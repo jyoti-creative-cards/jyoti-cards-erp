@@ -1,9 +1,10 @@
-import streamlit as st
-import pandas as pd
 import os
+
+import pandas as pd
+import streamlit as st
+
 from services.products import list_products, create_product, update_product, delete_product
 from services.vendors import list_vendors
-
 
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads", "products")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -24,88 +25,60 @@ def render(db):
     vendors = list_vendors(db)
     vendor_options = {"None": None}
     vendor_options.update({f"{v.name} (ID:{v.id})": v.id for v in vendors})
-
     tab_list, tab_add = st.tabs(["All Products", "Add Product"])
 
     with tab_list:
         products = list_products(db)
         if products:
-            rows = [{
+            st.dataframe(pd.DataFrame([{
                 "ID": p.id,
                 "Name": p.name,
                 "SKU": p.sku,
                 "Vendor": p.vendor.name if p.vendor else "",
-                "Category": p.category or "",
                 "Purchase ₹": p.purchase_price,
                 "Selling ₹": p.selling_price,
-                "Unit": p.unit,
                 "Min Stock": p.min_stock_level,
-                "Image": "Yes" if p.image_path else "No",
-            } for p in products]
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
-            st.subheader("Edit Product")
+                "Reorder": p.reorder_level,
+                "Active": p.active,
+            } for p in products]), use_container_width=True, hide_index=True)
             prod_map = {f"{p.name} ({p.sku})": p for p in products}
-            selected = st.selectbox("Select product", list(prod_map.keys()), key="edit_prod")
+            selected = st.selectbox("Select product", list(prod_map.keys()))
             p = prod_map[selected]
             if p.image_path and os.path.exists(p.image_path):
-                st.image(p.image_path, width=160)
-
+                st.image(p.image_path, width=150)
             with st.form("edit_product"):
                 name = st.text_input("Name", p.name)
                 sku = st.text_input("SKU", p.sku)
                 category = st.text_input("Category", p.category or "")
-                current_vendor_label = "None"
-                for label, vendor_id_value in vendor_options.items():
-                    if vendor_id_value == p.vendor_id:
-                        current_vendor_label = label
-                        break
-                selected_vendor = st.selectbox("Vendor", list(vendor_options.keys()), index=list(vendor_options.keys()).index(current_vendor_label))
-                purchase_price = st.number_input("Purchase Price", value=p.purchase_price, min_value=0.0)
-                selling_price = st.number_input("Selling Price", value=p.selling_price, min_value=0.0)
-                unit = st.selectbox("Unit", ["pcs", "kg", "box", "litre", "dozen"], index=["pcs", "kg", "box", "litre", "dozen"].index(p.unit) if p.unit in ["pcs", "kg", "box", "litre", "dozen"] else 0)
-                min_stock = st.number_input("Min Stock Level", value=p.min_stock_level, min_value=0.0)
-                image = st.file_uploader("Replace Image", type=["png", "jpg", "jpeg", "webp"], key=f"edit_img_{p.id}")
-
+                selected_vendor = st.selectbox("Vendor", list(vendor_options.keys()))
+                purchase_price = st.number_input("Purchase Price", min_value=0.0, value=float(p.purchase_price or 0))
+                selling_price = st.number_input("Selling Price", min_value=0.0, value=float(p.selling_price or 0))
+                min_stock = st.number_input("Min Stock", min_value=0.0, value=float(p.min_stock_level or 0))
+                reorder_level = st.number_input("Reorder Level", min_value=0.0, value=float(p.reorder_level or 0))
+                active = st.checkbox("Active", value=bool(p.active))
+                image = st.file_uploader("Replace Image", type=["png", "jpg", "jpeg", "webp"], key=f"img_{p.id}")
                 c1, c2 = st.columns(2)
-                save = c1.form_submit_button("Save Changes")
-                remove = c2.form_submit_button("Delete Product", type="secondary")
-
-                if save:
-                    image_path = save_uploaded_file(image) if image else p.image_path
-                    update_product(db, p.id, name=name, sku=sku, category=category,
-                                   vendor_id=vendor_options[selected_vendor],
-                                   purchase_price=purchase_price, selling_price=selling_price,
-                                   unit=unit, min_stock_level=min_stock, image_path=image_path)
-                    st.success("Updated")
+                if c1.form_submit_button("Save"):
+                    update_product(db, p.id, name=name, sku=sku, category=category, vendor_id=vendor_options[selected_vendor], purchase_price=purchase_price, selling_price=selling_price, min_stock_level=min_stock, reorder_level=reorder_level, active=active, image_path=save_uploaded_file(image) if image else p.image_path)
                     st.rerun()
-                if remove:
+                if c2.form_submit_button("Delete"):
                     delete_product(db, p.id)
-                    st.success("Deleted")
                     st.rerun()
         else:
-            st.info("No products yet")
+            st.info("No products")
 
     with tab_add:
         with st.form("add_product"):
             name = st.text_input("Name")
             sku = st.text_input("SKU")
             category = st.text_input("Category")
-            selected_vendor = st.selectbox("Vendor", list(vendor_options.keys()))
+            selected_vendor = st.selectbox("Vendor", list(vendor_options.keys()), key="vendor_new")
             purchase_price = st.number_input("Purchase Price", min_value=0.0)
             selling_price = st.number_input("Selling Price", min_value=0.0)
-            unit = st.selectbox("Unit", ["pcs", "kg", "box", "litre", "dozen"])
-            min_stock = st.number_input("Min Stock Level", min_value=0.0)
-            image = st.file_uploader("Product Image", type=["png", "jpg", "jpeg", "webp"])
-
-            if st.form_submit_button("Add Product"):
-                if name and sku:
-                    image_path = save_uploaded_file(image)
-                    create_product(db, name=name, sku=sku, category=category,
-                                   vendor_id=vendor_options[selected_vendor],
-                                   purchase_price=purchase_price, selling_price=selling_price,
-                                   unit=unit, min_stock_level=min_stock, image_path=image_path)
-                    st.success(f"Added {name}")
-                    st.rerun()
-                else:
-                    st.error("Name and SKU required")
+            min_stock = st.number_input("Min Stock", min_value=0.0)
+            reorder_level = st.number_input("Reorder Level", min_value=0.0)
+            active = st.checkbox("Active", value=True)
+            image = st.file_uploader("Product Image", type=["png", "jpg", "jpeg", "webp"], key="img_new")
+            if st.form_submit_button("Add Product") and name and sku:
+                create_product(db, name=name, sku=sku, category=category, vendor_id=vendor_options[selected_vendor], purchase_price=purchase_price, selling_price=selling_price, min_stock_level=min_stock, reorder_level=reorder_level, active=active, image_path=save_uploaded_file(image))
+                st.rerun()

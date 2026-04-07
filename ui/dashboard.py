@@ -1,73 +1,66 @@
-import streamlit as st
 import pandas as pd
-from datetime import date
-from db.models import SalesOrder, PurchaseOrder, SalesStatus, OrderStatus, Delivery, DeliveryStatus
+import plotly.express as px
+import streamlit as st
+
 from services.inventory import get_low_stock
+from services.reports import sales_dataframe, purchase_dataframe, inventory_dataframe, vendor_performance_dataframe
 
 
 def render(db):
     st.header("Dashboard")
 
-    today = date.today()
+    sales_df = sales_dataframe(db)
+    purchase_df = purchase_dataframe(db)
+    stock_df = inventory_dataframe(db)
+    vendor_df = vendor_performance_dataframe(db)
+    low_stock = get_low_stock(db)
 
-    col1, col2, col3, col4 = st.columns(4)
+    total_sales = float(sales_df["amount"].sum()) if not sales_df.empty else 0
+    total_purchase = float(purchase_df["amount"].sum()) if not purchase_df.empty else 0
+    total_orders = len(sales_df.index)
+    total_pos = len(purchase_df.index)
 
-    today_sales = db.query(SalesOrder).filter(SalesOrder.order_date == today).count()
-    today_purchases = db.query(PurchaseOrder).filter(PurchaseOrder.order_date == today).count()
-    pending_deliveries = db.query(Delivery).filter(Delivery.status != DeliveryStatus.DELIVERED).count()
-    low_stock_items = get_low_stock(db)
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Sales", f"₹{total_sales:,.0f}")
+    c2.metric("Purchases", f"₹{total_purchase:,.0f}")
+    c3.metric("Sales Orders", total_orders)
+    c4.metric("Low Stock", len(low_stock))
 
-    col1.metric("Today Sales Orders", today_sales)
-    col2.metric("Today Purchase Orders", today_purchases)
-    col3.metric("Pending Deliveries", pending_deliveries)
-    col4.metric("Low Stock Items", len(low_stock_items))
+    st.subheader("Business Trends")
+    left, right = st.columns(2)
+    with left:
+        if not sales_df.empty:
+            sales_chart = sales_df.groupby("date", as_index=False)["amount"].sum()
+            st.plotly_chart(px.line(sales_chart, x="date", y="amount", title="Sales by Date"), use_container_width=True)
+    with right:
+        if not purchase_df.empty:
+            po_chart = purchase_df.groupby("date", as_index=False)["amount"].sum()
+            st.plotly_chart(px.bar(po_chart, x="date", y="amount", title="Purchases by Date"), use_container_width=True)
 
-    st.divider()
-
-    c1, c2 = st.columns(2)
-
-    with c1:
-        st.subheader("Pending Sales Orders")
-        pending_so = (
-            db.query(SalesOrder)
-            .filter(SalesOrder.status.in_([SalesStatus.PENDING, SalesStatus.PACKED]))
-            .order_by(SalesOrder.created_at.desc())
-            .limit(10)
-            .all()
-        )
-        if pending_so:
-            rows = [{"ID": s.id, "Customer": s.customer.name, "Amount": f"₹{s.total_amount:,.0f}", "Status": s.status.value} for s in pending_so]
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    left, right = st.columns(2)
+    with left:
+        st.subheader("Inventory Left %")
+        if not stock_df.empty:
+            st.plotly_chart(px.bar(stock_df, x="product", y="left_percent", title="Product Left %"), use_container_width=True)
         else:
-            st.info("No pending sales orders")
-
-    with c2:
-        st.subheader("Pending Purchase Orders")
-        pending_po = (
-            db.query(PurchaseOrder)
-            .filter(PurchaseOrder.status.in_([OrderStatus.PENDING, OrderStatus.PARTIALLY_RECEIVED]))
-            .order_by(PurchaseOrder.created_at.desc())
-            .limit(10)
-            .all()
-        )
-        if pending_po:
-            rows = [{"ID": p.id, "Vendor": p.vendor.name, "Amount": f"₹{p.total_amount:,.0f}", "Status": p.status.value} for p in pending_po]
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            st.info("No inventory data")
+    with right:
+        st.subheader("Order Channel Mix")
+        if not sales_df.empty:
+            channel_df = sales_df.groupby("channel", as_index=False).size()
+            st.plotly_chart(px.pie(channel_df, names="channel", values="size", title="Manual vs WhatsApp"), use_container_width=True)
         else:
-            st.info("No pending purchase orders")
+            st.info("No sales data")
 
-    st.divider()
-    st.subheader("Low Stock Alerts")
-    if low_stock_items:
-        rows = []
-        for inv, prod in low_stock_items:
-            rows.append({
-                "Product": prod.name,
-                "SKU": prod.sku,
-                "Available": inv.quantity_available,
-                "Min Level": prod.min_stock_level,
-            })
-        df = pd.DataFrame(rows)
-        st.dataframe(df, use_container_width=True, hide_index=True)
+    st.subheader("Vendor Performance")
+    if not vendor_df.empty:
+        st.dataframe(vendor_df, use_container_width=True, hide_index=True)
     else:
-        st.success("All stock levels OK")
+        st.info("No vendor performance data")
+
+    st.subheader("Low Stock")
+    if low_stock:
+        rows = [{"Product": prod.name, "SKU": prod.sku, "Available": inv.quantity_available, "Min": prod.min_stock_level} for inv, prod in low_stock]
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    else:
+        st.success("No low stock items")

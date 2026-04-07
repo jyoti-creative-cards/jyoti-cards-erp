@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+ops.db
+.venv/
+uploads/products/*
+!uploads/products/.gitkeep
+.streamlit/

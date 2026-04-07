@@ -92,5 +92,91 @@ def _run_sqlite_migrations():
             if column_name not in existing_columns:
                 cursor.execute(statement)
 
+    legacy_updates = [
+        ("sales_orders", "status", {
+            "PENDING": "pending",
+            "CREATED": "created",
+            "CONFIRMED": "confirmed",
+            "PACKED": "packed",
+            "DISPATCHED": "dispatched",
+            "DELIVERED": "delivered",
+            "CANCELLED": "cancelled",
+        }),
+        ("purchase_orders", "status", {
+            "PENDING": "pending",
+            "CREATED": "created",
+            "APPROVED": "approved",
+            "LOADED": "loaded",
+            "IN_TRANSIT": "in_transit",
+            "RECEIVED": "received",
+            "MATCHED": "matched",
+            "CLOSED": "closed",
+            "DISPUTED": "disputed",
+            "PARTIALLY_RECEIVED": "partially_received",
+            "COMPLETED": "completed",
+            "CANCELLED": "cancelled",
+        }),
+        ("purchase_orders", "vendor_notification_status", {
+            "PENDING": "pending",
+            "SENT": "sent",
+            "FAILED": "failed",
+            "SKIPPED": "skipped",
+            "MOCK_SENT": "mock_sent",
+        }),
+        ("purchase_orders", "internal_notification_status", {
+            "PENDING": "pending",
+            "SENT": "sent",
+            "FAILED": "failed",
+            "SKIPPED": "skipped",
+            "MOCK_SENT": "mock_sent",
+        }),
+        ("sales_orders", "customer_notification_status", {
+            "PENDING": "pending",
+            "SENT": "sent",
+            "FAILED": "failed",
+            "SKIPPED": "skipped",
+            "MOCK_SENT": "mock_sent",
+        }),
+        ("sales_orders", "internal_notification_status", {
+            "PENDING": "pending",
+            "SENT": "sent",
+            "FAILED": "failed",
+            "SKIPPED": "skipped",
+            "MOCK_SENT": "mock_sent",
+        }),
+        ("inventory_transactions", "txn_type", {
+            "PURCHASE": "purchase",
+            "PURCHASE_RECEIPT": "purchase_receipt",
+            "SALE": "sale",
+            "SALE_CANCEL": "sale_cancel",
+            "ADJUSTMENT": "adjustment",
+        }),
+        ("deliveries", "status", {
+            "PENDING": "pending",
+            "IN_TRANSIT": "in_transit",
+            "DELIVERED": "delivered",
+        }),
+        ("payments", "payment_type", {
+            "INCOMING": "incoming",
+            "OUTGOING": "outgoing",
+        }),
+        ("three_way_matches", "status", {
+            "PENDING": "pending",
+            "MATCHED": "matched",
+            "DISPUTED": "disputed",
+        }),
+    ]
+
+    for table_name, column_name, replacements in legacy_updates:
+        cursor.execute(f"PRAGMA table_info({table_name})")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+        if column_name not in existing_columns:
+            continue
+        for old_value, new_value in replacements.items():
+            cursor.execute(
+                f"UPDATE {table_name} SET {column_name} = ? WHERE {column_name} = ?",
+                (new_value, old_value),
+            )
+
     conn.commit()
     conn.close()

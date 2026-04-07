@@ -7,8 +7,18 @@ from sqlalchemy.orm import relationship
 from db.database import Base
 
 
+def enum_values(enum_cls):
+    return SAEnum(
+        enum_cls,
+        values_callable=lambda enum_items: [item.value for item in enum_items],
+        native_enum=False,
+        validate_strings=True,
+    )
+
+
 class PurchaseOrderStatus(str, enum.Enum):
     CREATED = "created"
+    PENDING = "pending"
     APPROVED = "approved"
     LOADED = "loaded"
     IN_TRANSIT = "in_transit"
@@ -16,11 +26,14 @@ class PurchaseOrderStatus(str, enum.Enum):
     MATCHED = "matched"
     CLOSED = "closed"
     DISPUTED = "disputed"
+    PARTIALLY_RECEIVED = "partially_received"
+    COMPLETED = "completed"
     CANCELLED = "cancelled"
 
 
 class SalesStatus(str, enum.Enum):
     CREATED = "created"
+    PENDING = "pending"
     CONFIRMED = "confirmed"
     PACKED = "packed"
     DISPATCHED = "dispatched"
@@ -41,6 +54,7 @@ class PaymentType(str, enum.Enum):
 
 class TxnType(str, enum.Enum):
     PURCHASE_RECEIPT = "purchase_receipt"
+    PURCHASE = "purchase"
     SALE = "sale"
     SALE_CANCEL = "sale_cancel"
     ADJUSTMENT = "adjustment"
@@ -51,6 +65,7 @@ class NotificationStatus(str, enum.Enum):
     SENT = "sent"
     FAILED = "failed"
     SKIPPED = "skipped"
+    MOCK_SENT = "mock_sent"
 
 
 class MatchStatus(str, enum.Enum):
@@ -130,7 +145,7 @@ class InventoryTransaction(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
-    txn_type = Column(SAEnum(TxnType), nullable=False)
+    txn_type = Column(enum_values(TxnType), nullable=False)
     quantity = Column(Float, nullable=False)
     reference_type = Column(String(50))
     reference_id = Column(Integer)
@@ -145,7 +160,7 @@ class PurchaseOrder(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     vendor_id = Column(Integer, ForeignKey("vendors.id"), nullable=False)
-    status = Column(SAEnum(PurchaseOrderStatus), default=PurchaseOrderStatus.CREATED)
+    status = Column(enum_values(PurchaseOrderStatus), default=PurchaseOrderStatus.CREATED)
     order_date = Column(Date, default=date.today)
     expected_date = Column(Date)
     vendor_committed_date = Column(Date)
@@ -158,8 +173,8 @@ class PurchaseOrder(Base):
     transport_name = Column(String(200))
     transport_contact = Column(String(50))
     notes = Column(Text)
-    vendor_notification_status = Column(SAEnum(NotificationStatus), default=NotificationStatus.PENDING)
-    internal_notification_status = Column(SAEnum(NotificationStatus), default=NotificationStatus.PENDING)
+    vendor_notification_status = Column(enum_values(NotificationStatus), default=NotificationStatus.PENDING)
+    internal_notification_status = Column(enum_values(NotificationStatus), default=NotificationStatus.PENDING)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     vendor = relationship("Vendor")
@@ -220,7 +235,7 @@ class ThreeWayMatch(Base):
     purchase_order_id = Column(Integer, ForeignKey("purchase_orders.id"), nullable=False)
     vendor_bill_id = Column(Integer, ForeignKey("vendor_bills.id"))
     goods_receipt_id = Column(Integer, ForeignKey("goods_receipts.id"))
-    status = Column(SAEnum(MatchStatus), default=MatchStatus.PENDING)
+    status = Column(enum_values(MatchStatus), default=MatchStatus.PENDING)
     notes = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -245,7 +260,7 @@ class SalesOrder(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
-    status = Column(SAEnum(SalesStatus), default=SalesStatus.CREATED)
+    status = Column(enum_values(SalesStatus), default=SalesStatus.CREATED)
     order_date = Column(Date, default=date.today)
     channel = Column(String(20), default="manual")
     subtotal_amount = Column(Float, default=0)
@@ -253,8 +268,8 @@ class SalesOrder(Base):
     discount_amount = Column(Float, default=0)
     total_amount = Column(Float, default=0)
     notes = Column(Text)
-    customer_notification_status = Column(SAEnum(NotificationStatus), default=NotificationStatus.PENDING)
-    internal_notification_status = Column(SAEnum(NotificationStatus), default=NotificationStatus.PENDING)
+    customer_notification_status = Column(enum_values(NotificationStatus), default=NotificationStatus.PENDING)
+    internal_notification_status = Column(enum_values(NotificationStatus), default=NotificationStatus.PENDING)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     customer = relationship("Customer")
@@ -281,7 +296,7 @@ class Delivery(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     sales_order_id = Column(Integer, ForeignKey("sales_orders.id"), nullable=False)
-    status = Column(SAEnum(DeliveryStatus), default=DeliveryStatus.PENDING)
+    status = Column(enum_values(DeliveryStatus), default=DeliveryStatus.PENDING)
     delivery_date = Column(Date)
     driver_name = Column(String(100))
     notes = Column(Text)
@@ -294,7 +309,7 @@ class Payment(Base):
     __tablename__ = "payments"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    payment_type = Column(SAEnum(PaymentType), nullable=False)
+    payment_type = Column(enum_values(PaymentType), nullable=False)
     customer_id = Column(Integer, ForeignKey("customers.id"))
     vendor_id = Column(Integer, ForeignKey("vendors.id"))
     amount = Column(Float, nullable=False)

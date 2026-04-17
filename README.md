@@ -1,48 +1,55 @@
-# Jyoti Cards ERP
+# Jyoti Cards Purchasing App
 
-Internal ERP with Streamlit UI and FastAPI webhook backend.
+Streamlit admin app for vendor management, item catalog, purchase orders, stock intake, inventory, and WhatsApp communication through Meta WhatsApp API.
 
 ## Default Password
 
 - `kiwigudda`
 
-## Local Run
+## Run
 
 ```bash
 pip3 install -r requirements.txt
 streamlit run app.py
-uvicorn backend.main:app --host 0.0.0.0 --port 8015
 ```
 
-## WhatsApp Live Setup
+## WhatsApp Setup
 
 - Set `WHATSAPP_PROVIDER=meta`
 - Set `META_ACCESS_TOKEN`
 - Set `META_PHONE_NUMBER_ID`
-- Set `META_VERIFY_TOKEN`
-- Use office business number `9516789702`
-- Internal reports and alerts go to `9754656565`
+- Set `META_WEBHOOK_VERIFY_TOKEN` (example: `jyoti_cards_wh_verify_2026`)
+- Set `META_WEBHOOK_PORT` (default: `8080`)
+- Run webhook receiver: `python3 webhook_server.py`
+- Callback path: `/webhooks/whatsapp`
+- Use business number `9516789702`
+- Internal alerts go to `9754656565`
 
-## Streamlit Cloud
+## Deployment
 
-- Add secrets using `.streamlit/secrets.toml.example`
-- Deploy Streamlit UI with `app.py`
-- Deploy backend separately using `render.yaml` or another public Python host
-- Set webhook callback to:
-  - `<PUBLIC_BACKEND_URL>/webhooks/whatsapp`
+- Render blueprint file is `render.yaml`
+- Dashboard service: `jyoti-cards-dashboard` (Streamlit)
+- Webhook service: `jyoti-cards-whatsapp-webhook` (WSGI server)
+- Set secret env vars on Render dashboard (`META_ACCESS_TOKEN`, IDs, password, phone numbers)
+- After deploy, webhook callback URL is:
+  - `https://<your-webhook-service>.onrender.com/webhooks/whatsapp`
 
-## Features
+## Main Flow
 
-- WhatsApp customer ordering
-- Vendor and customer WhatsApp notifications
-- PDF order receipt on customer order confirmation
-- PO lifecycle and 3-way match
-- Vendor bill and goods receipt uploads
-- Discounts and reports
-- Daily internal summary automation
+- Create vendors with owner name, firm name, mobile, and billing condition
+- Create items with your own item ID plus vendor item ID for the selected vendor
+- Maintain vendor price and billing percent on the same item flow
+- Create purchase orders using your item ID while auto-loading vendor mapping
+- Create new PO versions after vendor discussions
+- Receive stock in batches against a PO
+- Close PO with note and WhatsApp notification
 
-## Smoke Test
+## Main Screens
 
-```bash
-python3 smoke_test.py
-```
+- Dashboard
+- Our Items
+- Vendors
+- Purchase Orders
+- Stock Intake
+- Inventory
+- WhatsApp

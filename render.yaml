@@ -1,6 +1,42 @@
 services:
   - type: web
-    name: jyoti-cards-erp-backend
-    env: python
+    name: jyoti-cards-dashboard
+    runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0
+    autoDeploy: true
+    healthCheckPath: /
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: APP_PASSWORD
+        sync: false
+      - key: BUSINESS_WHATSAPP_NUMBER
+        sync: false
+      - key: INTERNAL_ALERT_NUMBER
+        sync: false
+      - key: WHATSAPP_PROVIDER
+        value: meta
+      - key: META_ACCESS_TOKEN
+        sync: false
+      - key: META_PHONE_NUMBER_ID
+        sync: false
+      - key: META_BUSINESS_ACCOUNT_ID
+        sync: false
+      - key: META_API_VERSION
+        value: v25.0
+
+  - type: web
+    name: jyoti-cards-whatsapp-webhook
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python webhook_server.py
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: META_WEBHOOK_PATH
+        value: /webhooks/whatsapp
+      - key: META_WEBHOOK_VERIFY_TOKEN
+        value: jyoti_cards_wh_verify_2026

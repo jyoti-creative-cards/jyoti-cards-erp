@@ -43,6 +43,56 @@ def _append_log(payload: dict):
         handle.write(f"{line}\n")
 
 
+def _event_summary(event: dict) -> dict:
+    summary = {
+        "messages": [],
+        "statuses": [],
+        "errors": [],
+    }
+    for entry in event.get("entry", []) or []:
+        for change in entry.get("changes", []) or []:
+            value = change.get("value", {}) or {}
+            for msg in value.get("messages", []) or []:
+                summary["messages"].append(
+                    {
+                        "from": msg.get("from"),
+                        "id": msg.get("id"),
+                        "type": msg.get("type"),
+                    }
+                )
+            for status in value.get("statuses", []) or []:
+                summary["statuses"].append(
+                    {
+                        "id": status.get("id"),
+                        "status": status.get("status"),
+                        "recipient_id": status.get("recipient_id"),
+                    }
+                )
+                for err in status.get("errors", []) or []:
+                    summary["errors"].append(
+                        {
+                            "code": err.get("code"),
+                            "title": err.get("title"),
+                            "message": err.get("message"),
+                        }
+                    )
+    return summary
+
+
+def _read_recent_logs(limit: int = 20) -> list[dict]:
+    if not WEBHOOK_LOG_PATH.exists():
+        return []
+    lines = WEBHOOK_LOG_PATH.read_text(encoding="utf-8").splitlines()
+    recent = lines[-max(limit, 1):]
+    rows = []
+    for line in recent:
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            rows.append({"raw": line})
+    return rows
+
+
 def app(environ, start_response):
     method = environ.get("REQUEST_METHOD", "GET")
     path = environ.get("PATH_INFO", "/")
@@ -50,6 +100,10 @@ def app(environ, start_response):
 
     if path == "/health":
         return _json_response(start_response, {"status": "ok"})
+
+    if path == "/debug/webhooks":
+        limit = int((query.get("limit") or ["20"])[0] or "20")
+        return _json_response(start_response, {"rows": _read_recent_logs(limit)})
 
     if path != META_WEBHOOK_PATH:
         return _text_response(start_response, "not found", "404 Not Found")
@@ -72,8 +126,10 @@ def app(environ, start_response):
         record = {
             "received_at": datetime.now(timezone.utc).isoformat(),
             "event": body,
+            "summary": _event_summary(body),
         }
         _append_log(record)
+        print(json.dumps({"webhook_event": record["summary"]}, ensure_ascii=False), flush=True)
         return _json_response(start_response, {"status": "received"})
 
     return _text_response(start_response, "method not allowed", "405 Method Not Allowed")

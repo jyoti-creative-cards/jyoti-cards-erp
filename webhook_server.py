@@ -1,12 +1,14 @@
+"""
+WhatsApp webhook server — production version.
+Uses the same SQLAlchemy models as the ERP.
+Security: only phones registered in customers table can place orders.
+Structured order format from stock site: ORDER|SKU:1234|QTY:10
+"""
 from __future__ import annotations
 
 import json
 import re
-import sqlite3
-import urllib.request
-import urllib.parse
-import urllib.error
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs
 from wsgiref.simple_server import make_server
@@ -18,170 +20,28 @@ from config import (
     META_ACCESS_TOKEN,
     META_PHONE_NUMBER_ID,
     META_API_VERSION,
+    BUSINESS_WHATSAPP_NUMBER,
 )
 
-# ── DB path (mirrors db/database.py) ─────────────────────────────────────────
-ROOT    = Path(__file__).resolve().parent
-DB_PATH = ROOT / "ops.db"
+ROOT = Path(__file__).resolve().parent
 LOG_DIR = ROOT / "logs"
 LOG_DIR.mkdir(exist_ok=True)
 WEBHOOK_LOG_PATH = LOG_DIR / "whatsapp_webhooks.jsonl"
 
-# ── Azure OpenAI ──────────────────────────────────────────────────────────────
-import os
-AZURE_KEY        = os.getenv("AZURE_OPENAI_API_KEY", "")
-AZURE_ENDPOINT   = os.getenv("AZURE_OPENAI_ENDPOINT", "https://zeroque-intel.openai.azure.com/")
-AZURE_API_VER    = os.getenv("AZURE_OPENAI_API_VERSION", "2024-06-01")
-AZURE_DEPLOY     = os.getenv("AZURE_OPENAI_LLM_DEPLOYMENT", "gpt-5-nano")
+# Stock check website URL — update after deploying stock app
+STOCK_SITE_URL = "https://jyoti-cards-stock.onrender.com"
 
-# In-memory carts  {phone: [{"product_id","name","qty","price","unit"}]}
-_carts: dict = {}
 
-MENU = (
-    "Welcome to *Jyoti Creative Cards* 🎉\n\n"
-    "1️⃣  Browse catalog\n"
-    "2️⃣  Search product\n"
-    "3️⃣  View my cart\n"
-    "4️⃣  My orders\n"
-    "5️⃣  Recommendations\n"
-    "6️⃣  Support\n\n"
-    "Reply with a number or just tell me what you need!"
-)
+# ─── WhatsApp sender (no async needed in WSGI) ───────────────────────────────
 
-# ─────────────────────────────────────────────────────────────────────────────
-# DB helpers
-# ─────────────────────────────────────────────────────────────────────────────
+import urllib.request, urllib.error
 
-def _db():
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
-    return conn
-
-def _phone_local(phone: str) -> str:
-    """Return last 10 digits for matching."""
-    return re.sub(r"\D", "", phone)[-10:]
-
-def get_customer(phone: str):
-    local = _phone_local(phone)
-    with _db() as c:
-        row = c.execute(
-            "SELECT * FROM customers WHERE phone LIKE ? OR whatsapp_phone LIKE ? LIMIT 1",
-            (f"%{local}%", f"%{local}%")
-        ).fetchone()
-    return dict(row) if row else None
-
-def create_customer(name: str, phone: str) -> int:
-    with _db() as c:
-        cur = c.execute(
-            "INSERT INTO customers (name,phone,whatsapp_phone,customer_type,notifications_enabled,created_at) "
-            "VALUES (?,?,?,'retail',1,?)",
-            (name, phone, phone, datetime.now())
-        )
-        c.commit()
-        return cur.lastrowid
-
-def get_products(search: str = None) -> list:
-    sql = """SELECT p.id,p.name,p.sku,p.category,p.selling_price,p.unit,
-                    p.image_path,p.website_description,
-                    COALESCE(i.quantity_available,0) AS stock
-             FROM products p
-             LEFT JOIN inventory i ON i.product_id=p.id
-             WHERE p.active=1"""
-    args = []
-    if search:
-        sql += " AND (p.name LIKE ? OR p.category LIKE ? OR p.sku LIKE ?)"
-        like = f"%{search}%"
-        args = [like, like, like]
-    sql += " ORDER BY p.category,p.name LIMIT 30"
-    with _db() as c:
-        rows = c.execute(sql, args).fetchall()
-    return [dict(r) for r in rows]
-
-def get_product_by_id(pid: int):
-    with _db() as c:
-        row = c.execute(
-            "SELECT p.*,COALESCE(i.quantity_available,0) AS stock FROM products p "
-            "LEFT JOIN inventory i ON i.product_id=p.id WHERE p.id=?", (pid,)
-        ).fetchone()
-    return dict(row) if row else None
-
-def create_order(customer_id: int, items: list) -> int:
-    subtotal = sum(i["qty"] * i["price"] for i in items)
-    with _db() as c:
-        cur = c.execute(
-            "INSERT INTO sales_orders (customer_id,status,order_date,channel,"
-            "subtotal_amount,discount_percent,discount_amount,total_amount,notes,"
-            "customer_notification_status,internal_notification_status,created_at) "
-            "VALUES (?,?,?,?,?,0,0,?,?,'pending','pending',?)",
-            (customer_id, "pending", date.today(), "whatsapp",
-             subtotal, subtotal, "WhatsApp bot order", datetime.now())
-        )
-        oid = cur.lastrowid
-        for it in items:
-            c.execute(
-                "INSERT INTO sales_order_items "
-                "(order_id,product_id,quantity,unit_price,discount_percent,total_price) "
-                "VALUES (?,?,?,?,0,?)",
-                (oid, it["product_id"], it["qty"], it["price"], it["qty"]*it["price"])
-            )
-        c.commit()
-    return oid
-
-def get_recent_orders(customer_id: int) -> list:
-    with _db() as c:
-        rows = c.execute(
-            "SELECT so.id,so.status,so.order_date,so.total_amount,"
-            "GROUP_CONCAT(p.name||' x'||CAST(soi.quantity AS INT),', ') as items "
-            "FROM sales_orders so "
-            "JOIN sales_order_items soi ON soi.order_id=so.id "
-            "JOIN products p ON p.id=soi.product_id "
-            "WHERE so.customer_id=? GROUP BY so.id ORDER BY so.created_at DESC LIMIT 5",
-            (customer_id,)
-        ).fetchall()
-    return [dict(r) for r in rows]
-
-def log_wa(phone: str, direction: str, message: str, related_type=None, related_id=None):
-    try:
-        with _db() as c:
-            c.execute(
-                "INSERT INTO whatsapp_logs (phone,direction,message,related_type,related_id,status,created_at) "
-                "VALUES (?,?,?,?,?,'sent',?)",
-                (phone, direction, message, related_type, related_id, datetime.now())
-            )
-            c.commit()
-    except Exception:
-        pass
-
-def get_or_create_conversation(phone: str, customer_id=None, intent: str = None):
-    with _db() as c:
-        row = c.execute("SELECT * FROM whatsapp_conversations WHERE phone=? LIMIT 1", (phone,)).fetchone()
-        now = datetime.now()
-        if row:
-            c.execute(
-                "UPDATE whatsapp_conversations SET last_message_at=?,last_intent=?,"
-                "customer_id=COALESCE(?,customer_id) WHERE phone=?",
-                (now, intent, customer_id, phone)
-            )
-        else:
-            c.execute(
-                "INSERT INTO whatsapp_conversations (phone,customer_id,last_message_at,last_intent,created_at) "
-                "VALUES (?,?,?,?,?)",
-                (phone, customer_id, now, intent, now)
-            )
-        c.commit()
-        row2 = c.execute("SELECT * FROM whatsapp_conversations WHERE phone=? LIMIT 1", (phone,)).fetchone()
-    return dict(row2) if row2 else {}
-
-# ─────────────────────────────────────────────────────────────────────────────
-# WhatsApp sender
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _wa_post(payload: dict):
-    url   = f"https://graph.facebook.com/{META_API_VERSION}/{META_PHONE_NUMBER_ID}/messages"
-    data  = json.dumps(payload).encode()
-    req   = urllib.request.Request(url, data=data, headers={
+def _wa_post(payload: dict) -> dict:
+    url  = f"https://graph.facebook.com/{META_API_VERSION}/{META_PHONE_NUMBER_ID}/messages"
+    data = json.dumps(payload).encode()
+    req  = urllib.request.Request(url, data=data, headers={
         "Authorization": f"Bearer {META_ACCESS_TOKEN}",
-        "Content-Type":  "application/json",
+        "Content-Type": "application/json",
     })
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
@@ -191,7 +51,7 @@ def _wa_post(payload: dict):
         print(f"[WA ERROR] {e.code}: {body}", flush=True)
         return {"error": body}
 
-def wa_text(to: str, text: str):
+def wa_text(to: str, text: str) -> dict:
     return _wa_post({
         "messaging_product": "whatsapp",
         "recipient_type": "individual",
@@ -200,15 +60,7 @@ def wa_text(to: str, text: str):
         "text": {"body": text, "preview_url": False},
     })
 
-def wa_image(to: str, url: str, caption: str = ""):
-    return _wa_post({
-        "messaging_product": "whatsapp",
-        "to": to,
-        "type": "image",
-        "image": {"link": url, "caption": caption},
-    })
-
-def wa_buttons(to: str, body: str, buttons: list, header: str = None, footer: str = None):
+def wa_buttons(to: str, body: str, buttons: list, header: str = None, footer: str = None) -> dict:
     msg = {
         "messaging_product": "whatsapp",
         "to": to,
@@ -225,338 +77,372 @@ def wa_buttons(to: str, body: str, buttons: list, header: str = None, footer: st
         },
     }
     if header:
-        msg["interactive"]["header"] = {"type": "text", "text": header}
+        msg["interactive"]["header"] = {"type": "text", "text": header[:60]}
     if footer:
-        msg["interactive"]["footer"] = {"text": footer}
+        msg["interactive"]["footer"] = {"text": footer[:60]}
     return _wa_post(msg)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Azure OpenAI
-# ─────────────────────────────────────────────────────────────────────────────
 
-def ai_intent(user_msg: str, catalog_text: str, customer_name: str = None) -> dict:
-    name_ctx = f"Customer: {customer_name}" if customer_name else "Customer: new/unknown"
-    system = (
-        "You are a WhatsApp sales assistant for Jyoti Creative Cards, an Indian stationery/cards retailer.\n"
-        "Respond ONLY with valid JSON:\n"
-        '{"intent":"<greeting|browse|search|stock|order|status|recommend|confirm|cancel|unknown>",'
-        '"reply":"<short WhatsApp reply>",'
-        '"cart_items":[{"product_id":int,"qty":float}],'
-        '"search_query":"<string or null>"}'
-        "\ncart_items only when intent=order or confirm. reply must be under 300 chars."
-    )
-    user = f"{name_ctx}\nCatalog:\n{catalog_text}\nCustomer said: \"{user_msg}\"\nRespond with JSON only."
+# ─── DB helpers (use existing SQLAlchemy stack) ───────────────────────────────
 
-    url  = f"{AZURE_ENDPOINT.rstrip('/')}/openai/deployments/{AZURE_DEPLOY}/chat/completions?api-version={AZURE_API_VER}"
-    body = json.dumps({
-        "messages": [{"role":"system","content":system},{"role":"user","content":user}],
-        "temperature": 0.2,
-        "max_tokens": 400,
-        "response_format": {"type": "json_object"},
-    }).encode()
-    req = urllib.request.Request(url, data=body, headers={
-        "api-key": AZURE_KEY,
-        "Content-Type": "application/json",
-    })
+def _get_db():
+    from db.database import SessionLocal
+    return SessionLocal()
+
+def _normalise_phone(phone: str) -> str:
+    """Strip +, spaces, leading 91 — return last 10 digits."""
+    digits = re.sub(r"\D", "", phone)
+    return digits[-10:]
+
+def _get_customer(phone: str):
+    """Return Customer or None. Matches on whatsapp_phone or phone (last 10 digits)."""
+    from db.models import Customer
+    local = _normalise_phone(phone)
+    db = _get_db()
     try:
-        with urllib.request.urlopen(req, timeout=15) as r:
-            resp = json.loads(r.read())
-        content = resp["choices"][0]["message"]["content"]
-        return json.loads(content)
+        # Try exact match first
+        c = db.query(Customer).filter(Customer.whatsapp_phone == phone).first()
+        if c:
+            return c
+        # Try last-10-digit match
+        all_c = db.query(Customer).all()
+        for cust in all_c:
+            wp = _normalise_phone(cust.whatsapp_phone or "")
+            ph = _normalise_phone(cust.phone or "")
+            if wp == local or ph == local:
+                return cust
+        return None
+    finally:
+        db.close()
+
+def _log_wa(phone: str, direction: str, message: str, related_type=None, related_id=None):
+    from db.models import WhatsAppLog
+    db = _get_db()
+    try:
+        db.add(WhatsAppLog(phone=phone, direction=direction, message=message[:2000],
+                           related_type=related_type, related_id=related_id, status="sent"))
+        db.commit()
     except Exception as e:
-        print(f"[AI ERROR] {e}", flush=True)
-        return {"intent": "unknown", "reply": "Sorry, one moment. Type *menu* for options.", "cart_items": [], "search_query": None}
+        print(f"[LOG ERROR] {e}", flush=True)
+    finally:
+        db.close()
 
-def ai_recommend(catalog_text: str) -> str:
-    url  = f"{AZURE_ENDPOINT.rstrip('/')}/openai/deployments/{AZURE_DEPLOY}/chat/completions?api-version={AZURE_API_VER}"
-    body = json.dumps({
-        "messages": [
-            {"role":"system","content":"Recommend 2-3 products from this catalog for a retail stationery customer. Keep it under 200 chars, WhatsApp-friendly."},
-            {"role":"user","content":f"Catalog:\n{catalog_text}"},
-        ],
-        "temperature": 0.5,
-        "max_tokens": 150,
-    }).encode()
-    req = urllib.request.Request(url, data=body, headers={
-        "api-key": AZURE_KEY,
-        "Content-Type": "application/json",
-    })
+def _upsert_conversation(phone: str, customer_id=None, intent: str = None):
+    from db.models import WhatsAppConversation
+    db = _get_db()
     try:
-        with urllib.request.urlopen(req, timeout=15) as r:
-            resp = json.loads(r.read())
-        return resp["choices"][0]["message"]["content"].strip()
-    except Exception:
-        return ""
+        conv = db.query(WhatsAppConversation).filter(WhatsAppConversation.phone == phone).first()
+        now  = datetime.utcnow()
+        if conv:
+            conv.last_message_at = now
+            conv.last_intent     = intent
+            if customer_id:
+                conv.customer_id = customer_id
+        else:
+            db.add(WhatsAppConversation(phone=phone, customer_id=customer_id,
+                                        last_message_at=now, last_intent=intent))
+        db.commit()
+    finally:
+        db.close()
 
-def catalog_summary(products: list) -> str:
-    lines = []
-    for p in products:
-        stock = f"{p['stock']} {p.get('unit','')}" if p.get("stock",0) > 0 else "OUT OF STOCK"
-        lines.append(f"ID:{p['id']} {p['name']} SKU:{p['sku']} ₹{p.get('selling_price','?')}/{p.get('unit','unit')} [{stock}]")
-    return "\n".join(lines) or "No products available."
+def _get_last_intent(phone: str) -> str | None:
+    from db.models import WhatsAppConversation
+    db = _get_db()
+    try:
+        conv = db.query(WhatsAppConversation).filter(WhatsAppConversation.phone == phone).first()
+        return conv.last_intent if conv else None
+    finally:
+        db.close()
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Bot logic
-# ─────────────────────────────────────────────────────────────────────────────
+def _get_product_by_sku(sku: str):
+    from db.models import Product, Inventory
+    db = _get_db()
+    try:
+        p = db.query(Product).filter(Product.sku == sku.strip(), Product.active.is_(True)).first()
+        if not p:
+            return None, 0
+        inv = db.query(Inventory).filter(Inventory.product_id == p.id).first()
+        stock = inv.quantity_available if inv else 0
+        return p, stock
+    finally:
+        db.close()
+
+def _create_order(customer_id: int, product_id: int, quantity: float, sku: str) -> int:
+    """Create sales order, deduct stock, return SO id."""
+    from services.sales import create_sales_order
+    from services.products import get_product
+    db = _get_db()
+    try:
+        p = get_product(db, product_id)
+        so = create_sales_order(
+            db,
+            customer_id=customer_id,
+            items=[{"product_id": product_id, "quantity": quantity,
+                    "unit_price": p.selling_price, "discount_percent": 0}],
+            channel="whatsapp",
+            notes=f"WhatsApp order via stock site. SKU: {sku}",
+        )
+        return so.id
+    finally:
+        db.close()
+
+def _get_recent_orders(customer_id: int) -> list:
+    from db.models import SalesOrder, SalesOrderItem, Product
+    db = _get_db()
+    try:
+        orders = (db.query(SalesOrder)
+                  .filter(SalesOrder.customer_id == customer_id)
+                  .order_by(SalesOrder.created_at.desc())
+                  .limit(5).all())
+        result = []
+        for o in orders:
+            items_text = ", ".join(
+                f"{item.product.name} x{item.quantity:.0f}"
+                for item in o.items if item.product
+            )
+            result.append({
+                "id": o.id,
+                "status": o.status.value if hasattr(o.status, "value") else o.status,
+                "date": str(o.order_date),
+                "total": o.total_amount,
+                "items": items_text,
+            })
+        return result
+    finally:
+        db.close()
+
+
+# ─── Cart (in-memory, keyed by phone) ────────────────────────────────────────
+# Format: {phone: {"product_id", "sku", "name", "qty", "price", "customer_id"}}
+_pending_orders: dict = {}
+
+
+# ─── Bot logic ────────────────────────────────────────────────────────────────
+
+STATUS_EMOJI = {
+    "created": "🆕", "pending": "⏳", "confirmed": "✅",
+    "packed": "📦", "dispatched": "🚚", "delivered": "📬", "cancelled": "❌",
+}
+
+def _welcome_message(customer_name: str) -> str:
+    return (
+        f"Namaste *{customer_name}* ji! 🙏\n\n"
+        f"*Jyoti Creative Cards* mein aapka swagat hai.\n\n"
+        f"*Stock check karein:*\n"
+        f"👉 {STOCK_SITE_URL}\n\n"
+        f"*Options:*\n"
+        f"1️⃣  Mera order status\n"
+        f"2️⃣  Support chahiye\n\n"
+        f"Product dekh kar *Order Now* dabayein — order apne aap yahan aayega!"
+    )
 
 def handle_message(phone: str, text: str, interactive_id: str = None):
     text = (text or "").strip()
     msg  = (interactive_id or text).lower().strip()
 
-    log_wa(phone, "inbound", text)
-    customer = get_customer(phone)
-    conv     = get_or_create_conversation(phone, customer.get("id") if customer else None)
-    last     = conv.get("last_intent", "")
+    _log_wa(phone, "inbound", text or interactive_id or "")
 
-    # ── Shortcut triggers ────────────────────────────────────────────────────
-    if msg in ("menu","hi","hello","hii","hey","start","1","namaste","jai jinendra"):
-        wa_text(phone, MENU)
-        get_or_create_conversation(phone, customer.get("id") if customer else None, "menu")
-        return
-
-    if interactive_id == "confirm_order":
-        _do_confirm(phone, customer)
-        return
-
-    if interactive_id == "cancel_order":
-        _carts.pop(phone, None)
-        wa_text(phone, "Order cancelled. Type *menu* anytime 😊")
-        return
-
-    if interactive_id == "add_more" or msg == "3":
-        _show_cart(phone, customer)
-        return
-
-    if msg == "4":
-        _show_orders(phone, customer)
-        return
-
-    if msg == "6":
-        wa_text(phone, "Our team will call you back shortly.\n📞 +91 76948 12345\n⏰ Mon–Sat 10am–7pm")
-        return
-
-    # ── New customer name capture ────────────────────────────────────────────
-    if last == "awaiting_name" and text:
-        name = text.strip().title()
-        cid  = create_customer(name, phone)
-        wa_text(phone, f"Nice to meet you, *{name}*! 🎉\n\n{MENU}")
-        get_or_create_conversation(phone, cid, "menu")
-        return
-
-    # ── AI intent ────────────────────────────────────────────────────────────
-    products = get_products()
-    cat_text = catalog_summary(products)
-    result   = ai_intent(text, cat_text, customer.get("name") if customer else None)
-
-    intent       = result.get("intent","unknown")
-    reply        = result.get("reply","")
-    cart_items   = result.get("cart_items") or []
-    search_query = result.get("search_query")
-
-    get_or_create_conversation(phone, customer.get("id") if customer else None, intent)
-
-    if intent == "greeting":
-        if not customer:
-            wa_text(phone, "👋 Welcome to *Jyoti Creative Cards*!\nWhat's your name? (We'll save it for orders)")
-            get_or_create_conversation(phone, None, "awaiting_name")
-        else:
-            wa_text(phone, f"Welcome back, *{customer['name']}*! 😊\n\n{MENU}")
-
-    elif intent == "browse":
-        _send_catalog(phone, products)
-
-    elif intent in ("search","stock"):
-        q       = search_query or text
-        results = get_products(q)
-        if results:
-            wa_text(phone, f"Found *{len(results)}* result(s) for \"{q}\":")
-            for p in results[:4]:
-                _send_product_card(phone, p)
-            wa_buttons(phone,
-                body="Add any of these to your order?",
-                buttons=[{"id":"menu","title":"Main Menu"}, {"id":"add_more","title":"View Cart"}],
-                footer="Type product name + qty to order"
-            )
-        else:
-            wa_text(phone, f"No products found for \"{q}\". Try another name or type *menu*.")
-
-    elif intent in ("order","confirm") and cart_items:
-        validated = []
-        errors    = []
-        for ci in cart_items:
-            p = get_product_by_id(int(ci["product_id"]))
-            if not p:
-                errors.append(f"Product {ci['product_id']} not found")
-                continue
-            if p.get("stock",0) <= 0:
-                errors.append(f"*{p['name']}* is out of stock")
-                continue
-            validated.append({
-                "product_id": p["id"],
-                "name":  p["name"],
-                "qty":   float(ci.get("qty",1)),
-                "price": float(p.get("selling_price",0)),
-                "unit":  p.get("unit",""),
-            })
-        if errors:
-            wa_text(phone, "\n".join(errors))
-        if validated:
-            _carts[phone] = (_carts.get(phone) or []) + validated
-            _show_cart(phone, customer)
-
-    elif intent == "status":
-        _show_orders(phone, customer)
-
-    elif intent == "recommend":
-        reco = ai_recommend(cat_text)
-        if reco:
-            wa_text(phone, f"🌟 *You might love:*\n\n{reco}\n\nType a name to check stock!")
-        else:
-            _send_catalog(phone, products[:4])
-
-    elif intent == "cancel":
-        _carts.pop(phone, None)
-        wa_text(phone, "Order cancelled. Type *menu* to start fresh.")
-
-    else:
-        if reply:
-            wa_text(phone, reply)
-        else:
-            wa_text(phone, MENU)
-
-
-def _send_product_card(phone: str, p: dict):
-    stock_str = f"✅ {p['stock']} {p.get('unit','')} in stock" if p.get("stock",0) > 0 else "❌ Out of stock"
-    price_str = f"₹{p['selling_price']:.0f}/{p.get('unit','unit')}" if p.get("selling_price") else "Price on request"
-    caption   = f"*{p['name']}*\nSKU: {p['sku']}\n{price_str}\n{stock_str}"
-    if p.get("website_description"):
-        caption += f"\n{p['website_description']}"
-    if p.get("image_path"):
-        wa_image(phone, p["image_path"], caption)
-    else:
-        wa_text(phone, caption)
-
-
-def _send_catalog(phone: str, products: list):
-    if not products:
-        wa_text(phone, "Catalog is being updated. Check back soon!")
-        return
-    by_cat: dict = {}
-    for p in products:
-        by_cat.setdefault(p.get("category") or "Other", []).append(p)
-    wa_text(phone, f"🛍️ *Jyoti Creative Cards Catalog*\n{len(products)} products across {len(by_cat)} categories:")
-    for cat, prods in by_cat.items():
-        wa_text(phone, f"📂 *{cat}*")
-        for p in prods[:6]:
-            _send_product_card(phone, p)
-    wa_buttons(phone,
-        body="Anything you'd like to order? 😊",
-        buttons=[{"id":"2","title":"Search Product"}, {"id":"menu","title":"Main Menu"}],
-        footer="Type product name + quantity to order"
-    )
-
-
-def _show_cart(phone: str, customer: dict):
-    cart = _carts.get(phone, [])
-    if not cart:
-        wa_text(phone, "Your cart is empty 🛒\nBrowse catalog or search a product.")
-        return
-    lines = ["🛒 *Your Cart:*\n"]
-    total = 0.0
-    for it in cart:
-        sub    = it["qty"] * it["price"]
-        total += sub
-        lines.append(f"• {it['name']} — {it['qty']} {it.get('unit','')} × ₹{it['price']:.0f} = *₹{sub:.0f}*")
-    lines.append(f"\n💰 *Total: ₹{total:.0f}*")
+    # ── Security gate — registered customers only ─────────────────────────────
+    customer = _get_customer(phone)
     if not customer:
-        wa_text(phone, "\n".join(lines) + "\n\nWhat's your name to confirm this order?")
-        get_or_create_conversation(phone, None, "awaiting_name")
-    else:
-        wa_buttons(phone,
-            body="\n".join(lines),
-            buttons=[
-                {"id":"confirm_order","title":"✅ Confirm"},
-                {"id":"cancel_order","title":"❌ Cancel"},
-            ],
-            header=f"Order for {customer['name']}",
-            footer="We'll process this right away"
+        wa_text(phone,
+            "Maaf karein, aapka number registered nahi hai. 🙏\n\n"
+            "Order ke liye humse call karein:\n"
+            f"📞 *+91 {BUSINESS_WHATSAPP_NUMBER[-10:]}*\n"
+            "⏰ Mon–Sat, 10am–7pm"
         )
+        _upsert_conversation(phone, None, "rejected_unregistered")
+        return
+
+    cid       = customer.id
+    cname     = customer.name
+    last      = _get_last_intent(phone)
+
+    # ── Shortcuts ─────────────────────────────────────────────────────────────
+    if msg in ("hi", "hello", "hii", "hey", "start", "menu", "namaste", "jai jinendra", "1️⃣", "home"):
+        wa_text(phone, _welcome_message(cname))
+        _upsert_conversation(phone, cid, "welcome")
+        return
+
+    if msg in ("1", "order status", "mera order"):
+        _send_order_status(phone, customer)
+        return
+
+    if msg in ("2", "support", "help"):
+        wa_text(phone,
+            "Humari team jald call karegi. 😊\n"
+            f"📞 Direct call: *+91 {BUSINESS_WHATSAPP_NUMBER[-10:]}*\n"
+            "⏰ Mon–Sat, 10am–7pm"
+        )
+        _upsert_conversation(phone, cid, "support")
+        return
+
+    # ── Structured order from stock site: ORDER|SKU:1234|QTY:10 ──────────────
+    order_match = re.match(r"ORDER\|SKU:([^\|]+)\|QTY:(\d+(?:\.\d+)?)", text, re.IGNORECASE)
+    if order_match:
+        sku = order_match.group(1).strip()
+        qty = float(order_match.group(2))
+        _handle_structured_order(phone, customer, sku, qty)
+        return
+
+    # ── Confirm / cancel pending order ────────────────────────────────────────
+    if interactive_id == "confirm_order" or msg in ("confirm", "haan", "yes", "ok"):
+        if phone in _pending_orders:
+            _finalise_order(phone, customer)
+        else:
+            wa_text(phone, "Koi pending order nahi hai. Stock site par jayein:\n" + STOCK_SITE_URL)
+        return
+
+    if interactive_id == "cancel_order" or msg in ("cancel", "nahi", "no"):
+        _pending_orders.pop(phone, None)
+        wa_text(phone, "Order cancel kar diya. 😊\nKuch aur chahiye?\n\nStock check: " + STOCK_SITE_URL)
+        _upsert_conversation(phone, cid, "cancelled")
+        return
+
+    if interactive_id == "order_status":
+        _send_order_status(phone, customer)
+        return
+
+    # ── Fallback — send welcome ───────────────────────────────────────────────
+    wa_text(phone, _welcome_message(cname))
+    _upsert_conversation(phone, cid, "welcome")
 
 
-def _do_confirm(phone: str, customer: dict):
-    cart = _carts.get(phone, [])
-    if not cart:
-        wa_text(phone, "Cart is empty. Add items first.")
+def _handle_structured_order(phone: str, customer, sku: str, qty: float):
+    product, stock = _get_product_by_sku(sku)
+
+    if not product:
+        wa_text(phone, f"SKU *{sku}* nahi mila. Kripya stock site par dobara check karein:\n{STOCK_SITE_URL}")
         return
-    if not customer:
-        wa_text(phone, "Tell us your name first:")
-        get_or_create_conversation(phone, None, "awaiting_name")
+
+    if stock <= 0:
+        wa_text(phone, f"*{product.name}* (SKU: {sku}) abhi out of stock hai. 😔\nThoda intezaar karein ya aur products dekhein:\n{STOCK_SITE_URL}")
         return
-    oid   = create_order(customer["id"], cart)
-    total = sum(i["qty"]*i["price"] for i in cart)
-    lines = "\n".join(f"  • {i['name']} × {i['qty']} {i.get('unit','')} = ₹{i['qty']*i['price']:.0f}" for i in cart)
-    msg   = (
-        f"✅ *Order Confirmed!*\n\n"
-        f"Order ID: *#{oid}*\n"
-        f"{lines}\n\n"
-        f"💰 Total: *₹{total:.0f}*\n\n"
-        f"We'll call to confirm dispatch.\n📞 +91 76948 12345"
+
+    if qty > stock:
+        wa_text(phone,
+            f"*{product.name}* mein sirf *{stock:.0f} pcs* available hain.\n"
+            f"Aapne *{qty:.0f} pcs* maange — kripya quantity kam karein."
+        )
+        return
+
+    total = product.selling_price * qty
+    _pending_orders[phone] = {
+        "product_id": product.id,
+        "sku": sku,
+        "name": product.name,
+        "qty": qty,
+        "price": product.selling_price,
+        "customer_id": customer.id,
+    }
+
+    wa_buttons(phone,
+        header=f"Order for {customer.name}",
+        body=(
+            f"*Order Confirm Karein:*\n\n"
+            f"📦 Product: *{product.name}*\n"
+            f"🔢 SKU: {sku}\n"
+            f"🔢 Quantity: *{qty:.0f} pcs*\n"
+            f"💰 Price: ₹{product.selling_price:.0f}/pcs\n"
+            f"💰 Total: *₹{total:.0f}*\n\n"
+            f"Confirm karna chahte hain?"
+        ),
+        buttons=[
+            {"id": "confirm_order", "title": "✅ Haan, Confirm"},
+            {"id": "cancel_order",  "title": "❌ Cancel"},
+        ],
+        footer="Order confirm hone par stock automatically deduct hoga"
     )
-    wa_text(phone, msg)
-    log_wa(phone, "outbound", msg, "sales_order", oid)
-    _carts.pop(phone, None)
-    get_or_create_conversation(phone, customer["id"], "order_placed")
+    _upsert_conversation(phone, customer.id, "awaiting_confirm")
 
 
-def _show_orders(phone: str, customer: dict):
-    if not customer:
-        wa_text(phone, "Couldn't find your account. What's your name?")
-        get_or_create_conversation(phone, None, "awaiting_name")
+def _finalise_order(phone: str, customer):
+    po = _pending_orders.get(phone)
+    if not po:
         return
-    orders = get_recent_orders(customer["id"])
+
+    try:
+        so_id = _create_order(
+            customer_id=po["customer_id"],
+            product_id=po["product_id"],
+            quantity=po["qty"],
+            sku=po["sku"],
+        )
+        total = po["qty"] * po["price"]
+        msg   = (
+            f"✅ *Order Confirmed!*\n\n"
+            f"Order ID: *#{so_id}*\n"
+            f"📦 {po['name']} × {po['qty']:.0f} pcs\n"
+            f"💰 Total: *₹{total:.0f}*\n\n"
+            f"Humari team jald process karegi.\n"
+            f"Status check ke liye type karein: *order status*\n"
+            f"📞 +91 {BUSINESS_WHATSAPP_NUMBER[-10:]}"
+        )
+        wa_text(phone, msg)
+        _log_wa(phone, "outbound", msg, "sales_order", so_id)
+        _pending_orders.pop(phone, None)
+        _upsert_conversation(phone, customer.id, "order_placed")
+
+    except ValueError as e:
+        wa_text(phone, f"Order nahi ho saka: {e}\nCall karein: +91 {BUSINESS_WHATSAPP_NUMBER[-10:]}")
+    except Exception as e:
+        print(f"[ORDER ERROR] {e}", flush=True)
+        wa_text(phone, "Kuch gadbad ho gayi. Kripya call karein: +91 " + BUSINESS_WHATSAPP_NUMBER[-10:])
+
+
+def _send_order_status(phone: str, customer):
+    orders = _get_recent_orders(customer.id)
     if not orders:
-        wa_text(phone, "No orders yet. Browse the catalog to place your first order! 🛍️")
+        wa_text(phone,
+            "Abhi tak koi order nahi hai.\n\n"
+            f"Stock check karein: {STOCK_SITE_URL}"
+        )
         return
-    em = {"pending":"⏳","confirmed":"✅","dispatched":"🚚","delivered":"📬","cancelled":"❌"}
-    lines = [f"📦 *Orders for {customer['name']}:*\n"]
+
+    lines = [f"📋 *{customer.name} ke Orders:*\n"]
     for o in orders:
+        em = STATUS_EMOJI.get(o["status"], "📋")
         lines.append(
-            f"{em.get(o['status'],'📋')} *#{o['id']}* {o['order_date']}\n"
+            f"{em} *Order #{o['id']}* — {o['date']}\n"
             f"   {o['items']}\n"
-            f"   ₹{o['total_amount']:.0f} — *{str(o['status']).upper()}*\n"
+            f"   ₹{o['total']:,.0f} | *{o['status'].upper()}*\n"
         )
     wa_text(phone, "\n".join(lines))
+    _upsert_conversation(phone, customer.id, "order_status")
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Notify endpoint — called by Streamlit when order status changes
-# ─────────────────────────────────────────────────────────────────────────────
 
-def notify_order(order_id: int, new_status: str):
-    with _db() as c:
-        row = c.execute(
-            "SELECT so.id,so.total_amount,c.name,c.whatsapp_phone,c.phone "
-            "FROM sales_orders so JOIN customers c ON c.id=so.customer_id WHERE so.id=?",
-            (order_id,)
-        ).fetchone()
-    if not row:
-        return {"error": "order not found"}
-    phone  = (row["whatsapp_phone"] or row["phone"] or "").replace("+","").replace(" ","")
-    if not phone.startswith("91"):
-        phone = "91" + phone[-10:]
-    msgs = {
-        "confirmed":  f"✅ Order *#{order_id}* confirmed! We're preparing it.",
-        "dispatched": f"🚚 Order *#{order_id}* dispatched! Arriving in 1–2 days.",
-        "delivered":  f"📬 Order *#{order_id}* delivered! Thanks for shopping with Jyoti Cards 🎉",
-        "cancelled":  f"❌ Order *#{order_id}* cancelled. Call +91 76948 12345 for help.",
-    }
-    msg = msgs.get(new_status, f"📋 Order *#{order_id}* updated to *{new_status.upper()}*.")
-    wa_text(phone, msg)
-    log_wa(phone, "outbound", msg, "sales_order", order_id)
-    return {"sent": True}
+# ─── Notify endpoint (called by Streamlit ERP on status change) ───────────────
 
-# ─────────────────────────────────────────────────────────────────────────────
-# WSGI app
-# ─────────────────────────────────────────────────────────────────────────────
+def notify_order_update(order_id: int, new_status: str):
+    from db.models import SalesOrder, Customer
+    db = _get_db()
+    try:
+        so = db.query(SalesOrder).filter(SalesOrder.id == order_id).first()
+        if not so or not so.customer:
+            return {"error": "order or customer not found"}
+        c     = so.customer
+        phone = (c.whatsapp_phone or c.phone or "").replace("+", "").replace(" ", "")
+        if not phone:
+            return {"error": "no phone"}
+        if not phone.startswith("91"):
+            phone = "91" + phone[-10:]
+
+        msgs = {
+            "confirmed":  f"✅ Order *#{order_id}* confirm ho gaya! Hum prepare kar rahe hain.",
+            "packed":     f"📦 Order *#{order_id}* pack ho gaya! Jald dispatch hoga.",
+            "dispatched": f"🚚 Order *#{order_id}* dispatch ho gaya! 1–2 din mein milega.",
+            "delivered":  f"📬 Order *#{order_id}* deliver ho gaya! Shukriya 🙏\nJyoti Creative Cards",
+            "cancelled":  f"❌ Order *#{order_id}* cancel ho gaya.\nCall karein: +91 {BUSINESS_WHATSAPP_NUMBER[-10:]}",
+        }
+        text = msgs.get(new_status, f"📋 Order *#{order_id}* status: *{new_status.upper()}*")
+        wa_text(phone, text)
+        _log_wa(phone, "outbound", text, "sales_order", order_id)
+        return {"sent": True, "to": phone}
+    finally:
+        db.close()
+
+
+# ─── WSGI app ─────────────────────────────────────────────────────────────────
 
 def _read_body(environ) -> str:
     length = int(environ.get("CONTENT_LENGTH") or 0)
@@ -564,57 +450,53 @@ def _read_body(environ) -> str:
 
 def _json_resp(start_response, payload, status="200 OK"):
     body = json.dumps(payload, ensure_ascii=False).encode()
-    start_response(status, [("Content-Type","application/json"),("Content-Length",str(len(body)))])
+    start_response(status, [("Content-Type", "application/json"), ("Content-Length", str(len(body)))])
     return [body]
 
 def _text_resp(start_response, text, status="200 OK"):
     body = text.encode()
-    start_response(status, [("Content-Type","text/plain"),("Content-Length",str(len(body)))])
+    start_response(status, [("Content-Type", "text/plain"), ("Content-Length", str(len(body)))])
     return [body]
 
 def _html_resp(start_response, html, status="200 OK"):
     body = html.encode()
-    start_response(status, [("Content-Type","text/html; charset=utf-8"),("Content-Length",str(len(body)))])
+    start_response(status, [("Content-Type", "text/html; charset=utf-8"), ("Content-Length", str(len(body)))])
     return [body]
 
 def _append_log(payload: dict):
-    line = json.dumps(payload, ensure_ascii=False)
     with WEBHOOK_LOG_PATH.open("a", encoding="utf-8") as f:
-        f.write(f"{line}\n")
+        f.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 
 def app(environ, start_response):
-    method = environ.get("REQUEST_METHOD","GET")
-    path   = environ.get("PATH_INFO","/")
-    query  = parse_qs(environ.get("QUERY_STRING",""))
+    method = environ.get("REQUEST_METHOD", "GET")
+    path   = environ.get("PATH_INFO", "/")
+    query  = parse_qs(environ.get("QUERY_STRING", ""))
 
     if path == "/health":
-        return _json_resp(start_response, {"status":"ok"})
+        return _json_resp(start_response, {"status": "ok", "service": "jyoti-cards-bot"})
 
     if path == "/privacy-policy":
-        return _html_resp(start_response, """<!doctype html><html><head><title>Privacy Policy</title></head>
-<body><h1>Privacy Policy — Jyoti Creative Cards</h1>
-<p>We collect contact and order information to process your purchases and send notifications via WhatsApp.
-We do not sell your data. Contact: +91 76948 12345</p></body></html>""")
+        return _html_resp(start_response,
+            "<html><body><h1>Privacy Policy — Jyoti Creative Cards</h1>"
+            "<p>We collect contact and order data to process purchases and send WhatsApp notifications. "
+            "Data is not sold. Contact: +91 76948 12345</p></body></html>"
+        )
 
     if path == "/debug/webhooks":
         limit = int((query.get("limit") or ["20"])[0])
+        rows  = []
         if WEBHOOK_LOG_PATH.exists():
-            lines = WEBHOOK_LOG_PATH.read_text().splitlines()
-            rows  = []
-            for l in lines[-limit:]:
-                try: rows.append(json.loads(l))
-                except: rows.append({"raw":l})
-        else:
-            rows = []
+            for line in WEBHOOK_LOG_PATH.read_text().splitlines()[-limit:]:
+                try: rows.append(json.loads(line))
+                except: rows.append({"raw": line})
         return _json_resp(start_response, {"rows": rows})
 
-    # ── Notify endpoint (called by Streamlit) ─────────────────────────────────
+    # ── Order status notification (called by Streamlit ERP) ──────────────────
     if path == "/notify/order-update" and method == "POST":
-        raw = _read_body(environ)
         try:
-            data   = json.loads(raw)
-            result = notify_order(int(data["order_id"]), data["new_status"])
+            data   = json.loads(_read_body(environ))
+            result = notify_order_update(int(data["order_id"]), data["new_status"])
             return _json_resp(start_response, result)
         except Exception as e:
             return _json_resp(start_response, {"error": str(e)}, "400 Bad Request")
@@ -622,7 +504,7 @@ We do not sell your data. Contact: +91 76948 12345</p></body></html>""")
     if path != META_WEBHOOK_PATH:
         return _text_resp(start_response, "not found", "404 Not Found")
 
-    # ── WhatsApp webhook verify (GET) ─────────────────────────────────────────
+    # ── Webhook verify GET ────────────────────────────────────────────────────
     if method == "GET":
         mode      = (query.get("hub.mode") or [""])[0]
         token     = (query.get("hub.verify_token") or [""])[0]
@@ -631,28 +513,28 @@ We do not sell your data. Contact: +91 76948 12345</p></body></html>""")
             return _text_resp(start_response, challenge)
         return _text_resp(start_response, "forbidden", "403 Forbidden")
 
-    # ── Incoming WhatsApp message (POST) ──────────────────────────────────────
+    # ── Incoming WhatsApp message POST ────────────────────────────────────────
     if method == "POST":
-        raw  = _read_body(environ)
+        raw = _read_body(environ)
         try: body = json.loads(raw) if raw else {}
         except: body = {}
 
         _append_log({"received_at": datetime.now(timezone.utc).isoformat(), "event": body})
 
         try:
-            for entry in body.get("entry",[]):
-                for change in entry.get("changes",[]):
-                    value = change.get("value",{})
-                    for msg in value.get("messages",[]):
-                        phone    = msg.get("from","")
-                        mtype    = msg.get("type","")
-                        text     = ""
-                        iid      = None
+            for entry in body.get("entry", []):
+                for change in entry.get("changes", []):
+                    value = change.get("value", {})
+                    for msg in value.get("messages", []):
+                        phone  = msg.get("from", "")
+                        mtype  = msg.get("type", "")
+                        text   = ""
+                        iid    = None
                         if mtype == "text":
-                            text = msg.get("text",{}).get("body","")
+                            text = msg.get("text", {}).get("body", "")
                         elif mtype == "interactive":
-                            iv   = msg.get("interactive",{})
-                            it   = iv.get("type","")
+                            iv = msg.get("interactive", {})
+                            it = iv.get("type", "")
                             if it == "button_reply":
                                 iid  = iv["button_reply"]["id"]
                                 text = iv["button_reply"]["title"]
@@ -665,13 +547,12 @@ We do not sell your data. Contact: +91 76948 12345</p></body></html>""")
             print(f"[BOT ERROR] {e}", flush=True)
             import traceback; traceback.print_exc()
 
-        return _json_resp(start_response, {"status":"received"})
+        return _json_resp(start_response, {"status": "received"})
 
     return _text_resp(start_response, "method not allowed", "405 Method Not Allowed")
 
 
 if __name__ == "__main__":
-    print(f"Bot running → http://0.0.0.0:{META_WEBHOOK_PORT}{META_WEBHOOK_PATH}")
-    print(f"Verify token: {META_WEBHOOK_VERIFY_TOKEN}")
+    print(f"Bot → http://0.0.0.0:{META_WEBHOOK_PORT}{META_WEBHOOK_PATH}")
     server = make_server("0.0.0.0", META_WEBHOOK_PORT, app)
     server.serve_forever()

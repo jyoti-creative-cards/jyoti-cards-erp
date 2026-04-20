@@ -67,13 +67,15 @@ def _wa_post(payload: dict) -> dict:
 
 
 def wa_text(to: str, text: str) -> dict:
-    return _wa_post({
+    result = _wa_post({
         "messaging_product": "whatsapp",
         "recipient_type": "individual",
         "to": to,
         "type": "text",
         "text": {"body": text, "preview_url": False},
     })
+    _log_wa(to, "outbound", text, status=("failed" if "error" in result else "sent"))
+    return result
 
 
 def wa_buttons(to: str, body: str, buttons: list, header: str = None, footer: str = None) -> dict:
@@ -96,7 +98,9 @@ def wa_buttons(to: str, body: str, buttons: list, header: str = None, footer: st
         msg["interactive"]["header"] = {"type": "text", "text": header[:60]}
     if footer:
         msg["interactive"]["footer"] = {"text": footer[:60]}
-    return _wa_post(msg)
+    result = _wa_post(msg)
+    _log_wa(to, "outbound", body, status=("failed" if "error" in result else "sent"))
+    return result
 
 
 # ─── DB helpers (SQLAlchemy SessionLocal) ────────────────────────────────────
@@ -130,12 +134,12 @@ def _get_customer(phone: str):
         db.close()
 
 
-def _log_wa(phone: str, direction: str, message: str, related_type=None, related_id=None):
+def _log_wa(phone: str, direction: str, message: str, related_type=None, related_id=None, status: str = "sent"):
     from db.models import WhatsAppLog
     db = _get_db()
     try:
         db.add(WhatsAppLog(phone=phone, direction=direction, message=(message or "")[:2000],
-                           related_type=related_type, related_id=related_id, status="sent"))
+                           related_type=related_type, related_id=related_id, status=status))
         db.commit()
     except Exception as e:
         print(f"[LOG ERROR] {e}", flush=True)
@@ -630,6 +634,33 @@ def application(environ, start_response):
                 try: rows.append(json.loads(line))
                 except: rows.append({"raw": line})
         return _json_resp(start_response, {"rows": rows})
+
+    if path == "/debug/whatsapp-logs":
+        from db.models import WhatsAppLog
+        limit = int((query.get("limit") or ["20"])[0])
+        phone_filter = (query.get("phone") or [""])[0]
+        db = _get_db()
+        try:
+            q = db.query(WhatsAppLog).order_by(WhatsAppLog.created_at.desc())
+            if phone_filter:
+                q = q.filter(WhatsAppLog.phone.like(f"%{phone_filter[-10:]}%"))
+            rows = []
+            for r in q.limit(limit).all():
+                rows.append(
+                    {
+                        "id": r.id,
+                        "phone": r.phone,
+                        "direction": r.direction,
+                        "message": r.message,
+                        "status": r.status,
+                        "related_type": r.related_type,
+                        "related_id": r.related_id,
+                        "created_at": r.created_at.isoformat() if r.created_at else None,
+                    }
+                )
+            return _json_resp(start_response, {"rows": rows})
+        finally:
+            db.close()
 
     if path == "/notify/order-update" and method == "POST":
         try:

@@ -1,9 +1,29 @@
 import os
+import sqlite3
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, declarative_base
 
-# DB_PATH resolved from env (set by render.yaml to /data/ops.db)
-DB_PATH = os.getenv("DB_PATH", os.path.join(os.path.dirname(os.path.dirname(__file__)), "ops.db"))
+def _resolve_db_path() -> str:
+    project_default = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ops.db")
+    requested = (os.getenv("DB_PATH", "") or "").strip()
+    candidates = [requested, project_default, "/tmp/ops.db"]
+    seen = set()
+    for path in candidates:
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        try:
+            parent = os.path.dirname(path) or "."
+            os.makedirs(parent, exist_ok=True)
+            conn = sqlite3.connect(path)
+            conn.close()
+            return path
+        except Exception:
+            continue
+    return project_default
+
+
+DB_PATH = _resolve_db_path()
 
 # WAL mode for concurrent reads from multiple services
 engine = create_engine(

@@ -25,11 +25,18 @@ def get_product(db: Session, product_id: int):
 
 
 def get_product_by_name(db: Session, name: str):
-    return db.query(Product).filter(Product.name.ilike(name.strip())).first()
+    n = name.strip()
+    if not n:
+        return None
+    p = db.query(Product).filter(Product.name.ilike(n)).first()
+    if p:
+        return p
+    return db.query(Product).filter(Product.name.ilike(f"%{n}%")).first()
 
 
 def create_product(db: Session, **kwargs):
     kwargs["unit"] = "pcs"
+    kwargs.setdefault("website_visible", True)
     p = Product(**kwargs)
     db.add(p)
     db.flush()

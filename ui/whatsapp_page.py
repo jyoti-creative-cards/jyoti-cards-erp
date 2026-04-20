@@ -1,132 +1,66 @@
-"""
-WhatsApp Orders & Chat Logs page for the ERP.
-Shows all WhatsApp orders, lets owner update status + auto-notifies customer.
-"""
-import os
-import httpx
 import streamlit as st
-from sqlalchemy.orm import Session
 
-from db.database import SessionLocal
-from db.models import SalesOrder, SalesOrderItem, SalesStatus, Customer, WhatsAppLog, WhatsAppConversation
-from services.sales import update_sales_status
-
-BOT_BASE_URL = os.getenv("BOT_BASE_URL", "http://localhost:8080")
-
-STATUS_EMOJI = {
-    "created": "🆕", "pending": "⏳", "confirmed": "✅",
-    "packed": "📦", "dispatched": "🚚", "delivered": "📬", "cancelled": "❌",
-}
-ALL_STATUSES = ["created", "pending", "confirmed", "packed", "dispatched", "delivered", "cancelled"]
+from config import META_PHONE_NUMBER_ID, WHATSAPP_PROVIDER
+from backend.services.whatsapp import business_number, send_whatsapp_message
+from db.models import WhatsAppLog
+from services.vendors import list_vendors
 
 
-def _notify_bot(order_id: int, new_status: str):
-    try:
-        r = httpx.post(f"{BOT_BASE_URL}/notify/order-update",
-                       json={"order_id": order_id, "new_status": new_status}, timeout=8)
-        return r.json()
-    except Exception as e:
-        return {"error": str(e)}
+def render(db):
+    st.markdown("## 💬 WhatsApp")
+    st.caption("Message logs and manual messaging with vendors")
 
+    mc1, mc2, mc3 = st.columns(3)
+    mc1.metric("Business Number", business_number())
+    mc2.metric("Provider", WHATSAPP_PROVIDER.upper())
+    mc3.metric("Phone ID", META_PHONE_NUMBER_ID or "Not set")
 
-def render(db: Session = None):
-    st.title("📱 WhatsApp Orders")
+    tabs = st.tabs(["📜 Message Log", "✉️ Send Message"])
 
-    _owns_session = db is None
-    if db is None:
-        db = SessionLocal()
+    # ── message log ───────────────────────────────────────────────────────────
+    with tabs[0]:
+        logs = db.query(WhatsAppLog).order_by(WhatsAppLog.created_at.desc()).limit(100).all()
+        if not logs:
+            st.info("No messages yet.")
+            return
 
-    try:
-        # ── Summary KPIs ──────────────────────────────────────────────────────
-        wa_orders = db.query(SalesOrder).filter(SalesOrder.channel == "whatsapp").all()
-        total     = len(wa_orders)
-        pending   = sum(1 for o in wa_orders if o.status.value in ("created", "pending"))
-        today_str = str(__import__("datetime").date.today())
-        today_n   = sum(1 for o in wa_orders if str(o.order_date) == today_str)
-        revenue   = sum(o.total_amount or 0 for o in wa_orders)
+        for log in logs:
+            direction = "➡️ Sent" if log.direction == "outbound" else "⬅️ Received"
+            status_icon = "✅" if log.status in ("sent", "mock_sent") else ("❌" if log.status == "failed" else "⏳")
+            time_str = log.created_at.strftime("%d %b %Y, %I:%M %p") if log.created_at else ""
 
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Total WA Orders", total)
-        c2.metric("Action Needed", pending)
-        c3.metric("Today", today_n)
-        c4.metric("Revenue", f"₹{revenue:,.0f}")
+            with st.container():
+                hc1, hc2 = st.columns([4, 1])
+                hc1.markdown(f"{direction} **{log.phone}** — {time_str}")
+                hc2.markdown(f"{status_icon} `{log.status}`")
+                st.caption(log.message or "—")
+                if log.related_type:
+                    st.caption(f"Related: {log.related_type} #{log.related_id}")
+                st.markdown("---")
 
-        st.divider()
+    # ── send message ──────────────────────────────────────────────────────────
+    with tabs[1]:
+        vendors = list_vendors(db)
+        if not vendors:
+            st.warning("Add vendors first to send messages.")
+            return
 
-        # ── Tabs ──────────────────────────────────────────────────────────────
-        tab1, tab2 = st.tabs(["📦 Orders", "💬 Chat Logs"])
+        vendor_map = {(v.firm_name or v.name): v for v in vendors}
+        sel = st.selectbox("Select Vendor", list(vendor_map.keys()), key="wa_vendor")
+        vendor = vendor_map[sel]
 
-        # ══ Orders tab ════════════════════════════════════════════════════════
-        with tab1:
-            status_filter = st.selectbox("Filter by status",
-                                          ["All"] + ALL_STATUSES, key="wa_status_filter")
+        greeting = f"Hello {vendor.owner_name or vendor.firm_name or vendor.name}, this is Jyoti Cards."
 
-            q = db.query(SalesOrder).filter(SalesOrder.channel == "whatsapp").order_by(SalesOrder.created_at.desc())
-            if status_filter != "All":
-                q = q.filter(SalesOrder.status == status_filter)
-            orders = q.limit(100).all()
-
-            if not orders:
-                st.info("No WhatsApp orders yet.")
-            else:
-                for so in orders:
-                    cname = so.customer.name if so.customer else "Unknown"
-                    cphone = (so.customer.whatsapp_phone or so.customer.phone or "") if so.customer else ""
-                    em    = STATUS_EMOJI.get(so.status.value, "📋")
-                    items_text = ", ".join(
-                        f"{i.product.name} ×{i.quantity:.0f}" for i in so.items if i.product
-                    )
-                    with st.expander(
-                        f"{em} #{so.id} — {cname} | ₹{so.total_amount:,.0f} | "
-                        f"{so.status.value.upper()} | {so.order_date}"
-                    ):
-                        col_a, col_b = st.columns([3, 1])
-
-                        with col_a:
-                            st.write(f"**Customer:** {cname}")
-                            st.write(f"**Phone:** {cphone}")
-                            st.write(f"**Items:** {items_text}")
-                            st.write(f"**Amount:** ₹{so.total_amount:,.0f}")
-                            if so.notes:
-                                st.write(f"**Notes:** {so.notes}")
-                            st.write(f"**Ordered:** {so.created_at}")
-
-                        with col_b:
-                            cur_idx = ALL_STATUSES.index(so.status.value) if so.status.value in ALL_STATUSES else 0
-                            new_s   = st.selectbox("Update status", ALL_STATUSES,
-                                                    index=cur_idx, key=f"s_{so.id}")
-
-                            if st.button("💾 Save & Notify", key=f"save_{so.id}"):
-                                try:
-                                    update_sales_status(db, so.id, SalesStatus(new_s))
-                                    result = _notify_bot(so.id, new_s)
-                                    if result.get("sent"):
-                                        st.success(f"✅ Updated + WhatsApp sent to {cphone}")
-                                    elif result.get("error"):
-                                        st.warning(f"Status updated, WA failed: {result['error']}")
-                                    else:
-                                        st.success("Status updated.")
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"Error: {e}")
-
-        # ══ Chat Logs tab ══════════════════════════════════════════════════════
-        with tab2:
-            phone_filter = st.text_input("Filter by phone", key="wa_phone_filter")
-            logs_q = db.query(WhatsAppLog).order_by(WhatsAppLog.created_at.desc())
-            if phone_filter:
-                logs_q = logs_q.filter(WhatsAppLog.phone.contains(phone_filter))
-            logs = logs_q.limit(200).all()
-
-            if not logs:
-                st.info("No messages logged yet.")
-            else:
-                for log in logs:
-                    with st.chat_message("user" if log.direction == "inbound" else "assistant"):
-                        st.caption(f"{'📨 From' if log.direction == 'inbound' else '📤 Sent to'} "
-                                   f"{log.phone} — {log.created_at}")
-                        st.write(log.message or "—")
-
-    finally:
-        if _owns_session:
-            db.close()
+        with st.form("send_wa"):
+            phone = st.text_input("Mobile Number", value=vendor.phone or "")
+            message = st.text_area("Message", value=greeting, height=100)
+            if st.form_submit_button("📤 Send WhatsApp Message", use_container_width=True):
+                if not phone or not message:
+                    st.error("Phone and message are required")
+                else:
+                    result = send_whatsapp_message(db, phone, message, "vendor_manual", vendor.id)
+                    if result.status == "failed":
+                        st.error(f"Failed: {result.error or 'Unknown error'}")
+                    else:
+                        st.success(f"Message sent — Status: {result.status}")
+                        st.rerun()

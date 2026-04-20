@@ -89,9 +89,12 @@ class Product(Base):
     image_path = Column(String(500))
     reorder_level = Column(Float, default=0)
     active = Column(Boolean, default=True)
+    website_visible = Column(Boolean, default=True)
+    website_description = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     vendor = relationship("Vendor")
+    vendor_offerings = relationship("VendorOffering", back_populates="product")
 
 
 class Vendor(Base):
@@ -100,6 +103,9 @@ class Vendor(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(200), nullable=False)
     phone = Column(String(20))
+    owner_name = Column(String(200))
+    firm_name = Column(String(200))
+    billing_condition = Column(String(50), default="100%")
     address = Column(Text)
     credit_terms = Column(String(100))
     gst_number = Column(String(50))
@@ -109,6 +115,23 @@ class Vendor(Base):
     transporter_name = Column(String(200))
     transporter_contact = Column(String(50))
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class VendorOffering(Base):
+    __tablename__ = "vendor_offerings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    vendor_id = Column(Integer, ForeignKey("vendors.id"), nullable=False)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    vendor_product_code = Column(String(100))
+    vendor_price = Column(Float, default=0)
+    billing_percent = Column(Float, default=100)
+    active = Column(Boolean, default=True)
+    notes = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    vendor = relationship("Vendor")
+    product = relationship("Product", back_populates="vendor_offerings")
 
 
 class Customer(Base):
@@ -160,6 +183,10 @@ class PurchaseOrder(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     vendor_id = Column(Integer, ForeignKey("vendors.id"), nullable=False)
+    version_group_id = Column(Integer)
+    previous_version_id = Column(Integer, ForeignKey("purchase_orders.id"))
+    version_number = Column(Integer, default=1)
+    is_latest = Column(Boolean, default=True)
     status = Column(enum_values(PurchaseOrderStatus), default=PurchaseOrderStatus.CREATED)
     order_date = Column(Date, default=date.today)
     expected_date = Column(Date)
@@ -173,11 +200,13 @@ class PurchaseOrder(Base):
     transport_name = Column(String(200))
     transport_contact = Column(String(50))
     notes = Column(Text)
+    close_note = Column(Text)
     vendor_notification_status = Column(enum_values(NotificationStatus), default=NotificationStatus.PENDING)
     internal_notification_status = Column(enum_values(NotificationStatus), default=NotificationStatus.PENDING)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     vendor = relationship("Vendor")
+    previous_version = relationship("PurchaseOrder", remote_side=[id])
     items = relationship("PurchaseOrderItem", back_populates="order", cascade="all, delete-orphan")
     bills = relationship("VendorBill", back_populates="purchase_order", cascade="all, delete-orphan")
     receipts = relationship("GoodsReceipt", back_populates="purchase_order", cascade="all, delete-orphan")
@@ -189,13 +218,19 @@ class PurchaseOrderItem(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     order_id = Column(Integer, ForeignKey("purchase_orders.id"), nullable=False)
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    vendor_offering_id = Column(Integer, ForeignKey("vendor_offerings.id"))
+    vendor_product_code = Column(String(100))
+    our_product_code = Column(String(100))
     quantity_ordered = Column(Float, nullable=False)
     quantity_received = Column(Float, default=0)
+    base_unit_price = Column(Float, default=0)
+    billing_percent = Column(Float, default=100)
     unit_price = Column(Float, nullable=False)
     gst_percent = Column(Float, default=0)
     total_price = Column(Float, nullable=False)
 
     order = relationship("PurchaseOrder", back_populates="items")
+    vendor_offering = relationship("VendorOffering")
     product = relationship("Product")
 
 
@@ -226,6 +261,23 @@ class GoodsReceipt(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     purchase_order = relationship("PurchaseOrder", back_populates="receipts")
+    items = relationship("GoodsReceiptItem", back_populates="receipt", cascade="all, delete-orphan")
+
+
+class GoodsReceiptItem(Base):
+    __tablename__ = "goods_receipt_items"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    receipt_id = Column(Integer, ForeignKey("goods_receipts.id"), nullable=False)
+    purchase_order_item_id = Column(Integer, ForeignKey("purchase_order_items.id"), nullable=False)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    quantity_received = Column(Float, nullable=False)
+    notes = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    receipt = relationship("GoodsReceipt", back_populates="items")
+    purchase_order_item = relationship("PurchaseOrderItem")
+    product = relationship("Product")
 
 
 class ThreeWayMatch(Base):
@@ -333,6 +385,22 @@ class Ledger(Base):
     description = Column(Text)
     reference_type = Column(String(50))
     reference_id = Column(Integer)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class StorefrontSettings(Base):
+    __tablename__ = "storefront_settings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    site_title = Column(String(200), default="Jyoti Cards Shop")
+    hero_title = Column(String(200), default="Jyoti Cards Shop")
+    hero_subtitle = Column(
+        Text,
+        default="Browse live products, check stock, place your order online, and receive the order receipt on your WhatsApp number.",
+    )
+    ordering_enabled = Column(Boolean, default=True)
+    contact_whatsapp = Column(String(20))
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

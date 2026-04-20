@@ -17,6 +17,8 @@ WHATSAPP_PROVIDER         = os.getenv("WHATSAPP_PROVIDER", "meta")
 META_WEBHOOK_VERIFY_TOKEN = os.getenv("META_WEBHOOK_VERIFY_TOKEN", "jyoti_cards_wh_verify_2026")
 META_WEBHOOK_PATH         = os.getenv("META_WEBHOOK_PATH", "/webhooks/whatsapp")
 META_WEBHOOK_PORT         = int(os.getenv("META_WEBHOOK_PORT", os.getenv("PORT", "8080")))
+META_DEFAULT_TEMPLATE_LANGUAGE = os.getenv("META_DEFAULT_TEMPLATE_LANGUAGE", "en")
+CUSTOMER_WELCOME_TEMPLATE = os.getenv("CUSTOMER_WELCOME_TEMPLATE", "")
 
 # Bot URLs
 BOT_BASE_URL  = os.getenv("BOT_BASE_URL", "https://jyoti-cards-bot.onrender.com")

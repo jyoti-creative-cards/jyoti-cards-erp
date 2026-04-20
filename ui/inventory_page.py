@@ -1,96 +1,82 @@
-import pandas as pd
 import streamlit as st
 
-from db.models import TxnType
-from services.inventory import get_stock, get_low_stock, get_transactions, add_stock, deduct_stock
+from services.inventory import get_stock, get_low_stock, get_transactions
 from services.products import list_products
 
 
 def render(db):
-    st.header("Inventory")
-    tabs = st.tabs(["Current Stock", "Low Stock", "Manual Adjustment", "Transactions"])
+    st.markdown("## 📊 Inventory")
+    st.caption("Live stock levels across all your items")
 
+    tabs = st.tabs(["📦 Current Stock", "⚠️ Low Stock", "📜 History"])
+
+    # ── current stock ─────────────────────────────────────────────────────────
     with tabs[0]:
         stock_data = get_stock(db)
-        if stock_data:
-            rows = []
-            for inv, prod in stock_data:
-                avail = inv.quantity_available or 0
-                if avail <= 0:
-                    status = "Out of Stock"
-                elif avail <= (prod.min_stock_level or 0):
-                    status = "Low Stock"
-                else:
-                    status = "In Stock"
-                rows.append({
-                    "Product": prod.name,
-                    "SKU": prod.sku,
-                    "Available": avail,
-                    "Reserved": inv.quantity_reserved,
-                    "Min Stock": prod.min_stock_level,
-                    "Reorder Level": prod.reorder_level,
-                    "Status": status,
-                })
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-        else:
-            st.info("No stock")
+        if not stock_data:
+            st.info("No stock data yet. Receive goods against a purchase order to see stock here.")
+            return
 
+        rows = []
+        total_items = 0
+        total_qty = 0
+        for inv, prod in stock_data:
+            vendor_name = ""
+            if prod.vendor:
+                vendor_name = prod.vendor.firm_name or prod.vendor.name
+            rows.append({
+                "Our ID": prod.sku,
+                "Item": prod.name,
+                "Available": f"{inv.quantity_available:g}",
+                "Reserved": f"{inv.quantity_reserved:g}",
+                "Vendor": vendor_name or "—",
+            })
+            total_items += 1
+            total_qty += inv.quantity_available
+
+        mc1, mc2 = st.columns(2)
+        mc1.metric("Total Items in Stock", total_items)
+        mc2.metric("Total Quantity", f"{total_qty:,.0f}")
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+
+    # ── low stock ─────────────────────────────────────────────────────────────
     with tabs[1]:
         low = get_low_stock(db)
-        if low:
-            st.dataframe(
-                pd.DataFrame([
-                    {"Product": prod.name, "SKU": prod.sku,
-                     "Available": inv.quantity_available, "Min": prod.min_stock_level}
-                    for inv, prod in low
-                ]),
-                use_container_width=True, hide_index=True,
-            )
-        else:
-            st.success("Healthy stock")
+        if not low:
+            st.success("All items are well stocked. No alerts.")
+            return
 
+        st.warning(f"{len(low)} item(s) below minimum stock level")
+        for inv, prod in low:
+            pct = (inv.quantity_available / prod.min_stock_level * 100) if prod.min_stock_level else 100
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.markdown(f"**{prod.sku}** — {prod.name}")
+                st.progress(min(pct / 100, 1.0))
+            with col2:
+                st.metric("Available", f"{inv.quantity_available:g}", delta=f"{inv.quantity_available - prod.min_stock_level:g} from min")
+
+    # ── transaction history ───────────────────────────────────────────────────
     with tabs[2]:
         products = list_products(db)
-        if not products:
-            st.info("Add products first")
-        else:
-            pmap = {f"{p.name} ({p.sku})": p.id for p in products}
-            with st.form("manual_adjust"):
-                sel = st.selectbox("Product", list(pmap.keys()))
-                direction = st.radio("Direction", ["Add", "Remove"], horizontal=True)
-                qty = st.number_input("Quantity", min_value=0.01, value=1.0)
-                notes = st.text_input("Reason / Notes")
-                if st.form_submit_button("Apply Adjustment"):
-                    try:
-                        if direction == "Add":
-                            add_stock(db, pmap[sel], qty, "manual_adjustment", 0,
-                                      notes=notes or "Manual adjustment",
-                                      txn_type=TxnType.ADJUSTMENT)
-                        else:
-                            deduct_stock(db, pmap[sel], qty, "manual_adjustment", 0,
-                                         notes=notes or "Manual adjustment")
-                        st.success(f"Inventory {direction.lower()}ed by {qty}")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Could not adjust: {e}")
+        opts = {"All Items": None}
+        opts.update({f"{p.sku} — {p.name}": p.id for p in products})
+        selected = st.selectbox("Filter by item", list(opts.keys()), key="inv_filter")
 
-    with tabs[3]:
-        products = list_products(db)
-        pmap = {"All": None}
-        pmap.update({f"{p.name} ({p.sku})": p.id for p in products})
-        selected = st.selectbox("Product", list(pmap.keys()), key="txn_filter")
-        txns = get_transactions(db, product_id=pmap[selected])
-        if txns:
-            st.dataframe(
-                pd.DataFrame([{
-                    "Date": t.created_at,
-                    "Product": t.product.name if t.product else "",
-                    "Type": t.txn_type.value if hasattr(t.txn_type, "value") else t.txn_type,
-                    "Qty": t.quantity,
-                    "Ref": f"{t.reference_type}#{t.reference_id}",
-                    "Notes": t.notes or "",
-                } for t in txns]),
-                use_container_width=True, hide_index=True,
-            )
-        else:
-            st.info("No transactions")
+        txns = get_transactions(db, product_id=opts[selected])
+        if not txns:
+            st.info("No transactions yet.")
+            return
+
+        rows = []
+        for t in txns:
+            rows.append({
+                "Date": t.created_at.strftime("%d %b %Y, %I:%M %p") if t.created_at else "—",
+                "Our ID": t.product.sku,
+                "Item": t.product.name,
+                "Type": t.txn_type.value.replace("_", " ").title(),
+                "Qty": f"{t.quantity:+g}",
+                "Ref": f"{t.reference_type} #{t.reference_id}" if t.reference_type else "—",
+                "Notes": t.notes or "—",
+            })
+        st.dataframe(rows, use_container_width=True, hide_index=True)

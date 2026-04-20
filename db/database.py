@@ -24,19 +24,24 @@ def _resolve_db_path() -> str:
 
 
 DB_PATH = _resolve_db_path()
+DATABASE_URL = (os.getenv("DATABASE_URL", "") or "").strip()
 
-# WAL mode for concurrent reads from multiple services
-engine = create_engine(
-    f"sqlite:///{DB_PATH}",
-    echo=False,
-    connect_args={"check_same_thread": False, "timeout": 30},
-)
+if DATABASE_URL:
+    engine = create_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
+else:
+    # WAL mode for concurrent reads from multiple services
+    engine = create_engine(
+        f"sqlite:///{DB_PATH}",
+        echo=False,
+        connect_args={"check_same_thread": False, "timeout": 30},
+    )
 
-@event.listens_for(engine, "connect")
-def _set_wal(dbapi_conn, connection_record):
-    dbapi_conn.execute("PRAGMA journal_mode=WAL")
-    dbapi_conn.execute("PRAGMA synchronous=NORMAL")
-    dbapi_conn.execute("PRAGMA foreign_keys=ON")
+if not DATABASE_URL:
+    @event.listens_for(engine, "connect")
+    def _set_wal(dbapi_conn, connection_record):
+        dbapi_conn.execute("PRAGMA journal_mode=WAL")
+        dbapi_conn.execute("PRAGMA synchronous=NORMAL")
+        dbapi_conn.execute("PRAGMA foreign_keys=ON")
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
@@ -53,7 +58,8 @@ def get_db():
 def init_db():
     from db import models  # noqa: F401
     Base.metadata.create_all(bind=engine)
-    _run_sqlite_migrations()
+    if not DATABASE_URL:
+        _run_sqlite_migrations()
 
 
 def _run_sqlite_migrations():

@@ -40,6 +40,16 @@ LOG_DIR.mkdir(exist_ok=True)
 WEBHOOK_LOG_PATH = LOG_DIR / "whatsapp_webhooks.jsonl"
 
 STOCK_SITE_URL = os.getenv("STOCK_SITE_URL", _CFG_STOCK_SITE_URL) or "https://jyoti-cards-stock.onrender.com"
+_DB_READY = False
+
+
+def _ensure_db_ready():
+    global _DB_READY
+    if _DB_READY:
+        return
+    from db.database import init_db
+    init_db()
+    _DB_READY = True
 
 
 # ─── WhatsApp sender ──────────────────────────────────────────────────────────
@@ -106,6 +116,7 @@ def wa_buttons(to: str, body: str, buttons: list, header: str = None, footer: st
 # ─── DB helpers (SQLAlchemy SessionLocal) ────────────────────────────────────
 
 def _get_db():
+    _ensure_db_ready()
     from db.database import SessionLocal
     return SessionLocal()
 

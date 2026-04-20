@@ -29,10 +29,12 @@ def _notify_bot(order_id: int, new_status: str):
         return {"error": str(e)}
 
 
-def render():
+def render(db: Session = None):
     st.title("📱 WhatsApp Orders")
 
-    db: Session = SessionLocal()
+    _owns_session = db is None
+    if db is None:
+        db = SessionLocal()
 
     try:
         # ── Summary KPIs ──────────────────────────────────────────────────────
@@ -126,4 +128,5 @@ def render():
                         st.write(log.message or "—")
 
     finally:
-        db.close()
+        if _owns_session:
+            db.close()

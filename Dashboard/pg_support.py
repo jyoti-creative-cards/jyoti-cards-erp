@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import re
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 try:
     import psycopg
@@ -21,9 +22,33 @@ def use_postgres() -> bool:
 def database_url() -> str:
     """Supabase / Postgres URI from ``DATABASE_URL`` (Streamlit secrets or ``Dashboard/.env``)."""
     u = (os.environ.get("DATABASE_URL") or "").strip()
+    if len(u) >= 2 and u[0] == u[-1] and u[0] in "\"'":
+        u = u[1:-1].strip()
     if not u:
         raise RuntimeError("DATABASE_URL is not set")
     return u
+
+
+def _remote_supabase_needs_ssl(uri: str) -> bool:
+    """Streamlit Cloud → Supabase needs TLS; skip forcing sslmode when URI already sets it or host is local."""
+    if "sslmode=" in uri.lower():
+        return False
+    try:
+        host = (urlparse(uri).hostname or "").lower()
+    except Exception:
+        return True
+    return host not in ("localhost", "127.0.0.1", "::1")
+
+
+def pg_connect():
+    """Raw ``psycopg`` connection — same URL + TLS rules everywhere (including ``init_postgres_schema``)."""
+    if psycopg is None:
+        raise RuntimeError("Install psycopg: pip install 'psycopg[binary]'")
+    uri = database_url()
+    kw: dict[str, str] = {}
+    if _remote_supabase_needs_ssl(uri):
+        kw["sslmode"] = "require"
+    return psycopg.connect(uri, autocommit=False, **kw)
 
 
 def adapt_sql(sql: str) -> str:
@@ -114,10 +139,7 @@ class PgConnectionWrapper:
 
 
 def connect_postgres():
-    if psycopg is None:
-        raise RuntimeError("Install psycopg: pip install 'psycopg[binary]'")
-    raw = psycopg.connect(database_url(), autocommit=False)
-    return PgConnectionWrapper(raw)
+    return PgConnectionWrapper(pg_connect())
 
 
 def table_columns_pg(conn: PgConnectionWrapper, table: str) -> set[str]:

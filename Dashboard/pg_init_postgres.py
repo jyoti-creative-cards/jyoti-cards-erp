@@ -5,7 +5,7 @@ import re
 
 import sqlglot
 
-from pg_support import database_url
+from pg_support import pg_connect
 
 
 _RE_DT_NOW = re.compile(r"(?i)datetime\s*\(\s*['\"]now['\"]\s*\)")
@@ -74,10 +74,8 @@ def _ordered_ddl_blocks():
 
 def init_postgres_schema() -> None:
     """Create all tables on empty Supabase DB."""
-    import psycopg
-
     blocks = _ordered_ddl_blocks()
-    conn = psycopg.connect(database_url(), autocommit=False)
+    conn = pg_connect()
     try:
         for block in blocks:
             parts = [p.strip() for p in block.split(";") if p.strip()]

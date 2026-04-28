@@ -26,8 +26,11 @@ except ImportError:
 
 
 def _load_dashboard_models():
-    """Load `Dashboard/models.py` as a unique module name. Reloads when the file on disk changes."""
-    import importlib
+    """Load ``Dashboard/models.py`` under a stable name. Refresh when file mtime changes.
+
+    Avoid ``importlib.reload`` — some hosts (e.g. Streamlit Cloud) leave modules without a
+    valid ``__spec__``, which makes ``reload`` raise ``ModuleNotFoundError``.
+    """
     import importlib.util
 
     path = os.path.join(_DASH_DIR, "models.py")
@@ -37,15 +40,13 @@ def _load_dashboard_models():
     if mod is not None and getattr(mod, "_db_models_mtime", None) == mtime:
         if hasattr(mod, "CREATE_AR_PAYMENTS_TABLE"):
             return mod
-    if mod is not None:
-        mod = importlib.reload(mod)
-    else:
-        spec = importlib.util.spec_from_file_location(name, path)
-        if spec is None or spec.loader is None:
-            raise ImportError(f"Cannot load schema from {path}")
-        mod = importlib.util.module_from_spec(spec)
-        sys.modules[name] = mod
-        spec.loader.exec_module(mod)
+    sys.modules.pop(name, None)
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load schema from {path}")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
     if not hasattr(mod, "CREATE_AR_PAYMENTS_TABLE"):
         raise ImportError(
             f"{path} is missing CREATE_AR_PAYMENTS_TABLE (reinstall or fix models.py)"

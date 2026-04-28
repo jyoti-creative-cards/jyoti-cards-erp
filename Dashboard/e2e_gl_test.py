@@ -1,6 +1,8 @@
 """End-to-end: PO → receive → vendor bill (GL) → customer order → sale (GL) → pay vendor + collect.
-Run from repo:  cd Dashboard && DASHBOARD_E2E_DB=e2e_accounting.db python3 e2e_gl_test.py
-Removes e2e_accounting.db on each run.
+
+Requires ``DATABASE_URL`` (PostgreSQL). Use a disposable database.
+
+Run:  cd Dashboard && DATABASE_URL=... python3 e2e_gl_test.py
 """
 from __future__ import annotations
 
@@ -8,11 +10,10 @@ import os
 import sys
 
 _D = os.path.dirname(os.path.abspath(__file__))
-os.environ["DASHBOARD_E2E_DB"] = os.path.join(_D, "e2e_accounting.db")
-if os.path.isfile(os.environ["DASHBOARD_E2E_DB"]):
-    os.remove(os.environ["DASHBOARD_E2E_DB"])
+if not os.environ.get("DATABASE_URL", "").strip():
+    print("Set DATABASE_URL (PostgreSQL).", file=sys.stderr)
+    raise SystemExit(2)
 
-# Import after env
 import db
 from gl import (
     AC_CASH,
@@ -113,17 +114,20 @@ def main() -> int:
     p = pnl_to_date("2099-12-31")
     print("P&L to date:", p)
 
-    import sqlite3
-
-    c = sqlite3.connect(db.get_db_path())
-    c.row_factory = sqlite3.Row
-    tdr = float(
-        c.execute("SELECT COALESCE(SUM(debit),0) AS s FROM gl_journal_lines").fetchone()["s"]
-    )
-    tcr = float(
-        c.execute("SELECT COALESCE(SUM(credit),0) AS s FROM gl_journal_lines").fetchone()["s"]
-    )
-    c.close()
+    c = db._connect()
+    try:
+        tdr = float(
+            c.execute(
+                "SELECT COALESCE(SUM(debit),0) AS s FROM gl_journal_lines"
+            ).fetchone()["s"]
+        )
+        tcr = float(
+            c.execute(
+                "SELECT COALESCE(SUM(credit),0) AS s FROM gl_journal_lines"
+            ).fetchone()["s"]
+        )
+    finally:
+        c.close()
     assert abs(tdr - tcr) < 0.1, f"Unbalanced book Dr={tdr} Cr={tcr}"
     print("E2E OK: debits = credits, flows completed.")
     return 0

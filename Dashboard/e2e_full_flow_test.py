@@ -1,23 +1,22 @@
 """Full ERP simulation: vendor → product → PO → 2 receipts → stock up → portal-visible →
 customer order (stock down) → shipped → both bills → AR/AP cash → GL + P&L balanced.
 
-Run:  cd Dashboard && DASHBOARD_E2E_DB=e2e_full_flow.db python3 e2e_full_flow_test.py
-Rewrites the DB file each run.
+Requires ``DATABASE_URL`` (Postgres). Use a disposable database; re-runs append data.
+
+Run:  cd Dashboard && DATABASE_URL=... python3 e2e_full_flow_test.py
 """
 from __future__ import annotations
 
 import os
-import sqlite3
 import sys
 from datetime import date
 
 _D = os.path.dirname(os.path.abspath(__file__))
-_DEFAULT_DB = os.path.join(_D, "e2e_full_flow.db")
-os.environ["DASHBOARD_E2E_DB"] = os.environ.get("DASHBOARD_E2E_DB", _DEFAULT_DB)
-if os.path.isfile(os.environ["DASHBOARD_E2E_DB"]):
-    os.remove(os.environ["DASHBOARD_E2E_DB"])
+if not os.environ.get("DATABASE_URL", "").strip():
+    print("Set DATABASE_URL (PostgreSQL).", file=sys.stderr)
+    raise SystemExit(2)
 
-import db  # noqa: E402 — after DASHBOARD_E2E_DB
+import db  # noqa: E402
 from bill_pdf import build_billing_pdfs_for_co_record, build_billing_pdfs_for_record
 from gl import (
     AC_CASH,
@@ -43,14 +42,20 @@ def _seed_cash() -> None:
 
 
 def _assert_gl_balanced() -> None:
-    c = sqlite3.connect(db.get_db_path())
-    tdr = float(
-        c.execute("SELECT COALESCE(SUM(debit),0) AS s FROM gl_journal_lines").fetchone()[0]
-    )
-    tcr = float(
-        c.execute("SELECT COALESCE(SUM(credit),0) AS s FROM gl_journal_lines").fetchone()[0]
-    )
-    c.close()
+    c = db._connect()
+    try:
+        tdr = float(
+            c.execute(
+                "SELECT COALESCE(SUM(debit),0) AS s FROM gl_journal_lines"
+            ).fetchone()["s"]
+        )
+        tcr = float(
+            c.execute(
+                "SELECT COALESCE(SUM(credit),0) AS s FROM gl_journal_lines"
+            ).fetchone()["s"]
+        )
+    finally:
+        c.close()
     assert abs(tdr - tcr) < 0.1, f"Unbalanced: Dr={tdr} Cr={tcr}"
 
 

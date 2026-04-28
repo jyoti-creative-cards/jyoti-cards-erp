@@ -6,19 +6,29 @@ _DASH_DIR = os.path.dirname(os.path.abspath(__file__))
 if _DASH_DIR not in sys.path:
     sys.path.insert(0, _DASH_DIR)
 
-# Load `Dashboard/.env` before any DB code (Streamlit often starts with cwd ≠ this folder).
-import whatsapp_meta  # noqa: F401 — side effect: _load_env()
-
 from collections import defaultdict
 from typing import Any, Optional
 
 import streamlit as st
 
+# Local: load `Dashboard/.env` first. Then ``apply_streamlit_db_env`` overrides with ``st.secrets`` (Cloud).
+import whatsapp_meta  # noqa: F401 — side effect: _load_env()
+
 from streamlit_db_env import apply_streamlit_db_env
 
 apply_streamlit_db_env()
 
-import sqlite3
+from psycopg import errors as pg_errors
+
+_PG_INTEGRITY = (
+    pg_errors.UniqueViolation,
+    pg_errors.ForeignKeyViolation,
+    pg_errors.NotNullViolation,
+    pg_errors.CheckViolation,
+)
+_PG_ALL = _PG_INTEGRITY + (pg_errors.OperationalError,)
+_PG_INT_OR_VAL = _PG_INTEGRITY + (ValueError,)
+
 from datetime import date, timedelta
 
 from gl import journal_list, journal_lines, list_gl_accounts, pnl_to_date, trial_balance
@@ -36,6 +46,7 @@ from db import (
     delete_customer,
     delete_customer_order,
     delete_customer_order_billing,
+    delete_product_image_rel,
     delete_po_billing,
     delete_vendor,
     delete_vendor_product,
@@ -118,9 +129,11 @@ from db import (
     customers_who_bought_category,
     document_full_path,
     sales_revenue_series,
-    product_image_full_path,
     product_image_rel_paths,
+    product_image_src,
     product_on_hand,
+    upload_customer_order_billing_pdf_to_bucket,
+    upload_po_billing_pdf_to_bucket,
     save_customer_order_receipt,
     send_customer_order_payment_reminder_wa,
     save_product_uploads_streamlit,
@@ -1318,7 +1331,7 @@ if dmode == "home":
     gsel = st.radio("Chart grain", ("day", "week", "month"), horizontal=True, key="h_sg")
     try:
         ser = sales_revenue_series(t_start, t_end, gsel)
-    except (sqlite3.OperationalError, ValueError, TypeError) as e:
+    except (pg_errors.OperationalError, ValueError, TypeError) as e:
         ser = []
         st.caption(f"(Sales chart unavailable: {e})")
     if ser:
@@ -2029,6 +2042,16 @@ def _render_billing_tabs_and_pdf(b, rid: int) -> None:
                     use_container_width=True,
                     key=f"dl_raw_{rid}",
                 )
+                if st.button(
+                    "Upload bill PDF to cloud (vendor_bills)",
+                    key=f"s3_po_{rid}",
+                    use_container_width=True,
+                ):
+                    try:
+                        upload_po_billing_pdf_to_bucket(int(poid))
+                        st.success(f"Uploaded vendor_bills/{int(poid)}.pdf")
+                    except Exception as e:
+                        st.error(str(e)[:500])
             except Exception as e:
                 st.warning(f"Could not build PDF: {e}")
 
@@ -2185,6 +2208,16 @@ def _render_co_billing_tabs_and_pdf(b, rid: int) -> None:
                     use_container_width=True,
                     key=f"dl_co_raw_{rid}",
                 )
+                if st.button(
+                    "Upload bill PDF to cloud (customer_bills)",
+                    key=f"s3_co_{rid}",
+                    use_container_width=True,
+                ):
+                    try:
+                        upload_customer_order_billing_pdf_to_bucket(int(coid))
+                        st.success(f"Uploaded customer_bills/{int(coid)}.pdf")
+                    except Exception as e:
+                        st.error(str(e)[:500])
             except Exception as e:
                 st.warning(f"Could not build PDF: {e}")
 
@@ -2693,7 +2726,7 @@ elif dmode == "product":
                                 st.success("Product created.")
                                 st.session_state.page = None
                                 st.rerun()
-                            except sqlite3.IntegrityError as e:
+                            except _PG_INTEGRITY as e:
                                 st.error(
                                     "Duplicate: vendor+vendor id or our id already used. "
                                     + str(e)[:200]
@@ -2728,8 +2761,8 @@ elif dmode == "product":
             if rels:
                 cimg = st.columns(min(3, len(rels)))
                 for i, r in enumerate(rels):
-                    ap = product_image_full_path(r)
-                    if ap and os.path.isfile(ap):
+                    ap = product_image_src(r)
+                    if ap:
                         cimg[i % 3].image(ap, use_container_width=True)
             st.caption(f"Uploads folder: `{get_uploads_path()}`")
             st.write("**Since:**", p.created_at)
@@ -2797,12 +2830,7 @@ elif dmode == "product":
                             removed = [r for r in ex_paths if r not in keep_s]
                             if removed:
                                 for rel in removed:
-                                    ap = product_image_full_path(rel)
-                                    if ap and os.path.isfile(ap):
-                                        try:
-                                            os.remove(ap)
-                                        except OSError:
-                                            pass
+                                    delete_product_image_rel(rel)
                             kept = [r for r in ex_paths if r in keep_s]
                             try:
                                 npaths = save_product_uploads_streamlit(
@@ -2826,7 +2854,7 @@ elif dmode == "product":
                                         all_paths,
                                         low_stock_threshold=tpx,
                                     )
-                                except sqlite3.IntegrityError as e:
+                                except _PG_INTEGRITY as e:
                                     st.error("Duplicate id. " + str(e)[:200])
                                 else:
                                     st.success("Updated.")
@@ -3046,7 +3074,7 @@ elif dmode in ("po", "po_mgmt"):
                                 st.session_state.page = None
                                 st.session_state.po_eid = None
                                 st.rerun()
-                            except (sqlite3.IntegrityError, sqlite3.OperationalError) as e:
+                            except _PG_ALL as e:
                                 st.error(str(e)[:400])
 
     elif page == "modify" and rid is not None:
@@ -3119,7 +3147,7 @@ elif dmode in ("po", "po_mgmt"):
                                     )
                                     st.success("Received.")
                                     st.rerun()
-                                except (sqlite3.IntegrityError, sqlite3.OperationalError) as e:
+                                except _PG_ALL as e:
                                     st.error(str(e)[:500])
             elif pr and (leftq < 0.0001 or stx_b == "closed"):
                 st.caption("Line is **fully received** or **closed** — use **Inventory** to edit a receipt if needed.")
@@ -3212,7 +3240,7 @@ elif dmode in ("po", "po_mgmt"):
                                 st.session_state.page = None
                                 st.session_state.po_eid = None
                                 st.rerun()
-                            except (sqlite3.IntegrityError, sqlite3.OperationalError) as e:
+                            except _PG_ALL as e:
                                 st.error(str(e)[:400])
             st.divider()
             if o and st.button("Delete this PO line…", type="primary", key="po_todel1"):
@@ -3303,7 +3331,7 @@ elif dmode == "inv":
                         set_product_alternatives(
                             bid0, [plab_all[k] for k in msel if k in plab_all]
                         )
-                    except (sqlite3.IntegrityError, ValueError) as e:
+                    except _PG_INT_OR_VAL as e:
                         st.error(str(e)[:500])
                     else:
                         st.success("Saved.")
@@ -3431,7 +3459,7 @@ elif dmode == "inv":
                             st.success("Stock receipt saved.")
                             st.session_state.page = None
                             st.rerun()
-                        except (sqlite3.IntegrityError, sqlite3.OperationalError) as e:
+                        except _PG_ALL as e:
                             st.error(str(e)[:500])
 
     elif im != "alternatives" and page == "modify" and rid2 is not None:
@@ -3479,7 +3507,7 @@ elif dmode == "inv":
                         st.success("Updated.")
                         st.session_state.page = None
                         st.rerun()
-                    except (sqlite3.IntegrityError, sqlite3.OperationalError) as e:
+                    except _PG_ALL as e:
                         st.error(str(e)[:500])
         elif o and not plab_all:
             st.error("No products.")
@@ -3822,7 +3850,7 @@ elif dmode == "co_billing":
 elif dmode == "cust_order":
     st.caption("Summary counts are on **Order management → Dashboard**.")
     st.markdown(
-        '<div class="erp-section-note">Same <code>business.db</code> everywhere — sales documents vs order lines are different panels only.</div>',
+        '<div class="erp-section-note">Same database everywhere — sales documents vs order lines are different panels only.</div>',
         unsafe_allow_html=True,
     )
     _render_sales_document_workspace()
@@ -4239,7 +4267,7 @@ elif dmode == "acct_dash":
 
 **Vendor payment (clear AP):** **Accounts** → **AP (payable)** → **Record payment (vendor)** → pick bill → **Record vendor payment**.
 
-Same **`business.db`** as orders and billing; nothing extra to sync.
+Same database as orders and billing; nothing extra to sync.
         """
     )
 elif dmode == "ar":
@@ -4296,7 +4324,7 @@ elif dmode == "ar":
                                     insert_ar_payment(doc_id, a, meth or None, nte or None)
                                 st.success("Recorded.")
                                 st.rerun()
-                            except (ValueError, sqlite3.OperationalError) as e:
+                            except (ValueError, pg_errors.OperationalError) as e:
                                 st.error(str(e)[:500])
     with tab3:
         plog = list_ar_payments_log()
@@ -4380,7 +4408,7 @@ elif dmode == "ap":
                                     insert_ap_payment(doc_id, a2, meth2 or None, n2 or None)
                                 st.success("Recorded.")
                                 st.rerun()
-                            except (ValueError, sqlite3.OperationalError) as e:
+                            except (ValueError, pg_errors.OperationalError) as e:
                                 st.error(str(e)[:500])
     with tab3:
         plog2 = list_ap_payments_log()

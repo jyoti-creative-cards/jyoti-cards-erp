@@ -1,17 +1,19 @@
 """Document-model flow: PO -> goods receipt -> vendor bill 3-way match -> sales order -> delivery -> invoice.
 
+Requires ``DATABASE_URL`` (PostgreSQL).
+
 Run:
-  cd Dashboard && DASHBOARD_E2E_DB=e2e_document_flow.db python3 e2e_document_flow_test.py
+  cd Dashboard && DATABASE_URL=... python3 e2e_document_flow_test.py
 """
 from __future__ import annotations
 
 import os
+import sys
 
 _D = os.path.dirname(os.path.abspath(__file__))
-_DEFAULT_DB = os.path.join(_D, "e2e_document_flow.db")
-os.environ["DASHBOARD_E2E_DB"] = os.environ.get("DASHBOARD_E2E_DB", _DEFAULT_DB)
-if os.path.isfile(os.environ["DASHBOARD_E2E_DB"]):
-    os.remove(os.environ["DASHBOARD_E2E_DB"])
+if not os.environ.get("DATABASE_URL", "").strip():
+    print("Set DATABASE_URL (PostgreSQL).", file=sys.stderr)
+    raise SystemExit(2)
 
 import db  # noqa: E402
 

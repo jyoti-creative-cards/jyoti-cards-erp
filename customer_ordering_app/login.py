@@ -1,6 +1,7 @@
 """Login check using same SQLite + hashing as Dashboard/db.py."""
 from __future__ import annotations
 
+import os
 import re
 
 from dash_db import get_dashboard_db
@@ -38,8 +39,11 @@ def try_login(phone: str, password: str) -> tuple[bool, str, int | None]:
     msg = "Wrong mobile or password"
     if n_customers == 0:
         msg += (
-            ". This app has no customer rows yet. "
-            "On Streamlit Cloud the portal app uses its **own** database file unless both apps share "
-            "the same path via secrets — see README (Customer portal vs ERP)."
+            " No rows in **customers** for this database. "
+            "If you already created the customer in the ERP app, add the **same** "
+            "**DATABASE_URL** (Supabase Postgres) to **this portal app’s** Streamlit Secrets "
+            "as on the ERP app, redeploy, then try again."
         )
+        if not (os.environ.get("DATABASE_URL") or "").strip():
+            msg += " **Right now DATABASE_URL is missing from this app’s environment.**"
     return False, msg, None

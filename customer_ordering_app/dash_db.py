@@ -18,13 +18,11 @@ _MODULE_NAME = "dashboard_business_db"
 
 def get_dashboard_db():
     global _MOD, _MTIME_DB, _MTIME_MODELS
-    # Same DB path as ERP when Streamlit secrets set DASHBOARD_E2E_DB (must run before db loads).
+    # Same env as ERP: DATABASE_URL, S3, WhatsApp from ``st.secrets`` (must run before db loads).
     try:
-        import streamlit as st
+        from streamlit_db_env import apply_streamlit_db_env
 
-        v = st.secrets.get("DASHBOARD_E2E_DB") or st.secrets.get("BUSINESS_DB_PATH")
-        if v:
-            os.environ["DASHBOARD_E2E_DB"] = str(v).strip()
+        apply_streamlit_db_env()
     except Exception:
         pass
     m_db = os.path.getmtime(_DASH_DB_PATH)

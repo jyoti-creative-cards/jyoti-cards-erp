@@ -8,7 +8,6 @@ import os
 import re
 import secrets
 import shutil
-import sqlite3
 import sys
 import uuid
 from datetime import date
@@ -17,6 +16,13 @@ from typing import Any, Dict, List, Optional, Sequence
 _DASH_DIR = os.path.dirname(os.path.abspath(__file__))
 if _DASH_DIR not in sys.path:
     sys.path.insert(0, _DASH_DIR)
+
+from pg_support import connect_postgres
+
+try:
+    import storage_s3 as _storage_s3
+except ImportError:
+    _storage_s3 = None  # type: ignore
 
 
 def _load_dashboard_models():
@@ -88,13 +94,6 @@ VendorProduct = _m.VendorProduct
 Warehouse = _m.Warehouse
 
 _DASH = _DASH_DIR
-_ede = os.environ.get("DASHBOARD_E2E_DB", "").strip()
-if _ede and os.path.isabs(_ede):
-    DB_PATH = _ede
-elif _ede:
-    DB_PATH = os.path.join(_DASH, _ede)
-else:
-    DB_PATH = os.path.join(_DASH, "business.db")
 UPLOADS_ROOT = os.path.join(_DASH, "uploads")
 VP_UPLOAD_SUB = "vendor_products"
 DOC_UPLOAD_SUB = "documents"
@@ -115,7 +114,8 @@ def effective_low_stock_threshold(raw: Optional[float]) -> float:
 
 
 def get_db_path() -> str:
-    return DB_PATH
+    """Display label only — data lives in Postgres via ``DATABASE_URL``."""
+    return "postgresql"
 
 
 def get_uploads_path() -> str:
@@ -130,14 +130,26 @@ def _abs_product_dir(product_id: int) -> str:
     return os.path.join(UPLOADS_ROOT, VP_UPLOAD_SUB, str(product_id))
 
 
-def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    try:
-        conn.execute("PRAGMA foreign_keys = ON")
-    except sqlite3.OperationalError:
-        pass
-    return conn
+def _database_url_required() -> str:
+    u = (os.environ.get("DATABASE_URL") or "").strip()
+    if not u:
+        raise RuntimeError(
+            "DATABASE_URL is required (Supabase Postgres). Set it in Streamlit Secrets or the environment."
+        )
+    return u
+
+
+def _connect():
+    """PostgreSQL only (Supabase)."""
+    _database_url_required()
+    return connect_postgres()
+
+
+def _table_exists(name: str) -> bool:
+    from pg_support import table_exists_pg
+
+    with _connect() as c:
+        return table_exists_pg(c, name)
 
 
 def hash_password(plain: str) -> str:
@@ -203,58 +215,6 @@ def _migrated_billing(d: dict) -> Optional[int]:
     return _as_int_migrated(b)
 
 
-def _vendors_table_needs_migration() -> bool:
-    with _connect() as conn:
-        r = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='vendors'"
-        ).fetchone()
-        if not r:
-            return False
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(vendors)").fetchall()}
-    if "billing" in cols and "billing_custom" not in cols and "billing_condition" not in cols:
-        return False
-    return bool(cols)
-
-
-def _migrate_vendors_schema_if_needed() -> None:
-    if not _vendors_table_needs_migration():
-        return
-    with _connect() as conn:
-        old_rows = [dict(r) for r in conn.execute("SELECT * FROM vendors").fetchall()]
-    with sqlite3.connect(DB_PATH) as raw:
-        raw.execute("DROP TABLE vendors")
-        raw.executescript(CREATE_VENDORS_TABLE)
-        raw.commit()
-    with _connect() as conn:
-        for d in old_rows:
-            pt = _as_int_migrated(d.get("payment_terms"))
-            if "billing" in d and "billing_custom" not in d and "billing_condition" not in d:
-                bl = _as_int_migrated(d.get("billing"))
-            else:
-                bl = _migrated_billing(d)
-            conn.execute(
-                """
-                INSERT INTO vendors (id, person_name, company_name, primary_phone, secondary_phone,
-                    payment_terms, billing, notes,
-                    issuer_legal_name, issuer_address, issuer_city_pin, issuer_gstin, issuer_phone, issuer_email,
-                    created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?)
-                """,
-                (
-                    d["id"],
-                    d["person_name"],
-                    d.get("company_name"),
-                    d["primary_phone"],
-                    d.get("secondary_phone"),
-                    pt,
-                    bl,
-                    d.get("notes"),
-                    d["created_at"],
-                ),
-            )
-        conn.commit()
-
-
 def _rel_vendor_product_path(product_id: int, filename: str) -> str:
     return f"{VP_UPLOAD_SUB}/{product_id}/{filename}"
 
@@ -281,12 +241,7 @@ def _abs_from_rel(rel: str) -> str:
 
 def _remove_product_files_by_rel_list(paths: list[str]) -> None:
     for rel in paths:
-        ap = _abs_from_rel(rel)
-        try:
-            if os.path.isfile(ap):
-                os.remove(ap)
-        except OSError:
-            pass
+        delete_product_image_rel(rel)
 
 
 def _rmtree_product_dir(product_id: int) -> None:
@@ -303,6 +258,8 @@ def save_product_uploads_streamlit(
 ) -> list[str]:
     if not uploaded_files:
         return []
+    if _storage_s3 is not None and _storage_s3.s3_enabled():
+        return _storage_s3.put_product_uploads(product_id, uploaded_files)
     d = _abs_product_dir(product_id)
     os.makedirs(d, exist_ok=True)
     out: list[str] = []
@@ -322,7 +279,43 @@ def save_product_uploads_streamlit(
 
 
 def product_image_full_path(rel: str) -> str:
+    if not rel or str(rel).strip().startswith("s3:"):
+        return ""
     return _abs_from_rel(rel)
+
+
+def product_image_src(rel: Optional[str]) -> Optional[str]:
+    """Filesystem path or presigned HTTPS URL for ``st.image``."""
+    if not rel or not str(rel).strip():
+        return None
+    r = str(rel).strip()
+    if r.startswith("s3:"):
+        if _storage_s3 is None or not _storage_s3.s3_enabled():
+            return None
+        key = r[3:].lstrip("/")
+        try:
+            return _storage_s3.presigned_get_url(key)
+        except Exception:
+            return None
+    ap = _abs_from_rel(r)
+    return ap if os.path.isfile(ap) else None
+
+
+def delete_product_image_rel(rel: str) -> None:
+    """Remove one stored image (local file or S3 object)."""
+    r = (rel or "").strip()
+    if not r:
+        return
+    if r.startswith("s3:"):
+        if _storage_s3 is not None and _storage_s3.s3_enabled():
+            _storage_s3.delete_key(r[3:])
+        return
+    ap = _abs_from_rel(r)
+    try:
+        if os.path.isfile(ap):
+            os.remove(ap)
+    except OSError:
+        pass
 
 
 def _save_document_upload_bytes(doc_group: str, stem: str, file_bytes: bytes, name_hint: str) -> str:
@@ -384,11 +377,10 @@ def gst_add_exclusive(base_amount: float, gst_rate_pct: Optional[float]) -> tupl
 
 
 def _ensure_vendor_product_pricing_columns() -> None:
+    if not _table_exists("vendor_products"):
+        return
+    cols = _table_cols("vendor_products")
     with _connect() as conn:
-        r = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='vendor_products'").fetchone()
-        if not r:
-            return
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(vendor_products)").fetchall()}
         if "cost_price" not in cols:
             conn.execute("ALTER TABLE vendor_products ADD COLUMN cost_price REAL")
         if "tax_rate" not in cols:
@@ -401,19 +393,15 @@ def _ensure_vendor_product_pricing_columns() -> None:
 
 
 def _ensure_product_alternatives_table() -> None:
-    with _connect() as conn:
-        conn.executescript(CREATE_PRODUCT_ALTERNATIVES_TABLE)
-        conn.commit()
+    """Defined in ``init_postgres_schema``."""
+    return
 
 
 def _ensure_purchase_order_extras() -> None:
+    if not _table_exists("purchase_orders"):
+        return
+    cols = _table_cols("purchase_orders")
     with _connect() as conn:
-        r = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='purchase_orders'"
-        ).fetchone()
-        if not r:
-            return
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(purchase_orders)").fetchall()}
         if "status" not in cols:
             conn.execute(
                 "ALTER TABLE purchase_orders ADD COLUMN status TEXT NOT NULL DEFAULT 'open'"
@@ -425,7 +413,8 @@ def _ensure_purchase_order_extras() -> None:
         conn.execute(
             "UPDATE purchase_orders SET status = 'open' WHERE status IS NULL OR status = ''"
         )
-        if "status" in {row[1] for row in conn.execute("PRAGMA table_info(purchase_orders)").fetchall()}:
+        cols2 = _table_cols("purchase_orders")
+        if "status" in cols2:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_po_status ON purchase_orders (status)"
             )
@@ -433,19 +422,15 @@ def _ensure_purchase_order_extras() -> None:
 
 
 def _ensure_po_billings_table() -> None:
-    with _connect() as conn:
-        conn.executescript(CREATE_PO_BILLINGS_TABLE)
-        conn.commit()
+    """Defined in ``init_postgres_schema``."""
+    return
 
 
 def _ensure_vendor_issuer_columns() -> None:
+    if not _table_exists("vendors"):
+        return
+    cols = _table_cols("vendors")
     with _connect() as conn:
-        r = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='vendors'"
-        ).fetchone()
-        if not r:
-            return
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(vendors)").fetchall()}
         alters = [
             ("issuer_legal_name", "TEXT"),
             ("issuer_address", "TEXT"),
@@ -461,13 +446,10 @@ def _ensure_vendor_issuer_columns() -> None:
 
 
 def _ensure_po_billings_snapshot_columns() -> None:
+    if not _table_exists("po_billings"):
+        return
+    cols = _table_cols("po_billings")
     with _connect() as conn:
-        r = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='po_billings'"
-        ).fetchone()
-        if not r:
-            return
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(po_billings)").fetchall()}
         alters = [
             ("snap_vendor_person", "TEXT"),
             ("snap_vendor_company", "TEXT"),
@@ -488,94 +470,15 @@ def _ensure_po_billings_snapshot_columns() -> None:
 
 
 def _ensure_customer_orders_tables() -> None:
-    with _connect() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS customer_orders (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                customer_id INTEGER NOT NULL,
-                product_id INTEGER NOT NULL,
-                quantity REAL NOT NULL,
-                unit_price REAL NOT NULL,
-                billing_pct INTEGER,
-                gst_rate_pct REAL,
-                status TEXT NOT NULL DEFAULT 'placed',
-                shipment_id TEXT,
-                transport_name TEXT,
-                transport_number TEXT,
-                notes TEXT,
-                delivery_receipt_number TEXT,
-                delivery_contact TEXT,
-                delivery_notes TEXT,
-                receipt_image_path TEXT,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_at TEXT,
-                FOREIGN KEY (customer_id) REFERENCES customers (id) ON DELETE CASCADE,
-                FOREIGN KEY (product_id) REFERENCES vendor_products (id) ON DELETE RESTRICT
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS customer_order_billings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                customer_order_id INTEGER NOT NULL UNIQUE,
-                customer_id INTEGER NOT NULL,
-                product_id INTEGER NOT NULL,
-                quantity REAL NOT NULL,
-                unit_cost REAL NOT NULL,
-                billing_pct INTEGER,
-                gst_rate_pct REAL,
-                raw_line_total REAL NOT NULL,
-                gst_taxable_total REAL NOT NULL,
-                gst_amount REAL NOT NULL,
-                gst_grand_total REAL NOT NULL,
-                vendor_invoice_raw TEXT,
-                vendor_invoice_gst TEXT,
-                notes TEXT,
-                snap_customer_name TEXT,
-                snap_customer_company TEXT,
-                snap_customer_phone TEXT,
-                snap_customer_address TEXT,
-                snap_issuer_legal_name TEXT,
-                snap_issuer_address TEXT,
-                snap_issuer_city_pin TEXT,
-                snap_issuer_gstin TEXT,
-                snap_issuer_phone TEXT,
-                snap_issuer_email TEXT,
-                snap_item_sku TEXT,
-                snap_item_name TEXT,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_at TEXT,
-                FOREIGN KEY (customer_order_id) REFERENCES customer_orders (id) ON DELETE CASCADE,
-                FOREIGN KEY (customer_id) REFERENCES customers (id) ON DELETE CASCADE,
-                FOREIGN KEY (product_id) REFERENCES vendor_products (id) ON DELETE RESTRICT
-            )
-            """
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_co_customer ON customer_orders(customer_id)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_co_status ON customer_orders(status)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_co_created ON customer_orders(created_at)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_cob_customer ON customer_order_billings(customer_id)"
-        )
-        conn.commit()
+    """Tables created by ``init_postgres_schema``; only column migrations here."""
     _ensure_customer_order_delivery_columns()
 
 
 def _ensure_customer_order_delivery_columns() -> None:
+    if not _table_exists("customer_orders"):
+        return
+    cols = _table_cols("customer_orders")
     with _connect() as conn:
-        if not conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='customer_orders'"
-        ).fetchone():
-            return
-        cols = _table_cols("customer_orders")
         for col, typ in (
             ("delivery_receipt_number", "TEXT"),
             ("delivery_contact", "TEXT"),
@@ -590,164 +493,23 @@ def _ensure_customer_order_delivery_columns() -> None:
 
 
 def _ensure_customer_order_shipments_table() -> None:
-    with _connect() as conn:
-        if not conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='customer_orders'"
-        ).fetchone():
-            return
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS customer_order_shipments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                customer_order_id INTEGER NOT NULL,
-                quantity REAL NOT NULL,
-                unit_price REAL NOT NULL,
-                delivery_receipt_number TEXT,
-                delivery_contact TEXT,
-                receipt_image_path TEXT,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                FOREIGN KEY (customer_order_id) REFERENCES customer_orders (id) ON DELETE CASCADE
-            )
-            """
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_cos_order ON customer_order_shipments(customer_order_id)"
-        )
-        conn.commit()
+    """Schema from ``init_postgres_schema``."""
+    return
 
 
 def _ensure_accounting_payments() -> None:
-    # Must not run CREATE INDEX on ar_payments(customer_invoice_id) before migrating old
-    # tables that lack that column — CREATE TABLE IF NOT EXISTS skips the table but the
-    # index statement still runs and fails. Migration handles create + reshape.
-    _migrate_payment_tables_for_documents()
+    """AR/AP tables come from ``init_postgres_schema``."""
+    return
 
 
 def _migrate_payment_tables_for_documents() -> None:
-    with _connect() as conn:
-        ar_exists = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ar_payments'"
-        ).fetchone()
-        ap_exists = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ap_payments'"
-        ).fetchone()
-
-    if not ar_exists:
-        with sqlite3.connect(DB_PATH) as raw:
-            raw.executescript(CREATE_AR_PAYMENTS_TABLE)
-            raw.commit()
-
-    if not ap_exists:
-        with sqlite3.connect(DB_PATH) as raw:
-            raw.executescript(CREATE_AP_PAYMENTS_TABLE)
-            raw.commit()
-
-    with _connect() as conn:
-        ar_info = conn.execute("PRAGMA table_info(ar_payments)").fetchall()
-        ap_info = conn.execute("PRAGMA table_info(ap_payments)").fetchall()
-        ar_cols = {str(r[1]): r for r in ar_info}
-        ap_cols = {str(r[1]): r for r in ap_info}
-    ar_needs = ("customer_invoice_id" not in ar_cols) or (
-        ar_cols.get("co_billing_id", [None, None, None, None, 1])[3] == 1
-    )
-    ap_needs = ("vendor_bill_doc_id" not in ap_cols) or (
-        ap_cols.get("po_billing_id", [None, None, None, None, 1])[3] == 1
-    )
-    if ar_needs:
-        with _connect() as conn:
-            rows = [dict(r) for r in conn.execute("SELECT * FROM ar_payments").fetchall()]
-        with sqlite3.connect(DB_PATH) as raw:
-            raw.execute("DROP TABLE ar_payments")
-            raw.executescript(CREATE_AR_PAYMENTS_TABLE)
-            raw.commit()
-        # insert_ar_payment / GL expect this column; base DDL omits it — add before reload
-        if "gl_journal_id" not in _table_cols("ar_payments"):
-            with _connect() as conn:
-                conn.execute("ALTER TABLE ar_payments ADD COLUMN gl_journal_id INTEGER")
-                conn.commit()
-        with _connect() as conn:
-            for r in rows:
-                conn.execute(
-                    """
-                    INSERT INTO ar_payments (id, co_billing_id, customer_invoice_id, amount, paid_at, method, note, gl_journal_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        r["id"],
-                        r.get("co_billing_id"),
-                        r.get("customer_invoice_id"),
-                        r["amount"],
-                        r["paid_at"],
-                        r.get("method"),
-                        r.get("note"),
-                        r.get("gl_journal_id"),
-                    ),
-                )
-            conn.commit()
-    if ap_needs:
-        with _connect() as conn:
-            rows = [dict(r) for r in conn.execute("SELECT * FROM ap_payments").fetchall()]
-        with sqlite3.connect(DB_PATH) as raw:
-            raw.execute("DROP TABLE ap_payments")
-            raw.executescript(CREATE_AP_PAYMENTS_TABLE)
-            raw.commit()
-        if "gl_journal_id" not in _table_cols("ap_payments"):
-            with _connect() as conn:
-                conn.execute("ALTER TABLE ap_payments ADD COLUMN gl_journal_id INTEGER")
-                conn.commit()
-        with _connect() as conn:
-            for r in rows:
-                conn.execute(
-                    """
-                    INSERT INTO ap_payments (id, po_billing_id, vendor_bill_doc_id, amount, paid_at, method, note, gl_journal_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        r["id"],
-                        r.get("po_billing_id"),
-                        r.get("vendor_bill_doc_id"),
-                        r["amount"],
-                        r["paid_at"],
-                        r.get("method"),
-                        r.get("note"),
-                        r.get("gl_journal_id"),
-                    ),
-                )
-            conn.commit()
+    """SQLite-only legacy migration — removed."""
+    return
 
 
 def _ensure_document_tables() -> None:
-    with sqlite3.connect(DB_PATH) as raw:
-        raw.executescript(
-            CREATE_WAREHOUSES_TABLE
-            + "\n"
-            + CREATE_PURCHASE_ORDER_DOCS_TABLE
-            + "\n"
-            + CREATE_PURCHASE_ORDER_DOC_LINES_TABLE
-            + "\n"
-            + CREATE_GOODS_RECEIPT_DOCS_TABLE
-            + "\n"
-            + CREATE_GOODS_RECEIPT_LINES_TABLE
-            + "\n"
-            + CREATE_VENDOR_BILL_DOCS_TABLE
-            + "\n"
-            + CREATE_VENDOR_BILL_LINES_TABLE
-            + "\n"
-            + CREATE_STOCK_MOVEMENTS_TABLE
-            + "\n"
-            + CREATE_SALES_ORDER_DOCS_TABLE
-            + "\n"
-            + CREATE_SALES_ORDER_DOC_LINES_TABLE
-            + "\n"
-            + CREATE_DELIVERY_DOCS_TABLE
-            + "\n"
-            + CREATE_DELIVERY_LINES_TABLE
-            + "\n"
-            + CREATE_CUSTOMER_INVOICE_DOCS_TABLE
-            + "\n"
-            + CREATE_CUSTOMER_INVOICE_LINES_TABLE
-        )
-        raw.commit()
+    """Document tables created by ``init_postgres_schema``."""
+    return
 
 
 def _ensure_default_warehouse() -> None:
@@ -771,9 +533,10 @@ def _ensure_default_warehouse() -> None:
 
 
 def _table_cols(table: str) -> set:
+    from pg_support import table_columns_pg
+
     with _connect() as c:
-        r = c.execute(f"PRAGMA table_info({table})").fetchall()
-    return {str(x[1]) for x in r} if r else set()
+        return table_columns_pg(c, table)
 
 
 def _ensure_gl_columns() -> None:
@@ -787,9 +550,7 @@ def _ensure_gl_columns() -> None:
         ("ar_payments", "gl_journal_id", "INTEGER"),
         ("ap_payments", "gl_journal_id", "INTEGER"),
     ):
-        with _connect() as c:
-            tnames = [x[0] for x in c.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
-        if table not in tnames:
+        if not _table_exists(table):
             continue
         if col in _table_cols(table):
             continue
@@ -800,26 +561,9 @@ def _ensure_gl_columns() -> None:
 
 def init_db() -> None:
     os.makedirs(UPLOADS_ROOT, exist_ok=True)
-    with sqlite3.connect(DB_PATH) as raw:
-        raw.executescript(
-            CREATE_CUSTOMERS_TABLE
-            + "\n"
-            + CREATE_VENDORS_TABLE
-            + "\n"
-            + CREATE_VENDOR_PRODUCTS_TABLE
-            + "\n"
-            + CREATE_PURCHASE_ORDERS_TABLE
-            + "\n"
-            + CREATE_STOCK_RECEIPTS_TABLE
-            + "\n"
-            + CREATE_PO_BILLINGS_TABLE
-            + "\n"
-            + CREATE_CUSTOMER_ORDERS_TABLE
-            + "\n"
-            + CREATE_CUSTOMER_ORDER_BILLINGS_TABLE
-        )
-        raw.commit()
-    _migrate_vendors_schema_if_needed()
+    from pg_init_postgres import init_postgres_schema
+
+    init_postgres_schema()
     _ensure_vendor_product_pricing_columns()
     _ensure_purchase_order_extras()
     _ensure_po_billings_table()
@@ -832,7 +576,6 @@ def init_db() -> None:
     _ensure_accounting_payments()
     _ensure_gl_columns()
     _ensure_product_alternatives_table()
-    # No auto-seed customer: empty `customers` is valid; portal users are created in the app.
 
 
 def get_dashboard_stats() -> dict:
@@ -854,31 +597,19 @@ def get_dashboard_stats() -> dict:
             conn.execute("SELECT COALESCE(SUM(quantity), 0) AS s FROM stock_receipts")
             .fetchone()["s"]
         )
-        n_bill = int(
-            conn.execute(
-                "SELECT COUNT(*) AS c FROM sqlite_master WHERE type='table' AND name='po_billings'"
-            ).fetchone()["c"]
-        )
+        n_bill = int(_table_exists("po_billings"))
         n_pb = (
             int(conn.execute("SELECT COUNT(*) AS c FROM po_billings").fetchone()["c"])
             if n_bill
             else 0
         )
-        n_co = int(
-            conn.execute(
-                "SELECT COUNT(*) AS c FROM sqlite_master WHERE type='table' AND name='customer_orders'"
-            ).fetchone()["c"]
-        )
+        n_co = int(_table_exists("customer_orders"))
         n_co_rows = (
             int(conn.execute("SELECT COUNT(*) AS c FROM customer_orders").fetchone()["c"])
             if n_co
             else 0
         )
-        n_cob_t = int(
-            conn.execute(
-                "SELECT COUNT(*) AS c FROM sqlite_master WHERE type='table' AND name='customer_order_billings'"
-            ).fetchone()["c"]
-        )
+        n_cob_t = int(_table_exists("customer_order_billings"))
         n_cob = (
             int(
                 conn.execute("SELECT COUNT(*) AS c FROM customer_order_billings").fetchone()[
@@ -896,6 +627,45 @@ def get_dashboard_stats() -> dict:
             ORDER BY v.person_name
             """
         ).fetchall()
+        ar_t = int(_table_exists("ar_payments"))
+        ap_t = int(_table_exists("ap_payments"))
+        po_val = float(
+            conn.execute(
+                "SELECT COALESCE(SUM(quantity * unit_cost), 0) AS s FROM purchase_orders"
+            ).fetchone()["s"]
+        )
+        po_billed_raw = 0.0
+        if n_bill and n_pb:
+            po_billed_raw = float(
+                conn.execute("SELECT COALESCE(SUM(raw_line_total), 0) AS s FROM po_billings")
+                .fetchone()["s"]
+            )
+        co_billed_raw = 0.0
+        if n_cob_t and n_cob:
+            co_billed_raw = float(
+                conn.execute(
+                    "SELECT COALESCE(SUM(raw_line_total), 0) AS s FROM customer_order_billings"
+                )
+                .fetchone()["s"]
+            )
+        ar_out = 0.0
+        ar_paid = 0.0
+        if n_cob_t and n_cob and ar_t:
+            ar_paid = float(
+                conn.execute("SELECT COALESCE(SUM(amount), 0) AS s FROM ar_payments").fetchone()[
+                    "s"
+                ]
+            )
+            ar_out = co_billed_raw - ar_paid
+        ap_out = 0.0
+        ap_paid = 0.0
+        if n_bill and n_pb and ap_t:
+            ap_paid = float(
+                conn.execute("SELECT COALESCE(SUM(amount), 0) AS s FROM ap_payments").fetchone()[
+                    "s"
+                ]
+            )
+            ap_out = po_billed_raw - ap_paid
     vendors = [
         {
             "id": int(r["id"]),
@@ -905,55 +675,12 @@ def get_dashboard_stats() -> dict:
         }
         for r in rows
     ]
-    ar_t = int(
-        conn.execute(
-            "SELECT COUNT(*) AS c FROM sqlite_master WHERE type='table' AND name='ar_payments'"
-        ).fetchone()["c"]
-    )
-    ap_t = int(
-        conn.execute(
-            "SELECT COUNT(*) AS c FROM sqlite_master WHERE type='table' AND name='ap_payments'"
-        ).fetchone()["c"]
-    )
-    po_val = float(
-        conn.execute(
-            "SELECT COALESCE(SUM(quantity * unit_cost), 0) AS s FROM purchase_orders"
-        ).fetchone()["s"]
-    )
-    po_billed_raw = 0.0
-    if n_bill and n_pb:
-        po_billed_raw = float(
-            conn.execute("SELECT COALESCE(SUM(raw_line_total), 0) AS s FROM po_billings")
-            .fetchone()["s"]
-        )
-    co_billed_raw = 0.0
-    if n_cob_t and n_cob:
-        co_billed_raw = float(
-            conn.execute(
-                "SELECT COALESCE(SUM(raw_line_total), 0) AS s FROM customer_order_billings"
-            )
-            .fetchone()["s"]
-        )
-    ar_out = 0.0
-    ar_paid = 0.0
-    if n_cob_t and n_cob and ar_t:
-        ar_paid = float(
-            conn.execute("SELECT COALESCE(SUM(amount), 0) AS s FROM ar_payments").fetchone()["s"]
-        )
-        ar_out = co_billed_raw - ar_paid
-    ap_out = 0.0
-    ap_paid = 0.0
-    if n_bill and n_pb and ap_t:
-        ap_paid = float(
-            conn.execute("SELECT COALESCE(SUM(amount), 0) AS s FROM ap_payments").fetchone()["s"]
-        )
-        ap_out = po_billed_raw - ap_paid
     n_sku_low = 0
     n_sku_out = 0
     try:
         n_sku_low = len(list_catalog_stock_rows(status_filter={"low_stock"}))
         n_sku_out = len(list_catalog_stock_rows(status_filter={"out_of_stock"}))
-    except (sqlite3.OperationalError, TypeError, ValueError):
+    except Exception:
         pass
     with _connect() as conn2:
         pipe_rev = float(
@@ -1047,7 +774,7 @@ def get_document_dashboard_stats() -> dict[str, Any]:
 
 
 def stock_on_hand_v2(
-    product_id: int, warehouse_id: Optional[int] = None, conn: Optional[sqlite3.Connection] = None
+    product_id: int, warehouse_id: Optional[int] = None, conn: Optional[Any] = None
 ) -> float:
     where = ["product_id = ?"]
     args: list[object] = [int(product_id)]
@@ -1088,7 +815,7 @@ def list_stock_positions_v2() -> list[dict[str, Any]]:
             FROM vendor_products vp
             LEFT JOIN stock_movements sm ON sm.product_id = vp.id
             GROUP BY vp.id
-            ORDER BY vp.our_product_id COLLATE NOCASE
+            ORDER BY LOWER(vp.our_product_id)
             """
         ).fetchall()
     out: list[dict[str, Any]] = []
@@ -1104,7 +831,7 @@ def list_stock_positions_v2() -> list[dict[str, Any]]:
 
 
 def _post_stock_movement(
-    conn: sqlite3.Connection,
+    conn: Any,
     *,
     warehouse_id: int,
     product_id: int,
@@ -1136,7 +863,7 @@ def _post_stock_movement(
     return int(cur.lastrowid)
 
 
-def _recompute_po_doc_status(conn: sqlite3.Connection, po_doc_id: int) -> str:
+def _recompute_po_doc_status(conn: Any, po_doc_id: int) -> str:
     po_lines = conn.execute(
         "SELECT id, quantity FROM purchase_order_doc_lines WHERE po_doc_id = ?",
         (int(po_doc_id),),
@@ -2799,6 +2526,9 @@ def delete_vendor_product(pid: int) -> None:
         raise ValueError(
             f"Cannot delete: {n2} stock / receipt line(s) use this product. Remove or edit those first."
         )
+    p = get_vendor_product(pid)
+    if p:
+        _remove_product_files_by_rel_list(product_image_rel_paths(p.image_paths))
     _rmtree_product_dir(pid)
     with _connect() as conn:
         conn.execute("DELETE FROM vendor_products WHERE id = ?", (pid,))
@@ -3218,7 +2948,7 @@ def list_catalog_stock_rows(
             FROM vendor_products vp
             LEFT JOIN vendors v ON v.id = vp.vendor_id
             WHERE {wh}
-            ORDER BY v.person_name COLLATE NOCASE, vp.our_product_id COLLATE NOCASE
+            ORDER BY LOWER(v.person_name), LOWER(vp.our_product_id)
             """.format(wh=wh),
             params,
         ).fetchall()
@@ -3674,11 +3404,9 @@ def get_customer_order(oid: int) -> Optional[CustomerOrder]:
 
 def list_customer_orders() -> List[CustomerOrder]:
     init_db()
+    if not _table_exists("customer_orders"):
+        return []
     with _connect() as conn:
-        if not conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='customer_orders'"
-        ).fetchone():
-            return []
         rows = conn.execute(
             "SELECT * FROM customer_orders ORDER BY created_at DESC, id DESC"
         ).fetchall()
@@ -3687,11 +3415,9 @@ def list_customer_orders() -> List[CustomerOrder]:
 
 def list_customer_orders_for_customer(customer_id: int) -> List[CustomerOrder]:
     init_db()
+    if not _table_exists("customer_orders"):
+        return []
     with _connect() as conn:
-        if not conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='customer_orders'"
-        ).fetchone():
-            return []
         rows = conn.execute(
             """
             SELECT * FROM customer_orders
@@ -3735,11 +3461,9 @@ def save_customer_order_receipt(oid: int, file_bytes: bytes, name_hint: str) -> 
 
 def sum_customer_order_shipment_qty(oid: int) -> float:
     init_db()
+    if not _table_exists("customer_order_shipments"):
+        return 0.0
     with _connect() as conn:
-        if not conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='customer_order_shipments'"
-        ).fetchone():
-            return 0.0
         r = conn.execute(
             """
             SELECT COALESCE(SUM(quantity), 0) AS s
@@ -3752,11 +3476,9 @@ def sum_customer_order_shipment_qty(oid: int) -> float:
 
 def list_customer_order_shipments(oid: int) -> List[CustomerOrderShipment]:
     init_db()
+    if not _table_exists("customer_order_shipments"):
+        return []
     with _connect() as conn:
-        if not conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='customer_order_shipments'"
-        ).fetchone():
-            return []
         rows = conn.execute(
             """
             SELECT * FROM customer_order_shipments
@@ -4122,11 +3844,9 @@ def update_customer_order(
 
 def list_customer_order_ids_eligible_new_billing() -> List[int]:
     init_db()
+    if not _table_exists("customer_orders"):
+        return []
     with _connect() as conn:
-        if not conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='customer_orders'"
-        ).fetchone():
-            return []
         rows = conn.execute(
             """
             SELECT o.id
@@ -4225,11 +3945,9 @@ def send_customer_order_payment_reminder_wa(billing_id: int) -> dict[str, Any]:
 
 def list_customer_order_billings() -> List[CustomerOrderBilling]:
     init_db()
+    if not _table_exists("customer_order_billings"):
+        return []
     with _connect() as conn:
-        if not conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='customer_order_billings'"
-        ).fetchone():
-            return []
         rows = conn.execute(
             "SELECT * FROM customer_order_billings ORDER BY created_at DESC, id DESC"
         ).fetchall()
@@ -4254,11 +3972,9 @@ def _rate_band_label(unit_price: float) -> str:
 def list_portal_order_lines_detail() -> List[dict]:
     """Portal customer_orders joined to product category — for dashboard grouping."""
     init_db()
+    if not _table_exists("customer_orders"):
+        return []
     with _connect() as conn:
-        if not conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='customer_orders'"
-        ).fetchone():
-            return []
         rows = conn.execute(
             """
             SELECT co.id AS order_id, co.customer_id, c.name AS customer_name,
@@ -4589,11 +4305,9 @@ def _post_gl_ap_payment(pay_id: int, amount: float) -> int:
 
 def list_po_billings() -> List[PoBilling]:
     init_db()
+    if not _table_exists("po_billings"):
+        return []
     with _connect() as conn:
-        if not conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='po_billings'"
-        ).fetchone():
-            return []
         rows = conn.execute(
             "SELECT * FROM po_billings ORDER BY created_at DESC, id DESC"
         ).fetchall()
@@ -4614,13 +4328,37 @@ def get_po_billing_by_po_id(po_id: int) -> Optional[PoBilling]:
     return PoBilling(**dict(r)) if r else None
 
 
+def upload_po_billing_pdf_to_bucket(po_id: int) -> str:
+    """Build vendor bill PDF and store as vendor_bills/{po_id}.pdf."""
+    if _storage_s3 is None or not _storage_s3.s3_enabled():
+        raise RuntimeError("S3 not configured (set S3_ENDPOINT_URL, S3_BUCKET, access keys).")
+    from bill_pdf import build_billing_pdfs_for_record
+
+    b = get_po_billing_by_po_id(int(po_id))
+    if not b:
+        raise ValueError("No billing row for this PO.")
+    raw_pdf, _ = build_billing_pdfs_for_record(b)
+    return _storage_s3.put_vendor_bill_pdf(int(po_id), raw_pdf)
+
+
+def upload_customer_order_billing_pdf_to_bucket(customer_order_id: int) -> str:
+    """Build customer bill PDF and store as customer_bills/{customer_order_id}.pdf."""
+    if _storage_s3 is None or not _storage_s3.s3_enabled():
+        raise RuntimeError("S3 not configured.")
+    from bill_pdf import build_billing_pdfs_for_co_record
+
+    b = get_customer_order_billing_by_order_id(int(customer_order_id))
+    if not b:
+        raise ValueError("No billing row for this order.")
+    raw_pdf, _ = build_billing_pdfs_for_co_record(b)
+    return _storage_s3.put_customer_bill_pdf(int(customer_order_id), raw_pdf)
+
+
 def list_po_ids_eligible_new_billing() -> List[int]:
     init_db()
+    if not _table_exists("po_billings"):
+        return []
     with _connect() as conn:
-        if not conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='po_billings'"
-        ).fetchone():
-            return []
         rows = conn.execute(
             """
             SELECT po.id

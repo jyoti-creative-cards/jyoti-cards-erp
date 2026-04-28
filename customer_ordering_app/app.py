@@ -8,6 +8,10 @@ _DASH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "Dashboard
 if _DASH not in sys.path:
     sys.path.insert(0, _DASH)
 
+from streamlit_db_env import apply_streamlit_db_env
+
+apply_streamlit_db_env()
+
 from bill_pdf import build_billing_pdfs_for_co_record
 
 from dash_db import get_dashboard_db
@@ -137,7 +141,7 @@ else:
                     st.caption("No in-stock alternatives are configured right now.")
             rel = sel.get("image_rel")
             ap = image_abs_path(rel) if rel else None
-            if ap and os.path.isfile(ap):
+            if ap and (str(ap).startswith("http") or os.path.isfile(ap)):
                 st.image(ap, use_container_width=True)
             else:
                 st.info("No image on file.")
@@ -202,7 +206,9 @@ else:
                                 rp2 = (s.receipt_image_path or "").strip()
                                 if rp2:
                                     pabs3 = image_abs_path(rp2)
-                                    if pabs3 and os.path.isfile(pabs3):
+                                    if pabs3 and (
+                                        str(pabs3).startswith("http") or os.path.isfile(pabs3)
+                                    ):
                                         st.image(pabs3, width=280)
                         if bill:
                             st.success("Bill is available — download below.")

@@ -15,4 +15,4 @@ def search(sku_query: str) -> Optional[dict[str, Any]]:
 def image_abs_path(image_rel: str | None) -> str | None:
     if not image_rel:
         return None
-    return get_dashboard_db().product_image_full_path(image_rel)
+    return get_dashboard_db().product_image_src(image_rel)

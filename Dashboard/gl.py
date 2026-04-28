@@ -1,7 +1,6 @@
 """Double-entry general ledger: chart of accounts, journal entries, trial balance, P&L."""
 from __future__ import annotations
 
-import sqlite3
 from typing import Any, List, Optional, Sequence, Tuple
 
 # Account codes (stable API)
@@ -13,58 +12,18 @@ AC_EQUITY = "3000"
 AC_SALES = "4000"
 AC_COGS = "5000"
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS gl_accounts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    code TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL,
-    acc_type TEXT NOT NULL,
-    is_active INTEGER NOT NULL DEFAULT 1
-);
-CREATE INDEX IF NOT EXISTS idx_gl_accounts_type ON gl_accounts (acc_type);
 
-CREATE TABLE IF NOT EXISTS gl_journal_entries (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    entry_date TEXT NOT NULL,
-    description TEXT,
-    ref_type TEXT,
-    ref_id INTEGER,
-    reversal_of_id INTEGER,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE INDEX IF NOT EXISTS idx_gl_je_date ON gl_journal_entries (entry_date);
-CREATE INDEX IF NOT EXISTS idx_gl_je_ref ON gl_journal_entries (ref_type, ref_id);
+def _connect():
+    import db as _db
 
-CREATE TABLE IF NOT EXISTS gl_journal_lines (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    journal_id INTEGER NOT NULL,
-    account_id INTEGER NOT NULL,
-    debit REAL NOT NULL DEFAULT 0,
-    credit REAL NOT NULL DEFAULT 0,
-    FOREIGN KEY (journal_id) REFERENCES gl_journal_entries (id) ON DELETE CASCADE,
-    FOREIGN KEY (account_id) REFERENCES gl_accounts (id),
-    CHECK (debit >= 0 AND credit >= 0 AND (debit = 0 OR credit = 0))
-);
-CREATE INDEX IF NOT EXISTS idx_gl_lines_j ON gl_journal_lines (journal_id);
-CREATE INDEX IF NOT EXISTS idx_gl_lines_a ON gl_journal_lines (account_id);
-"""
+    return _db._connect()
 
 
-def _connect() -> sqlite3.Connection:
-    from db import DB_PATH
-
-    c = sqlite3.connect(DB_PATH)
-    c.row_factory = sqlite3.Row
-    c.execute("PRAGMA foreign_keys = ON")
-    return c
-
-
-def init_gl_schema(conn: Optional[sqlite3.Connection] = None) -> None:
+def init_gl_schema(conn: Optional[Any] = None) -> None:
     own = conn is None
     if own:
         conn = _connect()
     try:
-        conn.executescript(SCHEMA)
         _seed_accounts_if_empty(conn)
         conn.commit()
     finally:
@@ -75,7 +34,6 @@ def init_gl_schema(conn: Optional[sqlite3.Connection] = None) -> None:
 def init_gl_full() -> None:
     """Create GL tables, seed default accounts. Safe to call on every app start."""
     with _connect() as c:
-        c.executescript(SCHEMA)
         _seed_accounts_if_empty(c)
         c.commit()
 
@@ -112,7 +70,7 @@ def get_account_id_by_code(conn, code: str) -> int:
 
 
 def _validate_and_sum_lines(
-    c: sqlite3.Connection, lines: Sequence[Tuple[str, float, float]]
+    c: Any, lines: Sequence[Tuple[str, float, float]]
 ) -> list[tuple[int, float, float]]:
     out: list[tuple[int, float, float]] = []
     t_debit = 0.0
@@ -137,7 +95,7 @@ def post_journal(
     ref_type: Optional[str],
     ref_id: Optional[int],
     lines: Sequence[Tuple[str, float, float]],
-    conn: Optional[sqlite3.Connection] = None,
+    conn: Optional[Any] = None,
 ) -> int:
     """
     lines: (account_code, debit, credit)  — each line has one side only.
@@ -218,7 +176,7 @@ def list_gl_accounts() -> list[dict[str, Any]]:
     return [dict(x) for x in r]
 
 
-def trial_balance(conn: Optional[sqlite3.Connection] = None) -> list[dict[str, Any]]:
+def trial_balance(conn: Optional[Any] = None) -> list[dict[str, Any]]:
     own = conn is None
     if own:
         conn = _connect()

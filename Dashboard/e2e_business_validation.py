@@ -1,7 +1,9 @@
 """Broader business validation for ERP + customer portal semantics.
 
+Requires ``DATABASE_URL`` (PostgreSQL).
+
 Run:
-  cd Dashboard && DASHBOARD_E2E_DB=e2e_business_validation.db python3 e2e_business_validation.py
+  cd Dashboard && DATABASE_URL=... python3 e2e_business_validation.py
 """
 from __future__ import annotations
 
@@ -9,11 +11,10 @@ import os
 import sys
 
 _D = os.path.dirname(os.path.abspath(__file__))
-_DEFAULT_DB = os.path.join(_D, "e2e_business_validation.db")
-os.environ["DASHBOARD_E2E_DB"] = os.environ.get("DASHBOARD_E2E_DB", _DEFAULT_DB)
+if not os.environ.get("DATABASE_URL", "").strip():
+    print("Set DATABASE_URL (PostgreSQL).", file=sys.stderr)
+    raise SystemExit(2)
 os.environ["WHATSAPP_DISABLE"] = "1"
-if os.path.isfile(os.environ["DASHBOARD_E2E_DB"]):
-    os.remove(os.environ["DASHBOARD_E2E_DB"])
 _ROOT = os.path.abspath(os.path.join(_D, ".."))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)

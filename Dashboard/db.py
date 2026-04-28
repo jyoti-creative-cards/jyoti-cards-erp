@@ -9,6 +9,7 @@ import re
 import secrets
 import shutil
 import sys
+import threading
 import uuid
 from datetime import date
 from typing import Any, Dict, List, Optional, Sequence
@@ -103,8 +104,14 @@ PBKDF2_ITERS = 200_000
 # Customer portal: "low stock" band (still orderable if on_hand > 0)
 LOW_STOCK_THRESHOLD = 5.0
 
-# Streamlit reruns the whole script often; ``init_postgres_schema`` is heavy — run once per process.
+# DDL / migrations run once per process; serialized so concurrent Streamlit runs don’t deadlock.
 _PG_SCHEMA_INITIALIZED = False
+_INIT_DB_DONE = False
+_init_db_lock = threading.Lock()
+
+
+def _env_truthy(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes")
 
 
 def effective_low_stock_threshold(raw: Optional[float]) -> float:
@@ -563,25 +570,34 @@ def _ensure_gl_columns() -> None:
 
 
 def init_db() -> None:
-    global _PG_SCHEMA_INITIALIZED
+    """Ensure uploads dir; optionally create/migrate schema once per process (not every rerun)."""
+    global _PG_SCHEMA_INITIALIZED, _INIT_DB_DONE
     os.makedirs(UPLOADS_ROOT, exist_ok=True)
-    if not _PG_SCHEMA_INITIALIZED:
-        from pg_init_postgres import init_postgres_schema
+    if _env_truthy("DATABASE_SKIP_DDL"):
+        return
+    if _INIT_DB_DONE:
+        return
+    with _init_db_lock:
+        if _INIT_DB_DONE:
+            return
+        if not _PG_SCHEMA_INITIALIZED:
+            from pg_init_postgres import init_postgres_schema
 
-        init_postgres_schema()
-        _PG_SCHEMA_INITIALIZED = True
-    _ensure_vendor_product_pricing_columns()
-    _ensure_purchase_order_extras()
-    _ensure_po_billings_table()
-    _ensure_vendor_issuer_columns()
-    _ensure_po_billings_snapshot_columns()
-    _ensure_customer_orders_tables()
-    _ensure_customer_order_shipments_table()
-    _ensure_document_tables()
-    _ensure_default_warehouse()
-    _ensure_accounting_payments()
-    _ensure_gl_columns()
-    _ensure_product_alternatives_table()
+            init_postgres_schema()
+            _PG_SCHEMA_INITIALIZED = True
+        _ensure_vendor_product_pricing_columns()
+        _ensure_purchase_order_extras()
+        _ensure_po_billings_table()
+        _ensure_vendor_issuer_columns()
+        _ensure_po_billings_snapshot_columns()
+        _ensure_customer_orders_tables()
+        _ensure_customer_order_shipments_table()
+        _ensure_document_tables()
+        _ensure_default_warehouse()
+        _ensure_accounting_payments()
+        _ensure_gl_columns()
+        _ensure_product_alternatives_table()
+        _INIT_DB_DONE = True
 
 
 def get_dashboard_stats() -> dict:

@@ -6,6 +6,7 @@ import os
 # Keys copied from ``st.secrets`` into ``os.environ`` (Streamlit Cloud has no ``.env`` file).
 _SECRET_KEYS = (
     "DATABASE_URL",
+    "DATABASE_SKIP_DDL",
     "S3_ENDPOINT_URL",
     "S3_REGION",
     "S3_BUCKET",

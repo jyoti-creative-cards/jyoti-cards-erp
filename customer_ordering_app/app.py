@@ -8,6 +8,24 @@ _DASH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "Dashboard
 if _DASH not in sys.path:
     sys.path.insert(0, _DASH)
 
+# Local: same ``DATABASE_URL`` as ERP from ``Dashboard/.env`` (Cloud uses secrets).
+_ENV = os.path.join(_DASH, ".env")
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(_ENV, override=False)
+except ImportError:
+    if os.path.isfile(_ENV):
+        with open(_ENV, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, _, rest = line.partition("=")
+                k, v = k.strip(), rest.strip().strip('"').strip("'")
+                if k and k not in os.environ:
+                    os.environ[k] = v
+
 from streamlit_db_env import apply_streamlit_db_env
 
 apply_streamlit_db_env()

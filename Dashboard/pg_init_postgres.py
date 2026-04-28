@@ -2,8 +2,23 @@
 from __future__ import annotations
 
 import os
+import re
 
 import sqlglot
+
+
+_RE_DT_NOW = re.compile(r"(?i)datetime\s*\(\s*['\"]now['\"]\s*\)")
+
+
+def _sqlite_stmt_to_pg(sqlite_stmt: str) -> str:
+    """sqlglot leaves ``DATETIME('now')`` invalid on Postgres — normalize first + fix output."""
+    stmt = sqlite_stmt.strip()
+    if not stmt.endswith(";"):
+        stmt += ";"
+    stmt = _RE_DT_NOW.sub("CURRENT_TIMESTAMP", stmt)
+    pg_sql = sqlglot.transpile(stmt, read="sqlite", write="postgres")[0]
+    pg_sql = _RE_DT_NOW.sub("CURRENT_TIMESTAMP", pg_sql)
+    return pg_sql
 
 CREATE_CUSTOMER_ORDER_SHIPMENTS = """
 CREATE TABLE IF NOT EXISTS customer_order_shipments (
@@ -70,7 +85,7 @@ def init_postgres_schema() -> None:
         for block in blocks:
             parts = [p.strip() for p in block.split(";") if p.strip()]
             for p in parts:
-                pg_sql = sqlglot.transpile(p + ";", read="sqlite", write="postgres")[0]
+                pg_sql = _sqlite_stmt_to_pg(p)
                 with conn.cursor() as cur:
                     cur.execute(pg_sql)
         conn.commit()

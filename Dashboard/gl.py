@@ -12,6 +12,43 @@ AC_EQUITY = "3000"
 AC_SALES = "4000"
 AC_COGS = "5000"
 
+# SQLite-shaped DDL for ``pg_init_postgres`` (sqlglot → Postgres). Not executed as SQLite.
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS gl_accounts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    acc_type TEXT NOT NULL,
+    is_active INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_gl_accounts_type ON gl_accounts (acc_type);
+
+CREATE TABLE IF NOT EXISTS gl_journal_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entry_date TEXT NOT NULL,
+    description TEXT,
+    ref_type TEXT,
+    ref_id INTEGER,
+    reversal_of_id INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_gl_je_date ON gl_journal_entries (entry_date);
+CREATE INDEX IF NOT EXISTS idx_gl_je_ref ON gl_journal_entries (ref_type, ref_id);
+
+CREATE TABLE IF NOT EXISTS gl_journal_lines (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    journal_id INTEGER NOT NULL,
+    account_id INTEGER NOT NULL,
+    debit REAL NOT NULL DEFAULT 0,
+    credit REAL NOT NULL DEFAULT 0,
+    FOREIGN KEY (journal_id) REFERENCES gl_journal_entries (id) ON DELETE CASCADE,
+    FOREIGN KEY (account_id) REFERENCES gl_accounts (id),
+    CHECK (debit >= 0 AND credit >= 0 AND (debit = 0 OR credit = 0))
+);
+CREATE INDEX IF NOT EXISTS idx_gl_lines_j ON gl_journal_lines (journal_id);
+CREATE INDEX IF NOT EXISTS idx_gl_lines_a ON gl_journal_lines (account_id);
+"""
+
 
 def _connect():
     import db as _db

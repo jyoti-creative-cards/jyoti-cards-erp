@@ -17,6 +17,27 @@ def use_postgres() -> bool:
     return bool((os.environ.get("DATABASE_URL") or "").strip())
 
 
+def normalized_database_url() -> str:
+    """``DATABASE_URL`` with TLS params for hosted Postgres (Streamlit Cloud → Supabase needs SSL)."""
+    url = (os.environ.get("DATABASE_URL") or "").strip()
+    if not url:
+        raise RuntimeError("DATABASE_URL is not set")
+    explicit = (os.environ.get("DATABASE_SSLMODE") or "").strip().lower()
+    lu = url.lower()
+    if explicit:
+        sep = "&" if "?" in url else "?"
+        if "sslmode=" in lu:
+            return url
+        return f"{url}{sep}sslmode={explicit}"
+    if "sslmode=" in lu:
+        return url
+    # Local/dev sockets — no forced TLS
+    if "localhost" in lu or "127.0.0.1" in lu or lu.startswith("postgresql:///"):
+        return url
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}sslmode=require"
+
+
 def adapt_sql(sql: str) -> str:
     """Minimal SQLite → Postgres query tweaks (placeholders + date helpers)."""
     s = sql
@@ -107,10 +128,7 @@ class PgConnectionWrapper:
 def connect_postgres():
     if psycopg is None:
         raise RuntimeError("Install psycopg: pip install 'psycopg[binary]'")
-    url = (os.environ.get("DATABASE_URL") or "").strip()
-    if not url:
-        raise RuntimeError("DATABASE_URL is not set")
-    raw = psycopg.connect(url, autocommit=False)
+    raw = psycopg.connect(normalized_database_url(), autocommit=False)
     return PgConnectionWrapper(raw)
 
 

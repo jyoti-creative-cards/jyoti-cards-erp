@@ -1,10 +1,11 @@
 """One-time Postgres schema creation from SQLite DDL (sqlglot)."""
 from __future__ import annotations
 
-import os
 import re
 
 import sqlglot
+
+from pg_support import normalized_database_url
 
 
 _RE_DT_NOW = re.compile(r"(?i)datetime\s*\(\s*['\"]now['\"]\s*\)")
@@ -75,12 +76,8 @@ def init_postgres_schema() -> None:
     """Create all tables on empty Supabase DB."""
     import psycopg
 
-    url = (os.environ.get("DATABASE_URL") or "").strip()
-    if not url:
-        raise RuntimeError("DATABASE_URL missing")
-
     blocks = _ordered_ddl_blocks()
-    conn = psycopg.connect(url, autocommit=False)
+    conn = psycopg.connect(normalized_database_url(), autocommit=False)
     try:
         for block in blocks:
             parts = [p.strip() for p in block.split(";") if p.strip()]

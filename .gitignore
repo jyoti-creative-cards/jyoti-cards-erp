@@ -15,7 +15,7 @@ venv/
 !.env.example
 .streamlit/secrets.toml
 
-# Local SQLite & uploads (fresh DB created on first run via init_db)
+# Local uploads & optional SQLite artifacts
 **/business.db
 **/business.db-journal
 **/business.db-wal

@@ -79,7 +79,6 @@ from db import (
     get_vendors_with_product_count,
     get_vendor,
     get_vendor_product,
-    init_db,
     insert_customer,
     insert_customer_order,
     insert_customer_order_shipment,
@@ -151,8 +150,6 @@ from db import (
 )
 
 st.set_page_config(page_title="Business dashboard", layout="wide", initial_sidebar_state="expanded")
-
-init_db()
 
 
 @st.cache_data(ttl=45, show_spinner=False)

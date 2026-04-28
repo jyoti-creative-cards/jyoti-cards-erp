@@ -113,7 +113,7 @@ def upload_dummy_pdfs_s3(poid: int, coid: int, cob_id: int, pob_id: int) -> None
 
 
 def find_customer_id_by_phone(phone: str) -> int | None:
-    db.init_db()
+    db.run_schema_maintenance()
     want = norm10(phone)
     for c in db.list_customers():
         if norm10(c.phone or "") == want:
@@ -136,7 +136,7 @@ def run_payal_flow(
         )
         return 2
 
-    db.init_db()
+    db.run_schema_maintenance()
     seed_cash_opening()
     assert len(list_gl_accounts()) >= 7
 

@@ -16,7 +16,6 @@ def _norm10(s: str) -> str:
 
 def try_login(phone: str, password: str) -> tuple[bool, str, int | None]:
     db = get_dashboard_db()
-    db.init_db()
     p = _norm10(phone)
     if len(p) < 10:
         return False, "Enter a 10-digit mobile number", None

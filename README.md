@@ -7,7 +7,7 @@ Monorepo layout:
 | `Dashboard/` | Main ERP: inventory, orders, billing, AR/AP, GL |
 | `customer_ordering_app/` | Customer ordering portal (reads same DB logic via `dash_db.py`) |
 
-**Database:** PostgreSQL only. Set **`DATABASE_URL`** (e.g. Supabase) in the environment or Streamlit secrets — both apps use the same URL.
+**Database:** PostgreSQL only. Set **`DATABASE_URL`** (e.g. Supabase) in the environment or Streamlit secrets — both apps use the same URL. The Streamlit apps only **read/write data** (CRUD). To **create or migrate tables**, run **`Dashboard/db_maintenance.py`** once (locally or CI) with **`DATABASE_URL`** set — not from the ERP UI.
 
 Do **not** commit `.env`, tokens, or `Dashboard/uploads/` (gitignored).
 

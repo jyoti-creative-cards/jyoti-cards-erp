@@ -9,7 +9,6 @@ import re
 import secrets
 import shutil
 import sys
-import threading
 import uuid
 from datetime import date
 from typing import Any, Dict, List, Optional, Sequence
@@ -104,16 +103,6 @@ PBKDF2_ITERS = 200_000
 # Customer portal: "low stock" band (still orderable if on_hand > 0)
 LOW_STOCK_THRESHOLD = 5.0
 
-# DDL / migrations run once per process; serialized so concurrent Streamlit runs don’t deadlock.
-_PG_SCHEMA_INITIALIZED = False
-_INIT_DB_DONE = False
-_init_db_lock = threading.Lock()
-
-
-def _env_truthy(name: str) -> bool:
-    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes")
-
-
 def effective_low_stock_threshold(raw: Optional[float]) -> float:
     try:
         if raw is not None and float(raw) > 0:
@@ -152,6 +141,7 @@ def _database_url_required() -> str:
 def _connect():
     """PostgreSQL only (Supabase)."""
     _database_url_required()
+    os.makedirs(UPLOADS_ROOT, exist_ok=True)
     return connect_postgres()
 
 
@@ -355,7 +345,6 @@ def document_full_path(rel: Optional[str]) -> Optional[str]:
 
 
 def _next_doc_no(prefix: str, table: str, col: str = "doc_no") -> str:
-    init_db()
     pfx = (prefix or "DOC").strip().upper()
     with _connect() as conn:
         row = conn.execute(
@@ -570,39 +559,32 @@ def _ensure_gl_columns() -> None:
 
 
 def init_db() -> None:
-    """Ensure uploads dir; optionally create/migrate schema once per process (not every rerun)."""
-    global _PG_SCHEMA_INITIALIZED, _INIT_DB_DONE
+    """Ensure upload directories exist. Call ``run_schema_maintenance()`` (see ``db_maintenance.py``) for DDL."""
     os.makedirs(UPLOADS_ROOT, exist_ok=True)
-    if _env_truthy("DATABASE_SKIP_DDL"):
-        return
-    if _INIT_DB_DONE:
-        return
-    with _init_db_lock:
-        if _INIT_DB_DONE:
-            return
-        if not _PG_SCHEMA_INITIALIZED:
-            from pg_init_postgres import init_postgres_schema
 
-            init_postgres_schema()
-            _PG_SCHEMA_INITIALIZED = True
-        _ensure_vendor_product_pricing_columns()
-        _ensure_purchase_order_extras()
-        _ensure_po_billings_table()
-        _ensure_vendor_issuer_columns()
-        _ensure_po_billings_snapshot_columns()
-        _ensure_customer_orders_tables()
-        _ensure_customer_order_shipments_table()
-        _ensure_document_tables()
-        _ensure_default_warehouse()
-        _ensure_accounting_payments()
-        _ensure_gl_columns()
-        _ensure_product_alternatives_table()
-        _INIT_DB_DONE = True
+
+def run_schema_maintenance() -> None:
+    """Create tables and apply column migrations — run offline via ``python Dashboard/db_maintenance.py``, not Streamlit."""
+    os.makedirs(UPLOADS_ROOT, exist_ok=True)
+    from pg_init_postgres import init_postgres_schema
+
+    init_postgres_schema()
+    _ensure_vendor_product_pricing_columns()
+    _ensure_purchase_order_extras()
+    _ensure_po_billings_table()
+    _ensure_vendor_issuer_columns()
+    _ensure_po_billings_snapshot_columns()
+    _ensure_customer_orders_tables()
+    _ensure_customer_order_shipments_table()
+    _ensure_document_tables()
+    _ensure_default_warehouse()
+    _ensure_accounting_payments()
+    _ensure_gl_columns()
+    _ensure_product_alternatives_table()
 
 
 def get_dashboard_stats() -> dict:
     """Summary counts and per-vendor product counts (all vendors, including zero)."""
-    init_db()
     with _connect() as conn:
         n_c = int(conn.execute("SELECT COUNT(*) AS c FROM customers").fetchone()["c"])
         n_v = int(conn.execute("SELECT COUNT(*) AS c FROM vendors").fetchone()["c"])
@@ -760,14 +742,12 @@ def _sales_pipeline_where() -> str:
 
 
 def list_warehouses() -> List[Warehouse]:
-    init_db()
     with _connect() as conn:
         rows = conn.execute("SELECT * FROM warehouses ORDER BY is_default DESC, id ASC").fetchall()
     return [Warehouse(**dict(r)) for r in rows]
 
 
 def get_default_warehouse() -> Warehouse:
-    init_db()
     with _connect() as conn:
         r = conn.execute(
             "SELECT * FROM warehouses WHERE is_default = 1 ORDER BY id LIMIT 1"
@@ -778,7 +758,6 @@ def get_default_warehouse() -> Warehouse:
 
 
 def get_document_dashboard_stats() -> dict[str, Any]:
-    init_db()
     with _connect() as conn:
         return {
             "purchase_orders": int(conn.execute("SELECT COUNT(*) AS c FROM purchase_order_docs").fetchone()["c"]),
@@ -805,7 +784,6 @@ def stock_on_hand_v2(
         args.append(int(warehouse_id))
     own = conn is None
     if own:
-        init_db()
         conn = _connect()
     try:
         row = conn.execute(
@@ -823,7 +801,6 @@ def stock_on_hand_v2(
 
 
 def list_stock_positions_v2() -> list[dict[str, Any]]:
-    init_db()
     with _connect() as conn:
         rows = conn.execute(
             """
@@ -969,7 +946,6 @@ def create_purchase_order_document(
     gst_rate_pct: float = 18.0,
     warehouse_id: Optional[int] = None,
 ) -> int:
-    init_db()
     vendor = get_vendor(int(vendor_id))
     if not vendor:
         raise ValueError("Vendor not found")
@@ -1070,7 +1046,6 @@ def create_purchase_order_document(
 
 
 def list_purchase_order_documents() -> list[dict[str, Any]]:
-    init_db()
     with _connect() as conn:
         rows = conn.execute(
             """
@@ -1084,14 +1059,12 @@ def list_purchase_order_documents() -> list[dict[str, Any]]:
 
 
 def get_purchase_order_document(doc_id: int) -> Optional[dict[str, Any]]:
-    init_db()
     with _connect() as conn:
         row = conn.execute("SELECT * FROM purchase_order_docs WHERE id = ?", (int(doc_id),)).fetchone()
     return dict(row) if row else None
 
 
 def list_purchase_order_document_lines(doc_id: int) -> list[dict[str, Any]]:
-    init_db()
     with _connect() as conn:
         rows = conn.execute(
             "SELECT * FROM purchase_order_doc_lines WHERE po_doc_id = ? ORDER BY line_no ASC, id ASC",
@@ -1158,7 +1131,6 @@ def create_goods_receipt_document(
     receipt_image_bytes: Optional[bytes] = None,
     receipt_image_name: str = "receipt.jpg",
 ) -> int:
-    init_db()
     po = get_purchase_order_document(po_doc_id)
     if not po:
         raise ValueError("PO document not found")
@@ -1227,7 +1199,6 @@ def create_goods_receipt_document(
 
 
 def list_goods_receipt_documents() -> list[dict[str, Any]]:
-    init_db()
     with _connect() as conn:
         rows = conn.execute(
             """
@@ -1276,7 +1247,6 @@ def create_vendor_bill_document(
     bill_image_bytes: Optional[bytes] = None,
     bill_image_name: str = "bill.jpg",
 ) -> int:
-    init_db()
     po = get_purchase_order_document(po_doc_id)
     if not po:
         raise ValueError("PO document not found")
@@ -1440,7 +1410,6 @@ def create_sales_order_document(
     gst_rate_pct: float = 18.0,
     warehouse_id: Optional[int] = None,
 ) -> int:
-    init_db()
     customer = get_customer(int(customer_id))
     if not customer:
         raise ValueError("Customer not found")
@@ -1553,7 +1522,6 @@ def create_delivery_document(
     receipt_image_bytes: Optional[bytes] = None,
     receipt_image_name: str = "delivery.jpg",
 ) -> int:
-    init_db()
     so = get_sales_order_document(sales_order_id)
     if not so:
         raise ValueError("Sales order not found")
@@ -1652,7 +1620,6 @@ def create_customer_invoice_document(
 ) -> int:
     from bill_pdf import build_multi_line_document_pdf
 
-    init_db()
     so = get_sales_order_document(sales_order_id)
     if not so:
         raise ValueError("Sales order not found")
@@ -1775,7 +1742,6 @@ def list_customer_invoice_documents() -> list[dict[str, Any]]:
 
 
 def get_document_history(entity_type: str, entity_id: int) -> dict[str, list[dict[str, Any]]]:
-    init_db()
     et = (entity_type or "").strip().lower()
     eid = int(entity_id)
     out: dict[str, list[dict[str, Any]]] = {
@@ -1903,7 +1869,6 @@ def list_sales_line_rows(
     start_iso: str, end_iso: str, category_sub: str = ""
 ) -> list[dict]:
     """Order lines in date range; revenue = qty × unit_price. Dates: YYYY-MM-DD (inclusive)."""
-    init_db()
     t0 = (start_iso or "1970-01-01")[:10]
     t1 = (end_iso or "2099-12-31")[:10]
     wcat = ""
@@ -1967,7 +1932,6 @@ def sales_revenue_series(
 def top_categories_by_revenue(
     start_iso: str, end_iso: str, n: int = 12
 ) -> list[dict]:
-    init_db()
     rows = list_sales_line_rows(start_iso, end_iso, "")
     bucket: dict[str, float] = {}
     for r in rows:
@@ -1980,7 +1944,6 @@ def top_categories_by_revenue(
 def top_products_by_revenue(
     start_iso: str, end_iso: str, n: int = 12
 ) -> list[dict]:
-    init_db()
     rows = list_sales_line_rows(start_iso, end_iso, "")
     bucket: dict[str, float] = {}
     labels: dict[str, str] = {}
@@ -2006,7 +1969,6 @@ def customers_who_bought_category(
     category_sub: str, start_iso: str, end_iso: str
 ) -> list[dict]:
     """Distinct customers with revenue in a category (substring match)."""
-    init_db()
     if not (category_sub or "").strip():
         return []
     rows = list_sales_line_rows(start_iso, end_iso, category_sub.strip())
@@ -2022,7 +1984,6 @@ def customers_who_bought_category(
 
 def get_vendors_with_product_count() -> int:
     """Count of vendors that have at least one product."""
-    init_db()
     with _connect() as conn:
         c = int(
             conn.execute(
@@ -2033,7 +1994,6 @@ def get_vendors_with_product_count() -> int:
 
 
 def list_customers() -> List[Customer]:
-    init_db()
     with _connect() as conn:
         rows = conn.execute(
             "SELECT id, name, company_name, phone, alternate_phone, address, password_hash, created_at "
@@ -2141,14 +2101,12 @@ def delete_customer(cid: int) -> None:
 
 
 def list_vendors() -> List[Vendor]:
-    init_db()
     with _connect() as conn:
         rows = conn.execute("SELECT * FROM vendors ORDER BY person_name").fetchall()
     return [Vendor(**dict(r)) for r in rows]
 
 
 def get_vendor(vid: int) -> Optional[Vendor]:
-    init_db()
     with _connect() as conn:
         r = conn.execute("SELECT * FROM vendors WHERE id = ?", (vid,)).fetchone()
     return Vendor(**dict(r)) if r else None
@@ -2169,7 +2127,6 @@ def insert_vendor(
     issuer_phone: Optional[str] = None,
     issuer_email: Optional[str] = None,
 ) -> int:
-    init_db()
     with _connect() as conn:
         cur = conn.execute(
             """
@@ -2214,7 +2171,6 @@ def update_vendor(
     issuer_phone: Optional[str] = None,
     issuer_email: Optional[str] = None,
 ) -> None:
-    init_db()
     with _connect() as conn:
         conn.execute(
             """
@@ -2375,7 +2331,6 @@ def _purge_vendor_dependencies(vendor_id: int) -> None:
 
 
 def delete_vendor(vid: int) -> None:
-    init_db()
     _purge_vendor_dependencies(int(vid))
     with _connect() as conn:
         pids = conn.execute(
@@ -2393,7 +2348,6 @@ def product_image_rel_paths(stored: Optional[str]) -> list[str]:
 
 
 def list_vendor_products() -> List[VendorProduct]:
-    init_db()
     with _connect() as conn:
         rows = conn.execute(
             """
@@ -2407,7 +2361,6 @@ def list_vendor_products() -> List[VendorProduct]:
 
 
 def list_vendor_products_by_vendor(vendor_id: int) -> List[VendorProduct]:
-    init_db()
     with _connect() as conn:
         rows = conn.execute(
             """
@@ -2423,7 +2376,6 @@ def list_vendor_products_by_vendor(vendor_id: int) -> List[VendorProduct]:
 
 
 def get_vendor_product(pid: int) -> Optional[VendorProduct]:
-    init_db()
     with _connect() as conn:
         r = conn.execute("SELECT * FROM vendor_products WHERE id = ?", (pid,)).fetchone()
     return VendorProduct(**dict(r)) if r else None
@@ -2440,7 +2392,6 @@ def insert_vendor_product(
     tax_inclusive: Optional[int],
     low_stock_threshold: Optional[float] = None,
 ) -> int:
-    init_db()
     cat = (category or "").strip() or None
     th = None if low_stock_threshold is None else float(low_stock_threshold)
     with _connect() as conn:
@@ -2489,7 +2440,6 @@ def update_vendor_product(
     image_paths: list[str],
     low_stock_threshold: Optional[float] = None,
 ) -> None:
-    init_db()
     cat = (category or "").strip() or None
     th = None if low_stock_threshold is None else float(low_stock_threshold)
     with _connect() as conn:
@@ -2526,7 +2476,6 @@ def update_vendor_product(
 
 
 def delete_vendor_product(pid: int) -> None:
-    init_db()
     with _connect() as conn:
         n = int(
             conn.execute(
@@ -2558,7 +2507,6 @@ def delete_vendor_product(pid: int) -> None:
 
 
 def list_purchase_orders() -> List[PurchaseOrder]:
-    init_db()
     with _connect() as conn:
         rows = conn.execute(
             "SELECT * FROM purchase_orders ORDER BY created_at DESC, id DESC"
@@ -2567,7 +2515,6 @@ def list_purchase_orders() -> List[PurchaseOrder]:
 
 
 def get_purchase_order(poid: int) -> Optional[PurchaseOrder]:
-    init_db()
     with _connect() as conn:
         r = conn.execute("SELECT * FROM purchase_orders WHERE id = ?", (poid,)).fetchone()
     return PurchaseOrder(**dict(r)) if r else None
@@ -2598,7 +2545,6 @@ def _recompute_po_status(conn, po_id: int) -> None:
 
 
 def sum_received_for_po(po_id: int) -> float:
-    init_db()
     with _connect() as conn:
         return float(
             conn.execute(
@@ -2609,7 +2555,6 @@ def sum_received_for_po(po_id: int) -> float:
 
 
 def get_po_status_counts() -> Dict[str, int]:
-    init_db()
     with _connect() as conn:
         cur = conn.execute("SELECT status, COUNT(*) AS c FROM purchase_orders GROUP BY status")
         m = {str(r["status"] or "open").strip(): int(r["c"]) for r in cur.fetchall()}
@@ -2631,7 +2576,6 @@ def insert_purchase_order(
     transport_name: Optional[str],
     transport_number: Optional[str],
 ) -> int:
-    init_db()
     tname = (transport_name or None) and (transport_name or "").strip() or None
     tno = (transport_number or None) and (transport_number or "").strip() or None
     with _connect() as conn:
@@ -2674,7 +2618,6 @@ def update_purchase_order(
     transport_name: Optional[str],
     transport_number: Optional[str],
 ) -> None:
-    init_db()
     st = (status or "open").strip() or "open"
     tname = (transport_name or None) and (transport_name or "").strip() or None
     tno = (transport_number or None) and (transport_number or "").strip() or None
@@ -2717,7 +2660,6 @@ def update_purchase_order(
 
 
 def delete_purchase_order(poid: int) -> None:
-    init_db()
     with _connect() as conn:
         n = int(
             conn.execute(
@@ -2743,7 +2685,6 @@ def insert_stock_receipt(
     selling_price: Optional[float],
     notes: str,
 ) -> int:
-    init_db()
     with _connect() as conn:
         cur = conn.execute(
             """
@@ -2777,7 +2718,6 @@ def update_stock_receipt(
     selling_price: Optional[float],
     notes: str,
 ) -> None:
-    init_db()
     with _connect() as conn:
         ro = conn.execute("SELECT po_id FROM stock_receipts WHERE id = ?", (rid,)).fetchone()
         old_poid = int(ro["po_id"]) if ro and ro["po_id"] is not None else None
@@ -2806,7 +2746,6 @@ def update_stock_receipt(
 
 
 def delete_stock_receipt(rid: int) -> None:
-    init_db()
     with _connect() as conn:
         o = conn.execute("SELECT po_id FROM stock_receipts WHERE id = ?", (rid,)).fetchone()
         poid = int(o["po_id"]) if o and o["po_id"] is not None else None
@@ -2817,14 +2756,12 @@ def delete_stock_receipt(rid: int) -> None:
 
 
 def list_stock_receipts() -> List[StockReceipt]:
-    init_db()
     with _connect() as conn:
         rows = conn.execute("SELECT * FROM stock_receipts ORDER BY id DESC").fetchall()
     return [StockReceipt(**dict(r)) for r in rows]
 
 
 def get_stock_receipt(rid: int) -> Optional[StockReceipt]:
-    init_db()
     with _connect() as conn:
         r = conn.execute("SELECT * FROM stock_receipts WHERE id = ?", (rid,)).fetchone()
     return StockReceipt(**dict(r)) if r else None
@@ -2846,7 +2783,6 @@ def _sql_committed_subquery_alias(product_col: str) -> str:
 
 def product_receipts_total(product_id: int) -> float:
     """Gross: sum of stock_receipts quantities (physical receipts)."""
-    init_db()
     with _connect() as conn:
         r = conn.execute(
             """
@@ -2859,7 +2795,6 @@ def product_receipts_total(product_id: int) -> float:
 
 
 def _stock_movement_net(product_id: int) -> float:
-    init_db()
     with _connect() as conn:
         row = conn.execute(
             "SELECT COALESCE(SUM(quantity), 0) AS s FROM stock_movements WHERE product_id = ?",
@@ -2870,7 +2805,6 @@ def _stock_movement_net(product_id: int) -> float:
 
 def product_committed_in_customer_orders(product_id: int) -> float:
     """Units tied to open/shipped customer orders (not yet cancelled in schema)."""
-    init_db()
     with _connect() as conn:
         r = conn.execute(
             """
@@ -2885,7 +2819,6 @@ def product_committed_in_customer_orders(product_id: int) -> float:
 
 
 def list_inventory_aggregated() -> list[dict]:
-    init_db()
     comm = _sql_committed_subquery_alias("sr.product_id")
     with _connect() as conn:
         rows = conn.execute(
@@ -2955,7 +2888,6 @@ def list_catalog_stock_rows(
         where.append("vp.vendor_id = ?")
         params.append(int(vendor_id))
     wh = " AND ".join(where)
-    init_db()
     with _connect() as conn:
         rows = conn.execute(
             """
@@ -2994,7 +2926,6 @@ def list_catalog_stock_rows(
 
 
 def list_product_alternative_ids(product_id: int) -> List[int]:
-    init_db()
     with _connect() as conn:
         rows = conn.execute(
             "SELECT alt_product_id FROM product_alternatives WHERE product_id = ? ORDER BY id",
@@ -3004,7 +2935,6 @@ def list_product_alternative_ids(product_id: int) -> List[int]:
 
 
 def set_product_alternatives(product_id: int, alt_ids: List[int]) -> None:
-    init_db()
     pid = int(product_id)
     seen: set[int] = set()
     clean: list[int] = []
@@ -3028,7 +2958,6 @@ def instock_alternative_for_portal(
     product_id: int, limit: int = 20
 ) -> List[dict]:
     """Alternatives of product_id that are in stock (on_hand > 0), for customer portal."""
-    init_db()
     lim = max(1, min(60, int(limit)))
     a_ids = list_product_alternative_ids(int(product_id))
     out: List[dict] = []
@@ -3063,7 +2992,6 @@ def search_all_products_prefix(
     prefix: str, limit: int = 40
 ) -> List[dict]:
     """Prefix match (SKU or name); includes out-of-stock. For portal."""
-    init_db()
     q = (prefix or "").strip()
     if not q:
         return []
@@ -3111,7 +3039,6 @@ def search_all_products_prefix(
 
 def lookup_product_availability(sku_query: str) -> Optional[dict]:
     """Match our_product_id (exact first, then partial). **on_hand** = available (receipts − open orders)."""
-    init_db()
     q = (sku_query or "").strip()
     if not q:
         return None
@@ -3178,7 +3105,6 @@ def product_on_hand(product_id: int) -> float:
 
 
 def latest_selling_price_for_product(product_id: int) -> Optional[float]:
-    init_db()
     with _connect() as conn:
         r = conn.execute(
             """
@@ -3198,7 +3124,6 @@ def latest_selling_price_for_product(product_id: int) -> Optional[float]:
 
 def search_instock_products_prefix(prefix: str, limit: int = 40) -> List[dict]:
     """In-stock only; prefix match on our_product_id or name (customer portal search)."""
-    init_db()
     q = (prefix or "").strip()
     if not q:
         return []
@@ -3244,7 +3169,6 @@ def search_instock_products_prefix(prefix: str, limit: int = 40) -> List[dict]:
 
 
 def _default_issuer_snapshot() -> dict:
-    init_db()
     with _connect() as conn:
         row = conn.execute(
             """
@@ -3275,7 +3199,6 @@ def insert_customer_order(
     unit_price: Optional[float] = None,
     notes: Optional[str] = None,
 ) -> int:
-    init_db()
     if quantity <= 0:
         raise ValueError("Quantity must be positive")
     oh = product_on_hand(product_id)
@@ -3418,14 +3341,12 @@ def _wa_delivery_doc_update(delivery_id: int) -> None:
 
 
 def get_customer_order(oid: int) -> Optional[CustomerOrder]:
-    init_db()
     with _connect() as conn:
         r = conn.execute("SELECT * FROM customer_orders WHERE id = ?", (oid,)).fetchone()
     return CustomerOrder(**dict(r)) if r else None
 
 
 def list_customer_orders() -> List[CustomerOrder]:
-    init_db()
     if not _table_exists("customer_orders"):
         return []
     with _connect() as conn:
@@ -3436,7 +3357,6 @@ def list_customer_orders() -> List[CustomerOrder]:
 
 
 def list_customer_orders_for_customer(customer_id: int) -> List[CustomerOrder]:
-    init_db()
     if not _table_exists("customer_orders"):
         return []
     with _connect() as conn:
@@ -3452,7 +3372,6 @@ def list_customer_orders_for_customer(customer_id: int) -> List[CustomerOrder]:
 
 
 def delete_customer_order(oid: int) -> None:
-    init_db()
     with _connect() as conn:
         conn.execute("DELETE FROM customer_orders WHERE id = ?", (oid,))
         conn.commit()
@@ -3468,7 +3387,6 @@ def _resolve_upload_path_stored(relative: Optional[str]) -> Optional[str]:
 
 
 def save_customer_order_receipt(oid: int, file_bytes: bytes, name_hint: str) -> str:
-    init_db()
     d = os.path.join(UPLOADS_ROOT, "delivery_receipts")
     os.makedirs(d, exist_ok=True)
     ext = (os.path.splitext((name_hint or "x.jpg") or "x.jpg")[1] or ".jpg").lower()
@@ -3482,7 +3400,6 @@ def save_customer_order_receipt(oid: int, file_bytes: bytes, name_hint: str) -> 
 
 
 def sum_customer_order_shipment_qty(oid: int) -> float:
-    init_db()
     if not _table_exists("customer_order_shipments"):
         return 0.0
     with _connect() as conn:
@@ -3497,7 +3414,6 @@ def sum_customer_order_shipment_qty(oid: int) -> float:
 
 
 def list_customer_order_shipments(oid: int) -> List[CustomerOrderShipment]:
-    init_db()
     if not _table_exists("customer_order_shipments"):
         return []
     with _connect() as conn:
@@ -3521,7 +3437,6 @@ def insert_customer_order_shipment(
     file_bytes: Optional[bytes] = None,
     file_name: str = "r.jpg",
 ) -> int:
-    init_db()
     if quantity <= 0 or unit_price < 0:
         raise ValueError("Quantity and unit price must be valid")
     o = get_customer_order(customer_order_id)
@@ -3601,7 +3516,6 @@ def _save_shipment_receipt_path(
 
 def save_customer_order_delivery_receipt_pdf(order_id: int) -> Optional[str]:
     """Build delivery receipt PDF, save under uploads/order_receipt_pdfs/, store path on order."""
-    init_db()
     o = get_customer_order(int(order_id))
     if not o:
         return None
@@ -3659,7 +3573,6 @@ def _notify_customer_order_shipped(
     Meta templates take image header — PDF must be a separate document message (see WHATSAPP_SEND_ORDER_RECEIPT_PDF).
     Duplicate sends suppressed via whatsapp_ship_notice_sent.
     """
-    init_db()
     o = get_customer_order(int(order_id))
     if not o:
         return
@@ -3800,7 +3713,6 @@ def update_customer_order(
     delivery_notes: Optional[str] = None,
     receipt_image_path: Optional[str] = None,
 ) -> None:
-    init_db()
     o = get_customer_order(oid)
     if not o:
         raise ValueError("Order not found")
@@ -3865,7 +3777,6 @@ def update_customer_order(
 
 
 def list_customer_order_ids_eligible_new_billing() -> List[int]:
-    init_db()
     if not _table_exists("customer_orders"):
         return []
     with _connect() as conn:
@@ -3884,7 +3795,6 @@ def list_customer_order_ids_eligible_new_billing() -> List[int]:
 
 
 def get_customer_order_billing(bid: int) -> Optional[CustomerOrderBilling]:
-    init_db()
     with _connect() as conn:
         r = conn.execute(
             "SELECT * FROM customer_order_billings WHERE id = ?", (bid,)
@@ -3895,7 +3805,6 @@ def get_customer_order_billing(bid: int) -> Optional[CustomerOrderBilling]:
 def get_customer_order_billing_by_order_id(
     customer_order_id: int,
 ) -> Optional[CustomerOrderBilling]:
-    init_db()
     with _connect() as conn:
         r = conn.execute(
             "SELECT * FROM customer_order_billings WHERE customer_order_id = ?",
@@ -3906,7 +3815,6 @@ def get_customer_order_billing_by_order_id(
 
 def send_customer_order_payment_reminder_wa(billing_id: int) -> dict[str, Any]:
     """Send WhatsApp `payment_reminder_3` for an existing customer-order billing row."""
-    init_db()
     b = get_customer_order_billing(int(billing_id))
     if not b:
         return {"ok": False, "error": "billing not found"}
@@ -3966,7 +3874,6 @@ def send_customer_order_payment_reminder_wa(billing_id: int) -> dict[str, Any]:
 
 
 def list_customer_order_billings() -> List[CustomerOrderBilling]:
-    init_db()
     if not _table_exists("customer_order_billings"):
         return []
     with _connect() as conn:
@@ -3993,7 +3900,6 @@ def _rate_band_label(unit_price: float) -> str:
 
 def list_portal_order_lines_detail() -> List[dict]:
     """Portal customer_orders joined to product category — for dashboard grouping."""
-    init_db()
     if not _table_exists("customer_orders"):
         return []
     with _connect() as conn:
@@ -4034,7 +3940,6 @@ def insert_customer_order_billing(
     vendor_invoice_raw: Optional[str] = None,
     vendor_invoice_gst: Optional[str] = None,
 ) -> int:
-    init_db()
     co = get_customer_order(customer_order_id)
     if not co:
         raise ValueError("Customer order not found")
@@ -4147,7 +4052,6 @@ def update_customer_order_billing_record(
     vendor_invoice_gst: Optional[str],
     notes: str,
 ) -> None:
-    init_db()
     b = get_customer_order_billing(bid)
     if not b:
         raise ValueError("Billing row not found")
@@ -4205,7 +4109,6 @@ def update_customer_order_billing_record(
 
 
 def delete_customer_order_billing(bid: int) -> None:
-    init_db()
     b = get_customer_order_billing(bid)
     if b and getattr(b, "gl_journal_id", None):
         from gl import post_reversal
@@ -4326,7 +4229,6 @@ def _post_gl_ap_payment(pay_id: int, amount: float) -> int:
 
 
 def list_po_billings() -> List[PoBilling]:
-    init_db()
     if not _table_exists("po_billings"):
         return []
     with _connect() as conn:
@@ -4337,14 +4239,12 @@ def list_po_billings() -> List[PoBilling]:
 
 
 def get_po_billing(bid: int) -> Optional[PoBilling]:
-    init_db()
     with _connect() as conn:
         r = conn.execute("SELECT * FROM po_billings WHERE id = ?", (bid,)).fetchone()
     return PoBilling(**dict(r)) if r else None
 
 
 def get_po_billing_by_po_id(po_id: int) -> Optional[PoBilling]:
-    init_db()
     with _connect() as conn:
         r = conn.execute("SELECT * FROM po_billings WHERE po_id = ?", (po_id,)).fetchone()
     return PoBilling(**dict(r)) if r else None
@@ -4377,7 +4277,6 @@ def upload_customer_order_billing_pdf_to_bucket(customer_order_id: int) -> str:
 
 
 def list_po_ids_eligible_new_billing() -> List[int]:
-    init_db()
     if not _table_exists("po_billings"):
         return []
     with _connect() as conn:
@@ -4403,7 +4302,6 @@ def insert_po_billing_for_po(
     vendor_invoice_raw: Optional[str] = None,
     vendor_invoice_gst: Optional[str] = None,
 ) -> int:
-    init_db()
     po = get_purchase_order(po_id)
     if not po:
         raise ValueError("Purchase order not found")
@@ -4508,7 +4406,6 @@ def update_po_billing_record(
     vendor_invoice_gst: Optional[str],
     notes: str,
 ) -> None:
-    init_db()
     raw_line, gst_taxable, gst_amt, gst_grand = compute_po_billing_amounts(
         quantity,
         unit_cost,
@@ -4561,7 +4458,6 @@ def update_po_billing_record(
 
 
 def refresh_po_billing_from_po(bid: int) -> None:
-    init_db()
     b = get_po_billing(bid)
     if not b:
         raise ValueError("Billing row not found")
@@ -4600,7 +4496,6 @@ def refresh_po_billing_from_po(bid: int) -> None:
 
 
 def delete_po_billing(bid: int) -> None:
-    init_db()
     b = get_po_billing(bid)
     if b and getattr(b, "gl_journal_id", None):
         from gl import post_reversal
@@ -4654,7 +4549,6 @@ def _sum_ap_paid_for_vendor_bill_doc(vendor_bill_doc_id: int, conn) -> float:
 
 
 def get_ar_open_balance(cob_id: Optional[int] = None, *, customer_invoice_id: Optional[int] = None) -> float:
-    init_db()
     with _connect() as conn:
         if customer_invoice_id is not None:
             row = conn.execute(
@@ -4674,7 +4568,6 @@ def get_ar_open_balance(cob_id: Optional[int] = None, *, customer_invoice_id: Op
 
 
 def get_ap_open_balance(pob_id: Optional[int] = None, *, vendor_bill_doc_id: Optional[int] = None) -> float:
-    init_db()
     with _connect() as conn:
         if vendor_bill_doc_id is not None:
             row = conn.execute(
@@ -4696,7 +4589,6 @@ def get_ap_open_balance(pob_id: Optional[int] = None, *, vendor_bill_doc_id: Opt
 def insert_ar_payment(
     co_billing_id: Optional[int], amount: float, method: Optional[str], note: Optional[str], *, customer_invoice_id: Optional[int] = None
 ) -> int:
-    init_db()
     a = float(amount)
     if a <= 0:
         raise ValueError("Amount must be positive")
@@ -4736,7 +4628,6 @@ def insert_ar_payment(
 def insert_ap_payment(
     po_billing_id: Optional[int], amount: float, method: Optional[str], note: Optional[str], *, vendor_bill_doc_id: Optional[int] = None
 ) -> int:
-    init_db()
     a = float(amount)
     if a <= 0:
         raise ValueError("Amount must be positive")
@@ -4774,7 +4665,6 @@ def insert_ap_payment(
 
 
 def ar_ledger_rows() -> List[dict]:
-    init_db()
     with _connect() as conn:
         legacy_rows = conn.execute(
             """
@@ -4838,7 +4728,6 @@ def ar_ledger_rows() -> List[dict]:
 
 
 def ap_ledger_rows() -> List[dict]:
-    init_db()
     with _connect() as conn:
         legacy_rows = conn.execute(
             """
@@ -4906,7 +4795,6 @@ def ap_ledger_rows() -> List[dict]:
 
 
 def list_ar_payments_log() -> List[dict]:
-    init_db()
     with _connect() as conn:
         legacy_rows = conn.execute(
             """
@@ -4946,7 +4834,6 @@ def list_ar_payments_log() -> List[dict]:
 
 
 def list_ap_payments_log() -> List[dict]:
-    init_db()
     with _connect() as conn:
         legacy_rows = conn.execute(
             """
@@ -4990,7 +4877,6 @@ def list_ap_payments_log() -> List[dict]:
 
 
 def delete_ar_payment(pid: int) -> None:
-    init_db()
     with _connect() as conn:
         r = conn.execute("SELECT id, gl_journal_id FROM ar_payments WHERE id = ?", (pid,)).fetchone()
         if not r:
@@ -5008,7 +4894,6 @@ def delete_ar_payment(pid: int) -> None:
 
 
 def delete_ap_payment(pid: int) -> None:
-    init_db()
     with _connect() as conn:
         r = conn.execute("SELECT id, gl_journal_id FROM ap_payments WHERE id = ?", (pid,)).fetchone()
         if not r:

@@ -19,7 +19,7 @@ import db  # noqa: E402
 
 
 def main() -> int:
-    db.init_db()
+    db.run_schema_maintenance()
     wh = db.get_default_warehouse()
     assert wh.code == "MAIN"
 

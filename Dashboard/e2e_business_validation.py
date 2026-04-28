@@ -27,7 +27,7 @@ from login import try_login  # noqa: E402
 
 
 def main() -> int:
-    db.init_db()
+    db.run_schema_maintenance()
 
     # Vendors and products
     own_vid = db.insert_vendor("Default Vendor", "Own Products", "9111111111", None, 0, 100, "Own stock vendor")

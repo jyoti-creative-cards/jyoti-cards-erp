@@ -7,7 +7,7 @@ from __future__ import annotations
 import db
 
 def main() -> None:
-    db.init_db()
+    db.run_schema_maintenance()
     cid = db.insert_customer(
         "sourabh",
         "",

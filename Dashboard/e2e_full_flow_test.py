@@ -60,7 +60,7 @@ def _assert_gl_balanced() -> None:
 
 
 def main() -> int:
-    db.init_db()
+    db.run_schema_maintenance()
     _seed_cash()
     assert len(list_gl_accounts()) >= 7
 

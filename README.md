@@ -28,7 +28,7 @@ cd customer_ordering_app && python3 -m streamlit run app.py --server.port 8502
 Install deps:
 
 ```bash
-pip install -r requirements.txt
+pip install -r Dashboard/requirements.txt
 ```
 
 Optional: copy `Dashboard/.env` from `Dashboard/.env.example` and fill WhatsApp keys. Put **`DATABASE_URL`** in `.env` or export it in the shell.

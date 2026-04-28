@@ -42,9 +42,13 @@ def _remote_supabase_needs_ssl(uri: str) -> bool:
 
 
 def _ipv4_hostaddr(hostname: Optional[str], port: int) -> Optional[str]:
-    """Streamlit Cloud often breaks IPv6 routes; libpq can connect via IPv4 using ``hostaddr``."""
+    """Prefer IPv4 so Streamlit Cloud avoids broken IPv6 routes to Supabase."""
     if not hostname or hostname.lower() in ("localhost", "127.0.0.1", "::1"):
         return None
+    try:
+        return socket.gethostbyname(hostname)
+    except OSError:
+        pass
     try:
         infos = socket.getaddrinfo(hostname, port, socket.AF_INET, socket.SOCK_STREAM)
         if infos:
@@ -55,22 +59,25 @@ def _ipv4_hostaddr(hostname: Optional[str], port: int) -> Optional[str]:
 
 
 def pg_connect():
-    """Raw ``psycopg`` connection — same URL + TLS rules everywhere (including ``init_postgres_schema``)."""
+    """Raw ``psycopg`` connection — same URL + TLS + IPv4 ``hostaddr`` for hosted DB."""
     if psycopg is None:
         raise RuntimeError("Install psycopg: pip install 'psycopg[binary]'")
+    from psycopg.conninfo import conninfo_to_dict, make_conninfo
+
     uri = database_url()
-    kw: dict[str, Any] = {}
-    if _remote_supabase_needs_ssl(uri):
-        kw["sslmode"] = "require"
     try:
-        p = urlparse(uri)
-        h, pt = p.hostname, p.port or 5432
-        ha = _ipv4_hostaddr(h, pt)
-        if ha:
-            kw["hostaddr"] = ha
-    except Exception:
-        pass
-    return psycopg.connect(uri, autocommit=False, **kw)
+        params = conninfo_to_dict(uri)
+    except Exception as e:
+        raise RuntimeError("DATABASE_URL could not be parsed") from e
+    host = params.get("host")
+    port = int(params.get("port") or 5432)
+    if _remote_supabase_needs_ssl(uri):
+        params.setdefault("sslmode", "require")
+    ha = _ipv4_hostaddr(host, port)
+    if ha:
+        params["hostaddr"] = ha
+    conninfo = make_conninfo(**params)
+    return psycopg.connect(conninfo, autocommit=False)
 
 
 def adapt_sql(sql: str) -> str:

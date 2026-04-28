@@ -103,6 +103,9 @@ PBKDF2_ITERS = 200_000
 # Customer portal: "low stock" band (still orderable if on_hand > 0)
 LOW_STOCK_THRESHOLD = 5.0
 
+# Streamlit reruns the whole script often; ``init_postgres_schema`` is heavy — run once per process.
+_PG_SCHEMA_INITIALIZED = False
+
 
 def effective_low_stock_threshold(raw: Optional[float]) -> float:
     try:
@@ -560,10 +563,13 @@ def _ensure_gl_columns() -> None:
 
 
 def init_db() -> None:
+    global _PG_SCHEMA_INITIALIZED
     os.makedirs(UPLOADS_ROOT, exist_ok=True)
-    from pg_init_postgres import init_postgres_schema
+    if not _PG_SCHEMA_INITIALIZED:
+        from pg_init_postgres import init_postgres_schema
 
-    init_postgres_schema()
+        init_postgres_schema()
+        _PG_SCHEMA_INITIALIZED = True
     _ensure_vendor_product_pricing_columns()
     _ensure_purchase_order_extras()
     _ensure_po_billings_table()

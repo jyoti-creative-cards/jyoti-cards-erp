@@ -1,55 +1,56 @@
-# Jyoti Cards Purchasing App
+# Jyoti ERP — Streamlit (Dashboard + customer portal)
 
-Streamlit admin app for vendor management, item catalog, purchase orders, stock intake, inventory, and WhatsApp communication through Meta WhatsApp API.
+Monorepo layout:
 
-## Default Password
+| Path | Purpose |
+|------|---------|
+| `Dashboard/` | Main ERP: inventory, orders, billing, AR/AP, GL |
+| `customer_ordering_app/` | Customer ordering portal (reads same DB logic via `dash_db.py`) |
 
-- `kiwigudda`
+Database: SQLite `Dashboard/business.db` (created on first run). **Do not commit** the live DB or `Dashboard/uploads/` — both are gitignored.
 
-## Run
+## Run locally
 
 ```bash
-pip3 install -r requirements.txt
-streamlit run app.py
+cd Dashboard && python3 -m streamlit run app.py --server.port 8501
 ```
 
-## WhatsApp Setup
+Portal (second terminal):
 
-- Set `WHATSAPP_PROVIDER=meta`
-- Set `META_ACCESS_TOKEN`
-- Set `META_PHONE_NUMBER_ID`
-- Set `META_WEBHOOK_VERIFY_TOKEN` (example: `jyoti_cards_wh_verify_2026`)
-- Set `META_WEBHOOK_PORT` (default: `8080`)
-- Run webhook receiver: `python3 webhook_server.py`
-- Callback path: `/webhooks/whatsapp`
-- Use business number `9516789702`
-- Internal alerts go to `9754656565`
+```bash
+cd customer_ordering_app && python3 -m streamlit run app.py --server.port 8502
+```
 
-## Deployment
+Install deps:
 
-- Render blueprint file is `render.yaml`
-- Dashboard service: `jyoti-cards-dashboard` (Streamlit)
-- Webhook service: `jyoti-cards-whatsapp-webhook` (WSGI server)
-- Set secret env vars on Render dashboard (`META_ACCESS_TOKEN`, IDs, password, phone numbers)
-- After deploy, webhook callback URL is:
-  - `https://<your-webhook-service>.onrender.com/webhooks/whatsapp`
+```bash
+pip install -r requirements.txt
+```
 
-## Main Flow
+Optional: copy `Dashboard/.env` from `.env.example` and fill WhatsApp/Meta keys.
 
-- Create vendors with owner name, firm name, mobile, and billing condition
-- Create items with your own item ID plus vendor item ID for the selected vendor
-- Maintain vendor price and billing percent on the same item flow
-- Create purchase orders using your item ID while auto-loading vendor mapping
-- Create new PO versions after vendor discussions
-- Receive stock in batches against a PO
-- Close PO with note and WhatsApp notification
+## Deploy on Streamlit Community Cloud
 
-## Main Screens
+1. Push this repo to GitHub (**create a new empty repo** — do not overwrite the unrelated [stock Excel app](https://github.com/jyoti-creative-cards/jyoti-cards-stock-management-streamlit-app) unless you intend to replace it).
 
-- Dashboard
-- Our Items
-- Vendors
-- Purchase Orders
-- Stock Intake
-- Inventory
-- WhatsApp
+2. **New app → From GitHub** → pick repo → branch `main`.
+
+3. **Main file path:** `Dashboard/app.py`
+
+4. **Python:** 3.11+ recommended.
+
+5. **Secrets** (app sidebar shows `DB` path): add any keys your `Dashboard/whatsapp_meta.py` expects under `[secrets]` — mirror variables from `.env.example` if you use WhatsApp.
+
+6. **Persistent SQLite:** Community Cloud filesystem is ephemeral unless you attach storage — for production data you typically attach a **persistent volume** or later migrate to hosted Postgres. For demos, `init_db()` creates a fresh DB each redeploy unless you upload a seed DB via other means.
+
+### Second app (customer portal)
+
+Create **another** Streamlit Cloud deployment from the **same repo** with main file:
+
+`customer_ordering_app/app.py`
+
+Both apps resolve `Dashboard/db.py` via paths inside `dash_db.py`; repository layout must stay as committed.
+
+## Security
+
+Never commit `.env`, personal tokens, or production `business.db`.

@@ -1,7 +1,36 @@
+# Python
 __pycache__/
-*.pyc
-ops.db
+*.py[cod]
+*$py.class
+.Python
 .venv/
-uploads/products/*
-!uploads/products/.gitkeep
-.streamlit/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+
+# Local SQLite & uploads (fresh DB created on first run via init_db)
+**/business.db
+**/business.db-journal
+**/business.db-wal
+**/business.db-shm
+Dashboard/uploads/
+**/e2e_*.db
+**/whatsapp_send.log
+customer_ordering_app/uploads/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+.cursor/
+
+# Large local assets / experiments (adjust if you need these in repo)
+patrika/
+logs/

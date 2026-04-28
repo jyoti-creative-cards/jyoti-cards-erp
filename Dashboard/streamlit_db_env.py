@@ -7,6 +7,7 @@ import os
 _SECRET_KEYS = (
     "DATABASE_URL",
     "DATABASE_SSLMODE",
+    "DATABASE_CONNECT_TIMEOUT",
     "S3_ENDPOINT_URL",
     "S3_REGION",
     "S3_BUCKET",

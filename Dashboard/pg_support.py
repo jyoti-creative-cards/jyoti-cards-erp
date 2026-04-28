@@ -7,10 +7,14 @@ from typing import Any, Optional
 
 try:
     import psycopg
+    from psycopg.conninfo import conninfo_to_dict, make_conninfo
     from psycopg.rows import dict_row
 except ImportError:
     psycopg = None
+    conninfo_to_dict = None  # type: ignore
+    make_conninfo = None  # type: ignore
     dict_row = None  # type: ignore
+
 
 def use_postgres() -> bool:
     """True when ``DATABASE_URL`` is set. Call at runtime — Streamlit secrets load before first DB use."""
@@ -18,24 +22,38 @@ def use_postgres() -> bool:
 
 
 def normalized_database_url() -> str:
-    """``DATABASE_URL`` with TLS params for hosted Postgres (Streamlit Cloud → Supabase needs SSL)."""
-    url = (os.environ.get("DATABASE_URL") or "").strip()
-    if not url:
+    """Build a libpq conninfo string from ``DATABASE_URL`` (handles passwords & query params correctly).
+
+    Remote hosts get ``sslmode=require`` unless already set or ``DATABASE_SSLMODE`` overrides.
+    """
+    if psycopg is None or conninfo_to_dict is None or make_conninfo is None:
+        raise RuntimeError("Install psycopg: pip install 'psycopg[binary]'")
+    raw = (os.environ.get("DATABASE_URL") or "").strip()
+    if not raw:
         raise RuntimeError("DATABASE_URL is not set")
+    # Streamlit / copy-paste sometimes wraps the whole URI in quotes
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
+        raw = raw[1:-1].strip()
     explicit = (os.environ.get("DATABASE_SSLMODE") or "").strip().lower()
-    lu = url.lower()
+    try:
+        params = conninfo_to_dict(raw)
+    except Exception as e:
+        raise RuntimeError(
+            "DATABASE_URL could not be parsed. Use a standard postgres URI; "
+            "percent-encode special characters in the password (# & @ spaces)."
+        ) from e
+    host = (params.get("host") or "").lower()
+    is_local = host in ("localhost", "127.0.0.1", "::1") or host == ""
     if explicit:
-        sep = "&" if "?" in url else "?"
-        if "sslmode=" in lu:
-            return url
-        return f"{url}{sep}sslmode={explicit}"
-    if "sslmode=" in lu:
-        return url
-    # Local/dev sockets — no forced TLS
-    if "localhost" in lu or "127.0.0.1" in lu or lu.startswith("postgresql:///"):
-        return url
-    sep = "&" if "?" in url else "?"
-    return f"{url}{sep}sslmode=require"
+        params["sslmode"] = explicit
+    elif "sslmode" not in params and not is_local:
+        params["sslmode"] = "require"
+    ct = (os.environ.get("DATABASE_CONNECT_TIMEOUT") or "").strip()
+    if ct.isdigit() and int(ct) > 0:
+        params.setdefault("connect_timeout", ct)
+    elif not is_local:
+        params.setdefault("connect_timeout", "30")
+    return make_conninfo(**params)
 
 
 def adapt_sql(sql: str) -> str:

@@ -1,4 +1,10 @@
 import os
+import sys
+
+# Streamlit Cloud uses repo root as cwd; local imports (db, gl, bill_pdf) live in this folder.
+_DASH_DIR = os.path.dirname(os.path.abspath(__file__))
+if _DASH_DIR not in sys.path:
+    sys.path.insert(0, _DASH_DIR)
 
 # Load `Dashboard/.env` before any DB code (Streamlit often starts with cwd ≠ this folder).
 import whatsapp_meta  # noqa: F401 — side effect: _load_env()

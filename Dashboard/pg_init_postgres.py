@@ -5,7 +5,7 @@ import re
 
 import sqlglot
 
-from pg_support import normalized_database_url
+from pg_support import database_url
 
 
 _RE_DT_NOW = re.compile(r"(?i)datetime\s*\(\s*['\"]now['\"]\s*\)")
@@ -77,7 +77,7 @@ def init_postgres_schema() -> None:
     import psycopg
 
     blocks = _ordered_ddl_blocks()
-    conn = psycopg.connect(normalized_database_url(), autocommit=False)
+    conn = psycopg.connect(database_url(), autocommit=False)
     try:
         for block in blocks:
             parts = [p.strip() for p in block.split(";") if p.strip()]

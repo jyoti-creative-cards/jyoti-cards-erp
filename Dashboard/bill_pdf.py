@@ -583,3 +583,126 @@ def build_billing_pdfs_for_co_record(b) -> tuple[bytes, bytes]:
         invoice_row_label="Our invoice ref.",
     )
     return raw, raw
+
+
+def build_customer_order_shipped_receipt_pdf(
+    *,
+    order_id: int,
+    customer_name: str,
+    customer_phone: Optional[str],
+    customer_address: Optional[str],
+    item_sku: str,
+    item_name: str,
+    quantity: float,
+    unit_price: float,
+    line_total: float,
+    delivery_receipt_number: Optional[str],
+    delivery_contact: Optional[str],
+    delivery_notes: Optional[str],
+    order_notes: Optional[str],
+    doc_date: str,
+    seller: Optional[Mapping[str, Any]] = None,
+) -> bytes:
+    """Single-line portal order — PDF saved when status becomes shipped."""
+    sel = _normalize_seller(seller)
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle(
+        "COH1",
+        parent=styles["Heading1"],
+        fontSize=16,
+        spaceAfter=8,
+        textColor=colors.HexColor("#1a1a2e"),
+    )
+    h2 = ParagraphStyle(
+        "COH2",
+        parent=styles["Normal"],
+        fontSize=10,
+        textColor=colors.HexColor("#444"),
+        spaceAfter=4,
+    )
+    small = ParagraphStyle(
+        "COSM",
+        parent=styles["Normal"],
+        fontSize=8.5,
+        textColor=colors.HexColor("#666"),
+    )
+    story: list = []
+    _append_our_company_header(story, sel, h1, h2, small)
+    story.append(Spacer(1, 0.35 * cm))
+    story.append(
+        Paragraph(
+            "<b>Order delivery receipt (shipped)</b>",
+            ParagraphStyle("COT", parent=h1, fontSize=13),
+        )
+    )
+    story.append(Spacer(1, 0.25 * cm))
+
+    cblock = f"<b>Customer</b><br/>{customer_name.replace('&', '&amp;')}"
+    if (customer_phone or "").strip():
+        cblock += f"<br/>Phone: {(customer_phone or '').strip()}"
+    if (customer_address or "").strip():
+        cblock += f"<br/>{(customer_address or '').strip().replace('&', '&amp;')}"
+    story.append(Paragraph(cblock, h2))
+    story.append(Spacer(1, 0.25 * cm))
+
+    meta = [
+        ["Order no.", f"#{int(order_id)}"],
+        ["Date", doc_date],
+        ["Delivery receipt no.", (delivery_receipt_number or "—").replace("&", "&amp;")],
+        ["Delivery contact", (delivery_contact or "—").replace("&", "&amp;")],
+    ]
+    t0 = Table(meta, colWidths=[4.5 * cm, 10.8 * cm])
+    t0.setStyle(
+        TableStyle(
+            [
+                ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#555")),
+                ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LINEBELOW", (0, -1), (-1, -1), 0.25, colors.HexColor("#ddd")),
+            ]
+        )
+    )
+    story.append(t0)
+    story.append(Spacer(1, 0.35 * cm))
+
+    rows = [
+        ["SKU", "Description", "Qty", "Rate", "Amount"],
+        [
+            str(item_sku or "—"),
+            str(item_name or "—").replace("&", "&amp;"),
+            f"{float(quantity):g}",
+            _money(float(unit_price)),
+            _money(float(line_total)),
+        ],
+    ]
+    t1 = Table(
+        rows,
+        colWidths=[2.4 * cm, 7.2 * cm, 1.6 * cm, 2.4 * cm, 2.6 * cm],
+    )
+    t1.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a1a2e")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cdd3df")),
+                ("ALIGN", (2, 1), (-1, -1), "RIGHT"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ]
+        )
+    )
+    story.append(t1)
+    story.append(Spacer(1, 0.3 * cm))
+
+    foot: list[str] = []
+    if (delivery_notes or "").strip():
+        foot.append(f"<b>Delivery notes:</b> {(delivery_notes or '').strip().replace('&', '&amp;')}")
+    if (order_notes or "").strip():
+        foot.append(f"<b>Order notes:</b> {(order_notes or '').strip().replace('&', '&amp;')}")
+    if foot:
+        story.append(Paragraph("<br/>".join(foot), small))
+
+    return _build_doc(f"Order receipt #{order_id}", story)

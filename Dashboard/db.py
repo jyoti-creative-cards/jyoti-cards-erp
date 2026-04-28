@@ -581,6 +581,8 @@ def _ensure_customer_order_delivery_columns() -> None:
             ("delivery_contact", "TEXT"),
             ("delivery_notes", "TEXT"),
             ("receipt_image_path", "TEXT"),
+            ("delivery_receipt_pdf_path", "TEXT"),
+            ("whatsapp_ship_notice_sent", "INTEGER DEFAULT 0"),
         ):
             if col not in cols:
                 conn.execute(f"ALTER TABLE customer_orders ADD COLUMN {col} {typ}")
@@ -781,6 +783,7 @@ def _ensure_gl_columns() -> None:
     for table, col, typ in (
         ("po_billings", "gl_journal_id", "INTEGER"),
         ("customer_order_billings", "gl_journal_id", "INTEGER"),
+        ("customer_order_billings", "payment_reminder_wa_sent_at", "TEXT"),
         ("ar_payments", "gl_journal_id", "INTEGER"),
         ("ap_payments", "gl_journal_id", "INTEGER"),
     ):
@@ -3581,7 +3584,6 @@ def _wa_order_booked(oid: int) -> None:
     item_ref = (
         f"{pr.our_product_id} / {pr.name}" if pr else str(o.product_id)
     )
-    line_amt = float(o.quantity) * float(o.unit_price)
     try:
         from whatsapp_meta import send_wa_template_safe
 
@@ -3593,7 +3595,6 @@ def _wa_order_booked(oid: int) -> None:
                 "order_id": str(o.id),
                 "item_id": item_ref[:200],
                 "quantity": f"{o.quantity:g}",
-                "amount": f"{line_amt:.2f}",
             },
         )
     except Exception as ex:
@@ -3615,7 +3616,6 @@ def _wa_sales_order_doc_booked(so_id: int) -> None:
     first = lines[0]
     item_ref = f"{first.get('sku') or ''} / {first.get('item_name') or ''}"
     qty = sum(float(x.get("quantity") or 0) for x in lines)
-    amt = sum(float(x.get("line_grand_total") or 0) for x in lines)
     try:
         from whatsapp_meta import send_wa_template_safe
 
@@ -3627,7 +3627,6 @@ def _wa_sales_order_doc_booked(so_id: int) -> None:
                 "order_id": str(so.get("doc_no") or so_id),
                 "item_id": item_ref[:200],
                 "quantity": f"{qty:g}",
-                "amount": f"{amt:.2f}",
             },
         )
     except Exception as ex:
@@ -3820,35 +3819,24 @@ def insert_customer_order_shipment(
     nst = "shipped"
     with _connect() as conn:
         conn.execute(
-            "UPDATE customer_orders SET status = ?, updated_at = datetime('now') WHERE id = ?",
-            (nst, int(customer_order_id)),
+            """
+            UPDATE customer_orders SET
+                status = ?,
+                delivery_receipt_number = ?,
+                delivery_contact = ?,
+                updated_at = datetime('now')
+            WHERE id = ?
+            """,
+            (
+                nst,
+                (delivery_receipt_number or None) or None,
+                (delivery_contact or None) or None,
+                int(customer_order_id),
+            ),
         )
         conn.commit()
-    o2 = get_customer_order(int(customer_order_id))
-    c = o2 and get_customer(int(o2.customer_id))
-    if o2 and c and (c.phone and str(c.phone).strip()) and (os.environ.get("WHATSAPP_DISABLE") or "").strip().lower() not in (
-        "1", "true", "yes",
-    ):
-        try:
-            from whatsapp_meta import send_wa_template_safe
-
-            one_note = (o2.notes or "—")[:1024] if o2 and (o2.notes or "").strip() else "—"
-            rnum = (delivery_receipt_number or "—")[:1024] if (delivery_receipt_number or "").strip() else "—"
-            cnum = (delivery_contact or "—")[:1024] if (delivery_contact or "").strip() else "—"
-            img = _resolve_upload_path_stored(relp) if relp else None
-            send_wa_template_safe(
-                "delivery_update",
-                c.phone,
-                {
-                    "name": (c.name or "Customer").strip() or "Customer",
-                    "receipt": rnum,
-                    "contact": cnum,
-                    "notes": one_note,
-                },
-                header_image_path=img,
-            )
-        except Exception as ex:
-            print("WhatsApp shipment (ignored):", ex, file=sys.stderr)
+    img_abs = _resolve_upload_path_stored(relp) if relp else None
+    _notify_customer_order_shipped(int(customer_order_id), header_image_abs=img_abs)
     return ship_id
 
 
@@ -3865,6 +3853,146 @@ def _save_shipment_receipt_path(
     with open(p, "wb") as f:
         f.write(file_bytes)
     return os.path.join("delivery_receipts", fn).replace("\\", "/")
+
+
+def save_customer_order_delivery_receipt_pdf(order_id: int) -> Optional[str]:
+    """Build delivery receipt PDF, save under uploads/order_receipt_pdfs/, store path on order."""
+    init_db()
+    o = get_customer_order(int(order_id))
+    if not o:
+        return None
+    c = get_customer(int(o.customer_id))
+    pr = get_vendor_product(int(o.product_id))
+    doc_date = (o.updated_at or o.created_at or "")[:10] or "—"
+    sku = (pr.our_product_id or "") if pr else ""
+    title = (pr.name or "") if pr else ""
+    line = float(o.quantity) * float(o.unit_price)
+    from bill_pdf import build_customer_order_shipped_receipt_pdf
+
+    pdf_bytes = build_customer_order_shipped_receipt_pdf(
+        order_id=int(o.id),
+        customer_name=(c.name or "Customer").strip() if c else "Customer",
+        customer_phone=(c.phone if c else None),
+        customer_address=(c.address if c else None),
+        item_sku=str(sku),
+        item_name=str(title),
+        quantity=float(o.quantity),
+        unit_price=float(o.unit_price),
+        line_total=line,
+        delivery_receipt_number=o.delivery_receipt_number,
+        delivery_contact=o.delivery_contact,
+        delivery_notes=o.delivery_notes,
+        order_notes=o.notes,
+        doc_date=doc_date,
+        seller=_default_seller_snapshot(),
+    )
+    d = os.path.join(UPLOADS_ROOT, "order_receipt_pdfs")
+    os.makedirs(d, exist_ok=True)
+    fn = f"co_{int(order_id):05d}_receipt.pdf"
+    rel = f"order_receipt_pdfs/{fn}".replace("\\", "/")
+    ap = os.path.join(d, fn)
+    with open(ap, "wb") as f:
+        f.write(pdf_bytes)
+    with _connect() as conn:
+        conn.execute(
+            """
+            UPDATE customer_orders SET delivery_receipt_pdf_path = ?, updated_at = datetime('now')
+            WHERE id = ?
+            """,
+            (rel, int(order_id)),
+        )
+        conn.commit()
+    return rel
+
+
+def _notify_customer_order_shipped(
+    order_id: int,
+    *,
+    header_image_abs: Optional[str] = None,
+) -> None:
+    """
+    One WhatsApp per ship: delivery_update template only (PDF is optional extra message).
+    Meta templates take image header — PDF must be a separate document message (see WHATSAPP_SEND_ORDER_RECEIPT_PDF).
+    Duplicate sends suppressed via whatsapp_ship_notice_sent.
+    """
+    init_db()
+    o = get_customer_order(int(order_id))
+    if not o:
+        return
+    if int(getattr(o, "whatsapp_ship_notice_sent", 0) or 0) == 1:
+        return
+    save_pdf_disk = (os.environ.get("WHATSAPP_SAVE_ORDER_RECEIPT_PDF") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    send_pdf_wa = (os.environ.get("WHATSAPP_SEND_ORDER_RECEIPT_PDF") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if save_pdf_disk or send_pdf_wa:
+        save_customer_order_delivery_receipt_pdf(int(order_id))
+        o = get_customer_order(int(order_id)) or o
+    if (os.environ.get("WHATSAPP_DISABLE") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        return
+    c = get_customer(int(o.customer_id))
+    if not c or not (c.phone and str(c.phone).strip()):
+        return
+    img = header_image_abs or _resolve_upload_path_stored(
+        getattr(o, "receipt_image_path", None)
+    )
+    try:
+        from whatsapp_meta import send_wa_document_safe, send_wa_template
+    except Exception as ex:
+        print("WhatsApp import (ignored):", ex, file=sys.stderr)
+        return
+    r = send_wa_template(
+        "delivery_update",
+        c.phone,
+        {
+            "name": (c.name or "Customer").strip() or "Customer",
+            "receipt": (getattr(o, "delivery_receipt_number", None) or "—"),
+            "contact": (getattr(o, "delivery_contact", None) or "—"),
+            "notes": (
+                getattr(o, "delivery_notes", None)
+                or getattr(o, "notes", None)
+                or "—"
+            ),
+        },
+        header_image_path=img,
+    )
+    if r.get("ok") is True:
+        with _connect() as conn:
+            conn.execute(
+                """
+                UPDATE customer_orders SET whatsapp_ship_notice_sent = 1, updated_at = datetime('now')
+                WHERE id = ?
+                """,
+                (int(order_id),),
+            )
+            conn.commit()
+    else:
+        print("WhatsApp shipped update failed:", r, file=sys.stderr)
+    if not send_pdf_wa:
+        return
+    o2 = get_customer_order(int(order_id))
+    pdf_rel = getattr(o2, "delivery_receipt_pdf_path", None) if o2 else None
+    pdf_abs = _resolve_upload_path_stored(pdf_rel) if pdf_rel else None
+    if pdf_abs and os.path.isfile(pdf_abs):
+        try:
+            send_wa_document_safe(
+                c.phone,
+                pdf_abs,
+                filename=os.path.basename(pdf_abs),
+                caption="Order receipt (PDF)",
+            )
+        except Exception as ex:
+            print("WhatsApp receipt PDF (ignored):", ex, file=sys.stderr)
 
 
 def _co_whatsapp_after_status_change(
@@ -3910,17 +4038,7 @@ def _co_whatsapp_after_status_change(
     if p1 == "shipped":
         img = _resolve_upload_path_stored(getattr(o, "receipt_image_path", None))
         try:
-            send_wa_template_safe(
-                "delivery_update",
-                c.phone,
-                {
-                    "name": (c.name or "Customer").strip() or "Customer",
-                    "receipt": (getattr(o, "delivery_receipt_number", None) or "—"),
-                    "contact": (getattr(o, "delivery_contact", None) or "—"),
-                    "notes": (getattr(o, "delivery_notes", None) or getattr(o, "notes", None) or "—"),
-                },
-                header_image_path=img,
-            )
+            _notify_customer_order_shipped(int(o.id), header_image_abs=img)
         except Exception as ex:
             print("WhatsApp shipped update (ignored):", ex, file=sys.stderr)
 
@@ -3966,6 +4084,8 @@ def update_customer_order(
         else getattr(o, "receipt_image_path", None)
     )
     nst = (st or "placed").strip()
+    pl = (prev or "").strip().lower()
+    nl = (nst or "").strip().lower()
     with _connect() as conn:
         conn.execute(
             """
@@ -3990,6 +4110,11 @@ def update_customer_order(
                 oid,
             ),
         )
+        if pl == "shipped" and nl != "shipped":
+            conn.execute(
+                "UPDATE customer_orders SET whatsapp_ship_notice_sent = 0 WHERE id = ?",
+                (oid,),
+            )
         conn.commit()
     o2 = get_customer_order(oid) or o
     _co_whatsapp_after_status_change(o2, prev, nst)
@@ -4035,6 +4160,67 @@ def get_customer_order_billing_by_order_id(
             (customer_order_id,),
         ).fetchone()
     return CustomerOrderBilling(**dict(r)) if r else None
+
+
+def send_customer_order_payment_reminder_wa(billing_id: int) -> dict[str, Any]:
+    """Send WhatsApp `payment_reminder_3` for an existing customer-order billing row."""
+    init_db()
+    b = get_customer_order_billing(int(billing_id))
+    if not b:
+        return {"ok": False, "error": "billing not found"}
+    if (os.environ.get("WHATSAPP_DISABLE") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        return {"ok": False, "error": "WHATSAPP_DISABLE"}
+    co = get_customer_order(int(b.customer_order_id))
+    if not co:
+        return {"ok": False, "error": "order not found"}
+    if (co.status or "").strip().lower() != "delivered":
+        return {
+            "ok": False,
+            "error": "Set order status to **Delivered** before sending a payment reminder.",
+        }
+    cust = get_customer(int(b.customer_id))
+    if not cust or not (cust.phone and str(cust.phone).strip()):
+        return {"ok": False, "error": "customer phone missing"}
+    due = float(b.gst_grand_total or 0.0)
+    if due <= 0.0001:
+        due = float(b.raw_line_total or 0.0)
+    amt_str = f"{due:,.0f}"
+    sku = (b.snap_item_sku or "").strip() or "—"
+    od = (co.created_at or "")[:10] or "—"
+    try:
+        from whatsapp_meta import send_wa_template
+
+        r = send_wa_template(
+            "payment_reminder",
+            cust.phone,
+            {
+                "name": (cust.name or "Customer").strip() or "Customer",
+                "order_id": str(co.id),
+                "amount_due": amt_str,
+                "quantity": f"{co.quantity:g}",
+                "item_id": sku[:200],
+                "order_date": od,
+            },
+        )
+    except Exception as ex:
+        return {"ok": False, "error": str(ex)}
+    if r.get("ok") is True:
+        with _connect() as conn:
+            conn.execute(
+                """
+                UPDATE customer_order_billings SET
+                    payment_reminder_wa_sent_at = datetime('now'),
+                    updated_at = datetime('now')
+                WHERE id = ?
+                """,
+                (int(billing_id),),
+            )
+            conn.commit()
+    return r
 
 
 def list_customer_order_billings() -> List[CustomerOrderBilling]:

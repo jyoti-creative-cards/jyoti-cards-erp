@@ -16,6 +16,20 @@ from stock_lookup import image_abs_path
 
 st.set_page_config(page_title="Customer portal", layout="wide")
 
+
+def _portal_public_url() -> str:
+    try:
+        return str(
+            st.secrets.get(
+                "CUSTOMER_PORTAL_PUBLIC_URL", "https://jyoti-cards.streamlit.app"
+            )
+        ).strip()
+    except Exception:
+        return os.environ.get(
+            "CUSTOMER_PORTAL_PUBLIC_URL", "https://jyoti-cards.streamlit.app"
+        ).strip()
+
+
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 if "customer_name" not in st.session_state:
@@ -44,6 +58,8 @@ if not st.session_state.logged_in:
     _, c, _ = st.columns([1, 1.15, 1])
     with c:
         st.markdown("## Customer ordering")
+        pu = _portal_public_url()
+        st.markdown(f"[Open customer portal]({pu}) — order status lives here after login.")
         st.caption("Sign in with the mobile number and password your shop set in the Dashboard.")
         with st.form("login_form"):
             phone = st.text_input("Mobile number", placeholder="10-digit mobile")

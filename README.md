@@ -27,7 +27,7 @@ Install deps:
 pip install -r requirements.txt
 ```
 
-Optional: copy `Dashboard/.env` from `.env.example` and fill WhatsApp/Meta keys.
+Optional: copy `Dashboard/.env` from `Dashboard/.env.example` and fill WhatsApp keys.
 
 ## Deploy on Streamlit Community Cloud
 

@@ -273,6 +273,8 @@ CREATE TABLE IF NOT EXISTS customer_orders (
     delivery_contact TEXT,
     delivery_notes TEXT,
     receipt_image_path TEXT,
+    delivery_receipt_pdf_path TEXT,
+    whatsapp_ship_notice_sent INTEGER DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT,
     FOREIGN KEY (customer_id) REFERENCES customers (id) ON DELETE CASCADE,
@@ -302,6 +304,8 @@ class CustomerOrder:
     delivery_contact: Optional[str]
     delivery_notes: Optional[str]
     receipt_image_path: Optional[str]
+    delivery_receipt_pdf_path: Optional[str]
+    whatsapp_ship_notice_sent: Optional[int]
     created_at: str
     updated_at: Optional[str]
 
@@ -389,6 +393,7 @@ class CustomerOrderBilling:
     snap_item_sku: Optional[str] = None
     snap_item_name: Optional[str] = None
     gl_journal_id: Optional[int] = None
+    payment_reminder_wa_sent_at: Optional[str] = None
 
 
 CREATE_AR_PAYMENTS_TABLE = """

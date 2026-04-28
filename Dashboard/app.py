@@ -112,6 +112,7 @@ from db import (
     product_image_rel_paths,
     product_on_hand,
     save_customer_order_receipt,
+    send_customer_order_payment_reminder_wa,
     save_product_uploads_streamlit,
     set_vendor_product_image_paths,
     sum_received_for_po,
@@ -4074,7 +4075,26 @@ elif dmode == "cust_order":
             if bill:
                 st.divider()
                 _render_co_billing_tabs_and_pdf(bill, bill.id)
-            elif (o.status or "").strip().lower() == "shipped" and not bill:
+                if (o.status or "").strip().lower() == "delivered":
+                    st.markdown("##### Payment reminder (WhatsApp)")
+                    ts = getattr(bill, "payment_reminder_wa_sent_at", None)
+                    if ts:
+                        st.caption(f"Last sent: **{ts}**")
+                    if st.button(
+                        "Send payment reminder to customer",
+                        key=f"cob_paywa_{rid}",
+                        type="primary",
+                    ):
+                        try:
+                            r = send_customer_order_payment_reminder_wa(int(bill.id))
+                            if r.get("ok"):
+                                st.success("Payment reminder sent.")
+                                st.rerun()
+                            else:
+                                st.error(str(r.get("error") or r)[:700])
+                        except Exception as e:
+                            st.error(str(e)[:500])
+            elif (o.status or "").strip().lower() in ("shipped", "delivered") and not bill:
                 st.divider()
                 if st.button("Create sales bill record", key=f"mkcob_{rid}"):
                     try:

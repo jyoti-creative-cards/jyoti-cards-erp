@@ -105,6 +105,146 @@ def _upload_image_media(phone_id: str, access_token: str, api_version: str, file
     return str(mid) if mid else None
 
 
+def _upload_document_media(
+    phone_id: str, access_token: str, api_version: str, file_path: str
+) -> Optional[str]:
+    """Upload PDF (or other doc) for `document`-type outbound messages."""
+    if not file_path or not os.path.isfile(file_path):
+        return None
+    url = f"https://graph.facebook.com/{api_version}/{phone_id}/media"
+    ctype = mimetypes.guess_type(file_path)[0] or "application/pdf"
+    with open(file_path, "rb") as f:
+        data = f.read()
+    name = os.path.basename(file_path) or "document.pdf"
+    boundary = f"----{uuid.uuid4().hex}"
+    sep = f"--{boundary}\r\n".encode("ascii")
+    body = (
+        sep
+        + b'Content-Disposition: form-data; name="messaging_product"\r\n\r\n'
+        + b"whatsapp\r\n"
+        + sep
+        + b'Content-Disposition: form-data; name="type"\r\n\r\n'
+        + b"document\r\n"
+        + sep
+        + b'Content-Disposition: form-data; name="file"; filename="'
+        + name.encode("utf-8", errors="replace")
+        + b'"\r\nContent-Type: '
+        + ctype.encode("utf-8")
+        + b"\r\n\r\n"
+        + data
+        + f"\r\n--{boundary}--\r\n".encode("ascii")
+    )
+    req = urllib.request.Request(
+        url,
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=90) as r:
+            o = json.loads((r.read() or b"{}").decode() or "{}")
+    except (urllib.error.HTTPError, OSError) as e:
+        print("WhatsApp document upload failed:", e, file=sys.stderr)
+        if isinstance(e, urllib.error.HTTPError) and e.fp is not None:
+            try:
+                print(e.read().decode(), file=sys.stderr)
+            except OSError:
+                pass
+        return None
+    mid = o.get("id") if isinstance(o, dict) else None
+    return str(mid) if mid else None
+
+
+def send_wa_document(
+    recipient_phone: str,
+    file_path: str,
+    *,
+    filename: Optional[str] = None,
+    caption: Optional[str] = None,
+) -> dict[str, Any]:
+    """Send a document message (non-template). PDF receipt after shipped template."""
+    _load_env()
+    to = normalize_whatsapp_e164(recipient_phone)
+    if not to:
+        return {"ok": False, "error": "invalid phone"}
+    if not file_path or not os.path.isfile(file_path):
+        return {"ok": False, "error": "file not found"}
+    ver = (os.environ.get("WHATSAPP_API_VERSION") or "v21.0").strip()
+    pn = (os.environ.get("WHATSAPP_PHONE_NUMBER_ID") or "").strip()
+    tok = (os.environ.get("WHATSAPP_ACCESS_TOKEN") or "").strip()
+    if not tok or not pn:
+        return {"ok": False, "error": "missing WHATSAPP_ACCESS_TOKEN or WHATSAPP_PHONE_NUMBER_ID"}
+    mid = _upload_document_media(pn, tok, ver, file_path)
+    if not mid:
+        return {"ok": False, "error": "document upload failed"}
+    fn = (filename or os.path.basename(file_path)).strip() or "document.pdf"
+    doc_payload: dict[str, Any] = {"id": mid, "filename": fn[:240]}
+    if caption and caption.strip():
+        doc_payload["caption"] = caption.strip()[:1024]
+    payload: dict[str, Any] = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": to,
+        "type": "document",
+        "document": doc_payload,
+    }
+    url = f"https://graph.facebook.com/{ver}/{pn}/messages"
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {tok}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return {"ok": True, "response": json.loads(r.read().decode() or "{}")}
+    except urllib.error.HTTPError as e:
+        return {"ok": False, "http": e.code, "error": (e.read().decode() if e.fp else "") or str(e)}
+
+
+def send_wa_document_safe(
+    recipient_phone: str,
+    file_path: str,
+    *,
+    filename: Optional[str] = None,
+    caption: Optional[str] = None,
+) -> None:
+    r = send_wa_document(
+        recipient_phone, file_path, filename=filename, caption=caption
+    )
+    if r.get("ok") is not True:
+        print("WhatsApp document send failed:", r, file=sys.stderr)
+
+
+def _template_url_button_components(tdef: dict[str, Any]) -> list[dict[str, Any]]:
+    """Optional URL buttons (suffix appended to URL configured in Meta). Omit if skip_if_empty."""
+    out: list[dict[str, Any]] = []
+    for b in tdef.get("buttons") or ():
+        sub = (b.get("sub_type") or "url").lower()
+        if sub != "url":
+            continue
+        idx = str(int(b.get("index", 0)))
+        env_key = (b.get("suffix_env") or "CUSTOMER_PORTAL_URL_BUTTON_SUFFIX").strip()
+        suf = (os.environ.get(env_key) or "").strip()
+        if b.get("skip_if_empty", False) and not suf:
+            continue
+        out.append(
+            {
+                "type": "button",
+                "sub_type": "url",
+                "index": idx,
+                "parameters": [{"type": "text", "text": suf[:1024]}],
+            }
+        )
+    return out
+
+
 def _body_parameters(
     tdef: dict[str, Any], body: dict[str, str]
 ) -> list[dict[str, str]]:
@@ -186,6 +326,8 @@ def send_wa_template(
             "error": "this template needs a header image (or set header_optional in template SPEC)",
         }
     comp.append({"type": "body", "parameters": params})
+    for bc in _template_url_button_components(tdef):
+        comp.append(bc)
     payload: dict[str, Any] = {
         "messaging_product": "whatsapp",
         "recipient_type": "individual",

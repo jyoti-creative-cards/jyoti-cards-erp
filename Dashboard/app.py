@@ -14,6 +14,10 @@ from typing import Any, Optional
 
 import streamlit as st
 
+from streamlit_db_env import apply_streamlit_db_env
+
+apply_streamlit_db_env()
+
 import sqlite3
 from datetime import date, timedelta
 

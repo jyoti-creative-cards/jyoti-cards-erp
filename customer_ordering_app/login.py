@@ -22,9 +22,10 @@ def try_login(phone: str, password: str) -> tuple[bool, str, int | None]:
     if not (password or "").strip():
         return False, "Enter your password", None
     with db._connect() as conn:
-        for row in conn.execute(
+        rows = conn.execute(
             "SELECT id, phone, password_hash, name FROM customers"
-        ).fetchall():
+        ).fetchall()
+        for row in rows:
             if _norm10(row["phone"]) == p and db.verify_password(
                 row["password_hash"], password
             ):
@@ -33,4 +34,12 @@ def try_login(phone: str, password: str) -> tuple[bool, str, int | None]:
                     (row["name"] or "").strip() or "Customer",
                     int(row["id"]),
                 )
-    return False, "Wrong mobile or password", None
+        n_customers = len(rows)
+    msg = "Wrong mobile or password"
+    if n_customers == 0:
+        msg += (
+            ". This app has no customer rows yet. "
+            "On Streamlit Cloud the portal app uses its **own** database file unless both apps share "
+            "the same path via secrets — see README (Customer portal vs ERP)."
+        )
+    return False, msg, None

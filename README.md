@@ -51,6 +51,22 @@ Create **another** Streamlit Cloud deployment from the **same repo** with main f
 
 Both apps resolve `Dashboard/db.py` via paths inside `dash_db.py`; repository layout must stay as committed.
 
+### Customer portal login vs ERP (important)
+
+Locally, ERP and portal both use **`Dashboard/business.db`** on disk — customers you add in the ERP appear in the portal.
+
+On **Streamlit Community Cloud**, each deployed app has its **own isolated filesystem**. The ERP app’s SQLite file is **not** the same file as the portal app’s. So customers created in the hosted ERP **will not exist** in the hosted portal’s database — login fails even with the correct password.
+
+**What to do:**
+
+| Situation | Approach |
+|-----------|----------|
+| Local dev | Run both apps from this repo; they share `Dashboard/business.db`. |
+| Two Cloud apps | Use a **hosted database** both apps connect to (Postgres, Turso/libSQL, etc.) and point them at it — SQLite-on-disk alone cannot be shared across two Cloud runners. |
+| Single Cloud app only | Add customer-facing UI as another Streamlit **page** under `Dashboard/pages/` (same process → one DB) — optional future layout. |
+
+Optional secrets (applied **before** `db.py` loads): `DASHBOARD_E2E_DB` or `BUSINESS_DB_PATH` — absolute path to a SQLite file **when** that path is visible to the app (e.g. attached volume or local dev). Same key should be set in **both** apps if they ever share a mounted volume.
+
 ## Security
 
 Never commit `.env`, personal tokens, or production `business.db`.

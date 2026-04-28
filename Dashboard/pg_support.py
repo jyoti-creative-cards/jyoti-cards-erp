@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import socket
 from typing import Any, Optional
 from urllib.parse import urlparse
 
@@ -40,14 +41,35 @@ def _remote_supabase_needs_ssl(uri: str) -> bool:
     return host not in ("localhost", "127.0.0.1", "::1")
 
 
+def _ipv4_hostaddr(hostname: Optional[str], port: int) -> Optional[str]:
+    """Streamlit Cloud often breaks IPv6 routes; libpq can connect via IPv4 using ``hostaddr``."""
+    if not hostname or hostname.lower() in ("localhost", "127.0.0.1", "::1"):
+        return None
+    try:
+        infos = socket.getaddrinfo(hostname, port, socket.AF_INET, socket.SOCK_STREAM)
+        if infos:
+            return str(infos[0][4][0])
+    except OSError:
+        pass
+    return None
+
+
 def pg_connect():
     """Raw ``psycopg`` connection — same URL + TLS rules everywhere (including ``init_postgres_schema``)."""
     if psycopg is None:
         raise RuntimeError("Install psycopg: pip install 'psycopg[binary]'")
     uri = database_url()
-    kw: dict[str, str] = {}
+    kw: dict[str, Any] = {}
     if _remote_supabase_needs_ssl(uri):
         kw["sslmode"] = "require"
+    try:
+        p = urlparse(uri)
+        h, pt = p.hostname, p.port or 5432
+        ha = _ipv4_hostaddr(h, pt)
+        if ha:
+            kw["hostaddr"] = ha
+    except Exception:
+        pass
     return psycopg.connect(uri, autocommit=False, **kw)
 
 

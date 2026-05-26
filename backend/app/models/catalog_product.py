@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from typing import Optional
 
 from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, Numeric, String, UniqueConstraint, func, true as sql_true
 from sqlalchemy.orm import Mapped, mapped_column
@@ -26,6 +27,8 @@ class CatalogProduct(Base):
     name: Mapped[str] = mapped_column(String(500), nullable=False)
     vendor_product_id: Mapped[str] = mapped_column(String(255), nullable=False)
     category: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    series: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
+    year_group: Mapped[Optional[str]] = mapped_column(String(30), nullable=True, index=True)
     unit: Mapped[str] = mapped_column(String(50), nullable=False, server_default="pcs")
 
     buying_price: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False, server_default="0")

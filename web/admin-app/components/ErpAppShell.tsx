@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 
-export type ErpMainTab = "people" | "catalog" | "stock" | "orders" | "finance" | "create";
+export type ErpMainTab = "people" | "catalog" | "stock" | "orders" | "finance" | "create" | "admin";
 
 type NavEntry = { id: ErpMainTab; label: string; icon: string };
 
@@ -14,6 +14,7 @@ const NAV: NavEntry[] = [
   { id: "orders",  label: "Orders",  icon: "📋" },
   { id: "finance", label: "Finance", icon: "💰" },
   { id: "create",  label: "Create",  icon: "➕" },
+  { id: "admin",   label: "Admin",   icon: "⚙️" },
 ];
 
 const TITLE_MAP: Record<ErpMainTab, string> = {
@@ -23,6 +24,7 @@ const TITLE_MAP: Record<ErpMainTab, string> = {
   orders:  "Orders",
   finance: "Finance",
   create:  "Create",
+  admin:   "Admin",
 };
 
 type Props = {
@@ -67,8 +69,9 @@ export function ErpAppShell({ mainTab, setMainTab, adminKey, setAdminKey, apiBas
           <nav className="hidden gap-1 md:flex">
             {NAV.map((item) => {
               const active = mainTab === item.id;
-              const isCreate = item.id === "create";
-              return (
+                  const isCreate = item.id === "create";
+                  const isAdmin = item.id === "admin";
+                  return (
                 <button
                   key={item.id}
                   type="button"
@@ -78,9 +81,13 @@ export function ErpAppShell({ mainTab, setMainTab, adminKey, setAdminKey, apiBas
                       ? active
                         ? "border-emerald-400 text-emerald-300"
                         : "border-transparent text-emerald-400 hover:border-emerald-500 hover:text-emerald-300"
-                      : active
-                        ? "border-blue-400 text-white"
-                        : "border-transparent text-slate-400 hover:border-slate-500 hover:text-slate-200"
+                      : isAdmin
+                        ? active
+                          ? "border-orange-400 text-orange-300"
+                          : "border-transparent text-orange-400 hover:border-orange-500 hover:text-orange-300"
+                        : active
+                          ? "border-blue-400 text-white"
+                          : "border-transparent text-slate-400 hover:border-slate-500 hover:text-slate-200"
                   }`}
                 >
                   <span className="text-base leading-none">{item.icon}</span>

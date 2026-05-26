@@ -92,6 +92,9 @@ def create_customer(
     sec_norm = normalize_whatsapp_e164(sec) if sec else None
     if sec and not sec_norm:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="invalid secondary phone")
+    # Auto-generate password from last 4 digits of phone if not provided
+    import random, string as _str
+    plain = (body.password or "").strip() or phone[-4:] or "".join(random.choices(_str.digits, k=4))
 
     existing = db.query(Customer).filter(Customer.phone == phone).one_or_none()
     if existing is not None and legacy_active_value(existing.is_active):
@@ -103,7 +106,7 @@ def create_customer(
     if existing is not None:
         # Same phone on a soft-deleted row: recycle it so UNIQUE(phone) is not violated.
         existing.name = body.name.strip()
-        existing.password_hash = hash_password(body.password)
+        existing.password_hash = hash_password(plain)
         existing.company_name = body.company_name.strip() if body.company_name else None
         existing.address = body.address.strip() if body.address else None
         existing.secondary_phone = sec_norm
@@ -123,14 +126,14 @@ def create_customer(
             _send_wa_safe,
             existing.name,
             existing.phone,
-            body.password,
+            plain,
         )
         return existing
 
     row = Customer(
         name=body.name.strip(),
         phone=phone,
-        password_hash=hash_password(body.password),
+        password_hash=hash_password(plain),
         company_name=(body.company_name.strip() if body.company_name else None),
         alias=(body.alias.strip() if body.alias else None),
         address=(body.address.strip() if body.address else None),
@@ -156,7 +159,7 @@ def create_customer(
         _send_wa_safe,
         row.name,
         row.phone,
-        body.password,
+        plain,
     )
     return _to_public(row)
 

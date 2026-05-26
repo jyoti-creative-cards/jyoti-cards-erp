@@ -169,7 +169,7 @@ function CurrentStockTab({
   }
 
   async function saveThreshold(catalogProductId: number, val: number) {
-    const r = await fetchApi(apiUrl(`inventory/${catalogProductId}/threshold`), {
+    const r = await fetchApi(apiUrl(`inventory/balances/${catalogProductId}`), {
       method: "PATCH", headers: headers(),
       body: JSON.stringify({ low_stock_threshold: val }),
     });

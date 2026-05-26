@@ -12,9 +12,12 @@ class CatalogProductCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=500)
     vendor_product_id: str = Field(..., min_length=1, max_length=255)
     category: str = Field(..., min_length=1, max_length=120)
+    series: Optional[str] = Field(None, max_length=120)
+    year_group: Optional[str] = Field(None, max_length=30)
     unit: str = Field(default="pcs", max_length=50)
     buying_price: float = Field(..., ge=0, description="Our cost from vendor")
     selling_price: float = Field(..., ge=0, description="Our sell price")
+    addon_id: Optional[int] = Field(None, description="Optional add-on product to link at creation")
 
 
 class CatalogProductUpdate(BaseModel):
@@ -23,9 +26,12 @@ class CatalogProductUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=500)
     vendor_product_id: Optional[str] = Field(None, min_length=1, max_length=255)
     category: Optional[str] = Field(None, min_length=1, max_length=120)
+    series: Optional[str] = Field(None, max_length=120)
+    year_group: Optional[str] = Field(None, max_length=30)
     unit: Optional[str] = Field(None, max_length=50)
     buying_price: Optional[float] = Field(None, ge=0)
     selling_price: Optional[float] = Field(None, ge=0)
+    addon_id: Optional[int] = None
 
 
 class CatalogProductPublic(BaseModel):
@@ -35,6 +41,8 @@ class CatalogProductPublic(BaseModel):
     name: str
     vendor_product_id: str
     category: str
+    series: Optional[str] = None
+    year_group: Optional[str] = None
     unit: str = "pcs"
     buying_price: float
     selling_price: float

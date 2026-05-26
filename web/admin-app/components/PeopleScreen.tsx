@@ -80,6 +80,24 @@ function CustomersTab({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editing, setEditing] = useState<CustomerPublic | null>(null); // null = create mode
   const [saving, setSaving] = useState(false);
+  // Controlled city/route for auto-select
+  const [selectedCityId, setSelectedCityId] = useState<string>("");
+  const [selectedRouteId, setSelectedRouteId] = useState<string>("");
+
+  function openDrawer(c: CustomerPublic | null) {
+    setEditing(c);
+    setSelectedCityId(c?.city_id ? String(c.city_id) : "");
+    setSelectedRouteId(c?.route_id ? String(c.route_id) : "");
+    setDrawerOpen(true);
+  }
+
+  function onCityChange(cityId: string) {
+    setSelectedCityId(cityId);
+    if (cityId) {
+      const city = cities.find((c) => String(c.id) === cityId);
+      if (city?.route_id) setSelectedRouteId(String(city.route_id));
+    }
+  }
 
   const showToast = (msg: string, ok: boolean) => {
     setToast({ msg, ok });
@@ -122,8 +140,8 @@ function CustomersTab({
       address: emptyToNull(fd.get("address")),
       secondary_phone: emptyToNull(fd.get("secondary_phone")),
       city: emptyToNull(fd.get("city")),
-      city_id: emptyToNull(fd.get("city_id")) ? Number(fd.get("city_id")) : null,
-      route_id: emptyToNull(fd.get("route_id")) ? Number(fd.get("route_id")) : null,
+      city_id: selectedCityId ? Number(selectedCityId) : null,
+      route_id: selectedRouteId ? Number(selectedRouteId) : null,
       credit_limit: emptyToNull(fd.get("credit_limit")),
       credit_override: fd.get("credit_override") === "on",
     };
@@ -131,7 +149,7 @@ function CustomersTab({
     if (pw && String(pw).trim()) body.password = String(pw).trim();
 
     const url = editing ? apiUrl(`customers/${editing.id}`) : apiUrl("customers");
-    const method = editing ? "PUT" : "POST";
+    const method = editing ? "PATCH" : "POST";
     const r = await fetchApi(url, { method, headers: headers(), body: JSON.stringify(body) });
     const data = await r.json().catch(() => ({}));
     setSaving(false);
@@ -179,7 +197,7 @@ function CustomersTab({
         <button type="button" onClick={() => void load()} className={BTN_SECONDARY}>
           ↻ Refresh
         </button>
-        <button type="button" onClick={() => { setEditing(null); setDrawerOpen(true); }} className={BTN_PRIMARY}>
+        <button type="button" onClick={() => openDrawer(null)} className={BTN_PRIMARY}>
           + New customer
         </button>
       </div>
@@ -191,7 +209,7 @@ function CustomersTab({
         <div className="rounded-xl border-2 border-dashed border-slate-200 py-16 text-center text-slate-400">
           <div className="text-4xl">👥</div>
           <div className="mt-2 font-medium">No customers yet</div>
-          <button type="button" onClick={() => { setEditing(null); setDrawerOpen(true); }} className="mt-4 text-sm text-blue-600 underline">
+          <button type="button" onClick={() => openDrawer(null)} className="mt-4 text-sm text-blue-600 underline">
             Add first customer
           </button>
         </div>
@@ -213,7 +231,7 @@ function CustomersTab({
                 <tr
                   key={c.id}
                   className="cursor-pointer transition hover:bg-blue-50/40"
-                  onClick={() => { setEditing(c); setDrawerOpen(true); }}
+                  onClick={() => { openDrawer(c); setDrawerOpen(true); }}
                 >
                   <td className="px-4 py-3 font-medium text-slate-900">
                     {c.name}
@@ -291,21 +309,21 @@ function CustomersTab({
             </div>
             <div>
               <label className={LABEL}>Route</label>
-              <select name="route_id" defaultValue={editing?.route_id ?? ""} className={INPUT}>
+              <select name="route_id" value={selectedRouteId} onChange={(e) => setSelectedRouteId(e.target.value)} className={INPUT}>
                 <option value="">— none —</option>
                 {routes.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
               </select>
             </div>
             <div>
               <label className={LABEL}>City</label>
-              <select name="city_id" defaultValue={editing?.city_id ?? ""} className={INPUT}>
+              <select name="city_id" value={selectedCityId} onChange={(e) => onCityChange(e.target.value)} className={INPUT}>
                 <option value="">— none —</option>
                 {cities.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </div>
             <div>
-              <label className={LABEL}>City (text)</label>
-              <input name="city" defaultValue={editing?.city ?? ""} placeholder="Free-text city" className={INPUT} />
+              <label className={LABEL}>City (free text, if not in list)</label>
+              <input name="city" defaultValue={editing?.city ?? ""} placeholder="e.g. Pune" className={INPUT} />
             </div>
             <div>
               <label className={LABEL}>Credit limit (₹)</label>

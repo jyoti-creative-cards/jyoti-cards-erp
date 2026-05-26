@@ -262,6 +262,12 @@ def _migrate_customer_order_notes_postgres() -> None:
         conn.execute(text(
             "ALTER TABLE portal_customer_orders ADD COLUMN IF NOT EXISTS receipt_note_no VARCHAR(100)"
         ))
+        conn.execute(text(
+            "ALTER TABLE portal_catalog_products ADD COLUMN IF NOT EXISTS series VARCHAR(120)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE portal_catalog_products ADD COLUMN IF NOT EXISTS year_group VARCHAR(30)"
+        ))
 
 
 def _migrate_soft_delete_columns_postgres() -> None:

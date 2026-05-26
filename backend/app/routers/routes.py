@@ -30,7 +30,7 @@ class RoutePublic(BaseModel):
     model_config = {"from_attributes": True}
 
 class CityIn(BaseModel):
-    name: str
+    name: Optional[str] = None
     route_id: Optional[int] = None
 
 class CityPublic(BaseModel):
@@ -86,6 +86,8 @@ def list_cities(route_id: Optional[int] = None, db: Session = Depends(get_db)):
 
 @city_router.post("", response_model=CityPublic, status_code=201, dependencies=[Depends(require_admin)])
 def create_city(body: CityIn, db: Session = Depends(get_db)):
+    if not body.name or not body.name.strip():
+        raise HTTPException(400, "name required")
     row = City(name=body.name.strip(), route_id=body.route_id)
     db.add(row); db.commit(); db.refresh(row)
     return row
@@ -96,7 +98,8 @@ def update_city(city_id: int, body: CityIn, db: Session = Depends(get_db)):
     row = db.get(City, city_id)
     if not row:
         raise HTTPException(404, "city not found")
-    row.name = body.name.strip()
+    if body.name is not None:
+        row.name = body.name.strip()
     row.route_id = body.route_id
     db.commit(); db.refresh(row)
     return row

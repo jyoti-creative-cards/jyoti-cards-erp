@@ -8,6 +8,7 @@ import { StockScreen } from "@/components/StockScreen";
 import { OrdersScreen } from "@/components/OrdersScreen";
 import { FinanceScreen } from "@/components/FinanceScreen";
 import { CreateScreen } from "@/components/CreateScreen";
+import { AdminScreen } from "@/components/AdminScreen";
 import { getApiBase } from "@/lib/api";
 
 const KEY_STORE = "admin_x_key";
@@ -50,6 +51,7 @@ export default function OperationsAdminPage() {
           {mainTab === "orders"  && <OrdersScreen  adminKey={adminKey} />}
           {mainTab === "finance" && <FinanceScreen adminKey={adminKey} />}
           {mainTab === "create"  && <CreateScreen  adminKey={adminKey} />}
+          {mainTab === "admin"   && <AdminScreen   adminKey={adminKey} />}
         </>
       )}
     </ErpAppShell>

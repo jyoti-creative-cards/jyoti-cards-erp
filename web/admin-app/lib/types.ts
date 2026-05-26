@@ -70,6 +70,8 @@ export interface CatalogProductPublic {
   name: string;
   vendor_product_id: string;
   category: string;
+  series?: string | null;
+  year_group?: string | null;
   unit: string;
   buying_price: number;
   selling_price: number;

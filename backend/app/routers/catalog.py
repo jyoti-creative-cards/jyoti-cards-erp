@@ -64,6 +64,9 @@ def _to_public(row: CatalogProduct) -> CatalogProductPublic:
         name=row.name,
         vendor_product_id=row.vendor_product_id,
         category=row.category,
+        series=row.series,
+        year_group=row.year_group,
+        unit=row.unit if row.unit else "pcs",
         buying_price=float(bp) if bp is not None else 0.0,
         selling_price=float(sp) if sp is not None else 0.0,
         image_keys=keys_str,
@@ -76,6 +79,20 @@ def _to_public(row: CatalogProduct) -> CatalogProductPublic:
 @router.get("/categories", dependencies=[Depends(require_admin)])
 def categories(db: Session = Depends(get_db)) -> dict:
     return {"categories": _merged_categories(db)}
+
+
+@router.get("/series", dependencies=[Depends(require_admin)])
+def list_series(db: Session = Depends(get_db)) -> dict:
+    rows = db.query(CatalogProduct.series).distinct().filter(CatalogProduct.series.isnot(None)).all()
+    vals = sorted({r[0].strip() for r in rows if r[0] and r[0].strip()})
+    return {"series": vals}
+
+
+@router.get("/year-groups", dependencies=[Depends(require_admin)])
+def list_year_groups(db: Session = Depends(get_db)) -> dict:
+    rows = db.query(CatalogProduct.year_group).distinct().filter(CatalogProduct.year_group.isnot(None)).all()
+    vals = sorted({r[0].strip() for r in rows if r[0] and r[0].strip()}, reverse=True)
+    return {"year_groups": vals}
 
 
 @router.post("/categories", dependencies=[Depends(require_admin)])
@@ -93,6 +110,25 @@ def add_category(body: CategoryLabelCreate, db: Session = Depends(get_db)) -> di
         db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, detail="category already exists") from None
     return {"ok": True, "name": n}
+
+
+@router.delete("/categories/{name}", dependencies=[Depends(require_admin)])
+def delete_category(name: str, db: Session = Depends(get_db)) -> dict:
+    row = db.query(CatalogCategoryLabel).filter(CatalogCategoryLabel.name == name).first()
+    if row:
+        db.delete(row)
+        db.commit()
+    return {"ok": True}
+
+
+@router.post("/series", dependencies=[Depends(require_admin)])
+def add_series(body: CategoryLabelCreate) -> dict:
+    return {"ok": True, "name": body.name.strip()}
+
+
+@router.delete("/series/{name}", dependencies=[Depends(require_admin)])
+def delete_series(name: str) -> dict:
+    return {"ok": True}
 
 
 def _list_products_impl(
@@ -157,6 +193,9 @@ def create_product(body: CatalogProductCreate, db: Session = Depends(get_db)) ->
         name=body.name.strip(),
         vendor_product_id=body.vendor_product_id.strip(),
         category=cat,
+        series=(body.series.strip() if body.series else None),
+        year_group=(body.year_group.strip() if body.year_group else None),
+        unit=(body.unit or "pcs"),
         buying_price=Decimal(str(body.buying_price)),
         selling_price=Decimal(str(body.selling_price)),
         image_keys=[],
@@ -178,6 +217,19 @@ def create_product(body: CatalogProductCreate, db: Session = Depends(get_db)) ->
         ) from None
     db.refresh(row)
     _ensure_category_label(db, cat)
+    # Link addon if provided
+    if body.addon_id:
+        from app.models.addon_product import AddonProduct, CatalogProductAddon
+        if db.get(AddonProduct, body.addon_id):
+            existing_link = db.query(CatalogProductAddon).filter_by(
+                catalog_product_id=row.id, addon_product_id=body.addon_id
+            ).first()
+            if not existing_link:
+                db.add(CatalogProductAddon(
+                    catalog_product_id=row.id,
+                    addon_product_id=body.addon_id,
+                    quantity_per_card=1,
+                ))
     try:
         db.commit()
     except IntegrityError:
@@ -231,11 +283,24 @@ def update_product(
         row.category = cat
         _ensure_category_label(db, cat)
 
+    if "series" in data:
+        v = data.pop("series")
+        row.series = str(v).strip() or None if v else None
+
+    if "year_group" in data:
+        v = data.pop("year_group")
+        row.year_group = str(v).strip() or None if v else None
+
+    if "unit" in data:
+        row.unit = str(data.pop("unit")).strip() or "pcs"
+
     if "buying_price" in data:
         row.buying_price = Decimal(str(data.pop("buying_price")))
 
     if "selling_price" in data:
         row.selling_price = Decimal(str(data.pop("selling_price")))
+
+    addon_id = data.pop("addon_id", None)
 
     if data:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"unknown fields: {list(data.keys())}")
@@ -254,6 +319,26 @@ def update_product(
             status.HTTP_409_CONFLICT,
             detail="vendor already has this vendor_product_id",
         ) from None
+    # Handle addon link update
+    if addon_id is not None:
+        from app.models.addon_product import AddonProduct, CatalogProductAddon
+        if addon_id == 0:
+            # Remove all existing links
+            db.query(CatalogProductAddon).filter_by(catalog_product_id=row.id).delete()
+        elif db.get(AddonProduct, addon_id):
+            existing_link = db.query(CatalogProductAddon).filter_by(
+                catalog_product_id=row.id, addon_product_id=addon_id
+            ).first()
+            if not existing_link:
+                db.add(CatalogProductAddon(
+                    catalog_product_id=row.id,
+                    addon_product_id=addon_id,
+                    quantity_per_card=1,
+                ))
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
     db.refresh(row)
     return _to_public(row)
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import type { Dispatch, SetStateAction } from "react";
 import { Drawer } from "@/components/Drawer";
 import { apiUrl, fetchApi, formatApiError } from "@/lib/api";
 import type { CatalogProductPublic, ProductPricePublic, ProductAlternativePublic, VendorPublic } from "@/lib/types";
@@ -33,12 +34,16 @@ export function CatalogScreen({ adminKey }: Props) {
   const [vendors, setVendors] = useState<VendorPublic[]>([]);
   // Unit management — stored locally, seeded from existing products
   const [units, setUnits] = useState<string[]>(["pcs", "bundle", "box", "dozen", "set", "pair", "roll", "sheet"]);
+  const [seriesList, setSeriesList] = useState<string[]>([]);
+  const [yearGroups, setYearGroups] = useState<string[]>([]);
 
   const loadProducts = useCallback(async () => {
     if (!adminKey.trim()) return;
-    const [pr, vr] = await Promise.all([
+    const [pr, vr, sr, yr] = await Promise.all([
       fetchApi(apiUrl("catalog"), { headers: headersAdmin() }),
       fetchApi(apiUrl("vendors"), { headers: headersAdmin() }),
+      fetchApi(apiUrl("catalog/series"), { headers: headersAdmin() }),
+      fetchApi(apiUrl("catalog/year-groups"), { headers: headersAdmin() }),
     ]);
     if (pr.ok) {
       const data: CatalogProductPublic[] = await pr.json();
@@ -48,6 +53,8 @@ export function CatalogScreen({ adminKey }: Props) {
       setUnits((prev) => [...new Set([...prev, ...existing])]);
     }
     if (vr.ok) setVendors(await vr.json());
+    if (sr.ok) { const d = await sr.json(); setSeriesList(d.series ?? []); }
+    if (yr.ok) { const d = await yr.json(); setYearGroups(d.year_groups ?? []); }
   }, [adminKey]);
 
   useEffect(() => { void loadProducts(); }, [loadProducts]);
@@ -88,6 +95,10 @@ export function CatalogScreen({ adminKey }: Props) {
           categories={categories}
           units={units}
           setUnits={setUnits}
+          seriesList={seriesList}
+          setSeriesList={setSeriesList}
+          yearGroups={yearGroups}
+          setYearGroups={setYearGroups}
           headers={headers}
           headersAdmin={headersAdmin}
           adminKey={adminKey}
@@ -113,6 +124,10 @@ function ProductsTab({
   categories,
   units,
   setUnits,
+  seriesList,
+  setSeriesList,
+  yearGroups,
+  setYearGroups,
   headers,
   headersAdmin,
   adminKey,
@@ -123,7 +138,11 @@ function ProductsTab({
   vendorName: (id: number) => string;
   categories: string[];
   units: string[];
-  setUnits: React.Dispatch<React.SetStateAction<string[]>>;
+  setUnits: Dispatch<SetStateAction<string[]>>;
+  seriesList: string[];
+  setSeriesList: Dispatch<SetStateAction<string[]>>;
+  yearGroups: string[];
+  setYearGroups: Dispatch<SetStateAction<string[]>>;
   headers: () => Record<string, string>;
   headersAdmin: () => Record<string, string>;
   adminKey: string;
@@ -139,6 +158,24 @@ function ProductsTab({
   const [imgMsg, setImgMsg] = useState("");
   // New unit input
   const [newUnit, setNewUnit] = useState("");
+  // Addon state
+  const [addonId, setAddonId] = useState<string>("");
+  const [addons, setAddons] = useState<{ id: number; name: string }[]>([]);
+
+  useEffect(() => {
+    if (!adminKey.trim()) return;
+    fetchApi(apiUrl("addons"), { headers: headersAdmin() })
+      .then((r) => r.ok ? r.json() : [])
+      .then((data: { id: number; name: string }[]) => setAddons(data))
+      .catch(() => {/* ignore */});
+  }, [adminKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function openProduct(p: CatalogProductPublic | null) {
+    setEditing(p);
+    setImgMsg("");
+    setAddonId("");
+    setDrawerOpen(true);
+  }
 
   const showToast = (msg: string, ok: boolean) => {
     setToast({ msg, ok });
@@ -159,7 +196,7 @@ function ProductsTab({
     setSaving(true);
     const form = e.currentTarget;
     const fd = new FormData(form);
-    const body = {
+    const body: Record<string, unknown> = {
       our_product_id: String(fd.get("our_product_id") ?? "").trim(),
       vendor_id: Number(fd.get("vendor_id")),
       name: String(fd.get("category") ?? "").trim(), // use category as name
@@ -168,7 +205,10 @@ function ProductsTab({
       unit: String(fd.get("unit") ?? "pcs").trim() || "pcs",
       buying_price: Number(fd.get("buying_price")),
       selling_price: Number(fd.get("selling_price")),
+      series: String(fd.get("series") ?? "").trim() || null,
+      year_group: String(fd.get("year_group") ?? "").trim() || null,
     };
+    if (addonId) body.addon_id = Number(addonId);
 
     if (editing) {
       // PATCH
@@ -257,7 +297,7 @@ function ProductsTab({
           {vendors.map((v) => <option key={v.id} value={v.id}>{v.company_name || v.person_name}</option>)}
         </select>
         <button type="button" onClick={onRefresh} className={BTN_SECONDARY}>↻ Refresh</button>
-        <button type="button" onClick={() => { setEditing(null); setImgMsg(""); setDrawerOpen(true); }} className={BTN_PRIMARY}>
+        <button type="button" onClick={() => openProduct(null)} className={BTN_PRIMARY}>
           + New product
         </button>
       </div>
@@ -274,7 +314,7 @@ function ProductsTab({
             <div
               key={p.id}
               className="cursor-pointer rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-blue-300 hover:shadow-md"
-              onClick={() => { setEditing(p); setImgMsg(""); setDrawerOpen(true); }}
+              onClick={() => openProduct(p)}
             >
               {/* Image */}
               <div className="mb-3 flex h-24 items-center justify-center overflow-hidden rounded-lg bg-slate-100">
@@ -383,6 +423,28 @@ function ProductsTab({
             <div>
               <label className={LABEL}>Selling price (₹) *</label>
               <input name="selling_price" type="number" required step="0.0001" min="0" defaultValue={editing?.selling_price ?? 0} className={INPUT} />
+            </div>
+            <div>
+              <label className={LABEL}>Series (optional)</label>
+              <input name="series" list="series-list" defaultValue={editing?.series ?? ""} placeholder="e.g. Ganesh, Laxmi…" className={INPUT} />
+              <datalist id="series-list">
+                {seriesList.map((s) => <option key={s} value={s} />)}
+              </datalist>
+            </div>
+            <div>
+              <label className={LABEL}>Year group (optional)</label>
+              <input name="year_group" list="yg-list" defaultValue={editing?.year_group ?? ""} placeholder={`e.g. ${new Date().getFullYear()}-${String(new Date().getFullYear()+1).slice(-2)}`} className={INPUT} />
+              <datalist id="yg-list">
+                {yearGroups.map((y) => <option key={y} value={y} />)}
+              </datalist>
+            </div>
+            <div className="col-span-2">
+              <label className={LABEL}>Link add-on (optional)</label>
+              <select value={addonId} onChange={(e) => setAddonId(e.target.value)} className={INPUT}>
+                <option value="">— no add-on —</option>
+                {addons.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+              <p className="mt-1 text-xs text-slate-400">Add-on sent with this product when customer orders it.</p>
             </div>
             {!editing && (
               <div className="col-span-2">

@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Customer login</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; max-width: 360px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.25rem; font-weight: 600; }
+    label { display: block; margin-top: 0.75rem; font-size: 0.875rem; }
+    input { width: 100%; padding: 0.5rem; margin-top: 0.25rem; border: 1px solid #ccc; border-radius: 4px; }
+    button { margin-top: 1rem; padding: 0.5rem 1rem; cursor: pointer; }
+    .err { color: #b00; font-size: 0.875rem; margin-top: 0.5rem; }
+    .ok { color: #060; font-size: 0.875rem; margin-top: 0.5rem; }
+    pre { font-size: 0.7rem; overflow: auto; background: #f5f5f5; padding: 0.5rem; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>Customer login</h1>
+  <form id="f">
+    <label>Phone <input type="text" name="phone" autocomplete="tel" required /></label>
+    <label>Password <input type="password" name="password" required /></label>
+    <button type="submit">Log in</button>
+  </form>
+  <p id="msg" class="err"></p>
+  <p id="ok" class="ok"></p>
+  <pre id="me" hidden></pre>
+  <p class="hint" style="font-size:0.75rem;color:#666">API: <span id="apiLabel"></span> · <a href="?api=http://127.0.0.1:8001">default</a></p>
+  <script>
+    const API_BASE = (() => {
+      const p = new URLSearchParams(location.search).get("api");
+      if (p) return p.replace(/\/$/, "");
+      return "http://127.0.0.1:8001";
+    })();
+    const api = API_BASE + "/api/v1";
+    document.getElementById("apiLabel").textContent = API_BASE;
+    const msg = document.getElementById("msg");
+    const ok = document.getElementById("ok");
+    const meEl = document.getElementById("me");
+    document.getElementById("f").onsubmit = async (e) => {
+      e.preventDefault();
+      msg.textContent = "";
+      ok.textContent = "";
+      meEl.hidden = true;
+      const fd = new FormData(e.target);
+      const r = await fetch(api + "/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phone: fd.get("phone"),
+          password: fd.get("password"),
+        }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        msg.textContent = data.detail || r.statusText || "Login failed";
+        return;
+      }
+      sessionStorage.setItem("token", data.access_token);
+      ok.textContent = "Logged in.";
+      const mr = await fetch(api + "/auth/me", {
+        headers: { Authorization: "Bearer " + data.access_token },
+      });
+      const profile = await mr.json().catch(() => ({}));
+      if (mr.ok) {
+        meEl.textContent = JSON.stringify(profile, null, 2);
+        meEl.hidden = false;
+      }
+    };
+  </script>
+</body>
+</html>

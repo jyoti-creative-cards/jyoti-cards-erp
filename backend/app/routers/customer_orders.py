@@ -20,6 +20,7 @@ from app.models.customer import Customer
 from app.models.customer_order import CustomerOrder
 from app.models.stock_balance import StockBalance
 from app.schemas.customer_order import (
+    CustomerOrderAdminCreate,
     CustomerOrderAdminPatch,
     CustomerOrderAdminPublic,
     CustomerOrderCreate,
@@ -157,6 +158,9 @@ def _order_to_public(row: CustomerOrder) -> CustomerOrderPublic:
         shipment_contact=row.shipment_contact,
         shipment_notes=row.shipment_notes,
         customer_confirmed_delivery_at=row.customer_confirmed_delivery_at,
+        invoice_date=row.invoice_date,
+        invoice_no=row.invoice_no,
+        receipt_note_no=row.receipt_note_no,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -207,6 +211,18 @@ def create_customer_order(
 ) -> CustomerOrderPublic:
     merged = _merge_lines(body.lines)
     items, total = _build_items_customer(db, merged)
+
+    # Credit limit check
+    if customer.credit_limit is not None and not customer.credit_override:
+        from app.models.ar_invoice import ARInvoice
+        from app.services.accounting import amount_paid_on_ar
+        open_invs = db.query(ARInvoice).filter(ARInvoice.customer_id == customer.id, ARInvoice.status != "paid").all()
+        outstanding = sum(max(Decimal(str(inv.amount)) - amount_paid_on_ar(db, inv), Decimal("0")) for inv in open_invs)
+        if (outstanding + total) > Decimal(str(customer.credit_limit)):
+            raise HTTPException(
+                status.HTTP_402_PAYMENT_REQUIRED,
+                detail=f"Credit limit exceeded. Limit: {customer.credit_limit}, Outstanding: {outstanding}, Order: {total}",
+            )
 
     # Deduct stock immediately on confirm
     for cid, qty in merged.items():
@@ -328,6 +344,58 @@ def confirm_delivery_received(
     return _order_to_public(row)
 
 
+@admin_customer_order_router.post("", response_model=CustomerOrderAdminPublic, status_code=201, dependencies=[Depends(require_admin)])
+def admin_create_customer_order(
+    body: CustomerOrderAdminCreate,
+    db: Session = Depends(get_db),
+) -> CustomerOrderAdminPublic:
+    """Admin creates a manual / walk-in order on behalf of a customer (no WA notification)."""
+    customer = db.get(Customer, body.customer_id)
+    if not customer:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="customer not found")
+
+    merged = _merge_lines(body.items)
+    items, total = _build_items_admin(db, merged)
+
+    # Credit check
+    if customer.credit_limit is not None and not customer.credit_override:
+        from app.models.ar_invoice import ARInvoice
+        from app.services.accounting import amount_paid_on_ar
+        open_invs = db.query(ARInvoice).filter(ARInvoice.customer_id == customer.id, ARInvoice.status != "paid").all()
+        outstanding = sum(max(Decimal(str(inv.amount)) - amount_paid_on_ar(db, inv), Decimal("0")) for inv in open_invs)
+        if (outstanding + total) > Decimal(str(customer.credit_limit)):
+            raise HTTPException(
+                status.HTTP_402_PAYMENT_REQUIRED,
+                detail=f"Credit limit exceeded. Limit: {customer.credit_limit}, Outstanding: {outstanding}, Order: {total}",
+            )
+
+    # Deduct stock
+    for cid, qty in merged.items():
+        bal = db.get(StockBalance, cid)
+        if bal is None or int(bal.quantity) < qty:
+            p = db.get(CatalogProduct, cid)
+            pid = p.our_product_id if p else str(cid)
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"Insufficient stock for {pid}")
+        bal.quantity = int(bal.quantity) - qty
+        db.add(bal)
+
+    row = CustomerOrder(
+        customer_id=body.customer_id,
+        status="confirmed",
+        items=items,
+        total_amount=total,
+        notes=(body.notes or "").strip() or None,
+        customer_notes=(body.customer_notes or "").strip() or None,
+        invoice_date=body.invoice_date,
+        invoice_no=(body.invoice_no or "").strip() or None,
+        receipt_note_no=(body.receipt_note_no or "").strip() or None,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _admin_public(db, row)
+
+
 @admin_customer_order_router.get("", response_model=List[CustomerOrderAdminPublic], dependencies=[Depends(require_admin)])
 def admin_list_customer_orders(
     db: Session = Depends(get_db),
@@ -391,11 +459,18 @@ def admin_patch_customer_order(
         row.items = items
         row.total_amount = total
 
+    if body.invoice_date is not None:
+        row.invoice_date = body.invoice_date
+    if body.invoice_no is not None:
+        row.invoice_no = (body.invoice_no or "").strip() or None
+    if body.receipt_note_no is not None:
+        row.receipt_note_no = (body.receipt_note_no or "").strip() or None
+
     if row.status == "shipped":
-        if not row.shipment_receipt or not row.shipment_contact:
+        if not row.shipment_receipt:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                detail="shipment_receipt and shipment_contact are required when status is shipped",
+                detail="shipment_receipt (AWB/receipt number) is required when status is shipped",
             )
 
     db.add(row)

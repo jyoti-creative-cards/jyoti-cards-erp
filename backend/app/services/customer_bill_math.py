@@ -1,0 +1,155 @@
+"""Inclusive selling prices → optional invoice discount → optional GST split per line."""
+from __future__ import annotations
+
+from decimal import Decimal, ROUND_HALF_UP
+from typing import Any, Dict, List
+
+
+def _d(x: object) -> Decimal:
+    try:
+        return Decimal(str(x).strip())
+    except Exception:
+        return Decimal("0")
+
+
+def _fmt2(d: Decimal) -> str:
+    return format(d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP), "f")
+
+
+def compute_bill_totals(
+    order_items: List[dict[str, Any]],
+    gst_enabled: bool,
+    gst_rate_percent: Decimal,
+    discount_percent: Decimal | None,
+    freight_charges: Decimal | None = None,
+    packaging_charges: Decimal | None = None,
+) -> Dict[str, Any]:
+    """
+    Order line unit_price is GST-inclusive.
+    Discount % applies to the invoice inclusive subtotal; allocated to lines by proportion.
+    GST split uses the same rate on each line's discounted inclusive amount.
+    """
+    raw_lines: List[Dict[str, Any]] = []
+    subtotal_inclusive = Decimal("0")
+
+    for row in order_items:
+        if not isinstance(row, dict):
+            continue
+        try:
+            qty = int(row.get("quantity") or 0)
+        except (TypeError, ValueError):
+            qty = 0
+        if qty < 1:
+            continue
+        sku = str(row.get("our_product_id") or "")
+        name = str(row.get("name") or "")
+        inc_unit = _d(row.get("unit_price"))
+        line_inc = (inc_unit * Decimal(qty)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        subtotal_inclusive += line_inc
+        raw_lines.append(
+            {
+                "our_product_id": sku,
+                "name": name,
+                "quantity": qty,
+                "inclusive_unit_price": inc_unit,
+                "line_inclusive_total": line_inc,
+            }
+        )
+
+    subtotal_inclusive = subtotal_inclusive.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    dp = discount_percent if discount_percent is not None else Decimal("0")
+    if dp < 0:
+        dp = Decimal("0")
+    if dp > Decimal("100"):
+        dp = Decimal("100")
+
+    discount_amount = (subtotal_inclusive * dp / Decimal("100")).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+    after_discount_inclusive = (subtotal_inclusive - discount_amount).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+
+    r = gst_rate_percent if gst_rate_percent > 0 else Decimal("0")
+    factor = Decimal("1") + r / Decimal("100") if gst_enabled and r > 0 else Decimal("1")
+
+    n = len(raw_lines)
+    line_discounts: List[Decimal] = []
+    for lr in raw_lines:
+        li = lr["line_inclusive_total"]
+        if subtotal_inclusive > 0 and n > 0:
+            ld = (li / subtotal_inclusive * discount_amount).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        else:
+            ld = Decimal("0")
+        line_discounts.append(ld)
+    if n > 0:
+        drift = discount_amount - sum(line_discounts)
+        line_discounts[-1] = (line_discounts[-1] + drift).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    lines_out: List[Dict[str, Any]] = []
+    for lr, ld in zip(raw_lines, line_discounts):
+        qty = lr["quantity"]
+        inc_unit = lr["inclusive_unit_price"]
+        li = lr["line_inclusive_total"]
+        line_after = (li - ld).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+        rate_incl_fmt = _fmt2(inc_unit.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+        if gst_enabled and r > 0:
+            line_taxable = (line_after / factor).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            line_gst_amt = (line_after - line_taxable).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            base_unit_excl = (inc_unit / factor).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        else:
+            line_taxable = line_after
+            line_gst_amt = Decimal("0")
+            base_unit_excl = inc_unit.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+        lines_out.append(
+            {
+                "our_product_id": lr["our_product_id"],
+                "name": lr["name"],
+                "quantity": qty,
+                "rate_inclusive": rate_incl_fmt,
+                "base_unit_price": _fmt2(base_unit_excl),
+                "line_inclusive_before_discount": _fmt2(li),
+                "line_discount": _fmt2(ld),
+                "line_inclusive_after_discount": _fmt2(line_after),
+                "line_taxable_value": _fmt2(line_taxable),
+                "line_gst_amount": _fmt2(line_gst_amt),
+                "line_total": _fmt2(line_after),
+            }
+        )
+
+    taxable_total = (after_discount_inclusive / factor).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) if (
+        gst_enabled and r > 0
+    ) else after_discount_inclusive
+    gst_total = (after_discount_inclusive - taxable_total).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) if (
+        gst_enabled and r > 0
+    ) else Decimal("0")
+
+    gst_rate_display = _fmt2(r).rstrip("0").rstrip(".") if r == r.to_integral() else _fmt2(r)
+
+    freight = (freight_charges or Decimal("0")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    if freight < 0:
+        freight = Decimal("0")
+    packaging = (packaging_charges or Decimal("0")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    if packaging < 0:
+        packaging = Decimal("0")
+    grand = (after_discount_inclusive + freight + packaging).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    return {
+        "lines": lines_out,
+        "subtotal_inclusive": _fmt2(subtotal_inclusive),
+        "discount_percent": _fmt2(dp) if dp > 0 else None,
+        "discount_amount": _fmt2(discount_amount) if dp > 0 else _fmt2(Decimal("0")),
+        "after_discount_inclusive": _fmt2(after_discount_inclusive),
+        "freight_charges": _fmt2(freight) if freight > 0 else None,
+        "packaging_charges": _fmt2(packaging) if packaging > 0 else None,
+        "gst_enabled": gst_enabled,
+        "gst_rate_percent": _fmt2(r),
+        "gst_rate_label": f"{gst_rate_display}%",
+        "taxable_value": _fmt2(taxable_total),
+        "gst_amount": _fmt2(gst_total),
+        "grand_total": _fmt2(grand),
+    }

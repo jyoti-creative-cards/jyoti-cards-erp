@@ -1,0 +1,474 @@
+from __future__ import annotations
+
+import json
+import uuid
+from pathlib import Path
+from typing import List, Optional
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from sqlalchemy import or_
+from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
+
+from app.db.session import get_db
+from app.deps import require_admin
+from app.models.catalog_product import CatalogProduct
+from app.models.stock_adjustment import StockAdjustment
+from app.models.stock_balance import StockBalance
+from app.models.stock_receipt import StockReceipt
+from app.models.vendor_purchase_order import VendorPurchaseOrder
+from app.routers.purchase_orders import _int_snap, _to_public, receipt_allowed_status
+from app.schemas.inventory import (
+    BalanceThresholdBody,
+    InventoryRowPublic,
+    ManualStockBody,
+    StockAdjustmentCreate,
+    StockAdjustmentPublic,
+    StockAdjustmentUpdate,
+)
+from app.services.catalog_storage import presigned_urls, storage_configured, upload_bytes
+from app.services.stock_levels import stock_status_label
+
+router = APIRouter(prefix="/inventory", tags=["inventory"])
+
+_PREFIX = "receipt_documents"
+
+
+def _apply_stock_delta(db: Session, catalog_product_id: int, delta: int) -> StockBalance:
+    if delta == 0:
+        row = db.get(StockBalance, catalog_product_id)
+        if row is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="no stock row for this product")
+        return row
+    row = db.get(StockBalance, catalog_product_id)
+    if row is None:
+        if delta < 0:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail="cannot remove stock: no balance row (quantity is already 0)",
+            )
+        nb = StockBalance(catalog_product_id=catalog_product_id, quantity=delta, low_stock_threshold=0)
+        db.add(nb)
+        db.flush()
+        return nb
+    new_q = int(row.quantity) + delta
+    if new_q < 0:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=f"insufficient stock: would go to {new_q}",
+        )
+    row.quantity = new_q
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _inventory_row_public(db: Session, p: CatalogProduct, bal: Optional[StockBalance]) -> InventoryRowPublic:
+    qty = int(bal.quantity) if bal else 0
+    th = int(bal.low_stock_threshold) if bal else 0
+    keys = p.image_keys if isinstance(p.image_keys, list) else []
+    keys_str = [str(k) for k in keys]
+    return InventoryRowPublic(
+        catalog_product_id=p.id,
+        our_product_id=p.our_product_id,
+        name=p.name,
+        category=p.category,
+        vendor_id=p.vendor_id,
+        quantity=qty,
+        low_stock_threshold=th,
+        stock_status=stock_status_label(qty, th),
+        image_urls=presigned_urls(keys_str),
+    )
+
+
+def _save_receipt_upload(file: Optional[UploadFile]) -> Optional[str]:
+    if file is None or not getattr(file, "filename", None):
+        return None
+    raw = file.file.read()
+    if not raw:
+        return None
+    suf = Path(file.filename or "upload").suffix.lower()
+    if suf not in (".pdf", ".png", ".jpg", ".jpeg", ".webp", ".gif"):
+        suf = ".bin"
+    mime = file.content_type or "application/octet-stream"
+    key = f"{_PREFIX}/{uuid.uuid4().hex}{suf}"
+    upload_bytes(key, raw, mime)
+    return key
+
+
+@router.get("", response_model=List[InventoryRowPublic], dependencies=[Depends(require_admin)])
+def list_inventory(
+    db: Session = Depends(get_db),
+    vendor_id: Optional[int] = Query(None, ge=1),
+    q: Optional[str] = Query(None),
+    include_zero: bool = Query(False),
+    all_catalog: bool = Query(
+        False,
+        description="If true, list all catalog products (with optional balance); use for admin stock/thresholds",
+    ),
+    stock_status: Optional[str] = Query(
+        None,
+        description="Filter: in_stock | low_stock | out_of_stock",
+    ),
+) -> List[InventoryRowPublic]:
+    st_f = (stock_status or "").strip().lower()
+    if st_f and st_f not in ("in_stock", "low_stock", "out_of_stock"):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="stock_status must be in_stock, low_stock, or out_of_stock",
+        )
+
+    out: List[InventoryRowPublic] = []
+
+    if all_catalog:
+        qry = db.query(CatalogProduct)
+        if vendor_id is not None:
+            qry = qry.filter(CatalogProduct.vendor_id == vendor_id)
+        if q and q.strip():
+            term = f"%{q.strip()}%"
+            qry = qry.filter(
+                or_(
+                    CatalogProduct.name.ilike(term),
+                    CatalogProduct.our_product_id.ilike(term),
+                    CatalogProduct.vendor_product_id.ilike(term),
+                    CatalogProduct.category.ilike(term),
+                )
+            )
+        for p in qry.order_by(CatalogProduct.our_product_id.asc()).all():
+            bal = db.get(StockBalance, p.id)
+            row = _inventory_row_public(db, p, bal)
+            if st_f and row.stock_status != st_f:
+                continue
+            out.append(row)
+        return out
+
+    q_bal = db.query(StockBalance).join(CatalogProduct, CatalogProduct.id == StockBalance.catalog_product_id)
+    if not include_zero:
+        q_bal = q_bal.filter(StockBalance.quantity > 0)
+    if vendor_id is not None:
+        q_bal = q_bal.filter(CatalogProduct.vendor_id == vendor_id)
+    if q and q.strip():
+        term = f"%{q.strip()}%"
+        q_bal = q_bal.filter(
+            or_(
+                CatalogProduct.name.ilike(term),
+                CatalogProduct.our_product_id.ilike(term),
+                CatalogProduct.vendor_product_id.ilike(term),
+                CatalogProduct.category.ilike(term),
+            )
+        )
+    for bal in q_bal.order_by(CatalogProduct.our_product_id.asc()).all():
+        p = db.get(CatalogProduct, bal.catalog_product_id)
+        if p is None:
+            continue
+        row = _inventory_row_public(db, p, bal)
+        if st_f and row.stock_status != st_f:
+            continue
+        out.append(row)
+    return out
+
+
+@router.patch(
+    "/balances/{catalog_product_id}",
+    response_model=InventoryRowPublic,
+    dependencies=[Depends(require_admin)],
+)
+def patch_balance_threshold(
+    catalog_product_id: int,
+    body: BalanceThresholdBody,
+    db: Session = Depends(get_db),
+) -> InventoryRowPublic:
+    p = db.get(CatalogProduct, catalog_product_id)
+    if p is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="catalog product not found")
+    bal = db.get(StockBalance, catalog_product_id)
+    if bal is None:
+        bal = StockBalance(
+            catalog_product_id=catalog_product_id,
+            quantity=0,
+            low_stock_threshold=body.low_stock_threshold,
+        )
+        db.add(bal)
+    else:
+        bal.low_stock_threshold = body.low_stock_threshold
+        db.add(bal)
+    db.commit()
+    db.refresh(bal)
+    return _inventory_row_public(db, p, bal)
+
+
+@router.post("/manual", response_model=InventoryRowPublic, dependencies=[Depends(require_admin)])
+def add_manual_stock(body: ManualStockBody, db: Session = Depends(get_db)) -> InventoryRowPublic:
+    p = db.get(CatalogProduct, body.catalog_product_id)
+    if p is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="catalog product not found")
+    _apply_stock_delta(db, body.catalog_product_id, body.quantity)
+    db.commit()
+    bal = db.get(StockBalance, body.catalog_product_id)
+    return _inventory_row_public(db, p, bal)
+
+
+@router.get("/adjustments", response_model=List[StockAdjustmentPublic], dependencies=[Depends(require_admin)])
+def list_adjustments(
+    db: Session = Depends(get_db),
+    catalog_product_id: Optional[int] = Query(None, ge=1),
+) -> List[StockAdjustmentPublic]:
+    q = db.query(StockAdjustment).order_by(StockAdjustment.id.desc())
+    if catalog_product_id is not None:
+        q = q.filter(StockAdjustment.catalog_product_id == catalog_product_id)
+    rows = q.limit(500).all()
+    out: List[StockAdjustmentPublic] = []
+    for r in rows:
+        p = db.get(CatalogProduct, r.catalog_product_id)
+        out.append(
+            StockAdjustmentPublic(
+                id=r.id,
+                catalog_product_id=r.catalog_product_id,
+                our_product_id=p.our_product_id if p else "",
+                quantity_delta=r.quantity_delta,
+                note=r.note,
+                created_at=r.created_at,
+            )
+        )
+    return out
+
+
+@router.post(
+    "/adjustments",
+    response_model=StockAdjustmentPublic,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin)],
+)
+def create_adjustment(body: StockAdjustmentCreate, db: Session = Depends(get_db)) -> StockAdjustmentPublic:
+    p = db.get(CatalogProduct, body.catalog_product_id)
+    if p is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="catalog product not found")
+    if body.quantity_delta == 0:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="quantity_delta cannot be 0")
+
+    _apply_stock_delta(db, body.catalog_product_id, body.quantity_delta)
+    adj = StockAdjustment(
+        catalog_product_id=body.catalog_product_id,
+        quantity_delta=body.quantity_delta,
+        note=(body.note or "").strip() or None,
+    )
+    db.add(adj)
+    db.commit()
+    db.refresh(adj)
+    return StockAdjustmentPublic(
+        id=adj.id,
+        catalog_product_id=adj.catalog_product_id,
+        our_product_id=p.our_product_id,
+        quantity_delta=adj.quantity_delta,
+        note=adj.note,
+        created_at=adj.created_at,
+    )
+
+
+@router.patch(
+    "/adjustments/{adjustment_id}",
+    response_model=StockAdjustmentPublic,
+    dependencies=[Depends(require_admin)],
+)
+def update_adjustment_note(
+    adjustment_id: int,
+    body: StockAdjustmentUpdate,
+    db: Session = Depends(get_db),
+) -> StockAdjustmentPublic:
+    row = db.get(StockAdjustment, adjustment_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="adjustment not found")
+    if body.note is not None:
+        row.note = body.note.strip() or None
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    p = db.get(CatalogProduct, row.catalog_product_id)
+    return StockAdjustmentPublic(
+        id=row.id,
+        catalog_product_id=row.catalog_product_id,
+        our_product_id=p.our_product_id if p else "",
+        quantity_delta=row.quantity_delta,
+        note=row.note,
+        created_at=row.created_at,
+    )
+
+
+@router.delete("/adjustments/{adjustment_id}", dependencies=[Depends(require_admin)])
+def delete_adjustment(adjustment_id: int, db: Session = Depends(get_db)) -> dict:
+    row = db.get(StockAdjustment, adjustment_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="adjustment not found")
+    try:
+        _apply_stock_delta(db, row.catalog_product_id, -row.quantity_delta)
+    except HTTPException:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="cannot delete: reversing this adjustment would make stock negative",
+        ) from None
+    db.delete(row)
+    db.commit()
+    return {"ok": True, "id": adjustment_id}
+
+
+def _parse_bool_form(raw: Optional[str]) -> bool:
+    if raw is None:
+        return False
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
+@router.post("/receipts/from-po", response_model=dict, dependencies=[Depends(require_admin)])
+def receipt_from_po(
+    purchase_order_id: int = Form(...),
+    is_partial: str = Form("false"),
+    receipt_number: Optional[str] = Form(None),
+    contact_number: Optional[str] = Form(None),
+    lines: str = Form(...),
+    notes: Optional[str] = Form(None),
+    file: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db),
+) -> dict:
+    is_partial_f = _parse_bool_form(is_partial)
+    po = db.get(VendorPurchaseOrder, purchase_order_id)
+    if po is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="purchase order not found")
+
+    if not receipt_allowed_status(po.status):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="can only receive against a PO in booked or in_progress status",
+        )
+
+    try:
+        raw_lines = json.loads(lines)
+    except json.JSONDecodeError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"invalid lines JSON: {e}") from e
+    if not isinstance(raw_lines, list) or not raw_lines:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="lines must be a non-empty array")
+
+    parsed: list[tuple[int, int]] = []
+    for x in raw_lines:
+        if not isinstance(x, dict):
+            continue
+        try:
+            cid = int(x["catalog_product_id"])
+            q = int(x["quantity"])
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="each line needs catalog_product_id and quantity") from None
+        if q < 1:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="quantity must be >= 1")
+        parsed.append((cid, q))
+
+    if not parsed:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="no valid lines")
+
+    rn = (receipt_number or "").strip()
+    cn = (contact_number or "").strip()
+    if not rn or not cn:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="receipt_number and contact_number are required for each shipment",
+        )
+
+    if is_partial_f and storage_configured() and (file is None or not getattr(file, "filename", None)):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="partial receipt requires receipt file upload when storage is configured",
+        )
+
+    raw_items = po.items if isinstance(po.items, list) else []
+    pending_map: dict[int, int] = {}
+    item_row_by_cid: dict[int, dict] = {}
+    for row in raw_items:
+        if not isinstance(row, dict):
+            continue
+        try:
+            cid = int(row["catalog_product_id"])
+            ordered = int(row["quantity"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        recv = min(ordered, _int_snap(row, "received_quantity"))
+        pend = max(0, ordered - recv)
+        pending_map[cid] = pend
+        item_row_by_cid[cid] = row
+
+    incoming: dict[int, int] = {}
+    for cid, q in parsed:
+        if cid not in pending_map:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"catalog_product_id {cid} not on this PO")
+        incoming[cid] = incoming.get(cid, 0) + q
+
+    for cid, total_in in incoming.items():
+        if total_in > pending_map[cid]:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail=f"receive quantity for product {cid} exceeds pending ({pending_map[cid]})",
+            )
+
+    if not is_partial_f:
+        for cid, pend in pending_map.items():
+            if pend <= 0:
+                continue
+            got = incoming.get(cid, 0)
+            if got != pend:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    detail="full receipt mode: each line with pending stock must be received in exact pending quantity",
+                )
+
+    img_key: Optional[str] = None
+    if file is not None and getattr(file, "filename", None):
+        try:
+            img_key = _save_receipt_upload(file)
+        except RuntimeError as e:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)) from e
+
+    line_items_store: list[dict] = []
+    for cid, q in incoming.items():
+        row = item_row_by_cid.get(cid)
+        if row is None:
+            continue
+        row["received_quantity"] = _int_snap(row, "received_quantity") + q
+        line_items_store.append({"catalog_product_id": cid, "quantity": q})
+        _apply_stock_delta(db, cid, q)
+
+    sr = StockReceipt(
+        purchase_order_id=po.id,
+        receipt_number=rn if rn else None,
+        contact_number=cn,
+        receipt_image_key=img_key,
+        is_partial=is_partial_f,
+        line_items=line_items_store,
+        note=(notes or "").strip() or None,
+    )
+    db.add(sr)
+
+    flag_modified(po, "items")
+
+    all_done = True
+    for row in raw_items:
+        if not isinstance(row, dict):
+            continue
+        try:
+            ordered = int(row["quantity"])
+            recv = _int_snap(row, "received_quantity")
+        except (KeyError, TypeError, ValueError):
+            continue
+        if recv < ordered:
+            all_done = False
+            break
+
+    if all_done:
+        if po.status == "booked":
+            po.status = "in_progress"
+    elif is_partial_f or po.status == "booked":
+        po.status = "in_progress"
+
+    db.add(po)
+    db.commit()
+    db.refresh(po)
+    return {
+        "ok": True,
+        "fully_received": all_done,
+        "purchase_order": _to_public(db, po),
+    }

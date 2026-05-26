@@ -4,12 +4,18 @@ Monorepo layout:
 
 | Path | Purpose |
 |------|---------|
-| `Dashboard/` | Main ERP: inventory, orders, billing, AR/AP, GL |
-| `customer_ordering_app/` | Customer ordering portal (reads same DB logic via `dash_db.py`) |
+| `backend/` | **Production API** (FastAPI): same domain model as the Next portals; deploy to Railway — see `deploy/DEPLOY.md`. |
+| `web/admin-app/` | ERP admin UI (Next.js) → proxies to `backend/`. |
+| `web/customer-app/` | Customer shop (Next.js) → proxies to `backend/`. |
+| `Dashboard/` | Legacy Streamlit ERP (still used by `web/api` + `customer_ordering_app`). |
+| `customer_ordering_app/` | Legacy Streamlit portal (reads `Dashboard/db.py` via `dash_db.py`). |
+| `web/api/` + `web/frontend/` | Alternate FastAPI + Next stack wired to `Dashboard/` (different deploy shape). |
 
-**Database:** PostgreSQL only. Set **`DATABASE_URL`** (e.g. Supabase) in the environment or Streamlit secrets — both apps use the same URL. The Streamlit apps only **read/write data** (CRUD). To **create or migrate tables**, run **`Dashboard/db_maintenance.py`** once (locally or CI) with **`DATABASE_URL`** set — not from the ERP UI.
+**Database:** PostgreSQL (e.g. Supabase). Set **`DATABASE_URL`** in `backend/.env` for the FastAPI stack. Streamlit paths use the same variable in `Dashboard/.env` or secrets.
 
 Do **not** commit `.env`, tokens, or `Dashboard/uploads/` (gitignored).
+
+**Deploy FastAPI + Next (recommended):** read **`deploy/DEPLOY.md`** (Railway + Vercel + Supabase).
 
 ## Run locally
 

@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Admin</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 0 auto; padding: 1rem; }
+    h1 { font-size: 1.25rem; font-weight: 600; }
+    h2 { font-size: 1rem; margin-top: 1rem; }
+    .tabs { display: flex; gap: 0; border-bottom: 1px solid #ccc; margin-bottom: 1rem; flex-wrap: wrap; }
+    .tabs button {
+      padding: 0.5rem 1rem; border: none; background: #eee; cursor: pointer;
+      border-bottom: 2px solid transparent; margin-bottom: -1px;
+    }
+    .tabs button.active { background: #fff; border-bottom-color: #333; font-weight: 600; }
+    .panel { display: none; }
+    .panel.active { display: block; }
+    label { display: block; margin-top: 0.5rem; font-size: 0.875rem; }
+    input { width: 100%; padding: 0.4rem; margin-top: 0.15rem; border: 1px solid #ccc; border-radius: 4px; }
+    button.primary { margin-top: 1rem; padding: 0.5rem 1rem; cursor: pointer; }
+    button.small { padding: 0.25rem 0.5rem; font-size: 0.8rem; cursor: pointer; margin-right: 0.35rem; }
+    .err { color: #b00; font-size: 0.875rem; margin-top: 0.5rem; }
+    .ok { color: #060; font-size: 0.875rem; margin-top: 0.5rem; }
+    .hint { font-size: 0.8rem; color: #666; margin-bottom: 1rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    th, td { border: 1px solid #ddd; padding: 0.35rem 0.5rem; text-align: left; vertical-align: top; }
+    th { background: #f5f5f5; }
+    .scroll { overflow-x: auto; }
+    #editBox { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid #ccc; }
+  </style>
+</head>
+<body>
+  <h1>Admin</h1>
+  <p class="hint">Admin key (saved locally): <input type="password" id="adminKey" placeholder="X-Admin-Key" style="max-width:280px" /></p>
+  <div class="tabs">
+    <button type="button" class="active" data-tab="create">Create customer</button>
+    <button type="button" data-tab="customers">Customers</button>
+  </div>
+
+  <div id="create" class="panel active">
+    <form id="createForm">
+      <label>Name * <input name="name" required /></label>
+      <label>Phone * <input name="phone" required /></label>
+      <label>Password * <input name="password" type="password" required /></label>
+      <label>Company <input name="company_name" /></label>
+      <label>Address <input name="address" /></label>
+      <label>Secondary phone <input name="secondary_phone" /></label>
+      <label>City <input name="city" /></label>
+      <button type="submit" class="primary">Create</button>
+    </form>
+    <p id="cmsg" class="err"></p>
+    <p id="cok" class="ok"></p>
+  </div>
+
+  <div id="customers" class="panel">
+    <p><button type="button" class="small" id="refreshBtn">Refresh list</button></p>
+    <p id="listMsg" class="err"></p>
+    <p id="listOk" class="ok"></p>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Phone</th>
+            <th>Company</th>
+            <th>City</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="custBody"></tbody>
+      </table>
+    </div>
+
+    <div id="editBox" hidden>
+      <h2>Edit <span id="editIdLabel"></span></h2>
+      <form id="editForm">
+        <input type="hidden" name="id" id="editId" />
+        <label>Name * <input name="name" required /></label>
+        <label>Phone * <input name="phone" required /></label>
+        <label>New password <input name="password" type="password" placeholder="leave blank to keep" autocomplete="new-password" /></label>
+        <label>Company <input name="company_name" /></label>
+        <label>Address <input name="address" /></label>
+        <label>Secondary phone <input name="secondary_phone" /></label>
+        <label>City <input name="city" /></label>
+        <button type="submit" class="primary">Save changes</button>
+        <button type="button" class="small" id="cancelEdit">Cancel</button>
+      </form>
+      <p id="emsg" class="err"></p>
+      <p id="eok" class="ok"></p>
+    </div>
+  </div>
+
+  <p class="hint">API base: <span id="apiLabel"></span></p>
+  <p class="hint">405 usually means the browser called the wrong server/port. Run this repo’s API on 8001, UI on 8080. Or set <code>?api=http://127.0.0.1:YOUR_PORT</code>. Check Network tab: GET must go to <code>/api/v1/customers</code> on the API host.</p>
+  <script>
+    const API_BASE = (() => {
+      const p = new URLSearchParams(location.search).get("api");
+      const raw = p || "http://127.0.0.1:8001";
+      return raw.replace(/\/$/, "");
+    })();
+    const api = API_BASE + "/api/v1";
+    document.getElementById("apiLabel").textContent = API_BASE;
+
+    const keyStore = "admin_x_key";
+    const inp = document.getElementById("adminKey");
+    inp.value = sessionStorage.getItem(keyStore) || "";
+    inp.onchange = () => sessionStorage.setItem(keyStore, inp.value.trim());
+
+    /** GET/DELETE: only admin key — no Content-Type on GET (avoids odd proxies / caches). */
+    function headersAdmin() {
+      const k = inp.value.trim();
+      return k ? { "X-Admin-Key": k } : {};
+    }
+    /** POST/PATCH with JSON body */
+    function headersJson() {
+      const k = inp.value.trim();
+      const h = { "Content-Type": "application/json" };
+      if (k) h["X-Admin-Key"] = k;
+      return h;
+    }
+
+    function emptyToNull(v) {
+      if (v == null) return null;
+      const s = String(v).trim();
+      return s === "" ? null : s;
+    }
+
+    document.querySelectorAll(".tabs button").forEach((btn) => {
+      btn.onclick = () => {
+        document.querySelectorAll(".tabs button").forEach((b) => b.classList.remove("active"));
+        document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
+        btn.classList.add("active");
+        document.getElementById(btn.dataset.tab).classList.add("active");
+        if (btn.dataset.tab === "customers") loadCustomers();
+      };
+    });
+
+    document.getElementById("createForm").onsubmit = async (e) => {
+      e.preventDefault();
+      const k = inp.value.trim();
+      document.getElementById("cmsg").textContent = "";
+      document.getElementById("cok").textContent = "";
+      if (!k) {
+        document.getElementById("cmsg").textContent = "Set admin key above.";
+        return;
+      }
+      const fd = new FormData(e.target);
+      const body = {
+        name: fd.get("name"),
+        phone: fd.get("phone"),
+        password: fd.get("password"),
+        company_name: emptyToNull(fd.get("company_name")),
+        address: emptyToNull(fd.get("address")),
+        secondary_phone: emptyToNull(fd.get("secondary_phone")),
+        city: emptyToNull(fd.get("city")),
+      };
+      const r = await fetch(api + "/customers", {
+        method: "POST",
+        headers: headersJson(),
+        body: JSON.stringify(body),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        document.getElementById("cmsg").textContent =
+          typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail || data);
+        return;
+      }
+      document.getElementById("cok").textContent = "Created customer id " + data.id + ".";
+      e.target.reset();
+    };
+
+    async function loadCustomers() {
+      document.getElementById("listMsg").textContent = "";
+      document.getElementById("listOk").textContent = "";
+      if (!inp.value.trim()) {
+        document.getElementById("listMsg").textContent = "Set admin key.";
+        document.getElementById("custBody").innerHTML = "";
+        return;
+      }
+      const url = api + "/customers";
+      const r = await fetch(url, { method: "GET", headers: headersAdmin() });
+      const text = await r.text();
+      let data;
+      try {
+        data = text ? JSON.parse(text) : null;
+      } catch {
+        data = null;
+      }
+      if (!r.ok) {
+        document.getElementById("listMsg").textContent =
+          r.status +
+          " " +
+          r.statusText +
+          " — " +
+          url +
+          (text ? " — " + text.slice(0, 280) : "");
+        return;
+      }
+      if (!Array.isArray(data)) {
+        document.getElementById("listMsg").textContent = "Bad response (expected JSON array)";
+        return;
+      }
+      const tb = document.getElementById("custBody");
+      tb.innerHTML = "";
+      for (const row of data) {
+        const tr = document.createElement("tr");
+        tr.innerHTML =
+          "<td>" +
+          row.id +
+          "</td><td>" +
+          esc(row.name) +
+          "</td><td>" +
+          esc(row.phone) +
+          "</td><td>" +
+          esc(row.company_name || "") +
+          "</td><td>" +
+          esc(row.city || "") +
+          '</td><td><button type="button" class="small edit-bt" data-id="' +
+          row.id +
+          '">Edit</button> <button type="button" class="small del-bt" data-id="' +
+          row.id +
+          '">Delete</button></td>';
+        tb.appendChild(tr);
+      }
+      document.getElementById("listOk").textContent = data.length + " customer(s).";
+      tb.querySelectorAll(".edit-bt").forEach((b) => {
+        b.onclick = () => openEdit(Number(b.dataset.id), data);
+      });
+      tb.querySelectorAll(".del-bt").forEach((b) => {
+        b.onclick = () => delCustomer(Number(b.dataset.id));
+      });
+    }
+
+    function esc(s) {
+      const d = document.createElement("div");
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    function openEdit(id, rows) {
+      const row = rows.find((x) => x.id === id);
+      if (!row) return;
+      document.getElementById("editBox").hidden = false;
+      document.getElementById("editId").value = id;
+      document.getElementById("editIdLabel").textContent = "#" + id;
+      const ef = document.getElementById("editForm");
+      ef.querySelector('[name="name"]').value = row.name;
+      ef.querySelector('[name="phone"]').value = row.phone;
+      document.querySelector('#editForm [name="password"]').value = "";
+      document.querySelector('#editForm [name="company_name"]').value = row.company_name || "";
+      document.querySelector('#editForm [name="address"]').value = row.address || "";
+      document.querySelector('#editForm [name="secondary_phone"]').value = row.secondary_phone || "";
+      document.querySelector('#editForm [name="city"]').value = row.city || "";
+      document.getElementById("emsg").textContent = "";
+      document.getElementById("eok").textContent = "";
+      document.getElementById("editBox").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+
+    document.getElementById("cancelEdit").onclick = () => {
+      document.getElementById("editBox").hidden = true;
+    };
+
+    document.getElementById("editForm").onsubmit = async (e) => {
+      e.preventDefault();
+      document.getElementById("emsg").textContent = "";
+      document.getElementById("eok").textContent = "";
+      const fd = new FormData(e.target);
+      const id = fd.get("id");
+      const body = {
+        name: fd.get("name"),
+        phone: fd.get("phone"),
+        company_name: emptyToNull(fd.get("company_name")),
+        address: emptyToNull(fd.get("address")),
+        secondary_phone: emptyToNull(fd.get("secondary_phone")),
+        city: emptyToNull(fd.get("city")),
+      };
+      const pw = fd.get("password");
+      if (pw && String(pw).trim()) body.password = String(pw).trim();
+
+      const r = await fetch(api + "/customers/" + id, {
+        method: "PATCH",
+        headers: headersJson(),
+        body: JSON.stringify(body),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        document.getElementById("emsg").textContent =
+          typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail || data);
+        return;
+      }
+      document.getElementById("eok").textContent = "Saved.";
+      loadCustomers();
+    };
+
+    async function delCustomer(id) {
+      if (!confirm("Delete customer #" + id + "?")) return;
+      document.getElementById("listMsg").textContent = "";
+      const r = await fetch(api + "/customers/" + id, { method: "DELETE", headers: headersAdmin() });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        document.getElementById("listMsg").textContent =
+          typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail || data);
+        return;
+      }
+      document.getElementById("editBox").hidden = true;
+      loadCustomers();
+    }
+
+    document.getElementById("refreshBtn").onclick = loadCustomers;
+  </script>
+</body>
+</html>

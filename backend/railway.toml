@@ -1,0 +1,10 @@
+# Deploy with service root = this repository root.
+# Set env: DATABASE_URL, JWT_SECRET, ADMIN_API_KEY, CORS_ORIGINS, optional S3/WhatsApp.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/api/health"
+healthcheckTimeout = 120

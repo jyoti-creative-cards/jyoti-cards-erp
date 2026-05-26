@@ -1,0 +1,9 @@
+.env
+dev.db
+# Accidental drops in backend root (not versioned app code)
+/*.pdf
+/*.png
+__pycache__/
+*.pyc
+.venv/
+venv/

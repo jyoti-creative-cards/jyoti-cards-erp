@@ -199,3 +199,20 @@ def generate_customer_bill(body: CustomerBillGenerate, db: Session = Depends(get
             traceback.print_exc()
 
     return _to_public(row)
+
+
+from fastapi.responses import RedirectResponse
+
+
+@router.get("/{bill_id}/download", dependencies=[Depends(require_admin)])
+def download_bill(bill_id: int, db: Session = Depends(get_db)):
+    """Redirect to presigned PDF download URL."""
+    row = db.get(CustomerBill, bill_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="bill not found")
+    if not row.document_key:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="no PDF on file for this bill")
+    url = presigned_url(row.document_key, expires=300)
+    if not url:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="storage not configured")
+    return RedirectResponse(url=url, status_code=302)

@@ -497,3 +497,100 @@ def admin_patch_customer_order(
             print("WhatsApp shipment_confirmation send failed:", ex)
 
     return _admin_public(db, row)
+
+
+from pydantic import BaseModel as _BaseModel
+
+
+@admin_customer_order_router.delete("/{order_id}/permanent", dependencies=[Depends(require_admin)])
+def permanently_delete_customer_order(order_id: int, db: Session = Depends(get_db)) -> dict:
+    row = db.get(CustomerOrder, order_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="order not found")
+    db.delete(row)
+    db.commit()
+    return {"ok": True, "id": order_id, "permanently_deleted": True}
+
+
+@admin_customer_order_router.delete("/{order_id}", dependencies=[Depends(require_admin)])
+def soft_delete_customer_order(order_id: int, db: Session = Depends(get_db)) -> dict:
+    row = db.get(CustomerOrder, order_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="order not found")
+    row.deleted_at = datetime.now(timezone.utc)
+    row.status = "cancelled"
+    db.add(row)
+    db.commit()
+    return {"ok": True, "id": order_id, "deleted": True}
+
+
+@admin_customer_order_router.post("/{order_id}/restore", dependencies=[Depends(require_admin)])
+def restore_customer_order(order_id: int, db: Session = Depends(get_db)) -> dict:
+    row = db.get(CustomerOrder, order_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="order not found")
+    row.deleted_at = None
+    db.add(row)
+    db.commit()
+    return {"ok": True, "id": order_id, "restored": True}
+
+
+class MergeOrdersBody(_BaseModel):
+    customer_id: int
+    order_ids: List[int]
+    notes: Optional[str] = None
+
+
+@admin_customer_order_router.post("/merge", response_model=CustomerOrderAdminPublic, dependencies=[Depends(require_admin)])
+def merge_customer_orders(body: MergeOrdersBody, db: Session = Depends(get_db)) -> CustomerOrderAdminPublic:
+    if len(body.order_ids) < 2:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="provide at least 2 order_ids to merge")
+
+    orders = []
+    for oid in body.order_ids:
+        o = db.get(CustomerOrder, oid)
+        if o is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"order {oid} not found")
+        if o.customer_id != body.customer_id:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"order {oid} does not belong to customer {body.customer_id}")
+        if (o.status or "").strip().lower() != "confirmed":
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"order {oid} must be in 'confirmed' status to merge (got '{o.status}')")
+        orders.append(o)
+
+    merged_quantities: dict[int, dict] = {}
+    for o in orders:
+        for item in (o.items if isinstance(o.items, list) else []):
+            if not isinstance(item, dict):
+                continue
+            try:
+                cid = int(item["catalog_product_id"])
+                qty = int(item["quantity"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if cid in merged_quantities:
+                merged_quantities[cid]["quantity"] += qty
+                merged_quantities[cid]["line_total"] = float(
+                    Decimal(str(merged_quantities[cid]["unit_price"])) * merged_quantities[cid]["quantity"]
+                )
+            else:
+                merged_quantities[cid] = {**item, "quantity": qty}
+
+    merged_items = list(merged_quantities.values())
+    total = sum(Decimal(str(i.get("line_total", 0))) for i in merged_items)
+
+    new_order = CustomerOrder(
+        customer_id=body.customer_id,
+        status="confirmed",
+        items=merged_items,
+        total_amount=total,
+        notes=(body.notes or "").strip() or None,
+    )
+    db.add(new_order)
+
+    for o in orders:
+        o.status = "cancelled"
+        db.add(o)
+
+    db.commit()
+    db.refresh(new_order)
+    return _admin_public(db, new_order)

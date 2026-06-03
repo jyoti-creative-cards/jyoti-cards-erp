@@ -200,7 +200,9 @@ def init_db() -> None:
         addon_product,
         ap_bill,
         ar_invoice,
+        audit_log,
         bank_reconciliation,
+        bill_series,
         catalog_category_label,
         catalog_product,
         catalog_product_alternative,
@@ -236,6 +238,8 @@ def init_db() -> None:
     _migrate_customer_order_notes_postgres()
     _migrate_new_fields_postgres()
     _migrate_addon_tables_postgres()
+    _migrate_v2_features_postgres()
+    _migrate_v3_features_postgres()
     from app.services.accounting import seed_chart_accounts
 
     s = SessionLocal()
@@ -352,6 +356,47 @@ def _migrate_addon_tables_postgres() -> None:
                 notes TEXT
             )
         """))
+
+
+def _migrate_v2_features_postgres() -> None:
+    """Add v2 columns: bill_no, bill_series_id, deleted_at for all key tables."""
+    if engine.dialect.name != "postgresql":
+        return
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE portal_customer_bills ADD COLUMN IF NOT EXISTS bill_no VARCHAR(100)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE portal_customer_bills ADD COLUMN IF NOT EXISTS "
+            "bill_series_id INTEGER REFERENCES portal_bill_series(id) ON DELETE SET NULL"
+        ))
+        conn.execute(text(
+            "ALTER TABLE portal_customer_bills ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ"
+        ))
+        conn.execute(text(
+            "ALTER TABLE portal_customers ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ"
+        ))
+        conn.execute(text(
+            "ALTER TABLE portal_vendors ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ"
+        ))
+        conn.execute(text(
+            "ALTER TABLE portal_catalog_products ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ"
+        ))
+        conn.execute(text(
+            "ALTER TABLE portal_customer_orders ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ"
+        ))
+        conn.execute(text(
+            "ALTER TABLE portal_vendor_purchase_orders ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ"
+        ))
+
+
+def _migrate_v3_features_postgres() -> None:
+    """Add v3 columns: vendor_bill_no and bill_photo_key on stock receipts."""
+    if engine.dialect.name != "postgresql":
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE portal_stock_receipts ADD COLUMN IF NOT EXISTS vendor_bill_no VARCHAR(200)"))
+        conn.execute(text("ALTER TABLE portal_stock_receipts ADD COLUMN IF NOT EXISTS bill_photo_key VARCHAR(512)"))
 
 
 def get_db() -> Generator[Session, None, None]:

@@ -1,16 +1,22 @@
 from __future__ import annotations
 
+import io
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Response, status
+from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db, legacy_active_value, sql_is_active_true
 from app.deps import require_admin
 from app.integrations.whatsapp.client import send_account_creation, _e164 as normalize_whatsapp_e164
+from app.models.ar_invoice import ARInvoice
 from app.models.customer import Customer
+from app.models.customer_order import CustomerOrder
+from app.models.invoice_payment import InvoicePayment
 from app.schemas.customer import CustomerCreate, CustomerPublic, CustomerUpdate
 from app.services.passwords import hash_password
 
@@ -47,13 +53,18 @@ def _send_wa_safe(name: str, phone: str, plain: str) -> None:
 def list_customers(
     db: Session = Depends(get_db),
     include_inactive: bool = Query(False),
+    deleted: Optional[bool] = Query(None, description="true = only deleted; false/omit = exclude deleted"),
     route_id: Optional[int] = Query(None),
     city_id: Optional[int] = Query(None),
     search: Optional[str] = Query(None),
 ) -> List[CustomerPublic]:
     q = db.query(Customer)
-    if not include_inactive:
-        q = q.filter(sql_is_active_true(Customer.is_active))
+    if deleted is True:
+        q = q.filter(Customer.deleted_at.isnot(None))
+    else:
+        q = q.filter(Customer.deleted_at.is_(None))
+        if not include_inactive:
+            q = q.filter(sql_is_active_true(Customer.is_active))
     if route_id is not None:
         q = q.filter(Customer.route_id == route_id)
     if city_id is not None:
@@ -299,13 +310,320 @@ def reactivate_customer(customer_id: int, db: Session = Depends(get_db)) -> dict
     return {"ok": True, "id": customer_id, "reactivated": True}
 
 
+@router.post("/{customer_id}/restore", dependencies=[Depends(require_admin)])
+def restore_customer(customer_id: int, db: Session = Depends(get_db)) -> dict:
+    row = db.get(Customer, customer_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="customer not found")
+    row.deleted_at = None
+    row.is_active = True
+    db.add(row)
+    db.commit()
+    return {"ok": True, "id": customer_id, "restored": True}
+
+
+@router.delete("/{customer_id}/permanent", dependencies=[Depends(require_admin)])
+def permanently_delete_customer(customer_id: int, db: Session = Depends(get_db)) -> dict:
+    row = db.get(Customer, customer_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="customer not found")
+    db.delete(row)
+    db.commit()
+    return {"ok": True, "id": customer_id, "permanently_deleted": True}
+
+
 @router.delete("/{customer_id}", dependencies=[Depends(require_admin)])
 def deactivate_customer(customer_id: int, db: Session = Depends(get_db)) -> dict:
-    """Soft-delete: sets is_active=False. Hard history preserved."""
+    """Soft-delete: sets deleted_at and is_active=False."""
     row = db.get(Customer, customer_id)
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="customer not found")
     row.is_active = False
+    row.deleted_at = datetime.now(timezone.utc)
     db.add(row)
     db.commit()
     return {"ok": True, "id": customer_id, "deactivated": True}
+
+
+# ── Statement schemas ──────────────────────────────────────────────────────────
+
+class StatementEntry(BaseModel):
+    date: datetime
+    type: str
+    reference: str
+    description: str
+    debit: float
+    credit: float
+    running_balance: float
+    order_id: Optional[int] = None  # set for type=="order", enables drill-down popup
+    order_status: Optional[str] = None
+
+
+class CustomerStatementResponse(BaseModel):
+    customer_id: int
+    customer_name: str
+    phone: str
+    company_name: Optional[str]
+    total_orders: int
+    total_billed: float
+    total_paid: float
+    outstanding: float
+    statement_date: datetime
+    entries: List[StatementEntry]
+
+
+# ── Stats schema ───────────────────────────────────────────────────────────────
+
+class CustomerStats(BaseModel):
+    customer_id: int
+    total_orders: int
+    total_billed: float
+    invoice_count: int
+    hot_score: float
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _build_statement(customer_id: int, db: Session) -> CustomerStatementResponse:
+    cust = db.get(Customer, customer_id)
+    if cust is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="customer not found")
+
+    events: list[dict] = []
+
+    # debit entries — one per non-cancelled order
+    orders = (
+        db.query(CustomerOrder)
+        .filter(
+            CustomerOrder.customer_id == customer_id,
+            CustomerOrder.status != "cancelled",
+        )
+        .all()
+    )
+    total_billed = Decimal("0")
+    for o in orders:
+        amt = Decimal(str(o.total_amount))
+        total_billed += amt
+        item_count = len(o.items) if isinstance(o.items, list) else 0
+        events.append({
+            "date": o.created_at,
+            "type": "order",
+            "reference": f"ORD-{o.id}",
+            "description": f"Order #{o.id} — {item_count} item{'s' if item_count != 1 else ''}",
+            "debit": float(amt),
+            "credit": 0.0,
+            "order_id": o.id,
+            "order_status": o.status,
+        })
+
+    # credit entries — payments on AR invoices for this customer
+    ar_invoices = (
+        db.query(ARInvoice)
+        .filter(ARInvoice.customer_id == customer_id)
+        .all()
+    )
+    ar_ids = [inv.id for inv in ar_invoices]
+    total_paid = Decimal("0")
+    if ar_ids:
+        payments = (
+            db.query(InvoicePayment)
+            .filter(InvoicePayment.kind == "ar", InvoicePayment.ref_id.in_(ar_ids))
+            .all()
+        )
+        for pmt in payments:
+            amt = Decimal(str(pmt.amount))
+            total_paid += amt
+            ref = pmt.transaction_id or f"PMT-{pmt.id}"
+            dt = pmt.created_at
+            events.append({
+                "date": dt,
+                "type": "payment",
+                "reference": ref,
+                "description": "Payment received",
+                "debit": 0.0,
+                "credit": float(amt),
+            })
+
+    # sort chronologically
+    events.sort(key=lambda e: e["date"] if e["date"] else datetime.min.replace(tzinfo=timezone.utc))
+
+    running = Decimal("0")
+    entries: list[StatementEntry] = []
+    for e in events:
+        running = running + Decimal(str(e["debit"])) - Decimal(str(e["credit"]))
+        entries.append(
+            StatementEntry(
+                date=e["date"],
+                type=e["type"],
+                reference=e["reference"],
+                description=e["description"],
+                debit=e["debit"],
+                credit=e["credit"],
+                running_balance=float(running),
+                order_id=e.get("order_id"),
+                order_status=e.get("order_status"),
+            )
+        )
+
+    outstanding = total_billed - total_paid
+    return CustomerStatementResponse(
+        customer_id=customer_id,
+        customer_name=cust.name,
+        phone=cust.phone,
+        company_name=cust.company_name,
+        total_orders=len(orders),
+        total_billed=float(total_billed),
+        total_paid=float(total_paid),
+        outstanding=float(outstanding),
+        statement_date=datetime.now(tz=timezone.utc),
+        entries=entries,
+    )
+
+
+# ── Statement endpoints ────────────────────────────────────────────────────────
+
+@router.get(
+    "/{customer_id}/statement",
+    response_model=CustomerStatementResponse,
+    dependencies=[Depends(require_admin)],
+)
+def get_customer_statement(
+    customer_id: int,
+    db: Session = Depends(get_db),
+) -> CustomerStatementResponse:
+    return _build_statement(customer_id, db)
+
+
+@router.get("/{customer_id}/statement/pdf")
+def get_customer_statement_pdf(
+    customer_id: int,
+    db: Session = Depends(get_db),
+    x_admin_key: Optional[str] = Header(None, alias="X-Admin-Key"),
+    api_key: Optional[str] = Query(None, description="Admin key as query param for browser downloads"),
+) -> Response:
+    from app.config import get_settings
+    expected = (get_settings().admin_api_key or "").strip()
+    provided = (x_admin_key or api_key or "").strip()
+    if not expected or provided != expected:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="invalid admin key")
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import cm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    stmt = _build_statement(customer_id, db)
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=1.5 * cm, rightMargin=1.5 * cm,
+                            topMargin=2 * cm, bottomMargin=2 * cm)
+    styles = getSampleStyleSheet()
+    story = []
+
+    title = f"Statement of Account — {stmt.customer_name}"
+    story.append(Paragraph(title, styles["Title"]))
+    story.append(Spacer(1, 0.3 * cm))
+
+    meta_lines = [
+        f"<b>Phone:</b> {stmt.phone}",
+        f"<b>Company:</b> {stmt.company_name or '—'}",
+        f"<b>Statement Date:</b> {stmt.statement_date.strftime('%d %b %Y')}",
+    ]
+    for ml in meta_lines:
+        story.append(Paragraph(ml, styles["Normal"]))
+    story.append(Spacer(1, 0.5 * cm))
+
+    headers = ["Date", "Type", "Description", "Debit", "Credit", "Balance"]
+    table_data = [headers]
+    for e in stmt.entries:
+        table_data.append([
+            e.date.strftime("%d %b %Y"),
+            e.type.capitalize(),
+            e.description,
+            f"{e.debit:,.2f}" if e.debit else "—",
+            f"{e.credit:,.2f}" if e.credit else "—",
+            f"{e.running_balance:,.2f}",
+        ])
+
+    col_widths = [2.5 * cm, 2 * cm, 7 * cm, 2.5 * cm, 2.5 * cm, 2.5 * cm]
+    tbl = Table(table_data, colWidths=col_widths, repeatRows=1)
+    tbl.setStyle(
+        TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2563EB")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, 0), 9),
+            ("ALIGN", (3, 0), (-1, -1), "RIGHT"),
+            ("ALIGN", (0, 0), (2, -1), "LEFT"),
+            ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+            ("FONTSIZE", (0, 1), (-1, -1), 8),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F1F5F9")]),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ])
+    )
+    story.append(tbl)
+    story.append(Spacer(1, 0.8 * cm))
+
+    outstanding_line = (
+        f"<b>Outstanding Balance: {stmt.outstanding:,.2f}</b>  |  "
+        f"Total Billed: {stmt.total_billed:,.2f}  |  "
+        f"Total Paid: {stmt.total_paid:,.2f}"
+    )
+    story.append(Paragraph(outstanding_line, styles["Normal"]))
+
+    doc.build(story)
+    pdf_bytes = buf.getvalue()
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=statement_{customer_id}.pdf"},
+    )
+
+
+# ── Stats endpoint ─────────────────────────────────────────────────────────────
+
+@router.get(
+    "/{customer_id}/stats",
+    response_model=CustomerStats,
+    dependencies=[Depends(require_admin)],
+)
+def get_customer_stats(
+    customer_id: int,
+    db: Session = Depends(get_db),
+) -> CustomerStats:
+    cust = db.get(Customer, customer_id)
+    if cust is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="customer not found")
+
+    orders = (
+        db.query(CustomerOrder)
+        .filter(
+            CustomerOrder.customer_id == customer_id,
+            CustomerOrder.status != "cancelled",
+        )
+        .all()
+    )
+    total_orders = len(orders)
+    total_billed = float(sum(Decimal(str(o.total_amount)) for o in orders))
+
+    # invoice_count = orders that have a customer bill (billed/shipped)
+    from app.models.customer_bill import CustomerBill
+    order_ids = [o.id for o in orders]
+    invoice_count = 0
+    if order_ids:
+        invoice_count = (
+            db.query(CustomerBill)
+            .filter(CustomerBill.customer_order_id.in_(order_ids))
+            .count()
+        )
+
+    hot_score = round(invoice_count / max(1, total_orders) * 100, 2)
+
+    return CustomerStats(
+        customer_id=customer_id,
+        total_orders=total_orders,
+        total_billed=total_billed,
+        invoice_count=invoice_count,
+        hot_score=hot_score,
+    )

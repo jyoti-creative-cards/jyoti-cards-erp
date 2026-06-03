@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import List
+from datetime import datetime, timezone
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
@@ -19,10 +20,15 @@ router = APIRouter(prefix="/vendors", tags=["vendors"])
 def list_vendors(
     db: Session = Depends(get_db),
     include_inactive: bool = Query(False),
+    deleted: Optional[bool] = Query(None),
 ) -> List[Vendor]:
     q = db.query(Vendor)
-    if not include_inactive:
-        q = q.filter(sql_is_active_true(Vendor.is_active))
+    if deleted is True:
+        q = q.filter(Vendor.deleted_at.isnot(None))
+    else:
+        q = q.filter(Vendor.deleted_at.is_(None))
+        if not include_inactive:
+            q = q.filter(sql_is_active_true(Vendor.is_active))
     return q.order_by(Vendor.id.asc()).all()
 
 
@@ -141,12 +147,35 @@ def reactivate_vendor(vendor_id: int, db: Session = Depends(get_db)) -> dict:
     return {"ok": True, "id": vendor_id, "reactivated": True}
 
 
+@router.post("/{vendor_id}/restore", dependencies=[Depends(require_admin)])
+def restore_vendor(vendor_id: int, db: Session = Depends(get_db)) -> dict:
+    row = db.get(Vendor, vendor_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="vendor not found")
+    row.deleted_at = None
+    row.is_active = True
+    db.add(row)
+    db.commit()
+    return {"ok": True, "id": vendor_id, "restored": True}
+
+
+@router.delete("/{vendor_id}/permanent", dependencies=[Depends(require_admin)])
+def permanently_delete_vendor(vendor_id: int, db: Session = Depends(get_db)) -> dict:
+    row = db.get(Vendor, vendor_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="vendor not found")
+    db.delete(row)
+    db.commit()
+    return {"ok": True, "id": vendor_id, "permanently_deleted": True}
+
+
 @router.delete("/{vendor_id}", dependencies=[Depends(require_admin)])
 def deactivate_vendor(vendor_id: int, db: Session = Depends(get_db)) -> dict:
     row = db.get(Vendor, vendor_id)
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="vendor not found")
     row.is_active = False
+    row.deleted_at = datetime.now(timezone.utc)
     db.add(row)
     db.commit()
     return {"ok": True, "id": vendor_id, "deactivated": True}

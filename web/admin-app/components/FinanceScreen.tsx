@@ -14,15 +14,16 @@ interface Props {
 }
 
 export function FinanceScreen({ adminKey }: Props) {
-  const [tab, setTab] = useState<"payments" | "expenses" | "freight">("payments");
+  const [tab, setTab] = useState<"payments" | "expenses" | "freight" | "reports">("payments");
 
   return (
     <div>
-      <div className="mb-6 flex gap-2">
+      <div className="mb-6 flex gap-2 flex-wrap">
         {([
           { id: "payments", label: "💳 Payments" },
           { id: "expenses", label: "🧾 Expenses" },
           { id: "freight",  label: "🚛 Freight" },
+          { id: "reports",  label: "📊 P&L / GL" },
         ] as const).map((t) => (
           <button
             key={t.id}
@@ -40,6 +41,7 @@ export function FinanceScreen({ adminKey }: Props) {
       {tab === "payments" && <PaymentsTab adminKey={adminKey} />}
       {tab === "expenses" && <ExpensesTab adminKey={adminKey} />}
       {tab === "freight"  && <FreightTab  adminKey={adminKey} />}
+      {tab === "reports"  && <ReportsTab  adminKey={adminKey} />}
     </div>
   );
 }
@@ -56,6 +58,9 @@ function PaymentsTab({ adminKey }: { adminKey: string }) {
   const [selectedEntity, setSelectedEntity] = useState("");
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
   const [saving, setSaving] = useState(false);
+  const [apDetailModal, setApDetailModal] = useState<{ id: number } | null>(null);
+  const [apDetail, setApDetail] = useState<{ po_items: any[]; receipts: any[] } | null>(null);
+  const [apDetailLoading, setApDetailLoading] = useState(false);
 
   const headers = () => {
     const h: Record<string, string> = { "Content-Type": "application/json" };
@@ -65,6 +70,15 @@ function PaymentsTab({ adminKey }: { adminKey: string }) {
   const headersAdmin = (): Record<string, string> => adminKey.trim() ? { "X-Admin-Key": adminKey.trim() } : {};
 
   const showToast = (msg: string, ok: boolean) => { setToast({ msg, ok }); setTimeout(() => setToast(null), 3500); };
+
+  async function openApDetail(apId: number) {
+    setApDetailModal({ id: apId });
+    setApDetailLoading(true);
+    setApDetail(null);
+    const r = await fetchApi(apiUrl(`accounting/ap/${apId}/receipt-details`), { headers: headersAdmin() });
+    if (r.ok) setApDetail(await r.json());
+    setApDetailLoading(false);
+  }
 
   const load = useCallback(async () => {
     if (!adminKey.trim()) return;
@@ -112,8 +126,8 @@ function PaymentsTab({ adminKey }: { adminKey: string }) {
     if (fd.get("payment_date")) formData.append("payment_date", String(fd.get("payment_date")));
 
     const endpoint = mode === "ar"
-      ? `ar/customer/${selectedEntity}/pay`
-      : `ap/vendor/${selectedEntity}/pay`;
+      ? `accounting/ar/customer/${selectedEntity}/pay`
+      : `accounting/ap/vendor/${selectedEntity}/pay`;
     const r = await fetchApi(apiUrl(endpoint), { method: "POST", body: formData });
     const data = await r.json().catch(() => ({}));
     setSaving(false);
@@ -218,7 +232,7 @@ function PaymentsTab({ adminKey }: { adminKey: string }) {
                       </tr>
                     ))
                   : filteredAP.map((b) => (
-                      <tr key={b.id}>
+                      <tr key={b.id} onClick={() => openApDetail(b.id)} className="cursor-pointer hover:bg-blue-50">
                         <td className="px-4 py-2 font-medium">{vendorName(b.vendor_id)}</td>
                         <td className="px-4 py-2 text-right">₹{b.amount}</td>
                         <td className="px-4 py-2 text-right text-emerald-600">₹{b.amount_paid}</td>
@@ -279,6 +293,63 @@ function PaymentsTab({ adminKey }: { adminKey: string }) {
           </div>
         </div>
       </div>
+
+      {apDetailModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-bold text-slate-800">AP Bill Details</h3>
+              <button type="button" onClick={() => { setApDetailModal(null); setApDetail(null); }} className="text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+            {apDetailLoading ? (
+              <div className="py-8 text-center text-slate-400">Loading…</div>
+            ) : apDetail ? (
+              <div className="space-y-4">
+                <div>
+                  <div className="mb-2 text-xs font-semibold uppercase text-slate-500">PO Items (Ordered)</div>
+                  <table className="w-full text-sm border border-slate-200 rounded-lg overflow-hidden">
+                    <thead><tr className="bg-slate-50 text-xs uppercase text-slate-500"><th className="px-3 py-2 text-left">Product ID</th><th className="px-3 py-2 text-right">Ordered</th></tr></thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {(apDetail.po_items || []).map((item: any, i: number) => (
+                        <tr key={i}><td className="px-3 py-2">{item.our_product_id || item.catalog_product_id}</td><td className="px-3 py-2 text-right">{item.quantity}</td></tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div>
+                  <div className="mb-2 text-xs font-semibold uppercase text-slate-500">Receipts / Vendor Bills</div>
+                  {(apDetail.receipts || []).length === 0 ? (
+                    <div className="text-sm text-slate-400 py-4 text-center">No receipts found.</div>
+                  ) : (
+                    <div className="space-y-3">
+                      {apDetail.receipts.map((r: any) => (
+                        <div key={r.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                          <div className="flex items-center gap-3 mb-2">
+                            {r.vendor_bill_no && <span className="rounded-full bg-blue-100 px-3 py-0.5 text-xs font-semibold text-blue-700">Bill #{r.vendor_bill_no}</span>}
+                            {r.receipt_number && <span className="text-xs text-slate-500">Receipt: {r.receipt_number}</span>}
+                            <span className="ml-auto text-xs text-slate-400">{r.created_at ? new Date(r.created_at).toLocaleDateString("en-IN") : ""}</span>
+                          </div>
+                          <table className="w-full text-xs">
+                            <thead><tr className="text-slate-500"><th className="text-left py-1">Product</th><th className="text-right py-1">Qty</th></tr></thead>
+                            <tbody>
+                              {(r.line_items || []).map((li: any, i: number) => (
+                                <tr key={i}><td className="py-0.5">{li.catalog_product_id}</td><td className="text-right py-0.5">{li.quantity}</td></tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {r.note && <div className="mt-1 text-xs text-slate-500 italic">{r.note}</div>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="py-8 text-center text-slate-400">No details available.</div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -668,6 +739,205 @@ function FreightTab({ adminKey }: { adminKey: string }) {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────── REPORTS (P&L / GL / Journal) ───────────────
+
+interface PnLData { date_from: string; date_to: string; revenue_total: string; expense_total: string; net_pnl: string; }
+interface GLRow { account_code: string; name: string; kind: string; debit_total: string; credit_total: string; }
+interface JournalLine { account_code: string; debit: string; credit: string; }
+interface JournalEntry { id: number; posted_at: string; memo: string; ref_type: string; ref_id: number | null; lines: JournalLine[]; }
+
+function ReportsTab({ adminKey }: { adminKey: string }) {
+  const headersAdmin = (): Record<string, string> => adminKey.trim() ? { "X-Admin-Key": adminKey.trim() } : {};
+
+  const today = new Date().toISOString().slice(0, 10);
+  const firstOfYear = new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0, 10);
+
+  const [dateFrom, setDateFrom] = useState(firstOfYear);
+  const [dateTo, setDateTo]     = useState(today);
+  const [view, setView]         = useState<"pnl" | "gl" | "journal">("pnl");
+  const [loading, setLoading]   = useState(false);
+
+  const [pnl,     setPnl]     = useState<PnLData | null>(null);
+  const [gl,      setGl]      = useState<GLRow[]>([]);
+  const [journal, setJournal] = useState<JournalEntry[]>([]);
+  const [expandedJE, setExpandedJE] = useState<number | null>(null);
+
+  async function load() {
+    if (!dateFrom || !dateTo) return;
+    setLoading(true);
+    const qs = `?date_from=${dateFrom}&date_to=${dateTo}`;
+    try {
+      if (view === "pnl") {
+        const r = await fetchApi(apiUrl(`accounting/pnl${qs}`), { headers: headersAdmin() });
+        if (r.ok) setPnl(await r.json());
+      } else if (view === "gl") {
+        const r = await fetchApi(apiUrl(`accounting/gl${qs}`), { headers: headersAdmin() });
+        if (r.ok) setGl(await r.json());
+      } else {
+        const r = await fetchApi(apiUrl(`accounting/journal${qs}&limit=500`), { headers: headersAdmin() });
+        if (r.ok) setJournal(await r.json());
+      }
+    } finally { setLoading(false); }
+  }
+
+  useEffect(() => { void load(); }, [view, dateFrom, dateTo]);
+
+  const fmt = (s: string | number) => `₹${Number(s).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
+  const fmtDate = (s: string) => new Date(s).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+
+  const kindColor: Record<string, string> = { revenue: "#16a34a", expense: "#dc2626", asset: "#2563eb", liability: "#7c3aed", equity: "#0891b2" };
+
+  return (
+    <div>
+      {/* Date range + sub-tabs */}
+      <div className="mb-5 flex flex-wrap items-end gap-3">
+        <div>
+          <label className={LABEL}>From</label>
+          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className={INPUT} style={{ width: 148 }} />
+        </div>
+        <div>
+          <label className={LABEL}>To</label>
+          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className={INPUT} style={{ width: 148 }} />
+        </div>
+        <div className="flex gap-2 pb-0.5">
+          {(["pnl", "gl", "journal"] as const).map((v) => (
+            <button key={v} type="button" onClick={() => setView(v)}
+              className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${view === v ? "bg-slate-900 text-white" : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"}`}>
+              {v === "pnl" ? "P&L" : v === "gl" ? "General Ledger" : "Journal"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {loading && <div className="py-16 text-center text-slate-400 text-sm">Loading…</div>}
+
+      {/* ── P&L ── */}
+      {!loading && view === "pnl" && pnl && (
+        <div>
+          <div className="mb-6 grid grid-cols-3 gap-4">
+            {[
+              { label: "Revenue", value: pnl.revenue_total, color: "#16a34a", bg: "#f0fdf4" },
+              { label: "Expenses", value: pnl.expense_total, color: "#dc2626", bg: "#fff5f5" },
+              { label: "Net Profit / Loss", value: pnl.net_pnl, color: Number(pnl.net_pnl) >= 0 ? "#16a34a" : "#dc2626", bg: "#f8fafc" },
+            ].map((c) => (
+              <div key={c.label} style={{ background: c.bg, border: "1px solid #e2e8f0", borderRadius: 12, padding: "20px 24px", textAlign: "center" }}>
+                <div style={{ fontSize: 24, fontWeight: 800, color: c.color }}>{fmt(c.value)}</div>
+                <div style={{ fontSize: 12, color: "#64748b", marginTop: 4, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>{c.label}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ background: "#f8fafc", borderRadius: 10, padding: "16px 20px", fontSize: 13, color: "#475569" }}>
+            Period: {fmtDate(pnl.date_from)} — {fmtDate(pnl.date_to)}
+          </div>
+          <div className="mt-4 rounded-xl border border-slate-200 p-4">
+            <div className="text-sm font-semibold text-slate-700 mb-3">Revenue breakdown</div>
+            <table className="w-full text-sm">
+              <tbody>
+                <tr className="border-b border-slate-100">
+                  <td className="py-2 text-slate-600">Customer Sales (billed orders)</td>
+                  <td className="py-2 text-right font-semibold text-emerald-700">{fmt(pnl.revenue_total)}</td>
+                </tr>
+                <tr className="border-b border-slate-100">
+                  <td className="py-2 text-slate-600">Total Expenses (indirect + COGS)</td>
+                  <td className="py-2 text-right font-semibold text-red-600">{fmt(pnl.expense_total)}</td>
+                </tr>
+                <tr>
+                  <td className="py-3 font-bold text-slate-800">Net Profit / Loss</td>
+                  <td className={`py-3 text-right font-bold text-lg ${Number(pnl.net_pnl) >= 0 ? "text-emerald-700" : "text-red-600"}`}>{fmt(pnl.net_pnl)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ── General Ledger ── */}
+      {!loading && view === "gl" && (
+        <div className="rounded-xl border border-slate-200 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-slate-50">
+                {["Code", "Account", "Type", "Debit", "Credit", "Net"].map((h, i) => (
+                  <th key={h} className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500 ${i >= 3 ? "text-right" : "text-left"}`}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {gl.map((row, i) => {
+                const net = Number(row.debit_total) - Number(row.credit_total);
+                return (
+                  <tr key={i} className="border-t border-slate-100 hover:bg-slate-50">
+                    <td className="px-4 py-2.5 font-mono text-xs text-slate-500">{row.account_code}</td>
+                    <td className="px-4 py-2.5 font-medium text-slate-800">{row.name}</td>
+                    <td className="px-4 py-2.5">
+                      <span style={{ fontSize: 11, fontWeight: 600, color: kindColor[row.kind] ?? "#64748b", background: `${kindColor[row.kind] ?? "#64748b"}18`, borderRadius: 6, padding: "2px 8px", textTransform: "capitalize" }}>
+                        {row.kind}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-slate-700">{fmt(row.debit_total)}</td>
+                    <td className="px-4 py-2.5 text-right text-slate-700">{fmt(row.credit_total)}</td>
+                    <td className={`px-4 py-2.5 text-right font-semibold ${net >= 0 ? "text-slate-800" : "text-red-600"}`}>{fmt(Math.abs(net))}</td>
+                  </tr>
+                );
+              })}
+              {gl.length === 0 && (
+                <tr><td colSpan={6} className="px-4 py-12 text-center text-slate-400">No GL activity in this period.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* ── Journal ── */}
+      {!loading && view === "journal" && (
+        <div className="space-y-2">
+          {journal.length === 0 && <div className="py-12 text-center text-slate-400 text-sm">No journal entries in this period.</div>}
+          {journal.map((je) => (
+            <div key={je.id} className="rounded-xl border border-slate-200 overflow-hidden">
+              <div
+                className="flex items-center justify-between px-4 py-3 bg-slate-50 cursor-pointer hover:bg-slate-100"
+                onClick={() => setExpandedJE(expandedJE === je.id ? null : je.id)}
+              >
+                <div className="flex items-center gap-3">
+                  <span className="font-mono text-xs text-slate-400">#{je.id}</span>
+                  <span className="text-sm font-medium text-slate-800">{je.memo || "(no memo)"}</span>
+                  {je.ref_type && (
+                    <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">{je.ref_type}{je.ref_id ? ` #${je.ref_id}` : ""}</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-3 text-xs text-slate-500">
+                  <span>{fmtDate(je.posted_at)}</span>
+                  <span>{expandedJE === je.id ? "▲" : "▼"}</span>
+                </div>
+              </div>
+              {expandedJE === je.id && (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-white border-t border-slate-100">
+                      <th className="px-4 py-2 text-left text-xs font-semibold text-slate-500">Account</th>
+                      <th className="px-4 py-2 text-right text-xs font-semibold text-slate-500">Debit</th>
+                      <th className="px-4 py-2 text-right text-xs font-semibold text-slate-500">Credit</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {je.lines.map((ln, li) => (
+                      <tr key={li} className="border-t border-slate-50">
+                        <td className="px-4 py-2 font-mono text-xs text-slate-600">{ln.account_code}</td>
+                        <td className="px-4 py-2 text-right text-slate-700">{Number(ln.debit) > 0 ? fmt(ln.debit) : "—"}</td>
+                        <td className="px-4 py-2 text-right text-slate-700">{Number(ln.credit) > 0 ? fmt(ln.credit) : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

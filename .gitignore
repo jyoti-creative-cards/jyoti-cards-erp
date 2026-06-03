@@ -43,3 +43,8 @@ invoice_*.html
 
 # Local split-repo exports (not part of monorepo source)
 _publish/
+
+# Node
+node_modules/
+.next/
+*.tsbuildinfo

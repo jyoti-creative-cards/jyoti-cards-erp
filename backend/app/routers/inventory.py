@@ -1,18 +1,22 @@
 from __future__ import annotations
 
+import calendar
 import json
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
-from sqlalchemy import or_
+from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.db.session import get_db
 from app.deps import require_admin
 from app.models.catalog_product import CatalogProduct
+from app.models.customer import Customer
+from app.models.customer_order import CustomerOrder
 from app.models.stock_adjustment import StockAdjustment
 from app.models.stock_balance import StockBalance
 from app.models.stock_receipt import StockReceipt
@@ -21,7 +25,10 @@ from app.routers.purchase_orders import _int_snap, _to_public, receipt_allowed_s
 from app.schemas.inventory import (
     BalanceThresholdBody,
     InventoryRowPublic,
+    LedgerEntryDetail,
+    LedgerMonthSummary,
     ManualStockBody,
+    ProductLedgerResponse,
     StockAdjustmentCreate,
     StockAdjustmentPublic,
     StockAdjustmentUpdate,
@@ -63,7 +70,35 @@ def _apply_stock_delta(db: Session, catalog_product_id: int, delta: int) -> Stoc
     return row
 
 
-def _inventory_row_public(db: Session, p: CatalogProduct, bal: Optional[StockBalance]) -> InventoryRowPublic:
+def _invoice_count_for_product(db: Session, catalog_product_id: int) -> int:
+    try:
+        dialect = db.bind.dialect.name  # type: ignore[union-attr]
+    except Exception:
+        dialect = "postgresql"
+    if dialect == "postgresql":
+        sql = text(
+            "SELECT COUNT(*) FROM portal_customer_orders "
+            "WHERE items::jsonb @> (:filter)::jsonb AND status != 'cancelled'"
+        )
+        row = db.execute(sql, {"filter": json.dumps([{"catalog_product_id": catalog_product_id}])}).scalar()
+        return int(row or 0)
+    # fallback for non-PG (dev sqlite)
+    count = 0
+    orders = db.query(CustomerOrder).filter(CustomerOrder.status != "cancelled").all()
+    for o in orders:
+        items = o.items if isinstance(o.items, list) else []
+        if any(isinstance(i, dict) and i.get("catalog_product_id") == catalog_product_id for i in items):
+            count += 1
+    return count
+
+
+def _inventory_row_public(
+    db: Session,
+    p: CatalogProduct,
+    bal: Optional[StockBalance],
+    invoice_count: int = 0,
+    selling_price: float = 0.0,
+) -> InventoryRowPublic:
     qty = int(bal.quantity) if bal else 0
     th = int(bal.low_stock_threshold) if bal else 0
     keys = p.image_keys if isinstance(p.image_keys, list) else []
@@ -78,6 +113,8 @@ def _inventory_row_public(db: Session, p: CatalogProduct, bal: Optional[StockBal
         low_stock_threshold=th,
         stock_status=stock_status_label(qty, th),
         image_urls=presigned_urls(keys_str),
+        invoice_count=invoice_count,
+        selling_price=selling_price,
     )
 
 
@@ -136,7 +173,8 @@ def list_inventory(
             )
         for p in qry.order_by(CatalogProduct.our_product_id.asc()).all():
             bal = db.get(StockBalance, p.id)
-            row = _inventory_row_public(db, p, bal)
+            inv_cnt = _invoice_count_for_product(db, p.id)
+            row = _inventory_row_public(db, p, bal, invoice_count=inv_cnt)
             if st_f and row.stock_status != st_f:
                 continue
             out.append(row)
@@ -161,7 +199,8 @@ def list_inventory(
         p = db.get(CatalogProduct, bal.catalog_product_id)
         if p is None:
             continue
-        row = _inventory_row_public(db, p, bal)
+        inv_cnt = _invoice_count_for_product(db, p.id)
+        row = _inventory_row_public(db, p, bal, invoice_count=inv_cnt)
         if st_f and row.stock_status != st_f:
             continue
         out.append(row)
@@ -326,6 +365,9 @@ def receipt_from_po(
     lines: str = Form(...),
     notes: Optional[str] = Form(None),
     file: Optional[UploadFile] = File(None),
+    vendor_bill_no: Optional[str] = Form(None),
+    bill_photo: Optional[UploadFile] = File(None),
+    force_close: str = Form("false"),
     db: Session = Depends(get_db),
 ) -> dict:
     is_partial_f = _parse_bool_form(is_partial)
@@ -363,17 +405,11 @@ def receipt_from_po(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="no valid lines")
 
     rn = (receipt_number or "").strip()
-    cn = (contact_number or "").strip()
-    if not rn or not cn:
+    cn = (contact_number or "").strip() or None
+    if not rn:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            detail="receipt_number and contact_number are required for each shipment",
-        )
-
-    if is_partial_f and storage_configured() and (file is None or not getattr(file, "filename", None)):
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            detail="partial receipt requires receipt file upload when storage is configured",
+            detail="receipt_number is required for each shipment",
         )
 
     raw_items = po.items if isinstance(po.items, list) else []
@@ -398,28 +434,25 @@ def receipt_from_po(
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"catalog_product_id {cid} not on this PO")
         incoming[cid] = incoming.get(cid, 0) + q
 
-    for cid, total_in in incoming.items():
-        if total_in > pending_map[cid]:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                detail=f"receive quantity for product {cid} exceeds pending ({pending_map[cid]})",
-            )
-
-    if not is_partial_f:
-        for cid, pend in pending_map.items():
-            if pend <= 0:
-                continue
-            got = incoming.get(cid, 0)
-            if got != pend:
-                raise HTTPException(
-                    status.HTTP_400_BAD_REQUEST,
-                    detail="full receipt mode: each line with pending stock must be received in exact pending quantity",
-                )
-
     img_key: Optional[str] = None
     if file is not None and getattr(file, "filename", None):
         try:
             img_key = _save_receipt_upload(file)
+        except RuntimeError as e:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)) from e
+
+    bill_photo_key: Optional[str] = None
+    if bill_photo is not None and getattr(bill_photo, "filename", None):
+        try:
+            from pathlib import Path as _Path
+            raw_bp = bill_photo.file.read()
+            if raw_bp:
+                suf_bp = _Path(bill_photo.filename or "upload").suffix.lower()
+                if suf_bp not in (".pdf", ".png", ".jpg", ".jpeg", ".webp", ".gif"):
+                    suf_bp = ".bin"
+                mime_bp = bill_photo.content_type or "application/octet-stream"
+                bill_photo_key = f"po_receipts/{uuid.uuid4().hex}{suf_bp}"
+                upload_bytes(bill_photo_key, raw_bp, mime_bp)
         except RuntimeError as e:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)) from e
 
@@ -440,6 +473,8 @@ def receipt_from_po(
         is_partial=is_partial_f,
         line_items=line_items_store,
         note=(notes or "").strip() or None,
+        vendor_bill_no=(vendor_bill_no or "").strip() or None,
+        bill_photo_key=bill_photo_key,
     )
     db.add(sr)
 
@@ -458,9 +493,9 @@ def receipt_from_po(
             all_done = False
             break
 
-    if all_done:
-        if po.status == "booked":
-            po.status = "in_progress"
+    force_close_f = _parse_bool_form(force_close)
+    if force_close_f or all_done:
+        po.status = "closed"
     elif is_partial_f or po.status == "booked":
         po.status = "in_progress"
 
@@ -472,3 +507,138 @@ def receipt_from_po(
         "fully_received": all_done,
         "purchase_order": _to_public(db, po),
     }
+
+
+@router.get(
+    "/{catalog_product_id}/ledger",
+    response_model=ProductLedgerResponse,
+    dependencies=[Depends(require_admin)],
+)
+def get_product_ledger(
+    catalog_product_id: int,
+    db: Session = Depends(get_db),
+) -> ProductLedgerResponse:
+    p = db.get(CatalogProduct, catalog_product_id)
+    if p is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="catalog product not found")
+
+    bal = db.get(StockBalance, catalog_product_id)
+    current_stock = int(bal.quantity) if bal else 0
+
+    # ── collect all events ───────────────────────────────────────────
+    events: list[dict] = []
+
+    # inward — stock receipts
+    receipts = db.query(StockReceipt).all()
+    for sr in receipts:
+        line_items = sr.line_items if isinstance(sr.line_items, list) else []
+        for li in line_items:
+            if not isinstance(li, dict):
+                continue
+            if int(li.get("catalog_product_id", 0)) == catalog_product_id:
+                events.append({
+                    "date": sr.created_at,
+                    "type": "inward",
+                    "qty": int(li.get("quantity", 0)),
+                    "reference": sr.receipt_number or f"SR-{sr.id}",
+                    "party": None,
+                })
+
+    # outward — customer orders (confirmed / billed / shipped)
+    customer_map: dict[int, str] = {}
+    orders = db.query(CustomerOrder).filter(
+        CustomerOrder.status.in_(["confirmed", "billed", "shipped"])
+    ).all()
+    for co in orders:
+        items = co.items if isinstance(co.items, list) else []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if int(item.get("catalog_product_id", 0)) == catalog_product_id:
+                qty = int(item.get("quantity", 0))
+                if co.customer_id not in customer_map:
+                    cust = db.get(Customer, co.customer_id)
+                    customer_map[co.customer_id] = cust.name if cust else f"Customer {co.customer_id}"
+                events.append({
+                    "date": co.created_at,
+                    "type": "outward",
+                    "qty": -qty,
+                    "reference": f"ORD-{co.id}",
+                    "party": customer_map[co.customer_id],
+                })
+
+    # adjustments
+    adjs = db.query(StockAdjustment).filter(
+        StockAdjustment.catalog_product_id == catalog_product_id
+    ).all()
+    for adj in adjs:
+        events.append({
+            "date": adj.created_at,
+            "type": "adjustment",
+            "qty": int(adj.quantity_delta),
+            "reference": adj.note or f"ADJ-{adj.id}",
+            "party": None,
+        })
+
+    # sort by date
+    events.sort(key=lambda e: e["date"] if e["date"] is not None else datetime.min.replace(tzinfo=timezone.utc))
+
+    # compute running balances
+    running = 0
+    for e in events:
+        running += e["qty"]
+        e["running_balance"] = running
+
+    # invoice_count — any non-cancelled orders containing this product
+    invoice_count = _invoice_count_for_product(db, catalog_product_id)
+
+    # ── group into months ─────────────────────────────────────────────
+    month_map: dict[tuple[int, int], list[dict]] = {}
+    for e in events:
+        dt: datetime = e["date"]
+        key = (dt.year, dt.month)
+        month_map.setdefault(key, []).append(e)
+
+    months_out: list[LedgerMonthSummary] = []
+    prev_closing = 0
+
+    for key in sorted(month_map.keys()):
+        yr, mo = key
+        month_events = month_map[key]
+        opening = prev_closing
+        inward = sum(e["qty"] for e in month_events if e["qty"] > 0)
+        outward = sum(abs(e["qty"]) for e in month_events if e["qty"] < 0)
+        closing = month_events[-1]["running_balance"]
+        entries = [
+            LedgerEntryDetail(
+                date=e["date"],
+                type=e["type"],
+                qty=e["qty"],
+                reference=e["reference"],
+                party=e["party"],
+                running_balance=e["running_balance"],
+            )
+            for e in month_events
+        ]
+        months_out.append(
+            LedgerMonthSummary(
+                year=yr,
+                month=mo,
+                month_label=f"{calendar.month_abbr[mo]} {yr}",
+                opening=opening,
+                inward=inward,
+                outward=outward,
+                closing=closing,
+                entries=entries,
+            )
+        )
+        prev_closing = closing
+
+    return ProductLedgerResponse(
+        catalog_product_id=p.id,
+        our_product_id=p.our_product_id,
+        name=p.name,
+        current_stock=current_stock,
+        invoice_count=invoice_count,
+        months=months_out,
+    )

@@ -13,6 +13,8 @@ export interface CustomerPublic {
   credit_override: boolean;
   created_at: string;
   updated_at: string;
+  invoice_count?: number;
+  total_billed?: string;
 }
 
 export interface VendorPublic {
@@ -144,6 +146,8 @@ export interface InventoryRowPublic {
   low_stock_threshold: number;
   stock_status: string;
   image_urls: string[];
+  invoice_count?: number;
+  selling_price?: number;
 }
 
 export interface StockAdjustmentPublic {
@@ -204,6 +208,8 @@ export interface CustomerBillPublic {
   gst_enabled: boolean;
   gst_rate_percent: string;
   discount_percent: string | null;
+  bill_no?: string | null;
+  bill_series_id?: number | null;
   totals: {
     subtotal?: string;
     discount_amount?: string;
@@ -217,6 +223,28 @@ export interface CustomerBillPublic {
   document_url: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface BillSeries {
+  id: number;
+  name: string;
+  prefix: string;
+  start_num: number;
+  end_num: number;
+  current_num: number;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface AuditLogEntry {
+  id: number;
+  action: string;
+  entity_type: string;
+  entity_id?: number;
+  description: string;
+  performed_by?: string;
+  ip_address?: string;
+  created_at: string;
 }
 
 export interface DashboardPublic {

@@ -28,6 +28,10 @@ class CustomerBill(Base):
     discount_percent: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4), nullable=True)
     totals: Mapped[dict] = mapped_column(JSON, nullable=False)
     document_key: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    bill_no: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    bill_series_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("portal_bill_series.id", ondelete="SET NULL"), nullable=True)
+
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

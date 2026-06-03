@@ -23,12 +23,20 @@ def compute_bill_totals(
     discount_percent: Decimal | None,
     freight_charges: Decimal | None = None,
     packaging_charges: Decimal | None = None,
+    item_overrides: list[dict] | None = None,
 ) -> Dict[str, Any]:
     """
     Order line unit_price is GST-inclusive.
     Discount % applies to the invoice inclusive subtotal; allocated to lines by proportion.
     GST split uses the same rate on each line's discounted inclusive amount.
+    item_overrides: [{catalog_product_id, override_price?, discount_percent?}]
     """
+    overrides_map: dict[int, dict] = {}
+    if item_overrides:
+        for ov in item_overrides:
+            if isinstance(ov, dict) and ov.get("catalog_product_id"):
+                overrides_map[int(ov["catalog_product_id"])] = ov
+
     raw_lines: List[Dict[str, Any]] = []
     subtotal_inclusive = Decimal("0")
 
@@ -44,6 +52,21 @@ def compute_bill_totals(
         sku = str(row.get("our_product_id") or "")
         name = str(row.get("name") or "")
         inc_unit = _d(row.get("unit_price"))
+
+        # Apply per-item override if present
+        cid = row.get("catalog_product_id")
+        item_discount_pct = Decimal("0")
+        if cid is not None and int(cid) in overrides_map:
+            ov = overrides_map[int(cid)]
+            if ov.get("override_price") is not None:
+                inc_unit = _d(ov["override_price"])
+            if ov.get("discount_percent") is not None:
+                item_discount_pct = _d(ov["discount_percent"])
+                if item_discount_pct < 0:
+                    item_discount_pct = Decimal("0")
+                if item_discount_pct > Decimal("100"):
+                    item_discount_pct = Decimal("100")
+
         line_inc = (inc_unit * Decimal(qty)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         subtotal_inclusive += line_inc
         raw_lines.append(
@@ -53,6 +76,7 @@ def compute_bill_totals(
                 "quantity": qty,
                 "inclusive_unit_price": inc_unit,
                 "line_inclusive_total": line_inc,
+                "item_discount_pct": item_discount_pct,
             }
         )
 
@@ -78,14 +102,28 @@ def compute_bill_totals(
     line_discounts: List[Decimal] = []
     for lr in raw_lines:
         li = lr["line_inclusive_total"]
-        if subtotal_inclusive > 0 and n > 0:
+        item_dp = lr["item_discount_pct"]
+        if item_dp > 0:
+            # Per-item discount overrides the proportional global discount for this line
+            ld = (li * item_dp / Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        elif subtotal_inclusive > 0 and n > 0:
             ld = (li / subtotal_inclusive * discount_amount).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         else:
             ld = Decimal("0")
         line_discounts.append(ld)
     if n > 0:
-        drift = discount_amount - sum(line_discounts)
-        line_discounts[-1] = (line_discounts[-1] + drift).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        # Only correct drift on lines without per-item discount
+        global_discount_lines = [i for i, lr in enumerate(raw_lines) if lr["item_discount_pct"] == 0]
+        if global_discount_lines:
+            allocated = sum(line_discounts[i] for i in global_discount_lines)
+            global_discount_total = sum(
+                (lr["line_inclusive_total"] / subtotal_inclusive * discount_amount).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                if subtotal_inclusive > 0 else Decimal("0")
+                for lr in raw_lines if lr["item_discount_pct"] == 0
+            )
+            drift = global_discount_total - allocated
+            last_global = global_discount_lines[-1]
+            line_discounts[last_global] = (line_discounts[last_global] + drift).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
     lines_out: List[Dict[str, Any]] = []
     for lr, ld in zip(raw_lines, line_discounts):
@@ -118,6 +156,8 @@ def compute_bill_totals(
                 "line_taxable_value": _fmt2(line_taxable),
                 "line_gst_amount": _fmt2(line_gst_amt),
                 "line_total": _fmt2(line_after),
+                "item_discount_percent": _fmt2(lr["item_discount_pct"]) if lr["item_discount_pct"] > 0 else None,
+                "effective_price": _fmt2((line_after / Decimal(qty)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)) if qty > 0 else _fmt2(Decimal("0")),
             }
         )
 

@@ -18,6 +18,7 @@ from app.integrations.whatsapp.client import send_order_billed, upload_media
 from app.services.accounting import ensure_ar_for_customer_bill, order_line_summary
 from app.services.customer_bill_math import compute_bill_totals
 from app.services.customer_bill_pdf import render_customer_bill_pdf
+from app.models.bill_series import BillSeries
 
 router = APIRouter(prefix="/customer-bills", tags=["customer-bills"])
 
@@ -36,6 +37,8 @@ def _to_public(row: CustomerBill) -> CustomerBillPublic:
         totals=tot,
         document_key=row.document_key,
         document_url=doc_url,
+        bill_no=row.bill_no,
+        bill_series_id=row.bill_series_id,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -93,6 +96,24 @@ def generate_customer_bill(body: CustomerBillGenerate, db: Session = Depends(get
     freight = body.freight_charges
     packaging = body.packaging_charges
 
+    # Apply rate_type override
+    rate_type = (body.rate_type or "order").strip().lower()
+    if rate_type in ("net", "regular"):
+        overridden_items = []
+        for it in items:
+            cid = it.get("catalog_product_id")
+            prod = db.get(CatalogProduct, int(cid)) if cid else None
+            new_price = None
+            if prod and rate_type == "net":
+                new_price = float(prod.buying_price or 0)
+            elif prod and rate_type == "regular":
+                new_price = float(prod.selling_price or 0)
+            if new_price is not None:
+                it = dict(it)
+                it["unit_price"] = str(new_price)
+            overridden_items.append(it)
+        items = overridden_items
+
     totals = compute_bill_totals(
         items,
         gst_enabled=body.gst_enabled,
@@ -100,11 +121,13 @@ def generate_customer_bill(body: CustomerBillGenerate, db: Session = Depends(get
         discount_percent=disc,
         freight_charges=freight,
         packaging_charges=packaging,
+        item_overrides=body.item_overrides,
     )
 
     cust = db.get(Customer, order.customer_id)
     name = (cust.name if cust else "") or ""
     company = (cust.company_name if cust else None) or None
+    display_name = company or name
 
     if not storage_configured():
         raise HTTPException(
@@ -117,6 +140,20 @@ def generate_customer_bill(body: CustomerBillGenerate, db: Session = Depends(get
 
     existing = db.query(CustomerBill).filter(CustomerBill.customer_order_id == order.id).first()
     old_keys: list[str] = []
+
+    # Resolve bill_no from series if requested
+    new_bill_no: str | None = None
+    if body.bill_series_id is not None:
+        series = db.get(BillSeries, body.bill_series_id)
+        if series is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="bill series not found")
+        if series.current_num >= series.end_num:
+            raise HTTPException(status.HTTP_409_CONFLICT, detail="bill series exhausted")
+        next_num = series.current_num + 1 if series.current_num >= series.start_num else series.start_num
+        series.current_num = next_num
+        db.add(series)
+        new_bill_no = f"{series.prefix}{next_num}"
+
     if existing is not None:
         if existing.document_key:
             old_keys.append(existing.document_key)
@@ -125,6 +162,9 @@ def generate_customer_bill(body: CustomerBillGenerate, db: Session = Depends(get
         existing.discount_percent = disc
         existing.totals = totals
         existing.document_key = None
+        if new_bill_no is not None:
+            existing.bill_no = new_bill_no
+            existing.bill_series_id = body.bill_series_id
         db.add(existing)
         row = existing
     else:
@@ -135,6 +175,8 @@ def generate_customer_bill(body: CustomerBillGenerate, db: Session = Depends(get
             discount_percent=disc,
             totals=totals,
             document_key=None,
+            bill_no=new_bill_no,
+            bill_series_id=body.bill_series_id,
         )
         db.add(row)
 
@@ -147,7 +189,7 @@ def generate_customer_bill(body: CustomerBillGenerate, db: Session = Depends(get
     pdf_bytes = render_customer_bill_pdf(
         bill_id=row.id,
         order_id=order.id,
-        customer_name=name,
+        customer_name=display_name,
         customer_company=company,
         totals=totals,
         customer_notes=order.customer_notes or None,

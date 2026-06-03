@@ -6,6 +6,29 @@ import { Badge, Field } from "@/components/erp-ui";
 import { apiUrl, fetchApi, formatApiError } from "@/lib/api";
 import type { CityPublic, CustomerPublic, RoutePublic, VendorPublic } from "@/lib/types";
 
+interface StatementEntry {
+  date: string;
+  type: string;
+  reference?: string;
+  description: string;
+  debit: number | null;
+  credit: number | null;
+  balance: number;
+  running_balance?: number | null;
+  order_id?: number | null;
+  order_status?: string | null;
+}
+interface CustomerStatementData {
+  customer_id: number;
+  name: string;
+  phone: string;
+  company_name: string | null;
+  total_billed: number;
+  total_paid: number;
+  outstanding: number;
+  entries: StatementEntry[];
+}
+
 const INPUT = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
 const LABEL = "mb-1 block text-xs font-semibold text-slate-500 uppercase tracking-wider";
 const BTN_PRIMARY = "inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-50";
@@ -80,6 +103,8 @@ function CustomersTab({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editing, setEditing] = useState<CustomerPublic | null>(null); // null = create mode
   const [saving, setSaving] = useState(false);
+  // Statement modal
+  const [statementCustomer, setStatementCustomer] = useState<CustomerPublic | null>(null);
   // Controlled city/route for auto-select
   const [selectedCityId, setSelectedCityId] = useState<string>("");
   const [selectedRouteId, setSelectedRouteId] = useState<string>("");
@@ -223,6 +248,8 @@ function CustomersTab({
                 <th className="px-4 py-3 text-left">Company</th>
                 <th className="px-4 py-3 text-left">Route / City</th>
                 <th className="px-4 py-3 text-left">Credit</th>
+                <th className="px-4 py-3 text-right">Bills</th>
+                <th className="px-4 py-3 text-right">Total Bought</th>
                 <th className="px-4 py-3 text-left" />
               </tr>
             </thead>
@@ -247,14 +274,27 @@ function CustomersTab({
                       <span className="font-medium text-slate-700">₹{c.credit_limit}</span>
                     ) : <span className="text-slate-400">—</span>}
                   </td>
+                  <td className="px-4 py-3 text-right text-slate-600">{c.invoice_count ?? "—"}</td>
+                  <td className="px-4 py-3 text-right text-slate-600">
+                    {c.total_billed ? `₹${Number(c.total_billed).toLocaleString("en-IN")}` : "—"}
+                  </td>
                   <td className="px-4 py-3 text-right">
-                    <button
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); void delCustomer(c.id); }}
-                      className="text-xs text-red-500 hover:underline"
-                    >
-                      Delete
-                    </button>
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setStatementCustomer(c); }}
+                        className="text-xs text-blue-600 hover:underline"
+                      >
+                        Statement
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); void delCustomer(c.id); }}
+                        className="text-xs text-red-500 hover:underline"
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -264,6 +304,15 @@ function CustomersTab({
             {filtered.length} customer{filtered.length !== 1 ? "s" : ""}
           </div>
         </div>
+      )}
+
+      {statementCustomer && (
+        <StatementModal
+          customer={statementCustomer}
+          headersAdmin={headersAdmin}
+          adminKey={adminKey}
+          onClose={() => setStatementCustomer(null)}
+        />
       )}
 
       {/* Drawer */}
@@ -348,6 +397,244 @@ function CustomersTab({
           <RouteCityQuickAdd routes={routes} cities={cities} headers={headers} onDone={() => void load()} />
         </div>
       </Drawer>
+    </div>
+  );
+}
+
+// ─────────────────────────────── STATEMENT MODAL ───────────────────────────────
+
+function StatementModal({
+  customer,
+  headersAdmin,
+  adminKey,
+  onClose,
+}: {
+  customer: CustomerPublic;
+  headersAdmin: () => Record<string, string>;
+  adminKey: string;
+  onClose: () => void;
+}) {
+  const [data, setData] = useState<CustomerStatementData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [orderDetail, setOrderDetail] = useState<Record<string, unknown> | null>(null);
+  const [orderLoading, setOrderLoading] = useState(false);
+
+  useEffect(() => {
+    setLoading(true);
+    setError("");
+    fetchApi(apiUrl(`customers/${customer.id}/statement`), { headers: headersAdmin() })
+      .then(async (r) => {
+        if (!r.ok) { setError("Failed to load statement."); return; }
+        setData(await r.json());
+      })
+      .catch(() => setError("Network error."))
+      .finally(() => setLoading(false));
+  }, [customer.id]);
+
+  function downloadPdf() {
+    const key = adminKey.trim();
+    const url = apiUrl(`customers/${customer.id}/statement/pdf`) + (key ? `?api_key=${encodeURIComponent(key)}` : "");
+    window.open(url, "_blank");
+  }
+
+  function openOrderDetail(orderId: number) {
+    setOrderLoading(true);
+    fetchApi(apiUrl(`customer-orders/${orderId}`), { headers: headersAdmin() })
+      .then(async (r) => { if (r.ok) setOrderDetail(await r.json()); })
+      .catch(() => {})
+      .finally(() => setOrderLoading(false));
+  }
+
+  const fmt = (n: number | null | undefined) =>
+    n != null ? `₹${Number(n).toLocaleString("en-IN")}` : "—";
+
+  const statusColor: Record<string, string> = {
+    confirmed: "#2563eb", billed: "#7c3aed", shipped: "#16a34a", cancelled: "#dc2626",
+  };
+
+  return (
+    <div
+      style={{ position: "fixed", inset: 0, zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.45)" }}
+      onClick={onClose}
+    >
+      <div
+        style={{ background: "#fff", borderRadius: 16, width: "min(860px, 95vw)", maxHeight: "90vh", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 25px 50px rgba(0,0,0,0.25)" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div style={{ padding: "20px 24px 16px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 17, fontWeight: 700, color: "#0f172a" }}>{customer.name}</div>
+            <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
+              {customer.phone}{customer.company_name ? ` · ${customer.company_name}` : ""}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button
+              type="button"
+              onClick={downloadPdf}
+              style={{ fontSize: 12, fontWeight: 600, background: "#374151", color: "#fff", border: "none", borderRadius: 8, padding: "7px 14px", cursor: "pointer" }}
+            >
+              🖨️ Print Statement
+            </button>
+            <button
+              type="button"
+              onClick={downloadPdf}
+              style={{ fontSize: 12, fontWeight: 600, background: "#1d4ed8", color: "#fff", border: "none", borderRadius: 8, padding: "7px 14px", cursor: "pointer" }}
+            >
+              ⬇ Download PDF
+            </button>
+            <button type="button" onClick={onClose} style={{ fontSize: 20, lineHeight: 1, background: "none", border: "none", cursor: "pointer", color: "#94a3b8", padding: "2px 6px" }}>✕</button>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div style={{ overflowY: "auto", flex: 1, padding: "16px 24px" }}>
+          {loading && <div style={{ textAlign: "center", padding: "48px 0", color: "#94a3b8" }}>Loading…</div>}
+          {error && <div style={{ textAlign: "center", padding: "48px 0", color: "#ef4444" }}>{error}</div>}
+          {data && !loading && (
+            <>
+              {/* Summary cards */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12, marginBottom: 20 }}>
+                {[
+                  { label: "Total Billed", value: fmt(data.total_billed), color: "#1e293b" },
+                  { label: "Total Paid", value: fmt(data.total_paid), color: "#16a34a" },
+                  { label: "Outstanding", value: fmt(data.outstanding), color: data.outstanding > 0 ? "#dc2626" : "#16a34a" },
+                ].map((s) => (
+                  <div key={s.label} style={{ background: "#f8fafc", borderRadius: 10, padding: "14px 16px", textAlign: "center", border: "1px solid #e2e8f0" }}>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: s.color }}>{s.value}</div>
+                    <div style={{ fontSize: 11, color: "#64748b", marginTop: 3, textTransform: "uppercase", letterSpacing: "0.05em" }}>{s.label}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 8 }}>
+                💡 Click any order row to see full order details
+              </div>
+
+              {/* Entries table */}
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
+                    {["Date", "Type", "Description", "Debit (₹)", "Credit (₹)", "Balance (₹)"].map((h, i) => (
+                      <th key={h} style={{ padding: "8px 12px", textAlign: i >= 3 ? "right" : "left", fontSize: 11, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.entries.map((en, i) => (
+                    <tr
+                      key={i}
+                      onClick={() => en.order_id && openOrderDetail(en.order_id)}
+                      style={{
+                        borderBottom: "1px solid #f1f5f9",
+                        background: en.debit ? "#fff5f5" : en.credit ? "#f0fdf4" : undefined,
+                        cursor: en.order_id ? "pointer" : "default",
+                      }}
+                      title={en.order_id ? "Click to view order details" : undefined}
+                    >
+                      <td style={{ padding: "8px 12px", color: "#64748b", whiteSpace: "nowrap" }}>
+                        {new Date(en.date).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
+                      </td>
+                      <td style={{ padding: "8px 12px" }}>
+                        {en.order_status ? (
+                          <span style={{ fontSize: 11, fontWeight: 600, background: `${statusColor[en.order_status] ?? "#64748b"}18`, color: statusColor[en.order_status] ?? "#64748b", borderRadius: 6, padding: "2px 8px", textTransform: "capitalize" }}>
+                            {en.order_status}
+                          </span>
+                        ) : (
+                          <span style={{ color: "#16a34a", fontWeight: 600, fontSize: 12 }}>Payment</span>
+                        )}
+                      </td>
+                      <td style={{ padding: "8px 12px", color: "#1e293b" }}>
+                        {en.description}
+                        {en.order_id && <span style={{ color: "#94a3b8", fontSize: 11, marginLeft: 6 }}>→ view</span>}
+                      </td>
+                      <td style={{ padding: "8px 12px", textAlign: "right", color: en.debit ? "#dc2626" : "#94a3b8", fontWeight: en.debit ? 600 : 400 }}>
+                        {en.debit ? fmt(en.debit) : "—"}
+                      </td>
+                      <td style={{ padding: "8px 12px", textAlign: "right", color: en.credit ? "#16a34a" : "#94a3b8", fontWeight: en.credit ? 600 : 400 }}>
+                        {en.credit ? fmt(en.credit) : "—"}
+                      </td>
+                      <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 700, color: "#0f172a" }}>
+                        {fmt(en.running_balance ?? en.balance)}
+                      </td>
+                    </tr>
+                  ))}
+                  {data.entries.length === 0 && (
+                    <tr><td colSpan={6} style={{ padding: "48px 0", textAlign: "center", color: "#94a3b8" }}>No transactions yet.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Order detail popup */}
+      {(orderLoading || orderDetail) && (
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 70, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.5)" }}
+          onClick={() => { setOrderDetail(null); setOrderLoading(false); }}
+        >
+          <div
+            style={{ background: "#fff", borderRadius: 14, width: "min(560px, 95vw)", maxHeight: "85vh", overflow: "auto", boxShadow: "0 20px 40px rgba(0,0,0,0.3)", padding: 0 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {orderLoading && <div style={{ padding: "48px 0", textAlign: "center", color: "#94a3b8" }}>Loading order…</div>}
+            {orderDetail && !orderLoading && (() => {
+              const o = orderDetail as Record<string, unknown>;
+              const items = Array.isArray(o.items) ? o.items as Record<string, unknown>[] : [];
+              const st = String(o.status ?? "");
+              return (
+                <>
+                  <div style={{ padding: "16px 20px 12px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: 15, color: "#0f172a" }}>Order #{String(o.id)}</div>
+                      <span style={{ fontSize: 11, fontWeight: 600, background: `${statusColor[st] ?? "#64748b"}18`, color: statusColor[st] ?? "#64748b", borderRadius: 6, padding: "2px 8px", textTransform: "capitalize", marginTop: 4, display: "inline-block" }}>{st}</span>
+                    </div>
+                    <button onClick={() => { setOrderDetail(null); setOrderLoading(false); }} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#94a3b8" }}>✕</button>
+                  </div>
+                  <div style={{ padding: "16px 20px" }}>
+                    <div style={{ fontSize: 12, color: "#64748b", marginBottom: 12 }}>
+                      {o.created_at ? new Date(String(o.created_at)).toLocaleString("en-IN") : ""}
+                      {o.notes ? ` · Notes: ${String(o.notes)}` : ""}
+                    </div>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                      <thead>
+                        <tr style={{ background: "#f8fafc" }}>
+                          {["Item", "Qty", "Rate", "Total"].map((h, i) => (
+                            <th key={h} style={{ padding: "6px 10px", textAlign: i > 0 ? "right" : "left", fontSize: 11, fontWeight: 600, color: "#64748b", borderBottom: "1px solid #e2e8f0" }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {items.map((it, idx) => (
+                          <tr key={idx} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                            <td style={{ padding: "7px 10px", color: "#1e293b" }}>{String(it.name ?? it.our_product_id ?? it.catalog_product_id)}</td>
+                            <td style={{ padding: "7px 10px", textAlign: "right", color: "#475569" }}>{String(it.quantity)}</td>
+                            <td style={{ padding: "7px 10px", textAlign: "right", color: "#475569" }}>₹{Number(it.unit_price ?? it.selling_price ?? 0).toLocaleString("en-IN")}</td>
+                            <td style={{ padding: "7px 10px", textAlign: "right", fontWeight: 600, color: "#0f172a" }}>₹{Number(it.line_total ?? 0).toLocaleString("en-IN")}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <div style={{ marginTop: 12, textAlign: "right", fontWeight: 700, fontSize: 15, color: "#0f172a" }}>
+                      Total: ₹{Number(o.total_amount ?? 0).toLocaleString("en-IN")}
+                    </div>
+                    {!!o.shipment_receipt && (
+                      <div style={{ marginTop: 8, fontSize: 12, color: "#64748b" }}>
+                        📦 Shipment: {String(o.shipment_receipt)}{o.shipment_contact ? ` · ${String(o.shipment_contact)}` : ""}
+                        {o.shipment_notes ? ` · ${String(o.shipment_notes)}` : ""}
+                      </div>
+                    )}
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

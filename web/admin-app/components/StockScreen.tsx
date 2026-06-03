@@ -2,7 +2,35 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Drawer } from "@/components/Drawer";
-import { apiUrl, fetchApi, formatApiError } from "@/lib/api";import type { CatalogProductPublic, InventoryRowPublic, PurchaseOrderPublic, StockAdjustmentPublic, VendorPublic } from "@/lib/types";
+import { apiUrl, fetchApi, formatApiError } from "@/lib/api";
+import type { CatalogProductPublic, InventoryRowPublic, PurchaseOrderPublic, StockAdjustmentPublic, VendorPublic } from "@/lib/types";
+
+interface LedgerEntryDetail {
+  date: string;
+  type: "inward" | "outward" | "adjustment";
+  qty: number;
+  reference: string;
+  party?: string;
+  running_balance: number;
+}
+interface LedgerMonthSummary {
+  year: number;
+  month: number;
+  month_label: string;
+  opening: number;
+  inward: number;
+  outward: number;
+  closing: number;
+  entries: LedgerEntryDetail[];
+}
+interface ProductLedgerResponse {
+  catalog_product_id: number;
+  our_product_id: string;
+  name: string;
+  current_stock: number;
+  invoice_count: number;
+  months: LedgerMonthSummary[];
+}
 
 const INPUT = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
 const LABEL = "mb-1 block text-xs font-semibold text-slate-500 uppercase tracking-wider";
@@ -37,7 +65,7 @@ export function StockScreen({ adminKey }: Props) {
   const loadAll = useCallback(async () => {
     if (!adminKey.trim()) return;
     const [ir, cr, vr, pr] = await Promise.all([
-      fetchApi(apiUrl("inventory") + "?allCatalog=true", { headers: headersAdmin() }),
+      fetchApi(apiUrl("inventory") + "?all_catalog=true", { headers: headersAdmin() }),
       fetchApi(apiUrl("catalog"), { headers: headersAdmin() }),
       fetchApi(apiUrl("vendors"), { headers: headersAdmin() }),
       fetchApi(apiUrl("purchase-orders"), { headers: headersAdmin() }),
@@ -92,6 +120,7 @@ export function StockScreen({ adminKey }: Props) {
         <ReceiveGoodsTab
           catalog={catalog}
           pos={pos}
+          vendors={vendors}
           headers={headers}
           headersAdmin={headersAdmin}
           adminKey={adminKey}
@@ -104,6 +133,7 @@ export function StockScreen({ adminKey }: Props) {
           headers={headers}
           headersAdmin={headersAdmin}
           adminKey={adminKey}
+          onRefresh={loadAll}
         />
       )}
     </div>
@@ -136,6 +166,8 @@ function CurrentStockTab({
   const [vendorFilter, setVendorFilter] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerRow, setDrawerRow] = useState<InventoryRowPublic | null>(null);
+  const [ledgerRow, setLedgerRow] = useState<InventoryRowPublic | null>(null);
+  const [ledgerOpen, setLedgerOpen] = useState(false);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
   // Inline qty edit
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -229,10 +261,12 @@ function CurrentStockTab({
               <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase text-slate-500">
                 <th className="px-4 py-3 text-left">Product</th>
                 <th className="px-4 py-3 text-left">Category</th>
+                <th className="px-4 py-3 text-right">Invoices</th>
                 <th className="px-4 py-3 text-right">Sell ₹</th>
                 <th className="px-4 py-3 text-right">Qty</th>
                 <th className="px-4 py-3 text-left">Status</th>
                 <th className="px-4 py-3 text-left">Low threshold</th>
+                <th className="px-4 py-3" />
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -250,8 +284,9 @@ function CurrentStockTab({
                       <div className="text-xs font-mono text-slate-400">{row.our_product_id}</div>
                     </td>
                     <td className="px-4 py-3 text-slate-500">{row.category}</td>
+                    <td className="px-4 py-3 text-right text-slate-600">{row.invoice_count ?? "—"}</td>
                     <td className="px-4 py-3 text-right font-medium text-slate-700">
-                      {catRow ? `₹${catRow.selling_price}` : "—"}
+                      {row.selling_price != null ? `₹${row.selling_price}` : catRow ? `₹${catRow.selling_price}` : "—"}
                     </td>
                     <td className="px-4 py-3 text-right">
                       {editingId === row.catalog_product_id ? (
@@ -299,6 +334,15 @@ function CurrentStockTab({
                         </button>
                       </div>
                     </td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setLedgerRow(row); setLedgerOpen(true); }}
+                        className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                      >
+                        📊 Ledger
+                      </button>
+                    </td>
                   </tr>
                 );
               })}
@@ -308,6 +352,14 @@ function CurrentStockTab({
             {filtered.length} item{filtered.length !== 1 ? "s" : ""}
           </div>
         </div>
+      )}
+
+      {ledgerOpen && ledgerRow && (
+        <LedgerModal
+          row={ledgerRow}
+          headersAdmin={headersAdmin}
+          onClose={() => { setLedgerOpen(false); setLedgerRow(null); }}
+        />
       )}
 
       {/* Product detail drawer */}
@@ -352,6 +404,127 @@ function CurrentStockTab({
   );
 }
 
+// ────────────────────────── LEDGER MODAL ──────────────────────────
+
+function LedgerModal({
+  row,
+  headersAdmin,
+  onClose,
+}: {
+  row: InventoryRowPublic;
+  headersAdmin: () => Record<string, string>;
+  onClose: () => void;
+}) {
+  const [data, setData] = useState<ProductLedgerResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    setLoading(true);
+    setError("");
+    fetchApi(apiUrl(`inventory/${row.catalog_product_id}/ledger`), { headers: headersAdmin() })
+      .then(async (r) => {
+        if (!r.ok) { setError("Failed to load ledger."); return; }
+        setData(await r.json());
+      })
+      .catch(() => setError("Network error."))
+      .finally(() => setLoading(false));
+  }, [row.catalog_product_id]);
+
+  function toggleMonth(key: string) {
+    setExpandedMonths((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
+
+  return (
+    <div
+      style={{ position: "fixed", inset: 0, zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.45)" }}
+      onClick={onClose}
+    >
+      <div
+        style={{ background: "#fff", borderRadius: 16, width: "min(780px, 95vw)", maxHeight: "90vh", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 25px 50px rgba(0,0,0,0.25)" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div style={{ padding: "20px 24px 16px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 17, fontWeight: 700, color: "#0f172a" }}>{row.name}</div>
+            <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
+              {row.our_product_id} · Stock: <strong>{data?.current_stock ?? row.quantity}</strong>
+              {data?.invoice_count != null && <> · Invoices: <strong>{data.invoice_count}</strong></>}
+            </div>
+          </div>
+          <button type="button" onClick={onClose} style={{ fontSize: 20, lineHeight: 1, background: "none", border: "none", cursor: "pointer", color: "#94a3b8", padding: "2px 6px" }}>✕</button>
+        </div>
+
+        {/* Body */}
+        <div style={{ overflowY: "auto", flex: 1, padding: "16px 24px" }}>
+          {loading && <div style={{ textAlign: "center", padding: "48px 0", color: "#94a3b8" }}>Loading…</div>}
+          {error && <div style={{ textAlign: "center", padding: "48px 0", color: "#ef4444" }}>{error}</div>}
+          {data && !loading && (
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
+                  <th style={{ padding: "8px 12px", textAlign: "left", fontSize: 11, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>Month</th>
+                  <th style={{ padding: "8px 12px", textAlign: "right", fontSize: 11, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>Opening</th>
+                  <th style={{ padding: "8px 12px", textAlign: "right", fontSize: 11, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>Inward</th>
+                  <th style={{ padding: "8px 12px", textAlign: "right", fontSize: 11, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>Outward</th>
+                  <th style={{ padding: "8px 12px", textAlign: "right", fontSize: 11, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>Closing</th>
+                  <th style={{ padding: "8px 12px", width: 32 }} />
+                </tr>
+              </thead>
+              <tbody>
+                {data.months.map((m) => {
+                  const key = `${m.year}-${m.month}`;
+                  const expanded = expandedMonths.has(key);
+                  return (
+                    <>
+                      <tr
+                        key={key}
+                        style={{ borderBottom: "1px solid #f1f5f9", cursor: "pointer", background: expanded ? "#eff6ff" : undefined }}
+                        onClick={() => toggleMonth(key)}
+                      >
+                        <td style={{ padding: "9px 12px", fontWeight: 600, color: "#1e293b" }}>{m.month_label}</td>
+                        <td style={{ padding: "9px 12px", textAlign: "right", color: "#475569" }}>{m.opening}</td>
+                        <td style={{ padding: "9px 12px", textAlign: "right", color: "#16a34a", fontWeight: 600 }}>{m.inward > 0 ? `+${m.inward}` : m.inward}</td>
+                        <td style={{ padding: "9px 12px", textAlign: "right", color: "#dc2626", fontWeight: 600 }}>{m.outward > 0 ? `-${m.outward}` : m.outward}</td>
+                        <td style={{ padding: "9px 12px", textAlign: "right", fontWeight: 700, color: "#0f172a" }}>{m.closing}</td>
+                        <td style={{ padding: "9px 12px", textAlign: "center", color: "#94a3b8", fontSize: 11 }}>{expanded ? "▲" : "▼"}</td>
+                      </tr>
+                      {expanded && m.entries.map((en, i) => (
+                        <tr key={i} style={{ background: "#f8fafc", borderBottom: "1px solid #f1f5f9" }}>
+                          <td style={{ padding: "6px 12px 6px 24px", color: "#64748b" }}>{en.date}</td>
+                          <td colSpan={2} style={{ padding: "6px 12px", color: "#475569" }}>
+                            <span style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: en.type === "inward" ? "#16a34a" : en.type === "outward" ? "#dc2626" : "#7c3aed", marginRight: 6 }}>{en.type}</span>
+                            {en.party && <span style={{ marginRight: 6 }}>{en.party}</span>}
+                            <span style={{ color: "#94a3b8", fontSize: 12 }}>{en.reference}</span>
+                          </td>
+                          <td style={{ padding: "6px 12px", textAlign: "right", fontWeight: 700, color: en.type === "inward" ? "#16a34a" : en.type === "outward" ? "#dc2626" : "#475569" }}>
+                            {en.type === "inward" ? `+${en.qty}` : en.type === "outward" ? `-${en.qty}` : en.qty}
+                          </td>
+                          <td style={{ padding: "6px 12px", textAlign: "right", color: "#0f172a", fontWeight: 600 }}>{en.running_balance}</td>
+                          <td />
+                        </tr>
+                      ))}
+                    </>
+                  );
+                })}
+                {data.months.length === 0 && (
+                  <tr><td colSpan={6} style={{ padding: "48px 0", textAlign: "center", color: "#94a3b8" }}>No ledger entries yet.</td></tr>
+                )}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ────────────────────────── ADJUSTMENTS LOG ──────────────────────────
 
 function AdjustmentsTab({
@@ -359,11 +532,13 @@ function AdjustmentsTab({
   headers,
   headersAdmin,
   adminKey,
+  onRefresh,
 }: {
   catalog: CatalogProductPublic[];
   headers: () => Record<string, string>;
   headersAdmin: () => Record<string, string>;
   adminKey: string;
+  onRefresh: () => void;
 }) {
   const [adjustments, setAdjustments] = useState<StockAdjustmentPublic[]>([]);
   const [loading, setLoading] = useState(false);
@@ -400,6 +575,7 @@ function AdjustmentsTab({
     (e.target as HTMLFormElement).reset();
     setShowForm(false);
     void load();
+    onRefresh();
   }
 
   const productName = (id: number) => catalog.find((c) => c.id === id)?.name ?? `#${id}`;
@@ -484,6 +660,7 @@ function AdjustmentsTab({
 function ReceiveGoodsTab({
   catalog,
   pos,
+  vendors,
   headers,
   headersAdmin,
   adminKey,
@@ -491,6 +668,7 @@ function ReceiveGoodsTab({
 }: {
   catalog: CatalogProductPublic[];
   pos: PurchaseOrderPublic[];
+  vendors: VendorPublic[];
   headers: () => Record<string, string>;
   headersAdmin: () => Record<string, string>;
   adminKey: string;
@@ -501,9 +679,12 @@ function ReceiveGoodsTab({
   const [selPo, setSelPo] = useState<PurchaseOrderPublic | null>(null);
   const [recvQty, setRecvQty] = useState<Record<number, string>>({});
   const [receiptNo, setReceiptNo] = useState("");
+  const [vendorBillNo, setVendorBillNo] = useState("");
+  const [billPhoto, setBillPhoto] = useState<File | null>(null);
   const [contactNo, setContactNo] = useState("");
   const [notes, setNotes] = useState("");
   const [partial, setPartial] = useState(false);
+  const [forceClose, setForceClose] = useState(false);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
@@ -533,14 +714,17 @@ function ReceiveGoodsTab({
     fd.append("lines", JSON.stringify(lines));
     fd.append("is_partial", partial ? "true" : "false");
     if (receiptNo) fd.append("receipt_number", receiptNo);
+    if (vendorBillNo.trim()) fd.append("vendor_bill_no", vendorBillNo.trim());
     if (contactNo) fd.append("contact_number", contactNo);
     if (notes) fd.append("notes", notes);
+    if (forceClose) fd.append("force_close", "true");
+    if (billPhoto) fd.append("bill_photo", billPhoto);
     const r = await fetchApi(apiUrl("inventory/receipts/from-po"), { method: "POST", headers: headersAdmin(), body: fd });
     const data = await r.json().catch(() => ({}));
     setSaving(false);
     if (!r.ok) { showToast(formatApiError(data), false); return; }
     showToast("Goods received.", true);
-    setSelPoId(""); setSelPo(null); setReceiptNo(""); setContactNo(""); setNotes(""); setPartial(false);
+    setSelPoId(""); setSelPo(null); setReceiptNo(""); setVendorBillNo(""); setBillPhoto(null); setContactNo(""); setNotes(""); setPartial(false); setForceClose(false);
     onRefresh();
   }
 
@@ -590,16 +774,25 @@ function ReceiveGoodsTab({
             <label className={LABEL}>Select open purchase order</label>
             <select value={selPoId} onChange={(e) => setSelPoId(e.target.value)} className={INPUT + " max-w-sm"}>
               <option value="">— select PO —</option>
-              {openPos.map((p) => <option key={p.id} value={p.id}>PO #{p.id} — Vendor {p.vendor_id} ({p.status})</option>)}
+              {openPos.map((p) => {
+                const v = vendors.find((vv) => vv.id === p.vendor_id);
+                const vname = v?.company_name || v?.person_name || `Vendor #${p.vendor_id}`;
+                return <option key={p.id} value={p.id}>PO #{p.id} — {vname} ({p.status})</option>;
+              })}
             </select>
           </div>
 
           {selPo && (
             <form onSubmit={receiveFromPo} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm space-y-4">
               <div className="grid grid-cols-2 gap-4">
+                <div><label className={LABEL}>Vendor Bill No.</label><input value={vendorBillNo} onChange={(e) => setVendorBillNo(e.target.value)} placeholder="Bill number on vendor's paper" className={INPUT} /></div>
                 <div><label className={LABEL}>Receipt number</label><input value={receiptNo} onChange={(e) => setReceiptNo(e.target.value)} className={INPUT} /></div>
                 <div><label className={LABEL}>Contact number</label><input value={contactNo} onChange={(e) => setContactNo(e.target.value)} className={INPUT} /></div>
-                <div className="col-span-2"><label className={LABEL}>Notes</label><input value={notes} onChange={(e) => setNotes(e.target.value)} className={INPUT} /></div>
+                <div><label className={LABEL}>Notes</label><input value={notes} onChange={(e) => setNotes(e.target.value)} className={INPUT} /></div>
+                <div className="col-span-2">
+                  <label className={LABEL}>Bill photo (optional)</label>
+                  <input type="file" accept="image/*,.pdf" onChange={(e) => setBillPhoto(e.target.files?.[0] ?? null)} className="block w-full text-sm text-slate-500 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-semibold hover:file:bg-slate-200" />
+                </div>
               </div>
 
               <div className="overflow-hidden rounded-xl border border-slate-200">
@@ -612,26 +805,39 @@ function ReceiveGoodsTab({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {selPo.items.map((it) => (
-                      <tr key={it.catalog_product_id}>
-                        <td className="px-3 py-2 font-medium">{it.name}</td>
-                        <td className="px-3 py-2 text-right">{it.quantity}</td>
-                        <td className="px-3 py-2 text-right">
-                          <input type="number" min="0" max={it.quantity}
-                            value={recvQty[it.catalog_product_id] ?? ""}
-                            onChange={(e) => setRecvQty((p) => ({ ...p, [it.catalog_product_id]: e.target.value }))}
-                            className="w-20 rounded border border-slate-300 px-2 py-1 text-right text-sm" />
-                        </td>
-                      </tr>
-                    ))}
+                    {selPo.items.map((it) => {
+                      const entered = Number(recvQty[it.catalog_product_id] ?? 0);
+                      const overDelivery = entered > it.quantity;
+                      return (
+                        <tr key={it.catalog_product_id}>
+                          <td className="px-3 py-2 font-medium">{it.name}</td>
+                          <td className="px-3 py-2 text-right">{it.quantity}</td>
+                          <td className="px-3 py-2 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <input type="number" min="0"
+                                value={recvQty[it.catalog_product_id] ?? ""}
+                                onChange={(e) => setRecvQty((p) => ({ ...p, [it.catalog_product_id]: e.target.value }))}
+                                className="w-20 rounded border border-slate-300 px-2 py-1 text-right text-sm" />
+                              {overDelivery && (
+                                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">Over-delivery</span>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
 
-              <div className="flex items-center gap-4">
+              <div className="flex flex-wrap items-center gap-4">
                 <label className="flex items-center gap-2 text-sm">
                   <input type="checkbox" checked={partial} onChange={(e) => setPartial(e.target.checked)} className="h-4 w-4 rounded" />
                   Partial delivery
+                </label>
+                <label className="flex items-center gap-2 text-sm text-amber-700">
+                  <input type="checkbox" checked={forceClose} onChange={(e) => setForceClose(e.target.checked)} className="h-4 w-4 rounded" />
+                  Force close this PO after receipt
                 </label>
                 <button type="submit" disabled={saving} className={BTN_PRIMARY}>
                   {saving ? "Saving…" : "Confirm receipt"}

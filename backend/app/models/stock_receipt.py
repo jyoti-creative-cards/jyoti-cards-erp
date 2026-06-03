@@ -31,3 +31,5 @@ class StockReceipt(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    vendor_bill_no: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    bill_photo_key: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)

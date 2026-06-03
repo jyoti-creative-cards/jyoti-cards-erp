@@ -3,28 +3,30 @@
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 
-export type ErpMainTab = "people" | "catalog" | "stock" | "orders" | "finance" | "create" | "admin";
+export type ErpMainTab = "people" | "catalog" | "stock" | "orders" | "finance" | "create" | "admin" | "recyclebin";
 
 type NavEntry = { id: ErpMainTab; label: string; icon: string };
 
 const NAV: NavEntry[] = [
-  { id: "people",  label: "People",  icon: "👥" },
-  { id: "catalog", label: "Catalog", icon: "📦" },
-  { id: "stock",   label: "Stock",   icon: "🏪" },
-  { id: "orders",  label: "Orders",  icon: "📋" },
-  { id: "finance", label: "Finance", icon: "💰" },
-  { id: "create",  label: "Create",  icon: "➕" },
-  { id: "admin",   label: "Admin",   icon: "⚙️" },
+  { id: "people",     label: "People",      icon: "👥" },
+  { id: "catalog",    label: "Catalog",     icon: "📦" },
+  { id: "stock",      label: "Stock",       icon: "🏪" },
+  { id: "orders",     label: "Orders",      icon: "📋" },
+  { id: "finance",    label: "Finance",     icon: "💰" },
+  { id: "create",     label: "Create",      icon: "➕" },
+  { id: "admin",      label: "Admin",       icon: "⚙️" },
+  { id: "recyclebin", label: "Recycle Bin", icon: "🗑️" },
 ];
 
 const TITLE_MAP: Record<ErpMainTab, string> = {
-  people:  "People",
-  catalog: "Catalog",
-  stock:   "Stock",
-  orders:  "Orders",
-  finance: "Finance",
-  create:  "Create",
-  admin:   "Admin",
+  people:     "People",
+  catalog:    "Catalog",
+  stock:      "Stock",
+  orders:     "Orders",
+  finance:    "Finance",
+  create:     "Create",
+  admin:      "Admin",
+  recyclebin: "Recycle Bin",
 };
 
 type Props = {

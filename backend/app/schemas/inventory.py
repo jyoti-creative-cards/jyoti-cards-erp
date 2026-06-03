@@ -19,6 +19,37 @@ class InventoryRowPublic(BaseModel):
         description="in_stock | low_stock | out_of_stock",
     )
     image_urls: List[str] = Field(default_factory=list)
+    invoice_count: int = 0
+    selling_price: float = 0.0
+
+
+class LedgerEntryDetail(BaseModel):
+    date: datetime
+    type: str  # "inward" | "outward" | "adjustment"
+    qty: int
+    reference: str
+    party: Optional[str] = None
+    running_balance: int
+
+
+class LedgerMonthSummary(BaseModel):
+    year: int
+    month: int
+    month_label: str
+    opening: int
+    inward: int
+    outward: int
+    closing: int
+    entries: List[LedgerEntryDetail]
+
+
+class ProductLedgerResponse(BaseModel):
+    catalog_product_id: int
+    our_product_id: str
+    name: str
+    current_stock: int
+    invoice_count: int
+    months: List[LedgerMonthSummary]
 
 
 class BalanceThresholdBody(BaseModel):

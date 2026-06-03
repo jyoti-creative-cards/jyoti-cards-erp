@@ -22,6 +22,8 @@ class VendorPurchaseOrder(Base):
     items: Mapped[list] = mapped_column(JSON, nullable=False)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

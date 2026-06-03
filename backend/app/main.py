@@ -9,8 +9,10 @@ from app.db.session import init_db
 from app.routers import (
     accounting,
     addons,
+    audit,
     auth,
     bank,
+    bill_series,
     catalog,
     catalog_alternatives,
     customer_bills,
@@ -70,6 +72,8 @@ app.include_router(routes.city_router, prefix="/api/v1")
 app.include_router(product_prices.router, prefix="/api/v1")
 app.include_router(addons.router, prefix="/api/v1")
 app.include_router(freight_vendors.router, prefix="/api/v1")
+app.include_router(bill_series.router, prefix="/api/v1")
+app.include_router(audit.router, prefix="/api/v1")
 
 
 @app.on_event("startup")

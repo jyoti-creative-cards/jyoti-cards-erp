@@ -16,6 +16,9 @@ class CustomerBillGenerate(BaseModel):
     )
     freight_charges: Optional[Decimal] = Field(None, description="Freight / shipping charges in Rs.", ge=0)
     packaging_charges: Optional[Decimal] = Field(None, description="Packaging charges in Rs.", ge=0)
+    bill_series_id: Optional[int] = None
+    item_overrides: Optional[list[dict]] = None  # [{catalog_product_id: int, override_price: float, discount_percent: float}]
+    rate_type: Optional[str] = None  # "order" (default) | "net" (buying_price) | "regular" (selling_price)
 
 
 class CustomerBillPublic(BaseModel):
@@ -27,5 +30,7 @@ class CustomerBillPublic(BaseModel):
     totals: dict[str, Any]
     document_key: Optional[str] = None
     document_url: Optional[str] = None
+    bill_no: Optional[str] = None
+    bill_series_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime

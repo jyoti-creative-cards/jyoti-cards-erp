@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Drawer } from "@/components/Drawer";
 import { apiUrl, fetchApi, formatApiError } from "@/lib/api";
-import type { CatalogProductPublic, CustomerBillPublic, CustomerOrderAdminPublic, CustomerPublic, PurchaseOrderPublic, VendorPublic } from "@/lib/types";
+import type { BillSeries, CatalogProductPublic, CustomerBillPublic, CustomerOrderAdminPublic, CustomerPublic, PurchaseOrderPublic, VendorPublic } from "@/lib/types";
 
 const INPUT = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
 const LABEL = "mb-1 block text-xs font-semibold text-slate-500 uppercase tracking-wider";
@@ -103,6 +103,26 @@ function CustomerOrdersTab({
   const [billBusy, setBillBusy] = useState(false);
   const [billData, setBillData] = useState<CustomerBillPublic | null>(null);
 
+  // Bill series
+  const [billSeriesList, setBillSeriesList] = useState<BillSeries[]>([]);
+  const [billSeriesId, setBillSeriesId] = useState("");
+
+  // Per-item overrides
+  const [itemOverrides, setItemOverrides] = useState<Record<number, { enabled: boolean; price: string; discount: string }>>({});
+  const [bulkDiscount, setBulkDiscount] = useState("");
+
+  // Rate type
+  const [rateType, setRateType] = useState<"order" | "net" | "regular">("order");
+
+  // Zero-rate confirmation
+  const [zeroRateConfirmed, setZeroRateConfirmed] = useState(false);
+  const [showZeroRateBanner, setShowZeroRateBanner] = useState(false);
+
+  // Merge orders
+  const [mergeMode, setMergeMode] = useState(false);
+  const [selectedForMerge, setSelectedForMerge] = useState<Set<number>>(new Set());
+  const [merging, setMerging] = useState(false);
+
   // Bill detail modal
   const [showBillModal, setShowBillModal] = useState(false);
 
@@ -151,19 +171,24 @@ function CustomerOrdersTab({
     setSelectedFreightVendorId("");
     setBillMsg(""); setSaveMsg(""); setShowBillForm(false); setShowShipForm(false);
     setBillData(null); setShowBillModal(false); setCreditSummary(null);
+    setBillSeriesId(""); setItemOverrides({}); setBulkDiscount(""); setRateType("order"); setZeroRateConfirmed(false); setShowZeroRateBanner(false);
     setDrawerOpen(true);
-    // Fetch existing bill if any
-    const billsR = await fetchApi(apiUrl("customer-bills"), { headers: headersAdmin() });
+    // Fetch existing bill, bill series, credit summary in parallel
+    const [billsR, seriesR, creditR] = await Promise.all([
+      fetchApi(apiUrl("customer-bills"), { headers: headersAdmin() }),
+      fetchApi(apiUrl("bill-series"), { headers: headersAdmin() }),
+      o.customer_id ? fetchApi(apiUrl(`customers/${o.customer_id}/credit-summary`), { headers: headersAdmin() }) : Promise.resolve(null),
+    ]);
     if (billsR.ok) {
       const bills: CustomerBillPublic[] = await billsR.json();
       const b = bills.find((b) => b.customer_order_id === o.id);
       if (b) setBillData(b);
     }
-    // Fetch credit summary
-    if (o.customer_id) {
-      const cr = await fetchApi(apiUrl(`customers/${o.customer_id}/credit-summary`), { headers: headersAdmin() });
-      if (cr.ok) setCreditSummary(await cr.json());
+    if (seriesR.ok) {
+      const sl: BillSeries[] = await seriesR.json();
+      setBillSeriesList(sl.filter((s) => s.is_active && s.current_num < s.end_num));
     }
+    if (creditR?.ok) setCreditSummary(await creditR.json());
   }
 
   async function saveOrder(overrideStatus?: string) {
@@ -210,7 +235,19 @@ function CustomerOrdersTab({
 
   async function generateBill() {
     if (!selected) return;
-    setBillBusy(true); setBillMsg("");
+
+    // Zero-rate check: any item with price 0 and no override
+    const zeroItems = selected.items.filter((it) => {
+      const override = itemOverrides[it.catalog_product_id];
+      const hasOverride = override?.enabled && (override.price.trim() || override.discount.trim());
+      return Number(it.unit_price) === 0 && !hasOverride;
+    });
+    if (zeroItems.length > 0 && !zeroRateConfirmed) {
+      setShowZeroRateBanner(true);
+      return;
+    }
+
+    setBillBusy(true); setBillMsg(""); setShowZeroRateBanner(false);
     const body: Record<string, unknown> = {
       customer_order_id: selected.id,
       gst_enabled: gstEnabled,
@@ -219,18 +256,59 @@ function CustomerOrdersTab({
     if (freight.trim()) body.freight_charges = Number(freight);
     if (packaging.trim()) body.packaging_charges = Number(packaging);
     if (discount.trim()) body.discount_percent = Number(discount);
+    if (billSeriesId) body.bill_series_id = Number(billSeriesId);
+    if (rateType !== "order") body.rate_type = rateType;
+
+    const overridesList = selected.items
+      .filter((it) => itemOverrides[it.catalog_product_id]?.enabled)
+      .map((it) => {
+        const ov = itemOverrides[it.catalog_product_id];
+        const entry: Record<string, unknown> = { catalog_product_id: it.catalog_product_id };
+        if (ov.price.trim()) entry.override_price = Number(ov.price);
+        if (ov.discount.trim()) entry.discount_percent = Number(ov.discount);
+        return entry;
+      });
+    if (overridesList.length > 0) body.item_overrides = overridesList;
+
     const r = await fetchApi(apiUrl("customer-bills/generate"), { method: "POST", headers: headers(), body: JSON.stringify(body) });
     const data = await r.json().catch(() => ({}));
     setBillBusy(false);
     if (!r.ok) { setBillMsg(formatApiError(data)); return; }
     const bill = data as CustomerBillPublic;
     setBillData(bill);
-    setBillMsg(`✓ Bill #${bill.id} generated and sent to customer via WhatsApp.`);
+    const billLabel = bill.bill_no ? `Bill ${bill.bill_no}` : `Bill #${bill.id}`;
+    setBillMsg(`✓ ${billLabel} generated and sent to customer via WhatsApp.`);
     setShowBillForm(false);
     void load();
     // Refresh the selected order
     const updated = await fetchApi(apiUrl(`customer-orders/${selected.id}`), { headers: headersAdmin() });
     if (updated.ok) setSelected(await updated.json());
+  }
+
+  async function mergeSelectedOrders() {
+    if (selectedForMerge.size < 2) return;
+    const orderIds = [...selectedForMerge];
+    // Validate same customer
+    const selectedOrders = orders.filter((o) => orderIds.includes(o.id));
+    const customerIds = new Set(selectedOrders.map((o) => o.customer_id));
+    if (customerIds.size > 1) {
+      showToast("Can only merge orders from the same customer.", false);
+      return;
+    }
+    const customerId = [...customerIds][0];
+    setMerging(true);
+    const r = await fetchApi(apiUrl("customer-orders/merge"), {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ customer_id: customerId, order_ids: orderIds }),
+    });
+    const data = await r.json().catch(() => ({}));
+    setMerging(false);
+    if (!r.ok) { showToast(formatApiError(data), false); return; }
+    showToast("Orders merged successfully.", true);
+    setMergeMode(false);
+    setSelectedForMerge(new Set());
+    void load();
   }
 
   const filtered = orders.filter((o) => {
@@ -283,8 +361,33 @@ function CustomerOrdersTab({
             className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm shadow-sm focus:border-blue-500 focus:outline-none"
           />
           <button type="button" onClick={() => void load()} className={BTN_SECONDARY}>↻</button>
+          <button
+            type="button"
+            onClick={() => { setMergeMode((v) => !v); setSelectedForMerge(new Set()); }}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-semibold transition ${mergeMode ? "bg-orange-500 text-white hover:bg-orange-600" : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}`}
+          >
+            {mergeMode ? "✕ Cancel Merge" : "⊞ Merge Orders"}
+          </button>
         </div>
       </div>
+
+      {/* Merge mode banner */}
+      {mergeMode && (
+        <div className="mb-4 flex items-center gap-3 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3">
+          <span className="text-sm text-orange-800 font-medium">Merge mode: select confirmed orders from the same customer</span>
+          <span className="ml-auto text-sm font-semibold text-orange-700">{selectedForMerge.size} selected</span>
+          {selectedForMerge.size >= 2 && (
+            <button
+              type="button"
+              disabled={merging}
+              onClick={() => void mergeSelectedOrders()}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-orange-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm transition hover:bg-orange-700 disabled:opacity-50"
+            >
+              {merging ? "Merging…" : "Merge Selected"}
+            </button>
+          )}
+        </div>
+      )}
 
       {loading ? (
         <div className="py-12 text-center text-slate-400">Loading…</div>
@@ -298,12 +401,34 @@ function CustomerOrdersTab({
           {filtered.map((o) => (
             <div
               key={o.id}
-              onClick={() => void openOrder(o)}
-              className="cursor-pointer rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-blue-300 hover:shadow-md"
+              onClick={() => {
+                if (mergeMode && o.status === "confirmed") {
+                  setSelectedForMerge((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(o.id)) next.delete(o.id); else next.add(o.id);
+                    return next;
+                  });
+                } else if (!mergeMode) {
+                  void openOrder(o);
+                }
+              }}
+              className={`cursor-pointer rounded-xl border bg-white p-4 shadow-sm transition hover:shadow-md ${
+                mergeMode && selectedForMerge.has(o.id)
+                  ? "border-orange-400 bg-orange-50"
+                  : "border-slate-200 hover:border-blue-300"
+              }`}
             >
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <div className="flex items-center gap-2">
+                    {mergeMode && o.status === "confirmed" && (
+                      <input
+                        type="checkbox"
+                        checked={selectedForMerge.has(o.id)}
+                        readOnly
+                        className="h-4 w-4 rounded border-slate-300"
+                      />
+                    )}
                     <span className="font-semibold text-slate-900">{o.customer_name}</span>
                     <span className="font-mono text-xs text-slate-400">{o.customer_phone}</span>
                     {statusBadge(o.status)}
@@ -441,7 +566,9 @@ function CustomerOrdersTab({
               <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <div className="text-xs font-semibold uppercase text-amber-600">Bill #{billData.id}</div>
+                    <div className="text-xs font-semibold uppercase text-amber-600">
+                      {billData.bill_no ? `Bill ${billData.bill_no}` : `Bill #${billData.id}`}
+                    </div>
                     <button
                       type="button"
                       onClick={() => setShowBillModal(true)}
@@ -451,17 +578,27 @@ function CustomerOrdersTab({
                     </button>
                     <div className="text-xs text-amber-700">Click to view full breakdown</div>
                   </div>
-                  <a
-                    href={`${apiUrl(`customer-bills/${billData.id}/download`)}?x_admin_key=${encodeURIComponent(adminKey)}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-amber-700"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                    }}
-                  >
-                    ⬇ Download PDF
-                  </a>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const url = `${apiUrl(`customer-bills/${billData.id}/download`)}?x_admin_key=${encodeURIComponent(adminKey)}`;
+                        window.open(url, "_blank");
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-slate-700 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-slate-800"
+                    >
+                      🖨️ Print
+                    </button>
+                    <a
+                      href={`${apiUrl(`customer-bills/${billData.id}/download`)}?x_admin_key=${encodeURIComponent(adminKey)}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-amber-700"
+                      onClick={(e) => { e.stopPropagation(); }}
+                    >
+                      ⬇ Download PDF
+                    </a>
+                  </div>
                 </div>
               </div>
             )}
@@ -483,8 +620,58 @@ function CustomerOrdersTab({
               <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="text-sm font-semibold text-amber-800">Generate bill</div>
-                  <button type="button" onClick={() => setShowBillForm(false)} className="text-slate-400 hover:text-slate-600">✕</button>
+                  <button type="button" onClick={() => { setShowBillForm(false); setBulkDiscount(""); setRateType("order"); }} className="text-slate-400 hover:text-slate-600">✕</button>
                 </div>
+
+                {/* Bill series */}
+                <div>
+                  <label className={LABEL}>Bill Series</label>
+                  <select value={billSeriesId} onChange={(e) => setBillSeriesId(e.target.value)} className={INPUT}>
+                    <option value="">(none)</option>
+                    {billSeriesList.map((s) => {
+                      const exhausted = s.current_num >= s.end_num;
+                      return (
+                        <option key={s.id} value={s.id} disabled={exhausted}>
+                          {s.name} — {s.prefix}{exhausted ? " (Exhausted)" : ""}
+                        </option>
+                      );
+                    })}
+                  </select>
+                  {billSeriesId && (() => {
+                    const s = billSeriesList.find((s) => String(s.id) === billSeriesId);
+                    if (!s) return null;
+                    const exhausted = s.current_num >= s.end_num;
+                    return exhausted ? (
+                      <p className="mt-1 text-xs font-semibold text-red-600">⚠ This series is full. Select another or create a new one in Admin.</p>
+                    ) : (
+                      <p className="mt-1 text-xs text-amber-700">Next bill ID: <span className="font-bold">{s.prefix}{s.current_num + 1}</span> ({s.end_num - s.current_num} remaining)</p>
+                    );
+                  })()}
+                </div>
+
+                {/* Rate type */}
+                <div>
+                  <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-slate-500">Rate Type</div>
+                  <div className="flex gap-2">
+                    {[
+                      { id: "order", label: "Order Rate" },
+                      { id: "net", label: "Net Rate (cost)" },
+                      { id: "regular", label: "Regular (MRP)" },
+                    ].map((rt) => (
+                      <button
+                        key={rt.id}
+                        type="button"
+                        onClick={() => setRateType(rt.id as "order" | "net" | "regular")}
+                        className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                          rateType === rt.id ? "bg-blue-600 text-white" : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+                        }`}
+                      >
+                        {rt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className={LABEL}>Freight charges (₹)</label>
@@ -495,7 +682,7 @@ function CustomerOrdersTab({
                     <input value={packaging} onChange={(e) => setPackaging(e.target.value)} type="number" min="0" step="0.01" placeholder="0" className={INPUT} />
                   </div>
                   <div>
-                    <label className={LABEL}>Discount (%)</label>
+                    <label className={LABEL}>Overall bill discount (%)</label>
                     <input value={discount} onChange={(e) => setDiscount(e.target.value)} type="number" min="0" max="100" step="0.01" placeholder="0" className={INPUT} />
                   </div>
                   <div className="flex items-end gap-2">
@@ -508,8 +695,130 @@ function CustomerOrdersTab({
                     )}
                   </div>
                 </div>
+
+                {/* Per-item overrides */}
+                {selected && selected.items.length > 0 && (
+                  <div className="rounded-lg border border-amber-300 bg-white p-3 space-y-2">
+                    <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">Item-level overrides</div>
+                    <div className="flex items-center gap-3 pb-2 border-b border-amber-200">
+                      <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+                        <input
+                          type="checkbox"
+                          onChange={(e) => {
+                            if (!selected) return;
+                            const newOverrides: Record<number, { enabled: boolean; price: string; discount: string }> = {};
+                            selected.items.forEach((it) => {
+                              newOverrides[it.catalog_product_id] = {
+                                ...(itemOverrides[it.catalog_product_id] ?? { price: "", discount: "" }),
+                                enabled: e.target.checked,
+                              };
+                            });
+                            setItemOverrides(newOverrides);
+                          }}
+                          className="h-4 w-4 rounded"
+                        />
+                        Select All
+                      </label>
+                      <input
+                        type="number"
+                        min="0" max="100" step="0.01"
+                        value={bulkDiscount}
+                        onChange={(e) => setBulkDiscount(e.target.value)}
+                        placeholder="Bulk disc %"
+                        className="w-24 rounded border border-slate-300 px-2 py-1 text-xs"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!selected || !bulkDiscount.trim()) return;
+                          const newOverrides: Record<number, { enabled: boolean; price: string; discount: string }> = {};
+                          selected.items.forEach((it) => {
+                            newOverrides[it.catalog_product_id] = { enabled: true, price: "", discount: bulkDiscount };
+                          });
+                          setItemOverrides(newOverrides);
+                        }}
+                        className="rounded-lg bg-slate-700 px-3 py-1 text-xs font-semibold text-white hover:bg-slate-800"
+                      >
+                        Apply to all
+                      </button>
+                    </div>
+                    {selected.items.map((it) => {
+                      const ov = itemOverrides[it.catalog_product_id] ?? { enabled: false, price: "", discount: "" };
+                      return (
+                        <div key={it.catalog_product_id} className={`rounded-lg p-2 ${ov.enabled ? "bg-blue-50 border border-blue-200" : "bg-slate-50"}`}>
+                          <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                            <input
+                              type="checkbox"
+                              checked={ov.enabled}
+                              onChange={(e) => setItemOverrides((prev) => ({
+                                ...prev,
+                                [it.catalog_product_id]: { ...ov, enabled: e.target.checked },
+                              }))}
+                              className="h-4 w-4 rounded"
+                            />
+                            {it.name} <span className="text-xs text-slate-400">(₹{it.unit_price} × {it.quantity})</span>
+                          </label>
+                          {ov.enabled && (
+                            <div className="mt-2 grid grid-cols-2 gap-2 pl-6">
+                              <div>
+                                <label className="mb-0.5 block text-xs text-slate-500">Override Price (₹)</label>
+                                <input
+                                  type="number" min="0" step="0.01"
+                                  value={ov.price}
+                                  onChange={(e) => setItemOverrides((prev) => ({
+                                    ...prev,
+                                    [it.catalog_product_id]: { ...ov, price: e.target.value },
+                                  }))}
+                                  placeholder={it.unit_price}
+                                  className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                />
+                              </div>
+                              <div>
+                                <label className="mb-0.5 block text-xs text-slate-500">Discount %</label>
+                                <input
+                                  type="number" min="0" max="100" step="0.01"
+                                  value={ov.discount}
+                                  onChange={(e) => setItemOverrides((prev) => ({
+                                    ...prev,
+                                    [it.catalog_product_id]: { ...ov, discount: e.target.value },
+                                  }))}
+                                  placeholder="0"
+                                  className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Zero-rate confirmation banner */}
+                {showZeroRateBanner && (
+                  <div className="rounded-lg border border-red-200 bg-red-50 p-3">
+                    <p className="text-sm font-medium text-red-800">⚠ Some items have ₹0 rate. Continue?</p>
+                    <div className="mt-2 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => { setZeroRateConfirmed(true); setShowZeroRateBanner(false); void generateBill(); }}
+                        className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700"
+                      >
+                        Confirm
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowZeroRateBanner(false)}
+                        className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {billMsg && <p className="text-sm font-medium text-emerald-700">{billMsg}</p>}
-                <button type="button" onClick={generateBill} disabled={billBusy} className={BTN_PRIMARY}>
+                <button type="button" onClick={() => void generateBill()} disabled={billBusy} className={BTN_PRIMARY}>
                   {billBusy ? "Generating…" : "Generate & send to customer"}
                 </button>
               </div>
@@ -620,6 +929,13 @@ function CustomerOrdersTab({
               </div>
             </div>
             <div className="flex justify-end gap-3 border-t border-slate-200 px-6 py-4">
+              <button
+                type="button"
+                onClick={() => window.open(`${apiUrl(`customer-bills/${billData.id}/download`)}?x_admin_key=${encodeURIComponent(adminKey)}`, "_blank")}
+                className={BTN_SECONDARY}
+              >
+                🖨️ Print Bill
+              </button>
               <a href={`${apiUrl(`customer-bills/${billData.id}/download`)}?x_admin_key=${encodeURIComponent(adminKey)}`} target="_blank" rel="noreferrer" className={BTN_PRIMARY}>⬇ Download PDF</a>
               <button type="button" onClick={() => setShowBillModal(false)} className={BTN_SECONDARY}>Close</button>
             </div>
@@ -650,6 +966,7 @@ function PurchaseOrdersTab({
   const [showCreate, setShowCreate] = useState(false);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
   const [saving, setSaving] = useState(false);
+  const [poStatusFilter, setPoStatusFilter] = useState<string>("booked");
   // Create form state
   const [selectedVendorId, setSelectedVendorId] = useState("");
   const [lines, setLines] = useState<{ catalog_product_id: string; quantity: string; search: string }[]>([{ catalog_product_id: "", quantity: "1", search: "" }]);
@@ -719,6 +1036,26 @@ function PurchaseOrdersTab({
           {showCreate ? "Cancel" : "+ New purchase order"}
         </button>
       </div>
+
+      {/* Status filter tabs */}
+      {!showCreate && (
+        <div className="mb-4 flex gap-2 flex-wrap">
+          {(["all", "booked", "in_progress", "closed", "disputed", "cancelled"] as const).map((s) => {
+            const count = s === "all" ? orders.length : orders.filter((o) => o.status === s).length;
+            return (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setPoStatusFilter(s)}
+                className={`rounded-full px-4 py-1.5 text-xs font-semibold transition ${poStatusFilter === s ? "bg-slate-800 text-white shadow" : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"}`}
+              >
+                {s === "all" ? "All" : s === "in_progress" ? "In Progress" : s.charAt(0).toUpperCase() + s.slice(1)}
+                <span className="ml-1.5 rounded-full bg-white/20 px-1.5 py-0.5 text-xs">{count}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {showCreate && (
         <form onSubmit={createOrder} className="mb-6 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -864,7 +1201,7 @@ function PurchaseOrdersTab({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {orders.map((o) => (
+              {orders.filter((o) => poStatusFilter === "all" || o.status === poStatusFilter).map((o) => (
                 <tr
                   key={o.id}
                   className="cursor-pointer transition hover:bg-blue-50/40"
@@ -877,8 +1214,8 @@ function PurchaseOrdersTab({
                   <td className="px-4 py-3 text-slate-400 text-xs">{new Date(o.created_at).toLocaleDateString()}</td>
                 </tr>
               ))}
-              {orders.length === 0 && (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400">No purchase orders yet.</td></tr>
+              {orders.filter((o) => poStatusFilter === "all" || o.status === poStatusFilter).length === 0 && (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400">No {poStatusFilter === "all" ? "" : poStatusFilter + " "}purchase orders yet.</td></tr>
               )}
             </tbody>
           </table>
@@ -928,6 +1265,59 @@ function PurchaseOrdersTab({
                 <strong>Notes:</strong> {selected.notes}
               </div>
             )}
+
+            {/* Actions */}
+            <div className="flex flex-wrap gap-2 pt-2">
+              {(selected.status === "booked" || selected.status === "in_progress") && (
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-violet-700"
+                  onClick={async () => {
+                    if (!selected) return;
+                    // Generate vendor bill using received quantities
+                    const billLines = selected.items.map((it) => ({
+                      catalog_product_id: it.catalog_product_id,
+                      quantity: it.received_quantity ?? it.quantity,
+                      unit_price: it.buying_price ?? 0,
+                    }));
+                    const fd = new FormData();
+                    fd.append("purchase_order_id", String(selected.id));
+                    fd.append("bill_lines", JSON.stringify(billLines));
+                    const r = await fetchApi(apiUrl("vendor-bills"), { method: "POST", headers: headersAdmin(), body: fd });
+                    const data = await r.json().catch(() => ({}));
+                    if (!r.ok) { showToast(formatApiError(data), false); return; }
+                    showToast("Vendor bill created — AP entry recorded.", true);
+                    void load();
+                  }}
+                >
+                  📄 Generate Vendor Bill (→ AP)
+                </button>
+              )}
+              {selected.status === "in_progress" && (
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700"
+                  onClick={async () => {
+                    const r = await fetchApi(apiUrl(`purchase-orders/${selected.id}`), { method: "PATCH", headers: headers(), body: JSON.stringify({ status: "closed" }) });
+                    if (r.ok) { showToast("PO closed.", true); const d = await r.json(); setSelected(d); void load(); }
+                  }}
+                >
+                  ✓ Mark Closed
+                </button>
+              )}
+              {selected.status !== "cancelled" && selected.status !== "closed" && (
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-orange-300 bg-orange-50 px-4 py-2 text-sm font-semibold text-orange-700 shadow-sm transition hover:bg-orange-100"
+                  onClick={async () => {
+                    const r = await fetchApi(apiUrl(`purchase-orders/${selected.id}`), { method: "PATCH", headers: headers(), body: JSON.stringify({ status: "disputed" }) });
+                    if (r.ok) { showToast("PO marked disputed.", true); const d = await r.json(); setSelected(d); void load(); }
+                  }}
+                >
+                  ⚠ Mark Disputed
+                </button>
+              )}
+            </div>
           </div>
         )}
       </Drawer>

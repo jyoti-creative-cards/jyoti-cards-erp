@@ -10,16 +10,31 @@ on:
 
 jobs:
   deploy:
-    name: Deploy to Railway
+    name: Sync backend → jyoti-erp-api → Railway auto-deploys
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli@latest
+      - name: Clone jyoti-erp-api
+        run: |
+          git clone https://oauth2:${{ secrets.GH_PAT }}@github.com/jyoti-creative-cards/jyoti-erp-api.git /tmp/erp-api
 
-      - name: Deploy to Railway
-        working-directory: backend
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-        run: railway up --service jyoti-erp-api --detach
+      - name: Sync backend code
+        run: |
+          rsync -av --delete \
+            --exclude='.env' \
+            --exclude='__pycache__' \
+            --exclude='*.pyc' \
+            --exclude='.venv' \
+            --exclude='dev.db' \
+            --exclude='.git' \
+            backend/ /tmp/erp-api/
+
+      - name: Commit and push
+        working-directory: /tmp/erp-api
+        run: |
+          git config user.email "ci@jyoti-erp.com"
+          git config user.name "Jyoti ERP CI"
+          git add -A
+          git diff --cached --quiet || git commit -m "Deploy: sync backend from jyoti-cards-erp@${{ github.sha }}"
+          git push https://oauth2:${{ secrets.GH_PAT }}@github.com/jyoti-creative-cards/jyoti-erp-api.git main

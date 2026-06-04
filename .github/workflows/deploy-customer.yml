@@ -1,0 +1,33 @@
+name: Deploy Customer App → Vercel
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/customer-app/**"
+      - ".github/workflows/deploy-customer.yml"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy to Vercel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: Deploy to Vercel (production)
+        working-directory: web/customer-app
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_CUSTOMER_PROJECT_ID }}
+        run: >
+          vercel --prod --yes --token "$VERCEL_TOKEN"
+          --build-env BACKEND_URL=https://jyoti-erp-api-production.up.railway.app

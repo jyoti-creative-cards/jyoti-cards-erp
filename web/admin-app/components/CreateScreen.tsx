@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiUrl, fetchApi, formatApiError } from "@/lib/api";
-import type { CatalogProductPublic, CustomerPublic, VendorPublic } from "@/lib/types";
+import type { CatalogProductPublic, CityPublic, CustomerPublic, VendorPublic } from "@/lib/types";
 
 const INPUT = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
 const LABEL = "mb-1 block text-xs font-semibold text-slate-500 uppercase tracking-wider";
@@ -43,17 +43,20 @@ export function CreateScreen({ adminKey }: Props) {
   const [customers, setCustomers] = useState<CustomerPublic[]>([]);
   const [vendors, setVendors] = useState<VendorPublic[]>([]);
   const [catalog, setCatalog] = useState<CatalogProductPublic[]>([]);
+  const [cities, setCities] = useState<CityPublic[]>([]);
 
   const loadData = useCallback(async () => {
     if (!adminKey.trim()) return;
-    const [cr, vr, pr] = await Promise.all([
+    const [cr, vr, pr, cir] = await Promise.all([
       fetchApi(apiUrl("customers"), { headers: headersAdmin() }),
       fetchApi(apiUrl("vendors"), { headers: headersAdmin() }),
       fetchApi(apiUrl("catalog"), { headers: headersAdmin() }),
+      fetchApi(apiUrl("cities"), { headers: headersAdmin() }),
     ]);
     if (cr.ok) setCustomers(await cr.json());
     if (vr.ok) setVendors(await vr.json());
     if (pr.ok) setCatalog(await pr.json());
+    if (cir.ok) setCities(await cir.json());
   }, [adminKey]);
 
   useEffect(() => { void loadData(); }, [loadData]);
@@ -107,6 +110,7 @@ export function CreateScreen({ adminKey }: Props) {
             saving={saving}
             setSaving={setSaving}
             showToast={showToast}
+            cities={cities}
           />
         )}
         {selected === "vendor" && (
@@ -351,23 +355,34 @@ function CustomerOrderForm({
 
 // ──────────────────── CUSTOMER ────────────────────
 
-function CustomerForm({ headers, saving, setSaving, showToast }: {
+function CustomerForm({ headers, saving, setSaving, showToast, cities }: {
   headers: () => Record<string, string>;
   saving: boolean;
   setSaving: (b: boolean) => void;
   showToast: (msg: string, ok: boolean) => void;
+  cities: CityPublic[];
 }) {
   const [key, setKey] = useState(0);
+  const [cityId, setCityId] = useState("");
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
-    const body = { name: fd.get("name"), phone: fd.get("phone"), company_name: emptyToNull(fd.get("company_name")), alias: emptyToNull(fd.get("alias")), address: emptyToNull(fd.get("address")), credit_limit: emptyToNull(fd.get("credit_limit")) };
+    const body = {
+      name: fd.get("name"),
+      phone: fd.get("phone"),
+      company_name: emptyToNull(fd.get("company_name")),
+      alias: emptyToNull(fd.get("alias")),
+      address: emptyToNull(fd.get("address")),
+      credit_limit: emptyToNull(fd.get("credit_limit")),
+      city_id: cityId ? Number(cityId) : null,
+    };
     setSaving(true);
     const r = await fetchApi(apiUrl("customers"), { method: "POST", headers: headers(), body: JSON.stringify(body) });
     const data = await r.json().catch(() => ({}));
     setSaving(false);
     if (!r.ok) { showToast(formatApiError(data), false); return; }
     showToast(`Customer "${(data as { name: string }).name}" created.`, true);
+    setCityId("");
     setKey((k) => k + 1);
   }
   return (
@@ -379,6 +394,13 @@ function CustomerForm({ headers, saving, setSaving, showToast }: {
         <div><label className={LABEL}>Alias</label><input name="alias" placeholder="Short name for search" className={INPUT} /></div>
         <div className="col-span-2"><label className={LABEL}>Company</label><input name="company_name" className={INPUT} /></div>
         <div className="col-span-2"><label className={LABEL}>Address</label><input name="address" className={INPUT} /></div>
+        <div>
+          <label className={LABEL}>City</label>
+          <select value={cityId} onChange={(e) => setCityId(e.target.value)} className={INPUT}>
+            <option value="">— select city —</option>
+            {cities.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
         <div><label className={LABEL}>Credit limit ₹</label><input name="credit_limit" type="number" min="0" placeholder="No limit" className={INPUT} /></div>
         <div className="col-span-2"><button type="submit" disabled={saving} className={BTN_PRIMARY}>{saving ? "Saving…" : "Create customer"}</button></div>
       </form>

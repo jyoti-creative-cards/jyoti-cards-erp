@@ -164,7 +164,6 @@ function CustomersTab({
       alias: emptyToNull(fd.get("alias")),
       address: emptyToNull(fd.get("address")),
       secondary_phone: emptyToNull(fd.get("secondary_phone")),
-      city: emptyToNull(fd.get("city")),
       city_id: selectedCityId ? Number(selectedCityId) : null,
       route_id: selectedRouteId ? Number(selectedRouteId) : null,
       credit_limit: emptyToNull(fd.get("credit_limit")),
@@ -369,10 +368,6 @@ function CustomersTab({
                 <option value="">— none —</option>
                 {cities.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
-            </div>
-            <div>
-              <label className={LABEL}>City (free text, if not in list)</label>
-              <input name="city" defaultValue={editing?.city ?? ""} placeholder="e.g. Pune" className={INPUT} />
             </div>
             <div>
               <label className={LABEL}>Credit limit (₹)</label>

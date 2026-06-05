@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { apiUrl, fetchApi, formatApiError } from "@/lib/api";
+import { apiUrl, authHeaders, fetchApi, formatApiError, jsonAuthHeaders } from "@/lib/api";
+import type { AuthState } from "@/lib/types";
 import type { AuditLogEntry, BillSeries } from "@/lib/types";
 
 const INPUT = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
@@ -13,33 +14,49 @@ const CARD = "rounded-xl border border-slate-200 bg-white p-5 shadow-sm";
 
 interface Props {
   adminKey: string;
+  auth?: AuthState;
 }
 
-export function AdminScreen({ adminKey }: Props) {
-  const [tab, setTab] = useState<"routes" | "categories" | "series" | "yeargroups" | "billseries" | "auditlog">("routes");
-  const headersAdmin = (): Record<string, string> =>
-    adminKey.trim() ? { "X-Admin-Key": adminKey.trim() } : {};
-  const headersJson = (): Record<string, string> => ({
-    "Content-Type": "application/json",
-    ...(adminKey.trim() ? { "X-Admin-Key": adminKey.trim() } : {}),
-  });
+function hasPerm(auth: AuthState | undefined, perm: string): boolean {
+  if (!auth || auth.type === "admin_key") return true;
+  if (auth.type === "staff") {
+    if (auth.staff.role === "admin") return true;
+    return auth.staff.permissions.includes(perm);
+  }
+  return false;
+}
+
+export function AdminScreen({ adminKey, auth }: Props) {
+  const _auth: AuthState = auth ?? (adminKey.trim() ? { type: "admin_key", key: adminKey } : { type: "none" });
+  const canSetup = hasPerm(auth, "admin.setup");
+  const canAudit = hasPerm(auth, "admin.audit");
+
+  const [tab, setTab] = useState<"routes" | "categories" | "series" | "yeargroups" | "billseries" | "auditlog">(
+    canSetup ? "routes" : "auditlog"
+  );
+  const headersAdmin = () => authHeaders(_auth);
+  const headersJson = () => jsonAuthHeaders(_auth);
+
+  const availableTabs = [
+    ...(canSetup ? [
+      { id: "routes" as const,     label: "🗺️ Routes & Cities" },
+      { id: "categories" as const, label: "🏷️ Categories" },
+      { id: "series" as const,     label: "📚 Series" },
+      { id: "yeargroups" as const, label: "📅 Year Groups" },
+      { id: "billseries" as const, label: "🧾 Bill Series" },
+    ] : []),
+    ...(canAudit ? [{ id: "auditlog" as const, label: "📋 Audit Log" }] : []),
+  ];
 
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-xl font-bold text-slate-800">Admin Setup</h1>
+        <h1 className="text-xl font-bold text-slate-800">Setup</h1>
         <p className="mt-1 text-sm text-slate-500">Manage lookup values — routes, cities, categories, series, year groups.</p>
       </div>
 
       <div className="mb-6 flex flex-wrap gap-2">
-        {([
-          { id: "routes", label: "🗺️ Routes & Cities" },
-          { id: "categories", label: "🏷️ Categories" },
-          { id: "series", label: "📚 Series" },
-          { id: "yeargroups", label: "📅 Year Groups" },
-          { id: "billseries", label: "🧾 Bill Series" },
-          { id: "auditlog", label: "📋 Audit Log" },
-        ] as const).map((t) => (
+        {availableTabs.map((t) => (
           <button
             key={t.id}
             type="button"
@@ -53,7 +70,7 @@ export function AdminScreen({ adminKey }: Props) {
         ))}
       </div>
 
-      {tab === "routes" && <RoutesAndCitiesTab headersAdmin={headersAdmin} headersJson={headersJson} adminKey={adminKey} />}
+      {tab === "routes" && canSetup && <RoutesAndCitiesTab headersAdmin={headersAdmin} headersJson={headersJson} adminKey={adminKey} />}
       {tab === "categories" && <SimpleListTab
         label="Category"
         icon="🏷️"

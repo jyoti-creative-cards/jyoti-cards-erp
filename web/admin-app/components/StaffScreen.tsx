@@ -57,8 +57,7 @@ export function StaffScreen({ auth }: Props) {
 
   // Form state
   const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState("staff");
   const [permissions, setPermissions] = useState<string[]>([]);
@@ -78,13 +77,13 @@ export function StaffScreen({ auth }: Props) {
 
   function openCreate() {
     setEditing(null);
-    setName(""); setEmail(""); setPhone(""); setPassword(""); setRole("staff"); setPermissions([]);
+    setName(""); setUsername(""); setPassword(""); setRole("staff"); setPermissions([]);
     setShowForm(true);
   }
 
   function openEdit(s: StaffPublic) {
     setEditing(s);
-    setName(s.name); setEmail(s.email); setPhone(s.phone || ""); setPassword(""); setRole(s.role);
+    setName(s.name); setUsername(s.username); setPassword(""); setRole(s.role);
     setPermissions(s.role === "admin" ? [] : s.permissions);
     setShowForm(true);
   }
@@ -92,7 +91,7 @@ export function StaffScreen({ auth }: Props) {
   async function onSave(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
-    const body: Record<string, unknown> = { name, email, phone: phone || null, role, permissions };
+    const body: Record<string, unknown> = { name, username, role, permissions };
     if (password.trim()) body.password = password;
     if (!editing) body.password = password;
 
@@ -142,15 +141,12 @@ export function StaffScreen({ auth }: Props) {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <label className={LABEL}>Full name *</label>
-              <input required value={name} onChange={e => setName(e.target.value)} className={INPUT} />
+              <input required value={name} onChange={e => setName(e.target.value)} className={INPUT} placeholder="e.g. Rahul Sharma" />
             </div>
             <div>
-              <label className={LABEL}>Email *</label>
-              <input required type="email" value={email} onChange={e => setEmail(e.target.value)} className={INPUT} />
-            </div>
-            <div>
-              <label className={LABEL}>Phone</label>
-              <input value={phone} onChange={e => setPhone(e.target.value)} className={INPUT} />
+              <label className={LABEL}>Username * (used to login)</label>
+              <input required value={username} onChange={e => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_\-\.]/g, ""))} className={INPUT} placeholder="e.g. rahul.sharma" />
+              <p className="mt-1 text-xs text-slate-400">Only letters, numbers, dots, hyphens. Staff will type this to sign in.</p>
             </div>
             <div>
               <label className={LABEL}>{editing ? "New password (leave blank to keep)" : "Password *"}</label>
@@ -199,7 +195,7 @@ export function StaffScreen({ auth }: Props) {
             <thead className="border-b border-slate-200 bg-slate-50">
               <tr>
                 <th className="px-4 py-3 text-left font-semibold text-slate-600">Name</th>
-                <th className="px-4 py-3 text-left font-semibold text-slate-600">Email</th>
+                <th className="px-4 py-3 text-left font-semibold text-slate-600">Username</th>
                 <th className="px-4 py-3 text-left font-semibold text-slate-600">Role</th>
                 <th className="px-4 py-3 text-left font-semibold text-slate-600">Permissions</th>
                 <th className="px-4 py-3 text-left font-semibold text-slate-600">Status</th>
@@ -210,7 +206,7 @@ export function StaffScreen({ auth }: Props) {
               {staff.map(s => (
                 <tr key={s.id} className="hover:bg-slate-50">
                   <td className="px-4 py-3 font-medium text-slate-800">{s.name}</td>
-                  <td className="px-4 py-3 text-slate-600">{s.email}</td>
+                  <td className="px-4 py-3 font-mono text-slate-600">{s.username}</td>
                   <td className="px-4 py-3">
                     <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${s.role === "admin" ? "bg-purple-100 text-purple-700" : "bg-slate-100 text-slate-600"}`}>
                       {s.role}

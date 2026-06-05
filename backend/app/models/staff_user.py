@@ -16,7 +16,9 @@ PERMISSIONS = [
     "orders.view", "orders.edit",
     "finance.view",
     "returns.view", "returns.edit",
-    "admin.manage",
+    "admin.manage",   # manage staff accounts
+    "admin.setup",    # routes, cities, categories, bill series, etc.
+    "admin.audit",    # view audit log
     "recyclebin.view",
     "create.use",
 ]
@@ -29,8 +31,7 @@ class StaffUser(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
-    email: Mapped[str] = mapped_column(String(200), nullable=False, unique=True, index=True)
-    phone: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    username: Mapped[str] = mapped_column(String(100), nullable=False, unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(512), nullable=False)
     role: Mapped[str] = mapped_column(String(20), nullable=False, server_default="staff")  # "admin" | "staff"
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")

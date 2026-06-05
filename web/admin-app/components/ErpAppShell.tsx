@@ -16,7 +16,7 @@ const NAV: NavEntry[] = [
   { id: "finance",    label: "Finance",     icon: "💰", permission: "finance.view"   },
   { id: "returns",    label: "Returns",     icon: "↩️",  permission: "returns.view"   },
   { id: "create",     label: "Create",      icon: "➕", permission: "create.use"     },
-  { id: "admin",      label: "Admin",       icon: "⚙️"                               },
+  { id: "admin",      label: "Setup",       icon: "⚙️", permission: "admin.setup"    },
   { id: "staff",      label: "Staff",       icon: "👔", permission: "admin.manage"   },
   { id: "recyclebin", label: "Recycle Bin", icon: "🗑️", permission: "recyclebin.view"},
 ];

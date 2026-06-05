@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -19,8 +19,7 @@ router = APIRouter(prefix="/staff", tags=["staff"])
 
 class StaffCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
-    email: str = Field(..., min_length=3, max_length=200)
-    phone: Optional[str] = None
+    username: str = Field(..., min_length=2, max_length=100, pattern=r"^[a-zA-Z0-9_\-\.]+$")
     password: str = Field(..., min_length=4)
     role: str = Field(default="staff", pattern="^(admin|staff)$")
     permissions: list[str] = Field(default=[])
@@ -28,8 +27,7 @@ class StaffCreate(BaseModel):
 
 class StaffUpdate(BaseModel):
     name: Optional[str] = None
-    email: Optional[str] = None
-    phone: Optional[str] = None
+    username: Optional[str] = Field(default=None, min_length=2, max_length=100, pattern=r"^[a-zA-Z0-9_\-\.]+$")
     password: Optional[str] = None
     role: Optional[str] = Field(default=None, pattern="^(admin|staff)$")
     permissions: Optional[list[str]] = None
@@ -39,8 +37,7 @@ class StaffUpdate(BaseModel):
 class StaffPublic(BaseModel):
     id: int
     name: str
-    email: str
-    phone: Optional[str]
+    username: str
     role: str
     is_active: bool
     permissions: list[str]
@@ -51,7 +48,7 @@ class StaffPublic(BaseModel):
 
 
 class StaffLoginRequest(BaseModel):
-    email: str
+    username: str
     password: str
 
 
@@ -68,8 +65,7 @@ def _to_public(row: StaffUser) -> StaffPublic:
     return StaffPublic(
         id=row.id,
         name=row.name,
-        email=row.email,
-        phone=row.phone,
+        username=row.username,
         role=row.role,
         is_active=bool(row.is_active),
         permissions=perms if row.role != "admin" else PERMISSIONS,
@@ -89,10 +85,10 @@ def _effective_permissions(user: StaffUser) -> list[str]:
 
 @router.post("/login", response_model=StaffLoginResponse)
 def staff_login(body: StaffLoginRequest, db: Session = Depends(get_db)) -> StaffLoginResponse:
-    email = body.email.strip().lower()
-    user = db.query(StaffUser).filter(StaffUser.email == email, StaffUser.is_active.is_(True)).one_or_none()
+    username = body.username.strip().lower()
+    user = db.query(StaffUser).filter(StaffUser.username == username, StaffUser.is_active.is_(True)).one_or_none()
     if user is None or not verify_password(body.password, user.password_hash):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="wrong email or password")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="wrong username or password")
 
     perms = _effective_permissions(user)
     token = create_staff_token(staff_id=user.id, name=user.name, role=user.role, permissions=perms)
@@ -112,20 +108,18 @@ def list_staff(db: Session = Depends(get_db)) -> list[StaffPublic]:
 
 @router.post("", response_model=StaffPublic, dependencies=[Depends(require_admin_only)])
 def create_staff(body: StaffCreate, db: Session = Depends(get_db)) -> StaffPublic:
-    email = body.email.strip().lower()
-    existing = db.query(StaffUser).filter(StaffUser.email == email).one_or_none()
+    username = body.username.strip().lower()
+    existing = db.query(StaffUser).filter(StaffUser.username == username).one_or_none()
     if existing is not None:
-        raise HTTPException(status.HTTP_409_CONFLICT, detail="email already registered")
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="username already taken")
 
-    # Validate permissions
     invalid = [p for p in body.permissions if p not in PERMISSIONS]
     if invalid:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"unknown permissions: {invalid}")
 
     user = StaffUser(
         name=body.name.strip(),
-        email=email,
-        phone=(body.phone or "").strip() or None,
+        username=username,
         password_hash=hash_password(body.password),
         role=body.role,
         permissions=body.permissions,
@@ -145,14 +139,12 @@ def update_staff(staff_id: int, body: StaffUpdate, db: Session = Depends(get_db)
 
     if body.name is not None:
         user.name = body.name.strip()
-    if body.email is not None:
-        email = body.email.strip().lower()
-        existing = db.query(StaffUser).filter(StaffUser.email == email, StaffUser.id != staff_id).one_or_none()
+    if body.username is not None:
+        uname = body.username.strip().lower()
+        existing = db.query(StaffUser).filter(StaffUser.username == uname, StaffUser.id != staff_id).one_or_none()
         if existing:
-            raise HTTPException(status.HTTP_409_CONFLICT, detail="email already in use")
-        user.email = email
-    if body.phone is not None:
-        user.phone = body.phone.strip() or None
+            raise HTTPException(status.HTTP_409_CONFLICT, detail="username already taken")
+        user.username = uname
     if body.password is not None and body.password.strip():
         user.password_hash = hash_password(body.password.strip())
     if body.role is not None:

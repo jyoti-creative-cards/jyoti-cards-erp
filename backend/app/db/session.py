@@ -205,8 +205,7 @@ def _migrate_v4_features_postgres() -> None:
             CREATE TABLE IF NOT EXISTS portal_staff_users (
                 id SERIAL PRIMARY KEY,
                 name VARCHAR(200) NOT NULL,
-                email VARCHAR(200) NOT NULL UNIQUE,
-                phone VARCHAR(30),
+                username VARCHAR(100) NOT NULL UNIQUE,
                 password_hash VARCHAR(512) NOT NULL,
                 role VARCHAR(20) NOT NULL DEFAULT 'staff',
                 is_active BOOLEAN NOT NULL DEFAULT TRUE,
@@ -215,6 +214,8 @@ def _migrate_v4_features_postgres() -> None:
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         """))
+        # Add username column if table already existed with email (backwards compat)
+        conn.execute(text("ALTER TABLE portal_staff_users ADD COLUMN IF NOT EXISTS username VARCHAR(100) UNIQUE"))
         # Credit note enhancements
         conn.execute(text("ALTER TABLE portal_credit_notes ADD COLUMN IF NOT EXISTS return_items JSONB"))
         conn.execute(text("ALTER TABLE portal_credit_notes ADD COLUMN IF NOT EXISTS is_full_return BOOLEAN NOT NULL DEFAULT FALSE"))

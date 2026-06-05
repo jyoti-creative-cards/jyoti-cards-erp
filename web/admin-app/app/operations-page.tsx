@@ -71,7 +71,7 @@ function LoginPage({ onAuth }: { onAuth: (a: AuthState) => void }) {
     const r = await fetchApi(apiUrl("staff/login"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
+      body: JSON.stringify({ username: email.trim().toLowerCase(), password }),
     });
     const data = await r.json().catch(() => ({})) as { access_token?: string; staff?: StaffPublic };
     setLoading(false);
@@ -115,9 +115,10 @@ function LoginPage({ onAuth }: { onAuth: (a: AuthState) => void }) {
             {mode === "staff" ? (
               <form onSubmit={handleStaffLogin} className="space-y-4">
                 <div>
-                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-slate-500">Email</label>
-                  <input type="email" required value={email} onChange={e => setEmail(e.target.value)}
-                    placeholder="your@email.com"
+                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-slate-500">Username</label>
+                  <input type="text" required value={email} onChange={e => setEmail(e.target.value)}
+                    placeholder="your.username"
+                    autoComplete="username"
                     className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
                 </div>
                 <div>
@@ -208,7 +209,7 @@ export default function OperationsAdminPage() {
       {mainTab === "finance"    && can("finance.view")    && <FinanceScreen adminKey={adminKey} />}
       {mainTab === "returns"    && can("returns.view")    && <ReturnsScreen auth={auth} canEdit={can("returns.edit")} />}
       {mainTab === "create"     && can("create.use")      && <CreateScreen adminKey={adminKey} />}
-      {mainTab === "admin"      &&                           <AdminScreen adminKey={adminKey} />}
+      {mainTab === "admin"      && (can("admin.setup") || can("admin.audit")) && <AdminScreen adminKey={adminKey} auth={auth} />}
       {mainTab === "staff"      && can("admin.manage")    && <StaffScreen auth={auth} />}
       {mainTab === "recyclebin" && can("recyclebin.view") && <RecycleBinScreen adminKey={adminKey} />}
     </ErpAppShell>

@@ -1,8 +1,7 @@
 export interface StaffPublic {
   id: number;
   name: string;
-  email: string;
-  phone: string | null;
+  username: string;
   role: string;
   is_active: boolean;
   permissions: string[];
@@ -11,20 +10,22 @@ export interface StaffPublic {
 }
 
 export const ALL_PERMISSIONS: { id: string; label: string; group: string }[] = [
-  { id: "people.view",    label: "View people",      group: "People"    },
-  { id: "people.edit",    label: "Edit people",       group: "People"    },
-  { id: "catalog.view",   label: "View catalog",      group: "Catalog"   },
-  { id: "catalog.edit",   label: "Edit catalog",      group: "Catalog"   },
-  { id: "stock.view",     label: "View stock",        group: "Stock"     },
-  { id: "stock.edit",     label: "Edit stock",        group: "Stock"     },
-  { id: "orders.view",    label: "View orders",       group: "Orders"    },
-  { id: "orders.edit",    label: "Edit orders",       group: "Orders"    },
-  { id: "finance.view",   label: "View finance",      group: "Finance"   },
-  { id: "returns.view",   label: "View returns",      group: "Returns"   },
-  { id: "returns.edit",   label: "Issue credit notes",group: "Returns"   },
-  { id: "admin.manage",   label: "Manage staff",      group: "Admin"     },
-  { id: "recyclebin.view",label: "View recycle bin",  group: "Admin"     },
-  { id: "create.use",     label: "Use create form",   group: "Create"    },
+  { id: "people.view",    label: "View people",            group: "People"    },
+  { id: "people.edit",    label: "Edit people",            group: "People"    },
+  { id: "catalog.view",   label: "View catalog",           group: "Catalog"   },
+  { id: "catalog.edit",   label: "Edit catalog",           group: "Catalog"   },
+  { id: "stock.view",     label: "View stock",             group: "Stock"     },
+  { id: "stock.edit",     label: "Edit stock",             group: "Stock"     },
+  { id: "orders.view",    label: "View orders",            group: "Orders"    },
+  { id: "orders.edit",    label: "Edit orders",            group: "Orders"    },
+  { id: "finance.view",   label: "View finance",           group: "Finance"   },
+  { id: "returns.view",   label: "View returns",           group: "Returns"   },
+  { id: "returns.edit",   label: "Issue credit notes",     group: "Returns"   },
+  { id: "admin.manage",   label: "Manage staff accounts",  group: "Admin"     },
+  { id: "admin.setup",    label: "Manage routes/cities/categories/series", group: "Admin" },
+  { id: "admin.audit",    label: "View audit log",         group: "Admin"     },
+  { id: "recyclebin.view",label: "View & restore recycle bin", group: "Admin" },
+  { id: "create.use",     label: "Use create form",        group: "Create"    },
 ];
 
 export type AuthState =

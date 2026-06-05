@@ -357,9 +357,6 @@ export default function CustomerPortalPage() {
     setShopSuggestions([]);
   }
 
-      return sum + unit * row.qty;
-  }, 0);
-
   return (
     <div className="mx-auto max-w-6xl space-y-8 pb-6 sm:pb-2">
       {!token ? (

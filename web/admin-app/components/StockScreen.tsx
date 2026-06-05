@@ -980,7 +980,7 @@ function ReceiveGoodsTab({
 
           {selVendorId && !vendorPendingLoading && vendorPending && vendorPending.pending_items.length === 0 && vendorAdHocItems.length === 0 && (
             <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
-              No pending PO items for this vendor. Use "+ Add item" above to receive goods not tied to a PO.
+              No pending PO items for this vendor. Use &quot;+ Add item&quot; above to receive goods not tied to a PO.
               <button type="button" onClick={() => setVendorAdHocItems([{ cid: "", qty: "", price: "" }])} className={BTN_PRIMARY + " mt-3 mx-auto"}>+ Add item</button>
             </div>
           )}

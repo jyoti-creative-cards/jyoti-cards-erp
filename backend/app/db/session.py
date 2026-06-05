@@ -214,8 +214,36 @@ def _migrate_v4_features_postgres() -> None:
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         """))
-        # Add username column if table already existed with email (backwards compat)
-        conn.execute(text("ALTER TABLE portal_staff_users ADD COLUMN IF NOT EXISTS username VARCHAR(100) UNIQUE"))
+        # Fix schema if table was created with old email-based schema (email was NOT NULL, no username)
+        conn.execute(text("ALTER TABLE portal_staff_users ADD COLUMN IF NOT EXISTS username VARCHAR(100)"))
+        # Make legacy columns nullable so they don't block inserts from the new model
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='portal_staff_users' AND column_name='email'
+                    AND is_nullable='NO'
+                ) THEN
+                    ALTER TABLE portal_staff_users ALTER COLUMN email DROP NOT NULL;
+                END IF;
+            END $$;
+        """))
+        # Drop phone column if it exists (removed from model)
+        conn.execute(text("ALTER TABLE portal_staff_users DROP COLUMN IF EXISTS phone"))
+        # Add unique index on username
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_indexes
+                    WHERE tablename='portal_staff_users' AND indexname='uq_staff_username'
+                ) THEN
+                    CREATE UNIQUE INDEX uq_staff_username ON portal_staff_users(username)
+                    WHERE username IS NOT NULL;
+                END IF;
+            END $$;
+        """))
         # Credit note enhancements
         conn.execute(text("ALTER TABLE portal_credit_notes ADD COLUMN IF NOT EXISTS return_items JSONB"))
         conn.execute(text("ALTER TABLE portal_credit_notes ADD COLUMN IF NOT EXISTS is_full_return BOOLEAN NOT NULL DEFAULT FALSE"))

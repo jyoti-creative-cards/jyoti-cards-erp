@@ -195,6 +195,38 @@ def _repair_sqlite_is_active_text_values() -> None:
             conn.execute(text(f"UPDATE {tbl} SET is_active = 1 WHERE is_active IS NULL"))
 
 
+def _migrate_v4_features_postgres() -> None:
+    """Add v4 columns: staff users + credit note return fields."""
+    if engine.dialect.name != "postgresql":
+        return
+    with engine.begin() as conn:
+        # Staff users table
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS portal_staff_users (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(200) NOT NULL,
+                email VARCHAR(200) NOT NULL UNIQUE,
+                phone VARCHAR(30),
+                password_hash VARCHAR(512) NOT NULL,
+                role VARCHAR(20) NOT NULL DEFAULT 'staff',
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                permissions JSONB NOT NULL DEFAULT '[]',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """))
+        # Credit note enhancements
+        conn.execute(text("ALTER TABLE portal_credit_notes ADD COLUMN IF NOT EXISTS return_items JSONB"))
+        conn.execute(text("ALTER TABLE portal_credit_notes ADD COLUMN IF NOT EXISTS is_full_return BOOLEAN NOT NULL DEFAULT FALSE"))
+        conn.execute(text("ALTER TABLE portal_credit_notes ADD COLUMN IF NOT EXISTS refund_method VARCHAR(20) NOT NULL DEFAULT 'credit'"))
+        conn.execute(text("ALTER TABLE portal_credit_notes ADD COLUMN IF NOT EXISTS paid_out_at TIMESTAMPTZ"))
+        conn.execute(text(
+            "ALTER TABLE portal_credit_notes ADD COLUMN IF NOT EXISTS "
+            "applied_to_bill_id INTEGER REFERENCES portal_customer_bills(id) ON DELETE SET NULL"
+        ))
+        conn.execute(text("ALTER TABLE portal_credit_notes ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"))
+
+
 def init_db() -> None:
     from app.models import (  # noqa: F401
         addon_product,
@@ -221,6 +253,7 @@ def init_db() -> None:
         stock_adjustment,
         stock_balance,
         stock_receipt,
+        staff_user,
         vendor,
         vendor_bill,
         vendor_purchase_order,
@@ -240,6 +273,7 @@ def init_db() -> None:
     _migrate_addon_tables_postgres()
     _migrate_v2_features_postgres()
     _migrate_v3_features_postgres()
+    _migrate_v4_features_postgres()
     from app.services.accounting import seed_chart_accounts
 
     s = SessionLocal()

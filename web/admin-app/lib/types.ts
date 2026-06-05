@@ -1,3 +1,63 @@
+export interface StaffPublic {
+  id: number;
+  name: string;
+  email: string;
+  phone: string | null;
+  role: string;
+  is_active: boolean;
+  permissions: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export const ALL_PERMISSIONS: { id: string; label: string; group: string }[] = [
+  { id: "people.view",    label: "View people",      group: "People"    },
+  { id: "people.edit",    label: "Edit people",       group: "People"    },
+  { id: "catalog.view",   label: "View catalog",      group: "Catalog"   },
+  { id: "catalog.edit",   label: "Edit catalog",      group: "Catalog"   },
+  { id: "stock.view",     label: "View stock",        group: "Stock"     },
+  { id: "stock.edit",     label: "Edit stock",        group: "Stock"     },
+  { id: "orders.view",    label: "View orders",       group: "Orders"    },
+  { id: "orders.edit",    label: "Edit orders",       group: "Orders"    },
+  { id: "finance.view",   label: "View finance",      group: "Finance"   },
+  { id: "returns.view",   label: "View returns",      group: "Returns"   },
+  { id: "returns.edit",   label: "Issue credit notes",group: "Returns"   },
+  { id: "admin.manage",   label: "Manage staff",      group: "Admin"     },
+  { id: "recyclebin.view",label: "View recycle bin",  group: "Admin"     },
+  { id: "create.use",     label: "Use create form",   group: "Create"    },
+];
+
+export type AuthState =
+  | { type: "none" }
+  | { type: "admin_key"; key: string }
+  | { type: "staff"; token: string; staff: StaffPublic };
+
+export interface CreditNoteReturnItem {
+  catalog_product_id: number;
+  product_name: string;
+  quantity: number;
+  unit_price: number;
+  line_amount: number;
+}
+
+export interface CreditNotePublicFull {
+  id: number;
+  customer_id: number;
+  customer_order_id: number;
+  customer_bill_id: number | null;
+  amount: string;
+  reason: string | null;
+  status: string;
+  refund_method: string;
+  is_full_return: boolean;
+  return_items: CreditNoteReturnItem[];
+  note_date: string | null;
+  paid_out_at: string | null;
+  applied_to_bill_id: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface CustomerPublic {
   id: number;
   name: string;

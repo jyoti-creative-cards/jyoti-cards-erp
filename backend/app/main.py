@@ -15,6 +15,7 @@ from app.routers import (
     bill_series,
     catalog,
     catalog_alternatives,
+    credit_notes,
     customer_bills,
     customer_orders,
     customers,
@@ -27,6 +28,7 @@ from app.routers import (
     purchase_orders,
     routes,
     shop,
+    staff,
     vendor_bills,
     vendors,
 )
@@ -74,6 +76,8 @@ app.include_router(addons.router, prefix="/api/v1")
 app.include_router(freight_vendors.router, prefix="/api/v1")
 app.include_router(bill_series.router, prefix="/api/v1")
 app.include_router(audit.router, prefix="/api/v1")
+app.include_router(credit_notes.router, prefix="/api/v1")
+app.include_router(staff.router, prefix="/api/v1")
 
 
 @app.on_event("startup")

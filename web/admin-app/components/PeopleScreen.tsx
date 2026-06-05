@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Drawer } from "@/components/Drawer";
 import { Badge, Field } from "@/components/erp-ui";
-import { apiUrl, fetchApi, formatApiError } from "@/lib/api";
-import type { CityPublic, CustomerPublic, RoutePublic, VendorPublic } from "@/lib/types";
+import { apiUrl, authHeaders, fetchApi, formatApiError, jsonAuthHeaders } from "@/lib/api";
+import type { AuthState, CityPublic, CustomerPublic, RoutePublic, VendorPublic } from "@/lib/types";
 
 interface StatementEntry {
   date: string;
@@ -41,17 +41,15 @@ function emptyToNull(v: FormDataEntryValue | null): string | null {
 
 interface Props {
   adminKey: string;
+  auth?: AuthState;
 }
 
-export function PeopleScreen({ adminKey }: Props) {
+export function PeopleScreen({ adminKey, auth }: Props) {
   const [tab, setTab] = useState<"customers" | "vendors">("customers");
 
-  const headers = () => {
-    const h: Record<string, string> = { "Content-Type": "application/json" };
-    if (adminKey.trim()) h["X-Admin-Key"] = adminKey.trim();
-    return h;
-  };
-  const headersAdmin = (): Record<string, string> => adminKey.trim() ? { "X-Admin-Key": adminKey.trim() } : {};
+  const _auth: AuthState = auth ?? (adminKey.trim() ? { type: "admin_key", key: adminKey } : { type: "none" });
+  const headers = () => jsonAuthHeaders(_auth);
+  const headersAdmin = () => authHeaders(_auth);
 
   return (
     <div>

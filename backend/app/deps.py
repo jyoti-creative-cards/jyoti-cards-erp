@@ -9,20 +9,62 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.db.session import get_db, legacy_active_value
 from app.models.customer import Customer
-from app.services.tokens import decode_access_token, token_customer_id
+from app.services.tokens import decode_access_token, decode_staff_token, staff_id_from_payload, token_customer_id
 
 security = HTTPBearer()
 
 
-def require_admin(x_admin_key: Optional[str] = Header(None, alias="X-Admin-Key")) -> None:
+def _is_valid_admin_key(x_admin_key: Optional[str]) -> bool:
+    expected = (get_settings().admin_api_key or "").strip()
+    return bool(expected and x_admin_key and x_admin_key.strip() == expected)
+
+
+def _staff_from_bearer(authorization: Optional[str], db: Session):  # type: ignore[return]
+    """Return StaffUser if bearer token is a valid active staff token, else None."""
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    token = authorization[7:]
+    try:
+        payload = decode_staff_token(token)
+        from app.models.staff_user import StaffUser
+        uid = staff_id_from_payload(payload)
+        user = db.get(StaffUser, uid)
+        if user and user.is_active:
+            return user
+    except Exception:
+        pass
+    return None
+
+
+def require_admin(
+    x_admin_key: Optional[str] = Header(None, alias="X-Admin-Key"),
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+) -> None:
+    """Accept either the admin API key or a valid active staff Bearer token."""
+    if _is_valid_admin_key(x_admin_key):
+        return
+    if _staff_from_bearer(authorization, db) is not None:
+        return
     expected = (get_settings().admin_api_key or "").strip()
     if not expected:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="ADMIN_API_KEY not configured",
         )
-    if not x_admin_key or x_admin_key.strip() != expected:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="invalid admin key")
+    raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
+
+
+def require_admin_only(
+    x_admin_key: Optional[str] = Header(None, alias="X-Admin-Key"),
+) -> None:
+    """Only the admin API key — used for staff management endpoints."""
+    if _is_valid_admin_key(x_admin_key):
+        return
+    expected = (get_settings().admin_api_key or "").strip()
+    if not expected:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="ADMIN_API_KEY not configured")
+    raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="invalid admin key")
 
 
 def get_current_customer(

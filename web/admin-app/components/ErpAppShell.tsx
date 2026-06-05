@@ -4,28 +4,49 @@ import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import type { AuthState } from "@/lib/types";
 
-export type ErpMainTab = "people" | "catalog" | "stock" | "orders" | "finance" | "returns" | "create" | "admin" | "staff" | "recyclebin";
+export type ErpMainTab =
+  | "orders" | "people" | "stock" | "catalog" | "finance" | "returns"
+  | "create" | "admin" | "staff" | "recyclebin";
 
-type NavEntry = { id: ErpMainTab; label: string; icon: string; permission?: string };
+type NavItem = { id: ErpMainTab; label: string; icon: string; permission?: string };
+type NavSection = { title?: string; items: NavItem[] };
 
-const NAV: NavEntry[] = [
-  { id: "people",     label: "People",      icon: "👥", permission: "people.view"    },
-  { id: "catalog",    label: "Catalog",     icon: "📦", permission: "catalog.view"   },
-  { id: "stock",      label: "Stock",       icon: "🏪", permission: "stock.view"     },
-  { id: "orders",     label: "Orders",      icon: "📋", permission: "orders.view"    },
-  { id: "finance",    label: "Finance",     icon: "💰", permission: "finance.view"   },
-  { id: "returns",    label: "Returns",     icon: "↩️",  permission: "returns.view"   },
-  { id: "create",     label: "Create",      icon: "➕", permission: "create.use"     },
-  { id: "admin",      label: "Setup",       icon: "⚙️", permission: "admin.setup"    },
-  { id: "staff",      label: "Staff",       icon: "👔", permission: "admin.manage"   },
-  { id: "recyclebin", label: "Recycle Bin", icon: "🗑️", permission: "recyclebin.view"},
+const NAV_SECTIONS: NavSection[] = [
+  {
+    items: [
+      { id: "orders",  label: "Orders",   icon: "📋", permission: "orders.view"  },
+      { id: "people",  label: "People",   icon: "👥", permission: "people.view"  },
+      { id: "stock",   label: "Stock",    icon: "🏪", permission: "stock.view"   },
+      { id: "catalog", label: "Catalog",  icon: "📦", permission: "catalog.view" },
+      { id: "finance", label: "Finance",  icon: "💰", permission: "finance.view" },
+      { id: "returns", label: "Returns",  icon: "↩️",  permission: "returns.view" },
+    ],
+  },
+  {
+    title: "Settings",
+    items: [
+      { id: "admin",      label: "Setup",       icon: "⚙️",  permission: "admin.setup"    },
+      { id: "staff",      label: "Staff",       icon: "👔",  permission: "admin.manage"   },
+      { id: "recyclebin", label: "Recycle Bin", icon: "🗑️",  permission: "recyclebin.view"},
+    ],
+  },
 ];
 
 const TITLE_MAP: Record<ErpMainTab, string> = {
-  people: "People", catalog: "Catalog", stock: "Stock", orders: "Orders",
-  finance: "Finance", returns: "Returns & Credit Notes", create: "Create",
-  admin: "Admin", staff: "Staff Management", recyclebin: "Recycle Bin",
+  orders: "Orders", people: "People", stock: "Stock", catalog: "Catalog",
+  finance: "Finance", returns: "Returns & Credit Notes", create: "Quick Add",
+  admin: "Setup", staff: "Staff Management", recyclebin: "Recycle Bin",
 };
+
+function hasPermission(auth: AuthState, perm?: string): boolean {
+  if (!perm) return true;
+  if (auth.type === "admin_key") return true;
+  if (auth.type === "staff") {
+    if (auth.staff.role === "admin") return true;
+    return auth.staff.permissions.includes(perm);
+  }
+  return false;
+}
 
 type Props = {
   mainTab: ErpMainTab;
@@ -36,117 +57,196 @@ type Props = {
   children: ReactNode;
 };
 
-function hasPermission(auth: AuthState, perm?: string): boolean {
-  if (!perm) return true; // no permission required
-  if (auth.type === "admin_key") return true; // admin key = full access
-  if (auth.type === "staff") {
-    if (auth.staff.role === "admin") return true;
-    return auth.staff.permissions.includes(perm);
-  }
-  return false;
-}
-
 export function ErpAppShell({ mainTab, setMainTab, auth, onLogout, apiBase, children }: Props) {
-  const isLoggedIn = auth.type !== "none";
-  const [uiPort, setUiPort] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
-  useEffect(() => {
-    setUiPort(typeof window !== "undefined" ? window.location.port : "");
-  }, []);
+  const staffName = auth.type === "staff" ? auth.staff.name : "Admin";
+  const userInitial = staffName.charAt(0).toUpperCase();
+  const isAdminKey = auth.type === "admin_key";
 
-  const visibleNav = NAV.filter(item => hasPermission(auth, item.permission));
+  const canCreate = hasPermission(auth, "create.use");
 
-  function tabClass(item: NavEntry, active: boolean): string {
-    const isCreate = item.id === "create";
-    const isAdmin = item.id === "admin" || item.id === "staff";
-    if (isCreate) return active
-      ? "border-emerald-400 text-emerald-300"
-      : "border-transparent text-emerald-400 hover:border-emerald-500 hover:text-emerald-300";
-    if (isAdmin) return active
-      ? "border-orange-400 text-orange-300"
-      : "border-transparent text-orange-400 hover:border-orange-500 hover:text-orange-300";
-    return active
-      ? "border-blue-400 text-white"
-      : "border-transparent text-slate-400 hover:border-slate-500 hover:text-slate-200";
+  function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
+    return (
+      <div className="flex h-full flex-col">
+        {/* Logo */}
+        <div className="flex items-center gap-3 px-4 py-4 border-b border-white/10">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.jpeg" alt="Jyoti Creative Cards" className="h-8 w-8 rounded-lg object-cover flex-shrink-0" />
+          {!sidebarCollapsed && (
+            <div className="min-w-0">
+              <p className="text-sm font-bold text-white truncate leading-tight">Jyoti Creative</p>
+              <p className="text-[10px] text-slate-400">ERP Portal</p>
+            </div>
+          )}
+        </div>
+
+        {/* Quick Add button */}
+        {canCreate && (
+          <div className="px-3 pt-4 pb-2">
+            <button
+              type="button"
+              onClick={() => { setMainTab("create"); onNavigate?.(); }}
+              className={`flex items-center gap-2.5 w-full rounded-xl bg-blue-600 px-3 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-500 transition-colors ${sidebarCollapsed ? "justify-center" : ""}`}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+              {!sidebarCollapsed && "Quick Add"}
+            </button>
+          </div>
+        )}
+
+        {/* Nav sections */}
+        <nav className="flex-1 overflow-y-auto px-3 py-2 space-y-5">
+          {NAV_SECTIONS.map((section, si) => {
+            const visible = section.items.filter(item => hasPermission(auth, item.permission));
+            if (!visible.length) return null;
+            return (
+              <div key={si}>
+                {section.title && !sidebarCollapsed && (
+                  <p className="mb-1 px-2 text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                    {section.title}
+                  </p>
+                )}
+                <div className="space-y-0.5">
+                  {visible.map(item => {
+                    const active = mainTab === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => { setMainTab(item.id); onNavigate?.(); }}
+                        title={sidebarCollapsed ? item.label : undefined}
+                        className={`flex items-center gap-3 w-full rounded-xl px-3 py-2.5 text-sm font-medium transition-all ${
+                          active
+                            ? "bg-white/15 text-white shadow-sm"
+                            : "text-slate-400 hover:bg-white/8 hover:text-slate-200"
+                        } ${sidebarCollapsed ? "justify-center" : ""}`}
+                      >
+                        <span className="text-base leading-none flex-shrink-0">{item.icon}</span>
+                        {!sidebarCollapsed && <span>{item.label}</span>}
+                        {active && !sidebarCollapsed && (
+                          <span className="ml-auto h-1.5 w-1.5 rounded-full bg-blue-400" />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </nav>
+
+        {/* User footer */}
+        <div className="border-t border-white/10 px-3 py-3">
+          <div className={`flex items-center gap-3 ${sidebarCollapsed ? "justify-center" : ""}`}>
+            <div className="h-8 w-8 flex-shrink-0 rounded-full bg-slate-600 flex items-center justify-center text-sm font-bold text-white">
+              {userInitial}
+            </div>
+            {!sidebarCollapsed && (
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-slate-200 truncate">{staffName}</p>
+                <p className="text-xs text-slate-500">{isAdminKey ? "Super admin" : auth.type === "staff" ? auth.staff.role : ""}</p>
+              </div>
+            )}
+            {!sidebarCollapsed && (
+              <button
+                type="button"
+                onClick={onLogout}
+                title="Logout"
+                className="flex-shrink-0 rounded-lg p-1.5 text-slate-400 hover:bg-white/10 hover:text-red-400 transition-colors"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />
+                </svg>
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
   }
-
-  const staffName = auth.type === "staff" ? auth.staff.name : auth.type === "admin_key" ? "Admin" : "";
 
   return (
-    <div className="erp-shell flex min-h-screen flex-col">
-      {/* Top nav bar */}
-      <header className="sticky top-0 z-20 flex items-center justify-between border-b border-slate-200 bg-[#0f172a] px-4 py-0 shadow-md">
-        <div className="flex items-center gap-4">
-          <button type="button" className="rounded p-2 text-slate-300 hover:text-white md:hidden"
-            onClick={() => setSidebarOpen((v) => !v)}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M3 6h18M3 12h18M3 18h18" />
-            </svg>
-          </button>
-          <div className="flex items-center py-2">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logo.jpeg" alt="Jyoti Creative Cards" className="h-9 w-auto rounded" />
-          </div>
-          <nav className="hidden gap-1 md:flex">
-            {visibleNav.map((item) => (
-              <button key={item.id} type="button" onClick={() => setMainTab(item.id)}
-                className={`flex items-center gap-2 rounded-none border-b-2 px-4 py-3 text-sm font-medium transition-colors ${tabClass(item, mainTab === item.id)}`}>
-                <span className="text-base leading-none">{item.icon}</span>
-                {item.label}
-              </button>
-            ))}
-          </nav>
-        </div>
-        {/* User info + logout */}
-        <div className="flex items-center gap-3">
-          {staffName && (
-            <span className="text-xs text-slate-400">{staffName}</span>
-          )}
-          {isLoggedIn && (
-            <button type="button" onClick={onLogout}
-              className="rounded border border-slate-600 px-2.5 py-1.5 text-xs text-slate-300 hover:border-red-500 hover:text-red-400">
-              Logout
-            </button>
-          )}
-        </div>
-      </header>
+    <div className="flex h-screen overflow-hidden bg-slate-100">
+      {/* Desktop sidebar */}
+      <aside
+        className={`hidden md:flex flex-col bg-[#0f172a] transition-all duration-200 flex-shrink-0 ${
+          sidebarCollapsed ? "w-[64px]" : "w-[220px]"
+        }`}
+      >
+        <SidebarContent />
+        {/* Collapse toggle */}
+        <button
+          type="button"
+          onClick={() => setSidebarCollapsed(v => !v)}
+          className="absolute bottom-16 left-0 hidden md:flex h-6 w-6 items-center justify-center rounded-full bg-slate-700 text-slate-300 hover:bg-slate-600 shadow-lg"
+          style={{ left: sidebarCollapsed ? "48px" : "208px", bottom: "72px", transition: "left 0.2s" }}
+          title={sidebarCollapsed ? "Expand" : "Collapse"}
+        >
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            {sidebarCollapsed
+              ? <path d="M9 18l6-6-6-6" />
+              : <path d="M15 18l-6-6 6-6" />}
+          </svg>
+        </button>
+      </aside>
 
-      {/* Mobile nav drawer */}
+      {/* Mobile overlay sidebar */}
       {sidebarOpen && (
-        <div className="fixed inset-0 z-30 md:hidden" onClick={() => setSidebarOpen(false)}>
-          <div className="absolute inset-0 bg-black/40" />
-          <nav className="absolute left-0 top-0 flex h-full w-60 flex-col bg-[#0f172a] p-4 shadow-xl">
-            <div className="mb-6 flex items-center gap-2">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/logo.jpeg" alt="Jyoti Creative Cards" className="h-8 w-auto rounded" />
-            </div>
-            {visibleNav.map((item) => (
-              <button key={item.id} type="button"
-                onClick={() => { setMainTab(item.id); setSidebarOpen(false); }}
-                className={`flex items-center gap-3 rounded-lg px-3 py-3 text-left text-sm font-medium transition-colors ${
-                  mainTab === item.id ? "bg-blue-600 text-white" : "text-slate-300 hover:bg-white/5 hover:text-white"
-                }`}>
-                <span className="text-xl leading-none">{item.icon}</span>
-                {item.label}
-              </button>
-            ))}
-          </nav>
+        <div className="fixed inset-0 z-40 md:hidden" onClick={() => setSidebarOpen(false)}>
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+          <aside className="absolute left-0 top-0 h-full w-[220px] bg-[#0f172a] shadow-2xl" onClick={e => e.stopPropagation()}>
+            <SidebarContent onNavigate={() => setSidebarOpen(false)} />
+          </aside>
         </div>
       )}
 
-      {/* Content */}
-      <main className="flex-1 bg-slate-100 p-4 md:p-6">
-        <div className="mx-auto max-w-[1400px]">
-          {children}
-        </div>
-      </main>
+      {/* Right: topbar + content */}
+      <div className="flex flex-1 flex-col overflow-hidden">
+        {/* Top bar (slim) */}
+        <header className="flex h-12 flex-shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4 shadow-sm">
+          <div className="flex items-center gap-3">
+            {/* Mobile hamburger */}
+            <button
+              type="button"
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 md:hidden"
+              onClick={() => setSidebarOpen(true)}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M3 6h18M3 12h18M3 18h18" />
+              </svg>
+            </button>
+            {/* Breadcrumb */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-400">ERP</span>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-slate-300">
+                <path d="M9 18l6-6-6-6" />
+              </svg>
+              <span className="text-sm font-semibold text-slate-700">{TITLE_MAP[mainTab]}</span>
+            </div>
+          </div>
 
-      <footer className="border-t border-slate-200 bg-white px-4 py-2 text-center text-[10px] text-slate-400">
-        {TITLE_MAP[mainTab]} · Backend{" "}
-        <span className="font-mono">{apiBase || "same-origin (/api/proxy)"}</span>
-        {uiPort ? ` · UI :${uiPort}` : ""}
-      </footer>
+          {/* Right: user badge on mobile */}
+          <div className="flex items-center gap-2 md:hidden">
+            <div className="h-7 w-7 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold text-white">
+              {userInitial}
+            </div>
+            <button type="button" onClick={onLogout} className="text-xs text-slate-400 hover:text-red-500">
+              Logout
+            </button>
+          </div>
+        </header>
+
+        {/* Scrollable content */}
+        <main className="flex-1 overflow-y-auto p-4 md:p-6">
+          <div className="mx-auto max-w-[1400px]">
+            {children}
+          </div>
+        </main>
+      </div>
     </div>
   );
 }

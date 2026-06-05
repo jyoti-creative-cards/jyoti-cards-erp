@@ -85,68 +85,89 @@ function LoginPage({ onAuth }: { onAuth: (a: AuthState) => void }) {
   }
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-slate-100 px-4">
-      <div className="w-full max-w-md">
-        {/* Brand */}
-        <div className="mb-8 flex flex-col items-center gap-3">
+    <div className="flex min-h-screen bg-[#0f172a]">
+      {/* Left panel - branding */}
+      <div className="hidden lg:flex lg:w-[420px] flex-col justify-between bg-[#0a1020] p-10">
+        <div>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo.jpeg" alt="Jyoti Creative Cards" className="h-14 w-auto rounded-xl shadow" />
-          <h1 className="text-2xl font-bold text-slate-800">ERP Portal</h1>
+          <img src="/logo.jpeg" alt="Jyoti Creative Cards" className="h-12 w-12 rounded-xl object-cover" />
+          <h1 className="mt-8 text-3xl font-bold text-white leading-tight">Jyoti Creative<br />Cards ERP</h1>
+          <p className="mt-3 text-slate-400 text-sm leading-relaxed">Operations portal — manage orders, inventory, billing, people, and more from one place.</p>
         </div>
+        <div className="space-y-3">
+          {["Orders & billing", "Inventory tracking", "Customer management", "Staff access control"].map(f => (
+            <div key={f} className="flex items-center gap-2.5 text-sm text-slate-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
+              {f}
+            </div>
+          ))}
+        </div>
+      </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white shadow-lg">
+      {/* Right panel - login */}
+      <div className="flex flex-1 flex-col items-center justify-center p-6">
+        <div className="w-full max-w-sm">
+          {/* Mobile logo */}
+          <div className="mb-8 flex items-center gap-3 lg:hidden">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/logo.jpeg" alt="Jyoti Creative Cards" className="h-10 w-10 rounded-xl object-cover" />
+            <h1 className="text-xl font-bold text-white">ERP Portal</h1>
+          </div>
+
+        <div className="rounded-2xl bg-white/5 border border-white/10 backdrop-blur-sm shadow-2xl overflow-hidden">
           {/* Mode toggle */}
-          <div className="flex border-b border-slate-200">
+          <div className="flex border-b border-white/10">
             <button type="button" onClick={() => setMode("staff")}
-              className={`flex-1 py-3 text-sm font-medium transition ${mode === "staff" ? "border-b-2 border-blue-500 text-blue-600" : "text-slate-500 hover:text-slate-700"}`}>
+              className={`flex-1 py-3 text-sm font-medium transition ${mode === "staff" ? "bg-white/10 text-white" : "text-slate-400 hover:text-slate-200"}`}>
               Staff Login
             </button>
             <button type="button" onClick={() => setMode("key")}
-              className={`flex-1 py-3 text-sm font-medium transition ${mode === "key" ? "border-b-2 border-blue-500 text-blue-600" : "text-slate-500 hover:text-slate-700"}`}>
+              className={`flex-1 py-3 text-sm font-medium transition ${mode === "key" ? "bg-white/10 text-white" : "text-slate-400 hover:text-slate-200"}`}>
               Admin Key
             </button>
           </div>
 
           <div className="p-6">
             {error && (
-              <div className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
+              <div className="mb-4 rounded-lg bg-red-500/20 border border-red-500/30 px-4 py-3 text-sm text-red-300">{error}</div>
             )}
 
             {mode === "staff" ? (
               <form onSubmit={handleStaffLogin} className="space-y-4">
                 <div>
-                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-slate-500">Username</label>
+                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">Username</label>
                   <input type="text" required value={email} onChange={e => setEmail(e.target.value)}
                     placeholder="your.username"
                     autoComplete="username"
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    className="w-full rounded-xl border border-white/10 bg-white/10 px-4 py-3 text-sm text-white placeholder-slate-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-slate-500">Password</label>
+                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">Password</label>
                   <input type="password" required value={password} onChange={e => setPassword(e.target.value)}
                     placeholder="••••••••"
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    className="w-full rounded-xl border border-white/10 bg-white/10 px-4 py-3 text-sm text-white placeholder-slate-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
                 </div>
                 <button type="submit" disabled={loading}
-                  className="w-full rounded-lg bg-blue-600 py-2.5 text-sm font-semibold text-white shadow hover:bg-blue-700 disabled:opacity-50">
-                  {loading ? "Signing in…" : "Sign In"}
+                  className="w-full rounded-xl bg-blue-600 py-3 text-sm font-semibold text-white shadow-lg hover:bg-blue-500 disabled:opacity-50 transition-colors">
+                  {loading ? "Signing in…" : "Sign In →"}
                 </button>
               </form>
             ) : (
               <form onSubmit={handleAdminKey} className="space-y-4">
                 <div>
-                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-slate-500">Admin API Key</label>
+                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">Admin API Key</label>
                   <input type="password" required value={adminKey} onChange={e => setAdminKey(e.target.value)}
                     placeholder="Enter admin key"
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    className="w-full rounded-xl border border-white/10 bg-white/10 px-4 py-3 text-sm text-white placeholder-slate-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" />
                 </div>
                 <button type="submit" disabled={loading}
-                  className="w-full rounded-lg bg-blue-600 py-2.5 text-sm font-semibold text-white shadow hover:bg-blue-700 disabled:opacity-50">
-                  {loading ? "Verifying…" : "Enter"}
+                  className="w-full rounded-xl bg-blue-600 py-3 text-sm font-semibold text-white shadow-lg hover:bg-blue-500 disabled:opacity-50 transition-colors">
+                  {loading ? "Verifying…" : "Enter →"}
                 </button>
               </form>
             )}
           </div>
+        </div>
         </div>
       </div>
     </div>

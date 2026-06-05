@@ -65,7 +65,7 @@ def _to_public(row: StaffUser) -> StaffPublic:
     return StaffPublic(
         id=row.id,
         name=row.name,
-        username=row.username,
+        username=row.username or f"user.{row.id}",
         role=row.role,
         is_active=bool(row.is_active),
         permissions=perms if row.role != "admin" else PERMISSIONS,

@@ -231,6 +231,12 @@ def _migrate_v4_features_postgres() -> None:
         """))
         # Drop phone column if it exists (removed from model)
         conn.execute(text("ALTER TABLE portal_staff_users DROP COLUMN IF EXISTS phone"))
+        # Backfill NULL usernames with generated values from email or name
+        conn.execute(text("""
+            UPDATE portal_staff_users
+            SET username = LOWER(REGEXP_REPLACE(COALESCE(email, name), '[^a-zA-Z0-9_\\-]', '.', 'g')) || '.' || id::text
+            WHERE username IS NULL
+        """))
         # Add unique index on username
         conn.execute(text("""
             DO $$

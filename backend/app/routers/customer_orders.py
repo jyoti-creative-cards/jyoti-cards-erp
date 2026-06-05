@@ -237,17 +237,60 @@ def create_customer_order(
         bal.quantity = int(bal.quantity) - qty
         db.add(bal)
 
-    row = CustomerOrder(
-        customer_id=customer.id,
-        status="confirmed",
-        items=items,
-        total_amount=total,
-        notes=None,
-        customer_notes=(body.customer_notes or "").strip() or None,
+    # Auto-merge: if customer already has an open confirmed order, fold new items in
+    from sqlalchemy import and_
+    existing = (
+        db.query(CustomerOrder)
+        .filter(
+            and_(
+                CustomerOrder.customer_id == customer.id,
+                CustomerOrder.status == "confirmed",
+                CustomerOrder.deleted_at.is_(None),
+            )
+        )
+        .order_by(CustomerOrder.created_at.asc())
+        .first()
     )
-    db.add(row)
-    db.commit()
-    db.refresh(row)
+
+    if existing is not None:
+        from sqlalchemy.orm.attributes import flag_modified
+        ex_items: list = existing.items if isinstance(existing.items, list) else []
+        ex_by_cid: dict[int, dict] = {
+            int(it.get("catalog_product_id", 0)): it
+            for it in ex_items
+            if isinstance(it, dict) and it.get("catalog_product_id")
+        }
+        for new_item in items:
+            if not isinstance(new_item, dict):
+                continue
+            cid = int(new_item.get("catalog_product_id", 0))
+            if cid in ex_by_cid:
+                old = ex_by_cid[cid]
+                new_qty = int(old.get("quantity", 0)) + int(new_item.get("quantity", 0))
+                unit = float(old.get("unit_price", new_item.get("unit_price", 0)))
+                old["quantity"] = new_qty
+                old["line_total"] = round(unit * new_qty, 2)
+            else:
+                ex_by_cid[cid] = new_item
+        existing.items = list(ex_by_cid.values())
+        existing.total_amount = Decimal(str(sum(float(it.get("line_total", 0)) for it in existing.items)))
+        flag_modified(existing, "items")
+        db.add(existing)
+        db.commit()
+        db.refresh(existing)
+        row = existing
+    else:
+        row = CustomerOrder(
+            customer_id=customer.id,
+            status="confirmed",
+            items=items,
+            total_amount=total,
+            notes=None,
+            customer_notes=(body.customer_notes or "").strip() or None,
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
 
     try:
         qty_total = sum(int(x.get("quantity") or 0) for x in items if isinstance(x, dict))

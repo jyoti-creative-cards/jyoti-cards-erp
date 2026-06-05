@@ -309,6 +309,7 @@ def init_db() -> None:
     _migrate_v2_features_postgres()
     _migrate_v3_features_postgres()
     _migrate_v4_features_postgres()
+    _migrate_v5_vendor_receipt_postgres()
     from app.services.accounting import seed_chart_accounts
 
     s = SessionLocal()
@@ -466,6 +467,35 @@ def _migrate_v3_features_postgres() -> None:
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE portal_stock_receipts ADD COLUMN IF NOT EXISTS vendor_bill_no VARCHAR(200)"))
         conn.execute(text("ALTER TABLE portal_stock_receipts ADD COLUMN IF NOT EXISTS bill_photo_key VARCHAR(512)"))
+
+
+def _migrate_v5_vendor_receipt_postgres() -> None:
+    """Add v5: vendor-level receipt support on stock_receipts table."""
+    if engine.dialect.name != "postgresql":
+        return
+    with engine.begin() as conn:
+        # Make purchase_order_id nullable (for vendor-level receipts)
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='portal_stock_receipts' AND column_name='purchase_order_id'
+                    AND is_nullable='NO'
+                ) THEN
+                    ALTER TABLE portal_stock_receipts ALTER COLUMN purchase_order_id DROP NOT NULL;
+                END IF;
+            END $$;
+        """))
+        # Add vendor_id column
+        conn.execute(text("""
+            ALTER TABLE portal_stock_receipts
+            ADD COLUMN IF NOT EXISTS vendor_id INTEGER REFERENCES portal_vendors(id) ON DELETE SET NULL
+        """))
+        # Add extra_charges column
+        conn.execute(text("ALTER TABLE portal_stock_receipts ADD COLUMN IF NOT EXISTS extra_charges NUMERIC(14,4)"))
+        # Add image_key column (alias for receipt_image_key used in vendor receipt flow)
+        conn.execute(text("ALTER TABLE portal_stock_receipts ADD COLUMN IF NOT EXISTS image_key VARCHAR(512)"))
 
 
 def get_db() -> Generator[Session, None, None]:

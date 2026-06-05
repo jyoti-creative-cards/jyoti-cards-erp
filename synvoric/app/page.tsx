@@ -146,14 +146,14 @@ export default function HomePage() {
                 day with matched candidates.
               </p>
               <a
-                href="mailto:palak.agrawal@synvoric.com"
+                href="mailto:anshul.agrawal@synvoric.com"
                 className="mt-6 inline-flex items-center gap-2 text-lg font-semibold text-synvoric-blue transition-colors hover:text-blue-700"
               >
-                palak.agrawal@synvoric.com
+                anshul.agrawal@synvoric.com
               </a>
               <div className="mt-8">
                 <a
-                  href="mailto:palak.agrawal@synvoric.com?subject=Developer%20Staffing%20Inquiry%20-%20Synvoric"
+                  href="mailto:anshul.agrawal@synvoric.com?subject=Developer%20Staffing%20Inquiry%20-%20Synvoric"
                   className="inline-flex items-center justify-center rounded-lg bg-synvoric-blue px-8 py-3.5 text-base font-semibold text-white transition-all hover:bg-blue-700 hover:shadow-lg hover:shadow-synvoric-blue/25"
                 >
                   Get in Touch
@@ -177,10 +177,10 @@ export default function HomePage() {
             &copy; {new Date().getFullYear()} Synvoric · synvoric.com
           </p>
           <a
-            href="mailto:palak.agrawal@synvoric.com"
+            href="mailto:anshul.agrawal@synvoric.com"
             className="text-sm text-slate-500 transition-colors hover:text-synvoric-blue"
           >
-            palak.agrawal@synvoric.com
+            anshul.agrawal@synvoric.com
           </a>
         </div>
       </footer>

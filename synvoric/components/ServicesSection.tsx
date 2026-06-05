@@ -145,7 +145,7 @@ export function ServicesSection() {
               </div>
 
               <a
-                href={`mailto:palak.agrawal@synvoric.com?subject=${encodeURIComponent(active.title + " — Synvoric Inquiry")}`}
+                href={`mailto:anshul.agrawal@synvoric.com?subject=${encodeURIComponent(active.title + " — Synvoric Inquiry")}`}
                 className="block w-full rounded-lg bg-synvoric-blue py-3 text-center text-sm font-semibold text-white transition-colors hover:bg-blue-700"
               >
                 Request This Service

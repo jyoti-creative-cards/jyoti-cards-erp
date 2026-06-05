@@ -9,7 +9,7 @@ import type {
   ShopSuggestionPublic,
 } from "@/lib/types";
 
-type PortalTab = "availability" | "order_now" | "my_orders";
+type PortalTab = "availability" | "my_orders";
 
 /** Customer-facing: can they rely on us having units? */
 function availabilityLine(s: string): { title: string; hint: string } {
@@ -139,11 +139,9 @@ export default function CustomerPortalPage() {
   const [shopDidSearch, setShopDidSearch] = useState(false);
   const suggestTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const [cart, setCart] = useState<Record<number, { p: ShopProductPublic; qty: number }>>({});
   const [qtyDraft, setQtyDraft] = useState<Record<number, string>>({});
-  const [orderMsg, setOrderMsg] = useState("");
-  const [orderSubmitting, setOrderSubmitting] = useState(false);
-  const [orderNotes, setOrderNotes] = useState("");
+  const [bookingId, setBookingId] = useState<number | null>(null); // product being booked
+  const [bookMsg, setBookMsg] = useState<Record<number, { ok: boolean; msg: string }>>({});
 
   const [myOrders, setMyOrders] = useState<CustomerOrderPublic[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
@@ -276,84 +274,40 @@ export default function CustomerPortalPage() {
     }
   }, [token, shopQ]);
 
-  function addProductToCart(p: ShopProductPublic, qtyStr: string) {
-    if (p.stock_status === "out_of_stock") {
-      setOrderMsg("This item isn’t available to add right now.");
-      return;
-    }
-    const n = Math.floor(Number(qtyStr));
-    const addQty = Number.isFinite(n) ? Math.max(1, Math.min(n, MAX_ORDER_QTY)) : 1;
-    setOrderMsg("");
-    setCart((prev) => {
-      const existing = prev[p.catalog_product_id];
-      const merged = (existing?.qty ?? 0) + addQty;
-      const q = Math.min(Math.max(1, merged), MAX_ORDER_QTY);
-      return {
-        ...prev,
-        [p.catalog_product_id]: { p, qty: q },
-      };
-    });
-  }
-
   function setQtyDraftFor(pid: number, s: string) {
     setQtyDraft((prev) => ({ ...prev, [pid]: s }));
   }
 
-  function setLineQty(catalogProductId: number, qtyStr: string) {
-    const row = cart[catalogProductId];
-    if (!row) return;
-    const n = Math.floor(Number(qtyStr));
-    const q = Number.isFinite(n) ? Math.max(1, Math.min(n, MAX_ORDER_QTY)) : 1;
-    setCart((prev) => ({
-      ...prev,
-      [catalogProductId]: { ...row, qty: q },
-    }));
-  }
-
-  function removeLine(catalogProductId: number) {
-    setCart((prev) => {
-      const next = { ...prev };
-      delete next[catalogProductId];
-      return next;
-    });
-  }
-
-  async function placeOrder() {
-    setOrderMsg("");
+  async function bookNow(p: ShopProductPublic, qtyStr: string) {
     if (!token) return;
-    const lines = Object.values(cart).map((row) => ({
-      catalog_product_id: row.p.catalog_product_id,
-      quantity: row.qty,
-    }));
-    if (lines.length < 1) {
-      setOrderMsg("Add at least one item to your bag first.");
+    if (p.stock_status === "out_of_stock") {
+      setBookMsg((prev) => ({ ...prev, [p.catalog_product_id]: { ok: false, msg: "Not in stock right now." } }));
       return;
     }
-    setOrderSubmitting(true);
+    const n = Math.floor(Number(qtyStr));
+    const qty = Number.isFinite(n) ? Math.max(1, Math.min(n, MAX_ORDER_QTY)) : 1;
+    setBookingId(p.catalog_product_id);
+    setBookMsg((prev) => { const next = { ...prev }; delete next[p.catalog_product_id]; return next; });
     try {
       const r = await fetchApi(apiUrl("shop/orders"), {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ lines, customer_notes: orderNotes.trim() || null }),
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ lines: [{ catalog_product_id: p.catalog_product_id, quantity: qty }] }),
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) {
-        setOrderMsg(formatApiError(data) || r.statusText);
+        setBookMsg((prev) => ({ ...prev, [p.catalog_product_id]: { ok: false, msg: formatApiError(data) || r.statusText } }));
         return;
       }
-      setCart({});
-      setOrderNotes("");
-      setOrderMsg(`Order #${(data as CustomerOrderPublic).id} confirmed! We’ll message you on WhatsApp shortly.`);
+      setBookMsg((prev) => ({ ...prev, [p.catalog_product_id]: { ok: true, msg: "Booked ✓" } }));
       void loadMyOrders(token, orderStatusFilter);
-      setPortalTab("my_orders");
+      setTimeout(() => setBookMsg((prev) => { const next = { ...prev }; delete next[p.catalog_product_id]; return next; }), 3000);
     } finally {
-      setOrderSubmitting(false);
+      setBookingId(null);
     }
   }
 
+  
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setMsg("");
@@ -393,7 +347,6 @@ export default function CustomerPortalPage() {
     setShopResults([]);
     setShopSuggestions([]);
     setShopDidSearch(false);
-    setCart({});
     setMyOrders([]);
     setPortalTab("availability");
   }
@@ -404,10 +357,7 @@ export default function CustomerPortalPage() {
     setShopSuggestions([]);
   }
 
-  const cartLines = Object.values(cart);
-  const cartTotal = cartLines.reduce((sum, row) => {
-    const unit = parseFloat(row.p.selling_price || "0") || 0;
-    return sum + unit * row.qty;
+      return sum + unit * row.qty;
   }, 0);
 
   return (
@@ -530,19 +480,10 @@ export default function CustomerPortalPage() {
               onClick={() => setPortalTab("availability")}
               icon="🔍"
               title="Browse shop"
-              subtitle="Search & add to bag"
+              subtitle="Search & book"
               data-testid="portal-tab-browse"
             />
-            <ShopTab
-              active={portalTab === "order_now"}
-              onClick={() => setPortalTab("order_now")}
-              icon="🛒"
-              title="Your bag"
-              subtitle="Review & place order"
-              badge={cartLines.length > 0 ? cartLines.length : undefined}
-              data-testid="portal-tab-bag"
-            />
-            <ShopTab
+                        <ShopTab
               active={portalTab === "my_orders"}
               onClick={() => setPortalTab("my_orders")}
               icon="📦"
@@ -554,15 +495,14 @@ export default function CustomerPortalPage() {
 
           {portalTab === "availability" ? (
             <div
-              className={`relative overflow-hidden rounded-3xl border border-jc-border/80 bg-jc-card shadow-jc-lg ring-1 ring-black/[0.03] ${cartLines.length > 0 ? "pb-28" : ""}`}
+              className={`relative overflow-hidden rounded-3xl border border-jc-border/80 bg-jc-card shadow-jc-lg ring-1 ring-black/[0.03] `}
             >
               <div className="border-b border-jc-border/90 bg-gradient-to-br from-amber-50/90 via-white to-jc-bg-deep/60 px-5 py-6 sm:px-8">
                 <div className="flex flex-wrap items-end justify-between gap-4">
                   <div>
                     <h3 className="font-display text-2xl font-semibold text-jc-ink sm:text-[1.65rem]">Find products</h3>
                     <p className="mt-1 max-w-xl text-sm text-jc-muted">
-                      Search by code or name. Add to your bag, then open{" "}
-                      <strong className="font-semibold text-jc-ink">Your bag</strong> to send your order.
+                      Search by code or name, enter quantity, then click Book Now to place your order directly.
                     </p>
                   </div>
                   <p className="hidden max-w-[10rem] rounded-2xl bg-white/80 px-3 py-2 text-center text-[11px] font-medium leading-snug text-jc-muted shadow-sm ring-1 ring-jc-border/70 sm:block">
@@ -724,12 +664,17 @@ export default function CustomerPortalPage() {
                             </label>
                             <button
                               type="button"
-                              disabled={!canOrder}
-                              onClick={() => addProductToCart(p, qtyDraft[p.catalog_product_id] ?? "1")}
+                              disabled={!canOrder || bookingId === p.catalog_product_id}
+                              onClick={() => void bookNow(p, qtyDraft[p.catalog_product_id] ?? "1")}
                               className="rounded-xl bg-jc-accent px-5 py-2.5 text-sm font-semibold text-white shadow-md transition hover:bg-jc-accent-hover disabled:cursor-not-allowed disabled:bg-neutral-300"
                             >
-                              Add to bag
+                              {bookingId === p.catalog_product_id ? "Booking…" : "Book Now"}
                             </button>
+                            {bookMsg[p.catalog_product_id] && (
+                              <p className={`text-xs font-medium ${bookMsg[p.catalog_product_id].ok ? "text-emerald-700" : "text-red-700"}`}>
+                                {bookMsg[p.catalog_product_id].msg}
+                              </p>
+                            )}
                           </div>
                         </div>
                         {p.alternatives.length > 0 ? (
@@ -780,194 +725,7 @@ export default function CustomerPortalPage() {
                 </div>
               ) : null}
 
-              {cartLines.length > 0 ? (
-                <div className="sticky bottom-0 z-10 mx-3 mb-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-jc-border bg-white/95 px-4 py-3.5 shadow-2xl shadow-black/10 backdrop-blur-md sm:mx-6 sm:mb-4 sm:px-6">
-                  <div className="text-sm text-jc-ink">
-                    <span className="font-semibold">{cartLines.length}</span> item(s) · Est.{" "}
-                    <span className="font-bold tabular-nums text-jc-brand">₹{cartTotal.toFixed(2)}</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setPortalTab("order_now")}
-                    className="rounded-xl bg-jc-accent px-5 py-2.5 text-sm font-semibold text-white shadow-md transition hover:bg-jc-accent-hover"
-                  >
-                    Go to bag
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          ) : portalTab === "order_now" ? (
-            <div className="overflow-hidden rounded-3xl border border-jc-border/80 bg-jc-card shadow-jc-lg ring-1 ring-black/[0.03]">
-              <div className="border-b border-jc-border/90 bg-gradient-to-r from-jc-bg-deep/80 to-white px-5 py-6 sm:px-8">
-                <h3 className="font-display text-2xl font-semibold text-jc-ink">Your bag</h3>
-                <p className="mt-1 max-w-2xl text-sm text-jc-muted">
-                  Change quantities, then place your order. We confirm on WhatsApp if stock or price differs.
-                </p>
-              </div>
-              <div className="space-y-6 p-5 sm:p-8">
-                {orderMsg ? (
-                  <p
-                    className={`rounded-2xl border px-4 py-3 text-sm ${
-                      orderMsg.startsWith("Order #")
-                        ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-                        : "border-red-200 bg-red-50 text-red-800"
-                    }`}
-                  >
-                    {orderMsg}
-                  </p>
-                ) : null}
-                {cartLines.length === 0 ? (
-                  <div className="mt-10 flex flex-col items-center rounded-2xl border border-dashed border-jc-border bg-jc-bg/50 px-6 py-14 text-center">
-                    <span className="text-5xl opacity-90" aria-hidden>
-                      🛒
-                    </span>
-                    <p className="mt-4 font-display text-lg font-semibold text-jc-ink">Your bag is empty</p>
-                    <p className="mt-2 max-w-sm text-sm text-jc-muted">
-                      Go to <strong className="text-jc-ink">Browse shop</strong> and add products.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => setPortalTab("availability")}
-                      className="mt-6 rounded-xl bg-jc-brand px-6 py-3 text-sm font-semibold text-white shadow-md transition hover:bg-jc-brand-light"
-                    >
-                      Browse shop
-                    </button>
-                  </div>
-                ) : (
-                  <>
-                    <div className="mt-6 space-y-3 md:hidden">
-                      {cartLines.map(({ p, qty }) => {
-                        const unit = parseFloat(p.selling_price || "0") || 0;
-                        const line = unit * qty;
-                        const av = availabilityLine(p.stock_status);
-                        return (
-                          <div
-                            key={p.catalog_product_id}
-                            className="flex gap-3 rounded-2xl border border-jc-border bg-white p-3 shadow-sm"
-                          >
-                            <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-xl bg-jc-bg-deep/60 ring-1 ring-jc-border/80">
-                              {p.image_url ? (
-                                // eslint-disable-next-line @next/next/no-img-element
-                                <img
-                                  src={p.image_url}
-                                  alt=""
-                                  className="h-full w-full object-cover"
-                                />
-                              ) : (
-                                <div className="flex h-full items-center justify-center text-[10px] text-jc-muted">
-                                  No photo
-                                </div>
-                              )}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <p className="font-semibold leading-snug text-jc-ink">{p.our_product_id}</p>
-                              <p className="mt-1 text-xs text-jc-muted">{av.title}</p>
-                              <p className="mt-2 text-sm">
-                                <span className="text-jc-muted">₹{p.selling_price}</span>
-                                <span className="mx-1 text-jc-border">·</span>
-                                <span className="font-semibold tabular-nums text-jc-brand">₹{line.toFixed(2)}</span>
-                              </p>
-                              <div className="mt-2 flex flex-wrap items-center gap-2">
-                                <input
-                                  type="number"
-                                  min={1}
-                                  max={MAX_ORDER_QTY}
-                                  value={qty}
-                                  onChange={(e) => setLineQty(p.catalog_product_id, e.target.value)}
-                                  className="w-20 rounded-lg border border-jc-border px-2 py-1.5 text-right text-sm"
-                                />
-                                <button
-                                  type="button"
-                                  className="text-xs font-semibold text-red-700 underline-offset-2 hover:underline"
-                                  onClick={() => removeLine(p.catalog_product_id)}
-                                >
-                                  Remove
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <div className="mt-6 hidden overflow-x-auto rounded-2xl border border-jc-border shadow-inner md:block">
-                      <table className="w-full min-w-[640px] border-collapse text-sm">
-                        <thead>
-                          <tr className="border-b border-jc-border bg-jc-bg-deep/70 text-left text-[11px] font-bold uppercase tracking-wide text-jc-muted">
-                            <th className="px-4 py-3">Item</th>
-                            <th className="px-4 py-3 text-right">Price</th>
-                            <th className="px-4 py-3">Stock</th>
-                            <th className="px-4 py-3 text-right">Qty</th>
-                            <th className="px-4 py-3 text-right">Line</th>
-                            <th className="px-4 py-3" />
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-jc-border bg-white">
-                          {cartLines.map(({ p, qty }) => {
-                            const unit = parseFloat(p.selling_price || "0") || 0;
-                            const line = unit * qty;
-                            const av = availabilityLine(p.stock_status);
-                            return (
-                              <tr key={p.catalog_product_id}>
-                                <td className="px-4 py-3 font-medium text-jc-ink">{p.our_product_id}</td>
-                                <td className="px-4 py-3 text-right tabular-nums">₹{p.selling_price}</td>
-                                <td className="px-4 py-3 text-xs text-jc-muted">{av.title}</td>
-                                <td className="px-4 py-3 text-right">
-                                  <input
-                                    type="number"
-                                    min={1}
-                                    max={MAX_ORDER_QTY}
-                                    value={qty}
-                                    onChange={(e) => setLineQty(p.catalog_product_id, e.target.value)}
-                                    className="w-20 rounded-lg border border-jc-border px-2 py-1.5 text-right text-sm"
-                                  />
-                                </td>
-                                <td className="px-4 py-3 text-right font-medium tabular-nums text-jc-ink">
-                                  ₹{line.toFixed(2)}
-                                </td>
-                                <td className="px-4 py-3">
-                                  <button
-                                    type="button"
-                                    className="text-xs font-semibold text-red-700 underline-offset-2 hover:underline"
-                                    onClick={() => removeLine(p.catalog_product_id)}
-                                  >
-                                    Remove
-                                  </button>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                    <div className="mt-6 flex flex-col gap-4 rounded-2xl border border-jc-border bg-gradient-to-br from-jc-bg/80 to-white p-5 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="flex-1">
-                        <p className="font-display text-lg font-semibold text-jc-ink">
-                          Estimated total{" "}
-                          <span className="text-2xl tabular-nums text-jc-brand">₹{cartTotal.toFixed(2)}</span>
-                        </p>
-                        <label className="mt-3 block text-sm text-jc-ink">
-                          Order notes (optional)
-                          <textarea
-                            value={orderNotes}
-                            onChange={(e) => setOrderNotes(e.target.value)}
-                            rows={2}
-                            placeholder="e.g. Please make it urgent / Send via XYZ transport"
-                            className="mt-1 w-full rounded-xl border border-jc-border bg-white px-3 py-2 text-sm text-jc-ink placeholder-neutral-400 focus:outline-none focus:ring-1 focus:ring-jc-brand"
-                          />
-                        </label>
-                      </div>
-                      <button
-                        type="button"
-                        disabled={orderSubmitting}
-                        onClick={() => void placeOrder()}
-                        className="w-full rounded-xl bg-jc-brand py-3.5 text-sm font-semibold text-white shadow-lg transition hover:bg-jc-brand-light disabled:bg-neutral-300 sm:w-auto sm:min-w-[220px]"
-                      >
-                        {orderSubmitting ? "Sending…" : "Place order"}
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
+              
             </div>
           ) : (
             <div className="overflow-hidden rounded-3xl border border-jc-border/80 bg-jc-card shadow-jc-lg ring-1 ring-black/[0.03]">

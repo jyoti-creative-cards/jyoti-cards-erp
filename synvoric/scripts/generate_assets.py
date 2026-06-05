@@ -390,7 +390,7 @@ def build_ppt():
     cx = s.shapes.add_textbox(Inches(1.5), Inches(1.8), Inches(7), Inches(2.5))
     ctf = cx.text_frame
     ep = ctf.paragraphs[0]
-    ep.text = "palak.agrawal@synvoric.com"
+    ep.text = "anshul.agrawal@synvoric.com"
     ep.font.size = Pt(20)
     ep.font.bold = True
     ep.font.color.rgb = BLUE
@@ -475,7 +475,7 @@ def build_proposal():
     doc_para(doc, "Date: [PROPOSAL DATE]")
     doc_para(doc, "Prepared for: [CLIENT COMPANY NAME]")
     doc_para(doc, "Attention: [CLIENT CONTACT NAME], [TITLE]")
-    doc_para(doc, "Prepared by: Synvoric  ·  palak.agrawal@synvoric.com  ·  www.synvoric.com")
+    doc_para(doc, "Prepared by: Synvoric  ·  anshul.agrawal@synvoric.com  ·  www.synvoric.com")
     doc.add_paragraph()
 
     doc_heading(doc, "1. Executive Summary", 2)
@@ -545,7 +545,7 @@ def build_proposal():
     doc_para(doc, (
         "This proposal is valid for [30] days from the date above. Services shall be governed "
         "by the Synvoric Master Service Agreement (MSA) upon acceptance. To proceed, please "
-        "sign below and return to palak.agrawal@synvoric.com."
+        "sign below and return to anshul.agrawal@synvoric.com."
     ))
     doc.add_paragraph()
     doc_para(doc, "Accepted by [CLIENT COMPANY NAME]:")
@@ -571,7 +571,7 @@ def build_msa():
     doc_para(doc, "Effective Date: [EFFECTIVE DATE]")
     doc_para(doc, 'This Master Service Agreement ("Agreement") is entered into between:')
     doc_para(doc, 'Provider: Synvoric ("Synvoric", "Provider", "we")', bold=True)
-    doc_para(doc, "Contact: palak.agrawal@synvoric.com  ·  www.synvoric.com")
+    doc_para(doc, "Contact: anshul.agrawal@synvoric.com  ·  www.synvoric.com")
     doc_para(doc, 'Client: [CLIENT COMPANY NAME] ("Client", "you")', bold=True)
     doc_para(doc, "Address: [CLIENT ADDRESS]")
     doc_para(doc, 'Synvoric and Client are each a "Party" and collectively the "Parties."')
@@ -647,7 +647,7 @@ def build_msa():
             "This Agreement constitutes the entire agreement and supersedes prior discussions.",
             "Amendments must be in writing signed by both Parties.",
             "Neither Party may assign without consent, except to an affiliate or successor.",
-            "Notices shall be sent to the addresses above (or email for Synvoric: palak.agrawal@synvoric.com).",
+            "Notices shall be sent to the addresses above (or email for Synvoric: anshul.agrawal@synvoric.com).",
         ]),
     ]
 
@@ -684,7 +684,7 @@ def build_contractor_agreement():
 
     doc_para(doc, "Effective Date: [EFFECTIVE DATE]")
     doc_para(doc, 'This Contractor Agreement ("Agreement") is between:')
-    doc_para(doc, 'Synvoric ("Company")  ·  palak.agrawal@synvoric.com  ·  www.synvoric.com', bold=True)
+    doc_para(doc, 'Synvoric ("Company")  ·  anshul.agrawal@synvoric.com  ·  www.synvoric.com', bold=True)
     doc_para(doc, 'Contractor: [CONTRACTOR FULL NAME] ("Contractor")', bold=True)
     doc_para(doc, "Address: [CONTRACTOR ADDRESS]  ·  PAN/Tax ID: [___________]")
 

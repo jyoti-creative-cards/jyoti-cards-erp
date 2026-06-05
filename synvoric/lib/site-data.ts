@@ -27,7 +27,7 @@ export const services: Service[] = [
       "Senior React Developer",
       "Next.js Engineer",
       "Angular Developer",
-      "UI / UX Engineer",
+      "UX / UI Engineer",
     ],
   },
   {

@@ -334,3 +334,80 @@ def delete_order(order_id: int, db: Session = Depends(get_db)) -> dict:
 
 def receipt_allowed_status(po_status: str) -> bool:
     return po_status in RECEIPT_ALLOWED_PO_STATUSES
+
+
+@router.get("/vendor/{vendor_id}/pending", dependencies=[Depends(require_admin)])
+def vendor_pending_items(vendor_id: int, db: Session = Depends(get_db)) -> dict:
+    """Return all pending (not-yet-received) items across open POs for a given vendor."""
+    vendor = db.get(Vendor, vendor_id)
+    if vendor is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="vendor not found")
+
+    open_pos = (
+        db.query(VendorPurchaseOrder)
+        .filter(
+            VendorPurchaseOrder.vendor_id == vendor_id,
+            VendorPurchaseOrder.status.in_(["booked", "in_progress"]),
+            VendorPurchaseOrder.deleted_at.is_(None),
+        )
+        .order_by(VendorPurchaseOrder.created_at.asc())
+        .all()
+    )
+
+    pending_items: list[dict] = []
+    total_pending_value = 0.0
+
+    for po in open_pos:
+        po_items = po.items if isinstance(po.items, list) else []
+        for item in po_items:
+            if not isinstance(item, dict):
+                continue
+            try:
+                cid = int(item.get("catalog_product_id", 0))
+                ordered = int(item.get("quantity", 0))
+                received = _int_snap(item, "received_quantity")
+                pending = max(0, ordered - received)
+            except (TypeError, ValueError):
+                continue
+            if pending <= 0:
+                continue
+            unit_price = _float_snap(item, "unit_price")
+            cat = db.get(CatalogProduct, cid) if cid else None
+            pending_items.append({
+                "po_id": po.id,
+                "po_date": po.created_at.isoformat() if po.created_at else None,
+                "catalog_product_id": cid,
+                "product_name": cat.our_product_id if cat else str(cid),
+                "ordered_qty": ordered,
+                "received_qty": received,
+                "pending_qty": pending,
+                "unit_price": unit_price,
+                "pending_value": round(unit_price * pending, 2),
+            })
+            total_pending_value += unit_price * pending
+
+    # Also build vendor financial summary via APBill
+    from app.models.ap_bill import APBill
+    try:
+        unpaid_aps = db.query(APBill).filter(
+            APBill.vendor_id == vendor_id,
+            APBill.status != "paid",
+        ).all()
+        total_owed = sum(float(ap.amount or 0) for ap in unpaid_aps)
+    except Exception:
+        total_owed = 0.0
+
+    return {
+        "vendor_id": vendor_id,
+        "vendor_name": vendor.name,
+        "pending_items": pending_items,
+        "total_pending_value": round(total_pending_value, 2),
+        "total_owed": round(total_owed, 2),
+        "open_po_count": len(open_pos),
+    }
+
+
+@router.get("/vendor/{vendor_id}/status", dependencies=[Depends(require_admin)])
+def vendor_status(vendor_id: int, db: Session = Depends(get_db)) -> dict:
+    """Full status view for a vendor: open POs, pending items, amounts owed."""
+    return vendor_pending_items(vendor_id, db)

@@ -319,7 +319,7 @@ export default function CapabilityDeck() {
                 Share your requirements and we&apos;ll respond within one business
                 day with matched candidates.
               </p>
-              <p className="contact-email">palak.agrawal@synvoric.com</p>
+              <p className="contact-email">anshul.agrawal@synvoric.com</p>
               <p className="contact-web">www.synvoric.com</p>
               <div className="contact-detail">
                 {engagementModels.map((m) => (

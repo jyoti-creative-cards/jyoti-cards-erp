@@ -222,12 +222,12 @@ function CurrentStockTab({
       {/* Stats row */}
       <div className="mb-4 grid grid-cols-3 gap-3">
         {[
-          { label: "In stock", count: rows.filter((r) => r.stock_status === "in_stock").length, color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
-          { label: "Low stock", count: rows.filter((r) => r.stock_status === "low_stock").length, color: "bg-amber-50 text-amber-700 border-amber-200" },
-          { label: "Out of stock", count: rows.filter((r) => r.stock_status === "out_of_stock").length, color: "bg-red-50 text-red-700 border-red-200" },
+          { label: "In stock",     key: "in_stock",     count: rows.filter((r) => r.stock_status === "in_stock").length,     color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+          { label: "Low stock",    key: "low_stock",    count: rows.filter((r) => r.stock_status === "low_stock").length,    color: "bg-amber-50 text-amber-700 border-amber-200" },
+          { label: "Out of stock", key: "out_of_stock", count: rows.filter((r) => r.stock_status === "out_of_stock").length, color: "bg-red-50 text-red-700 border-red-200" },
         ].map((s) => (
           <div key={s.label} className={`cursor-pointer rounded-xl border p-3 text-center transition hover:shadow-sm ${s.color}`}
-            onClick={() => setStatusFilter(statusFilter === s.label.toLowerCase().replace(" ", "_") ? "" : s.label.toLowerCase().replace(" ", "_"))}>
+            onClick={() => setStatusFilter(statusFilter === s.key ? "" : s.key)}>
             <div className="text-2xl font-bold">{s.count}</div>
             <div className="text-xs font-medium">{s.label}</div>
           </div>
@@ -657,6 +657,27 @@ function AdjustmentsTab({
 
 // ────────────────────────── RECEIVE GOODS ──────────────────────────
 
+interface VendorPendingItem {
+  po_id: number;
+  po_date: string | null;
+  catalog_product_id: number;
+  product_name: string;
+  ordered_qty: number;
+  received_qty: number;
+  pending_qty: number;
+  unit_price: number;
+  pending_value: number;
+}
+
+interface VendorPendingResponse {
+  vendor_id: number;
+  vendor_name: string;
+  pending_items: VendorPendingItem[];
+  total_pending_value: number;
+  total_owed: number;
+  open_po_count: number;
+}
+
 function ReceiveGoodsTab({
   catalog,
   pos,
@@ -674,7 +695,82 @@ function ReceiveGoodsTab({
   adminKey: string;
   onRefresh: () => void;
 }) {
-  const [mode, setMode] = useState<"po" | "manual">("po");
+  const [mode, setMode] = useState<"vendor" | "po" | "manual">("vendor");
+
+  // Vendor receive state
+  const [selVendorId, setSelVendorId] = useState("");
+  const [vendorPending, setVendorPending] = useState<VendorPendingResponse | null>(null);
+  const [vendorPendingLoading, setVendorPendingLoading] = useState(false);
+  const [vendorRecvQty, setVendorRecvQty] = useState<Record<number, string>>({});
+  const [vendorUnitPrice, setVendorUnitPrice] = useState<Record<number, string>>({});
+  const [vendorExtraCharges, setVendorExtraCharges] = useState("");
+  const [vendorNotes, setVendorNotes] = useState("");
+  const [vendorBillFile, setVendorBillFile] = useState<File | null>(null);
+  const [vendorSaving, setVendorSaving] = useState(false);
+  const [vendorAdHocItems, setVendorAdHocItems] = useState<{ cid: string; qty: string; price: string }[]>([]);
+
+  useEffect(() => {
+    if (!selVendorId) { setVendorPending(null); return; }
+    setVendorPendingLoading(true);
+    fetchApi(apiUrl(`purchase-orders/vendor/${selVendorId}/pending`), { headers: headersAdmin() })
+      .then((r) => r.json())
+      .then((data: VendorPendingResponse) => {
+        setVendorPending(data);
+        const qty: Record<number, string> = {};
+        const price: Record<number, string> = {};
+        (data.pending_items || []).forEach((it) => {
+          qty[it.catalog_product_id] = String(it.pending_qty);
+          price[it.catalog_product_id] = String(it.unit_price || "");
+        });
+        setVendorRecvQty(qty);
+        setVendorUnitPrice(price);
+      })
+      .catch(() => setVendorPending(null))
+      .finally(() => setVendorPendingLoading(false));
+  }, [selVendorId, headersAdmin]);
+
+  async function receiveFromVendor(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!selVendorId) return;
+    setVendorSaving(true);
+
+    const items: { catalog_product_id: number; quantity: number; unit_price: number }[] = [];
+
+    // Items from pending POs
+    (vendorPending?.pending_items || []).forEach((it) => {
+      const qty = Number(vendorRecvQty[it.catalog_product_id] || 0);
+      if (qty > 0) {
+        items.push({ catalog_product_id: it.catalog_product_id, quantity: qty, unit_price: Number(vendorUnitPrice[it.catalog_product_id] || it.unit_price || 0) });
+      }
+    });
+
+    // Ad-hoc items
+    vendorAdHocItems.forEach((row) => {
+      const cid = Number(row.cid);
+      const qty = Number(row.qty);
+      if (cid > 0 && qty > 0) {
+        items.push({ catalog_product_id: cid, quantity: qty, unit_price: Number(row.price || 0) });
+      }
+    });
+
+    if (items.length === 0) { showToast("No items to receive", false); setVendorSaving(false); return; }
+
+    const fd = new FormData();
+    fd.append("vendor_id", selVendorId);
+    fd.append("items", JSON.stringify(items));
+    fd.append("extra_charges", vendorExtraCharges || "0");
+    if (vendorNotes.trim()) fd.append("notes", vendorNotes.trim());
+    if (vendorBillFile) fd.append("bill_photo", vendorBillFile);
+
+    const r = await fetchApi(apiUrl("inventory/receipts/from-vendor"), { method: "POST", headers: headersAdmin(), body: fd });
+    const data = await r.json().catch(() => ({}));
+    setVendorSaving(false);
+    if (!r.ok) { showToast(formatApiError(data) || "Failed", false); return; }
+    showToast(`Goods received! ${(data as { items_received?: number }).items_received ?? items.length} item(s) added to stock.`, true);
+    setSelVendorId(""); setVendorPending(null); setVendorRecvQty({}); setVendorUnitPrice({}); setVendorExtraCharges(""); setVendorNotes(""); setVendorBillFile(null); setVendorAdHocItems([]);
+    onRefresh();
+  }
+
   const [selPoId, setSelPoId] = useState("");
   const [selPo, setSelPo] = useState<PurchaseOrderPublic | null>(null);
   const [recvQty, setRecvQty] = useState<Record<number, string>>({});
@@ -756,19 +852,142 @@ function ReceiveGoodsTab({
         </div>
       )}
 
-      <div className="mb-4 flex gap-2">
+      <div className="mb-4 flex flex-wrap gap-2">
         {[
+          { id: "vendor", label: "📦 Receive from Vendor" },
           { id: "po", label: "Receive against PO" },
-          { id: "manual", label: "Ad-hoc receive" },
+          { id: "manual", label: "Ad-hoc / Manual" },
         ].map((m) => (
-          <button key={m.id} type="button" onClick={() => setMode(m.id as "po" | "manual")}
+          <button key={m.id} type="button" onClick={() => setMode(m.id as "vendor" | "po" | "manual")}
             className={`rounded-lg px-4 py-2 text-sm font-semibold ${mode === m.id ? "bg-blue-600 text-white" : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}`}>
             {m.label}
           </button>
         ))}
       </div>
 
-      {mode === "po" ? (
+      {mode === "vendor" && (
+        <div className="space-y-4">
+          <div>
+            <label className={LABEL}>Select vendor</label>
+            <select value={selVendorId} onChange={(e) => setSelVendorId(e.target.value)} className={INPUT + " max-w-sm"}>
+              <option value="">— select vendor —</option>
+              {vendors.map((v) => <option key={v.id} value={v.id}>{v.company_name || v.person_name}</option>)}
+            </select>
+          </div>
+
+          {vendorPendingLoading && <p className="text-sm text-slate-500">Loading pending items…</p>}
+
+          {vendorPending && (
+            <form onSubmit={receiveFromVendor} className="space-y-4">
+              {/* Vendor status summary */}
+              <div className="flex flex-wrap gap-4 rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm">
+                <span><strong>{vendorPending.open_po_count}</strong> open POs</span>
+                <span><strong>₹{vendorPending.total_pending_value.toFixed(2)}</strong> pending value</span>
+                <span><strong>₹{vendorPending.total_owed.toFixed(2)}</strong> owed to vendor</span>
+              </div>
+
+              {/* Pending items from POs */}
+              {vendorPending.pending_items.length > 0 && (
+                <div>
+                  <p className={LABEL}>Pending items from open POs</p>
+                  <div className="overflow-hidden rounded-xl border border-slate-200">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase text-slate-500">
+                          <th className="px-3 py-2 text-left">Product</th>
+                          <th className="px-3 py-2 text-left">PO #</th>
+                          <th className="px-3 py-2 text-left">PO Date</th>
+                          <th className="px-3 py-2 text-right">Pending</th>
+                          <th className="px-3 py-2 text-right">Unit Price</th>
+                          <th className="px-3 py-2 text-right">Receive Qty</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {vendorPending.pending_items.map((it) => (
+                          <tr key={`${it.po_id}-${it.catalog_product_id}`}>
+                            <td className="px-3 py-2 font-medium">{it.product_name}</td>
+                            <td className="px-3 py-2 text-slate-500">PO #{it.po_id}</td>
+                            <td className="px-3 py-2 text-slate-500 text-xs">{it.po_date ? new Date(it.po_date).toLocaleDateString() : "—"}</td>
+                            <td className="px-3 py-2 text-right tabular-nums">{it.pending_qty}</td>
+                            <td className="px-3 py-2 text-right">
+                              <input type="number" min="0" step="0.01"
+                                value={vendorUnitPrice[it.catalog_product_id] ?? ""}
+                                onChange={(e) => setVendorUnitPrice((p) => ({ ...p, [it.catalog_product_id]: e.target.value }))}
+                                className="w-24 rounded border border-slate-300 px-2 py-1 text-right text-sm" />
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              <input type="number" min="0"
+                                value={vendorRecvQty[it.catalog_product_id] ?? ""}
+                                onChange={(e) => setVendorRecvQty((p) => ({ ...p, [it.catalog_product_id]: e.target.value }))}
+                                className="w-20 rounded border border-slate-300 px-2 py-1 text-right text-sm" />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Ad-hoc items not in any PO */}
+              <div>
+                <div className="flex items-center justify-between">
+                  <p className={LABEL}>Extra items (not in any PO)</p>
+                  <button type="button" onClick={() => setVendorAdHocItems((p) => [...p, { cid: "", qty: "", price: "" }])}
+                    className={BTN_SECONDARY + " text-xs"}>+ Add item</button>
+                </div>
+                {vendorAdHocItems.map((row, idx) => (
+                  <div key={idx} className="mt-2 flex flex-wrap gap-2">
+                    <select value={row.cid} onChange={(e) => setVendorAdHocItems((p) => p.map((r, i) => i === idx ? { ...r, cid: e.target.value } : r))}
+                      className={INPUT + " max-w-[200px]"}>
+                      <option value="">— product —</option>
+                      {catalog.map((c) => <option key={c.id} value={c.id}>{c.our_product_id}</option>)}
+                    </select>
+                    <input type="number" min="1" placeholder="Qty" value={row.qty}
+                      onChange={(e) => setVendorAdHocItems((p) => p.map((r, i) => i === idx ? { ...r, qty: e.target.value } : r))}
+                      className="w-24 rounded border border-slate-300 px-2 py-1 text-sm" />
+                    <input type="number" min="0" step="0.01" placeholder="Unit price" value={row.price}
+                      onChange={(e) => setVendorAdHocItems((p) => p.map((r, i) => i === idx ? { ...r, price: e.target.value } : r))}
+                      className="w-28 rounded border border-slate-300 px-2 py-1 text-sm" />
+                    <button type="button" onClick={() => setVendorAdHocItems((p) => p.filter((_, i) => i !== idx))}
+                      className="text-xs font-semibold text-red-600 hover:underline">Remove</button>
+                  </div>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className={LABEL}>Extra charges (transport, etc.)</label>
+                  <input type="number" min="0" step="0.01" value={vendorExtraCharges}
+                    onChange={(e) => setVendorExtraCharges(e.target.value)} placeholder="0.00" className={INPUT} />
+                </div>
+                <div>
+                  <label className={LABEL}>Notes</label>
+                  <input value={vendorNotes} onChange={(e) => setVendorNotes(e.target.value)} className={INPUT} />
+                </div>
+                <div className="col-span-2">
+                  <label className={LABEL}>Upload vendor bill (optional)</label>
+                  <input type="file" accept="image/*,.pdf" onChange={(e) => setVendorBillFile(e.target.files?.[0] ?? null)}
+                    className="block w-full text-sm text-slate-500 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-semibold hover:file:bg-slate-200" />
+                </div>
+              </div>
+
+              <button type="submit" disabled={vendorSaving} className={BTN_PRIMARY}>
+                {vendorSaving ? "Adding stock…" : "Add Stock"}
+              </button>
+            </form>
+          )}
+
+          {selVendorId && !vendorPendingLoading && vendorPending && vendorPending.pending_items.length === 0 && vendorAdHocItems.length === 0 && (
+            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
+              No pending PO items for this vendor. Use "+ Add item" above to receive goods not tied to a PO.
+              <button type="button" onClick={() => setVendorAdHocItems([{ cid: "", qty: "", price: "" }])} className={BTN_PRIMARY + " mt-3 mx-auto"}>+ Add item</button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {mode === "po" && (
         <div className="space-y-4">
           <div>
             <label className={LABEL}>Select open purchase order</label>
@@ -846,7 +1065,9 @@ function ReceiveGoodsTab({
             </form>
           )}
         </div>
-      ) : (
+      )}
+
+      {mode === "manual" && (
         <form onSubmit={manualReceive} className="max-w-md space-y-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div>
             <label className={LABEL}>Product *</label>

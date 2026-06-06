@@ -12,9 +12,11 @@ const BTN_SECONDARY = "inline-flex items-center gap-1.5 rounded-lg border border
 
 function statusBadge(status: string) {
   const map: Record<string, { label: string; cls: string }> = {
-    confirmed:  { label: "Confirmed",  cls: "bg-blue-50 text-blue-700 ring-blue-200" },
-    billed:     { label: "Billed",     cls: "bg-amber-50 text-amber-700 ring-amber-200" },
-    shipped:    { label: "Shipped",    cls: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
+    open:       { label: "Open",       cls: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
+    confirmed:  { label: "Open",       cls: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
+    billed:     { label: "Partial",    cls: "bg-amber-50 text-amber-700 ring-amber-200" },
+    closed:     { label: "Closed",     cls: "bg-slate-100 text-slate-600 ring-slate-200" },
+    shipped:    { label: "Shipped",    cls: "bg-blue-50 text-blue-700 ring-blue-200" },
     cancelled:  { label: "Cancelled",  cls: "bg-red-50 text-red-700 ring-red-200" },
   };
   const s = map[status] ?? { label: status, cls: "bg-slate-100 text-slate-600 ring-slate-200" };
@@ -30,7 +32,7 @@ interface Props {
 }
 
 export function OrdersScreen({ adminKey }: Props) {
-  const [tab, setTab] = useState<"customer" | "purchase">("customer");
+  const [tab, setTab] = useState<"customer" | "summary">("customer");
 
   const headers = () => {
     const h: Record<string, string> = { "Content-Type": "application/json" };
@@ -43,8 +45,8 @@ export function OrdersScreen({ adminKey }: Props) {
     <div>
       <div className="mb-6 flex gap-2">
         {([
-          { id: "customer", label: "🛒 Customer orders" },
-          { id: "purchase", label: "📦 Purchase orders" },
+          { id: "customer", label: "🛒 Customer Orders" },
+          { id: "summary", label: "📊 Summary" },
         ] as const).map((t) => (
           <button
             key={t.id}
@@ -59,11 +61,96 @@ export function OrdersScreen({ adminKey }: Props) {
         ))}
       </div>
 
-      {tab === "customer" ? (
+      {tab === "customer" && (
         <CustomerOrdersTab headers={headers} headersAdmin={headersAdmin} adminKey={adminKey} />
-      ) : (
-        <PurchaseOrdersTab headers={headers} headersAdmin={headersAdmin} adminKey={adminKey} />
       )}
+      {tab === "summary" && (
+        <CustomerSummaryTab headersAdmin={headersAdmin} />
+      )}
+    </div>
+  );
+}
+
+// ─── CUSTOMER SUMMARY TAB ──────────────────────────────────────────────────────
+
+function CustomerSummaryTab({ headersAdmin }: { headersAdmin: () => Record<string, string> }) {
+  const [orders, setOrders] = useState<CustomerOrderAdminPublic[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function load() {
+      setLoading(true);
+      const r = await fetchApi(apiUrl("customer-orders"), { headers: headersAdmin() });
+      if (r.ok) setOrders(await r.json());
+      setLoading(false);
+    }
+    void load();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Group open orders by customer
+  const openOrders = orders.filter(o => ["open", "confirmed", "billed"].includes(o.status));
+
+  const byCustomer: Record<string, { name: string; orders: CustomerOrderAdminPublic[] }> = {};
+  for (const o of openOrders) {
+    if (!byCustomer[o.customer_id]) byCustomer[o.customer_id] = { name: o.customer_name, orders: [] };
+    byCustomer[o.customer_id].orders.push(o);
+  }
+
+  function pendingItems(o: CustomerOrderAdminPublic) {
+    return o.items.map(it => ({
+      ...it,
+      qty_remaining: Math.max(0, it.quantity - (it.qty_billed ?? 0)),
+    })).filter(it => it.qty_remaining > 0);
+  }
+
+  return (
+    <div className="space-y-4">
+      {loading && <p className="py-10 text-center text-slate-400">Loading…</p>}
+      {!loading && Object.keys(byCustomer).length === 0 && (
+        <p className="py-10 text-center text-slate-400">No open customer orders</p>
+      )}
+      {Object.entries(byCustomer).map(([cid, { name, orders: cOrders }]) => {
+        const allPending = cOrders.flatMap(pendingItems);
+        const totalPendingValue = allPending.reduce((s, it) => s + it.qty_remaining * Number(it.unit_price), 0);
+        return (
+          <div key={cid} className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+            <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-5 py-3">
+              <h3 className="font-bold text-slate-800">{name}</h3>
+              <div className="flex gap-4 text-xs text-slate-500">
+                <span><strong className="text-slate-800">{cOrders.length}</strong> open order{cOrders.length !== 1 ? "s" : ""}</span>
+                <span><strong className="text-amber-700">{allPending.length}</strong> pending lines</span>
+                <span>₹{totalPendingValue.toLocaleString("en-IN", { minimumFractionDigits: 2 })} pending</span>
+              </div>
+            </div>
+            {allPending.length > 0 && (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-slate-50 text-xs font-semibold uppercase text-slate-500">
+                    <th className="px-4 py-2 text-left">Product</th>
+                    <th className="px-4 py-2 text-right">Ordered</th>
+                    <th className="px-4 py-2 text-right">Billed</th>
+                    <th className="px-4 py-2 text-right">Pending</th>
+                    <th className="px-4 py-2 text-right">Unit Price</th>
+                    <th className="px-4 py-2 text-right">Pending Value</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {allPending.map((it, i) => (
+                    <tr key={i}>
+                      <td className="px-4 py-2 font-medium text-slate-800">{it.our_product_id || it.name}</td>
+                      <td className="px-4 py-2 text-right tabular-nums">{it.quantity}</td>
+                      <td className="px-4 py-2 text-right tabular-nums text-amber-600">{it.qty_billed ?? 0}</td>
+                      <td className="px-4 py-2 text-right tabular-nums font-semibold text-emerald-700">{it.qty_remaining}</td>
+                      <td className="px-4 py-2 text-right tabular-nums">₹{Number(it.unit_price).toLocaleString("en-IN")}</td>
+                      <td className="px-4 py-2 text-right tabular-nums">₹{(it.qty_remaining * Number(it.unit_price)).toLocaleString("en-IN")}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -82,7 +169,7 @@ function CustomerOrdersTab({
   const [orders, setOrders] = useState<CustomerOrderAdminPublic[]>([]);
   const [catalog, setCatalog] = useState<CatalogProductPublic[]>([]);
   const [loading, setLoading] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<string>("confirmed");
+  const [statusFilter, setStatusFilter] = useState<string>("open");
   const [search, setSearch] = useState("");
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
@@ -111,6 +198,9 @@ function CustomerOrdersTab({
   const [itemOverrides, setItemOverrides] = useState<Record<number, { enabled: boolean; price: string; discount: string }>>({});
   const [bulkDiscount, setBulkDiscount] = useState("");
 
+  // Partial billing: which items/quantities to bill in this run
+  const [partialBillQty, setPartialBillQty] = useState<Record<number, string>>({});
+
   // Rate type
   const [rateType, setRateType] = useState<"order" | "net" | "regular">("order");
 
@@ -137,7 +227,7 @@ function CustomerOrdersTab({
   const [showShipForm, setShowShipForm] = useState(false);
 
   // Edit order state
-  const [editStatus, setEditStatus] = useState("confirmed");
+  const [editStatus, setEditStatus] = useState("open");
   const [editNotes, setEditNotes] = useState("");
   const [shipReceipt, setShipReceipt] = useState("");
   const [shipContact, setShipContact] = useState("");
@@ -270,6 +360,13 @@ function CustomerOrdersTab({
       });
     if (overridesList.length > 0) body.item_overrides = overridesList;
 
+    // Include partial billing quantities if set
+    const partialItems = selected.items
+      .map(it => ({ catalog_product_id: it.catalog_product_id, quantity: Number(partialBillQty[it.catalog_product_id] ?? it.quantity) }))
+      .filter(it => it.quantity > 0);
+    const hasPartial = Object.values(partialBillQty).some(v => v.trim() !== "");
+    if (hasPartial) body.bill_items = partialItems;
+
     const r = await fetchApi(apiUrl("customer-bills/generate"), { method: "POST", headers: headers(), body: JSON.stringify(body) });
     const data = await r.json().catch(() => ({}));
     setBillBusy(false);
@@ -312,16 +409,19 @@ function CustomerOrdersTab({
   }
 
   const filtered = orders.filter((o) => {
-    const matchStatus = !statusFilter || o.status === statusFilter;
+    let matchStatus = true;
+    if (statusFilter === "open") matchStatus = o.status === "open" || o.status === "confirmed" || o.status === "billed";
+    else if (statusFilter === "closed") matchStatus = o.status === "closed" || o.status === "shipped";
+    else if (statusFilter) matchStatus = o.status === statusFilter;
     const q = search.toLowerCase();
     const matchSearch = !q || o.customer_name.toLowerCase().includes(q) || o.customer_phone.includes(q) || String(o.id).includes(q);
     return matchStatus && matchSearch;
   });
 
   const statusCounts = {
-    confirmed: orders.filter((o) => o.status === "confirmed").length,
-    billed: orders.filter((o) => o.status === "billed").length,
-    shipped: orders.filter((o) => o.status === "shipped").length,
+    open: orders.filter((o) => ["open", "confirmed", "billed"].includes(o.status)).length,
+    closed: orders.filter((o) => ["closed", "shipped"].includes(o.status)).length,
+    cancelled: orders.filter((o) => o.status === "cancelled").length,
   };
 
   return (
@@ -336,9 +436,9 @@ function CustomerOrdersTab({
       <div className="mb-4 flex flex-wrap items-center gap-2">
         {[
           { id: "", label: "All", count: orders.length },
-          { id: "confirmed", label: "Confirmed", count: statusCounts.confirmed },
-          { id: "billed", label: "Billed", count: statusCounts.billed },
-          { id: "shipped", label: "Shipped", count: statusCounts.shipped },
+          { id: "open", label: "Open", count: statusCounts.open },
+          { id: "closed", label: "Closed", count: statusCounts.closed },
+          { id: "cancelled", label: "Cancelled", count: statusCounts.cancelled },
         ].map((s) => (
           <button
             key={s.id}
@@ -468,8 +568,8 @@ function CustomerOrdersTab({
             <button type="button" onClick={() => void saveOrder()} disabled={saving} className={BTN_PRIMARY}>
               {saving ? "Saving…" : "Save changes"}
             </button>
-            {selected && selected.status === "confirmed" && !showBillForm && (
-              <button type="button" onClick={() => setShowBillForm(true)} className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-amber-600">
+            {selected && ["open", "confirmed", "billed"].includes(selected.status) && !showBillForm && (
+              <button type="button" onClick={() => { setShowBillForm(true); setPartialBillQty({}); }} className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-amber-600">
                 🧾 Generate Bill
               </button>
             )}
@@ -489,10 +589,12 @@ function CustomerOrdersTab({
               <div>
                 <label className={LABEL}>Status</label>
                 <select value={editStatus} onChange={(e) => setEditStatus(e.target.value)} className={INPUT}>
-                  <option value="confirmed">Confirmed</option>
-                  <option value="billed">Billed</option>
-                  <option value="shipped">Shipped</option>
+                  <option value="open">Open</option>
+                  <option value="closed">Closed</option>
                   <option value="cancelled">Cancelled</option>
+                  <option value="confirmed">Confirmed (legacy)</option>
+                  <option value="billed">Billed (legacy)</option>
+                  <option value="shipped">Shipped (legacy)</option>
                 </select>
               </div>
               <div>
@@ -620,7 +722,47 @@ function CustomerOrdersTab({
               <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="text-sm font-semibold text-amber-800">Generate bill</div>
-                  <button type="button" onClick={() => { setShowBillForm(false); setBulkDiscount(""); setRateType("order"); }} className="text-slate-400 hover:text-slate-600">✕</button>
+                  <button type="button" onClick={() => { setShowBillForm(false); setBulkDiscount(""); setRateType("order"); setPartialBillQty({}); }} className="text-slate-400 hover:text-slate-600">✕</button>
+                </div>
+
+                {/* Partial delivery: choose which items / quantities to bill */}
+                <div>
+                  <div className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-slate-500">Delivery quantities (leave blank = full remaining)</div>
+                  <div className="overflow-hidden rounded-lg border border-amber-200 bg-white">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-slate-50 text-xs font-semibold uppercase text-slate-500">
+                          <th className="px-3 py-1.5 text-left">Product</th>
+                          <th className="px-3 py-1.5 text-right">Ordered</th>
+                          <th className="px-3 py-1.5 text-right">Already Billed</th>
+                          <th className="px-3 py-1.5 text-right">Deliver now</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {selected.items.map(it => {
+                          const remaining = Math.max(0, it.quantity - (it.qty_billed ?? 0));
+                          if (remaining <= 0) return null;
+                          return (
+                            <tr key={it.catalog_product_id}>
+                              <td className="px-3 py-1.5 font-medium text-slate-800">{it.our_product_id || it.name || it.catalog_product_id}</td>
+                              <td className="px-3 py-1.5 text-right tabular-nums">{it.quantity}</td>
+                              <td className="px-3 py-1.5 text-right tabular-nums text-amber-600">{it.qty_billed ?? 0}</td>
+                              <td className="px-3 py-1.5 text-right">
+                                <input
+                                  type="number" min="1" max={remaining}
+                                  placeholder={String(remaining)}
+                                  value={partialBillQty[it.catalog_product_id] ?? ""}
+                                  onChange={e => setPartialBillQty(p => ({ ...p, [it.catalog_product_id]: e.target.value }))}
+                                  className="w-20 rounded border border-slate-300 px-2 py-1 text-right text-sm"
+                                />
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="mt-1 text-xs text-amber-700">Remaining undelivered items will stay in the open order.</p>
                 </div>
 
                 {/* Bill series */}

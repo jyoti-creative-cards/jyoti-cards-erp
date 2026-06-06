@@ -222,9 +222,11 @@ export interface StockAdjustmentPublic {
 
 export interface CustomerOrderLinePublic {
   catalog_product_id: number;
-  our_product_id: string;
+  our_product_id?: string;
+  product_code?: string;
   name: string;
   quantity: number;
+  qty_billed?: number;
   unit_price: string;
   line_total: string;
 }

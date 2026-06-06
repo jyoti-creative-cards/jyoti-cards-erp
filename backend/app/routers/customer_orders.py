@@ -237,14 +237,14 @@ def create_customer_order(
         bal.quantity = int(bal.quantity) - qty
         db.add(bal)
 
-    # Auto-merge: if customer already has an open confirmed order, fold new items in
+    # Auto-merge: if customer already has an open order, fold new items in
     from sqlalchemy import and_
     existing = (
         db.query(CustomerOrder)
         .filter(
             and_(
                 CustomerOrder.customer_id == customer.id,
-                CustomerOrder.status == "confirmed",
+                CustomerOrder.status.in_(["open", "confirmed"]),
                 CustomerOrder.deleted_at.is_(None),
             )
         )
@@ -282,7 +282,7 @@ def create_customer_order(
     else:
         row = CustomerOrder(
             customer_id=customer.id,
-            status="confirmed",
+            status="open",
             items=items,
             total_amount=total,
             notes=None,

@@ -30,6 +30,7 @@ from app.routers import (
     shop,
     staff,
     vendor_bills,
+    vendor_orders,
     vendors,
 )
 
@@ -78,6 +79,7 @@ app.include_router(bill_series.router, prefix="/api/v1")
 app.include_router(audit.router, prefix="/api/v1")
 app.include_router(credit_notes.router, prefix="/api/v1")
 app.include_router(staff.router, prefix="/api/v1")
+app.include_router(vendor_orders.router, prefix="/api/v1")
 
 
 @app.on_event("startup")

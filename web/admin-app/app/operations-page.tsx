@@ -6,6 +6,7 @@ import { PeopleScreen } from "@/components/PeopleScreen";
 import { CatalogScreen } from "@/components/CatalogScreen";
 import { StockScreen } from "@/components/StockScreen";
 import { OrdersScreen } from "@/components/OrdersScreen";
+import { VendorOrdersScreen } from "@/components/VendorOrdersScreen";
 import { FinanceScreen } from "@/components/FinanceScreen";
 import { CreateScreen } from "@/components/CreateScreen";
 import { AdminScreen } from "@/components/AdminScreen";
@@ -226,7 +227,8 @@ export default function OperationsAdminPage() {
       {mainTab === "people"     && can("people.view")     && <PeopleScreen adminKey={adminKey} auth={auth} />}
       {mainTab === "catalog"    && can("catalog.view")    && <CatalogScreen adminKey={adminKey} />}
       {mainTab === "stock"      && can("stock.view")      && <StockScreen adminKey={adminKey} />}
-      {mainTab === "orders"     && can("orders.view")     && <OrdersScreen adminKey={adminKey} />}
+      {mainTab === "orders"          && can("orders.view") && <OrdersScreen adminKey={adminKey} />}
+      {mainTab === "vendor-orders"   && can("orders.view") && <VendorOrdersScreen auth={auth} />}
       {mainTab === "finance"    && can("finance.view")    && <FinanceScreen adminKey={adminKey} />}
       {mainTab === "returns"    && can("returns.view")    && <ReturnsScreen auth={auth} canEdit={can("returns.edit")} />}
       {mainTab === "create"     && can("create.use")      && <CreateScreen adminKey={adminKey} />}

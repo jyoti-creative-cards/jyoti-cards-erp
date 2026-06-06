@@ -310,6 +310,7 @@ def init_db() -> None:
     _migrate_v3_features_postgres()
     _migrate_v4_features_postgres()
     _migrate_v5_vendor_receipt_postgres()
+    _migrate_v6_vendor_orders_postgres()
     from app.services.accounting import seed_chart_accounts
 
     s = SessionLocal()
@@ -496,6 +497,33 @@ def _migrate_v5_vendor_receipt_postgres() -> None:
         conn.execute(text("ALTER TABLE portal_stock_receipts ADD COLUMN IF NOT EXISTS extra_charges NUMERIC(14,4)"))
         # Add image_key column (alias for receipt_image_key used in vendor receipt flow)
         conn.execute(text("ALTER TABLE portal_stock_receipts ADD COLUMN IF NOT EXISTS image_key VARCHAR(512)"))
+
+
+def _migrate_v6_vendor_orders_postgres() -> None:
+    """Add v6: portal_vendor_orders table + customer order qty_billed tracking."""
+    if engine.dialect.name != "postgresql":
+        return
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS portal_vendor_orders (
+                id SERIAL PRIMARY KEY,
+                vendor_id INTEGER NOT NULL REFERENCES portal_vendors(id) ON DELETE CASCADE,
+                status VARCHAR(20) NOT NULL DEFAULT 'open',
+                items JSONB NOT NULL DEFAULT '[]',
+                notes TEXT,
+                bill_number VARCHAR(200),
+                bill_amount NUMERIC(14,4),
+                bill_key VARCHAR(512),
+                bill_uploaded_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_portal_vendor_orders_vendor_id ON portal_vendor_orders(vendor_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_portal_vendor_orders_status ON portal_vendor_orders(status)"))
+        # Add qty_billed to customer order items (tracked in JSON items array — no column needed)
+        # Allow customer order status 'open' in addition to existing values
+        # (no constraint to alter — status is a plain VARCHAR)
 
 
 def get_db() -> Generator[Session, None, None]:

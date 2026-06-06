@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import type { AuthState } from "@/lib/types";
 
 export type ErpMainTab =
-  | "orders" | "people" | "stock" | "catalog" | "finance" | "returns"
+  | "orders" | "vendor-orders" | "people" | "stock" | "catalog" | "finance" | "returns"
   | "create" | "admin" | "staff" | "recyclebin";
 
 type NavItem = { id: ErpMainTab; label: string; icon: string; permission?: string };
@@ -14,12 +14,13 @@ type NavSection = { title?: string; items: NavItem[] };
 const NAV_SECTIONS: NavSection[] = [
   {
     items: [
-      { id: "orders",  label: "Orders",   icon: "📋", permission: "orders.view"  },
-      { id: "people",  label: "People",   icon: "👥", permission: "people.view"  },
-      { id: "stock",   label: "Stock",    icon: "🏪", permission: "stock.view"   },
-      { id: "catalog", label: "Catalog",  icon: "📦", permission: "catalog.view" },
-      { id: "finance", label: "Finance",  icon: "💰", permission: "finance.view" },
-      { id: "returns", label: "Returns",  icon: "↩️",  permission: "returns.view" },
+      { id: "orders",        label: "Customer Orders", icon: "🛒", permission: "orders.view"  },
+      { id: "vendor-orders", label: "Vendor Orders",   icon: "🏭", permission: "orders.view"  },
+      { id: "people",        label: "People",          icon: "👥", permission: "people.view"  },
+      { id: "stock",         label: "Stock",           icon: "🏪", permission: "stock.view"   },
+      { id: "catalog",       label: "Catalog",         icon: "📦", permission: "catalog.view" },
+      { id: "finance",       label: "Finance",         icon: "💰", permission: "finance.view" },
+      { id: "returns",       label: "Returns",         icon: "↩️",  permission: "returns.view" },
     ],
   },
   {
@@ -33,8 +34,9 @@ const NAV_SECTIONS: NavSection[] = [
 ];
 
 const TITLE_MAP: Record<ErpMainTab, string> = {
-  orders: "Orders", people: "People", stock: "Stock", catalog: "Catalog",
-  finance: "Finance", returns: "Returns & Credit Notes", create: "Quick Add",
+  orders: "Customer Orders", "vendor-orders": "Vendor Orders", people: "People",
+  stock: "Stock", catalog: "Catalog", finance: "Finance",
+  returns: "Returns & Credit Notes", create: "Quick Add",
   admin: "Setup", staff: "Staff Management", recyclebin: "Recycle Bin",
 };
 

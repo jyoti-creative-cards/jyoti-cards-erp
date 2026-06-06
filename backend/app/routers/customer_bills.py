@@ -77,17 +77,83 @@ def get_customer_bill(bill_id: int, db: Session = Depends(get_db)) -> CustomerBi
 
 @router.post("/generate", response_model=CustomerBillPublic, dependencies=[Depends(require_admin)])
 def generate_customer_bill(body: CustomerBillGenerate, db: Session = Depends(get_db)) -> CustomerBillPublic:
+    from sqlalchemy.orm.attributes import flag_modified
+
     order = db.get(CustomerOrder, body.customer_order_id)
     if order is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="order not found")
-    if (order.status or "").strip().lower() not in ("confirmed", "billed"):
+    allowed_statuses = {"open", "confirmed", "billed"}
+    if (order.status or "").strip().lower() not in allowed_statuses:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            detail="customer bill can be generated when order status is confirmed or billed",
+            detail=f"customer bill can be generated when order status is open/confirmed/billed (got: {order.status})",
         )
 
     raw_items = order.items if isinstance(order.items, list) else []
-    items = [x for x in raw_items if isinstance(x, dict)]
+    all_order_items = [x for x in raw_items if isinstance(x, dict)]
+
+    # Partial billing: if bill_items specified, use only those quantities
+    if body.bill_items:
+        bill_qty_map: dict[int, int] = {}
+        for bi in body.bill_items:
+            cid = int(bi.get("catalog_product_id", 0))
+            qty = int(bi.get("quantity", 0))
+            if cid > 0 and qty > 0:
+                bill_qty_map[cid] = bill_qty_map.get(cid, 0) + qty
+
+        # Build items for this bill (only requested quantities)
+        items = []
+        for it in all_order_items:
+            cid = int(it.get("catalog_product_id", 0))
+            if cid in bill_qty_map:
+                bq = bill_qty_map[cid]
+                available = int(it.get("quantity", 0)) - int(it.get("qty_billed", 0))
+                if bq > available:
+                    raise HTTPException(
+                        status.HTTP_400_BAD_REQUEST,
+                        detail=f"Bill qty {bq} exceeds unbilled qty {available} for product {cid}",
+                    )
+                new_it = dict(it)
+                new_it["quantity"] = bq
+                new_it["line_total"] = float(it.get("unit_price", 0)) * bq
+                items.append(new_it)
+
+        # Update order items: add qty_billed tracking
+        updated_order_items = []
+        for it in all_order_items:
+            cid = int(it.get("catalog_product_id", 0))
+            new_it = dict(it)
+            if cid in bill_qty_map:
+                new_it["qty_billed"] = int(it.get("qty_billed", 0)) + bill_qty_map[cid]
+            updated_order_items.append(new_it)
+        order.items = updated_order_items
+        flag_modified(order, "items")
+
+        # Recalculate order total (remaining unbilled)
+        order.total_amount = Decimal(str(sum(
+            float(it.get("unit_price", 0)) * max(0, int(it.get("quantity", 0)) - int(it.get("qty_billed", 0)))
+            for it in updated_order_items
+        )))
+    else:
+        # Bill all remaining (unbilled) items
+        items = []
+        for it in all_order_items:
+            qty_total = int(it.get("quantity", 0))
+            qty_billed = int(it.get("qty_billed", 0))
+            remaining = max(0, qty_total - qty_billed)
+            if remaining <= 0:
+                continue
+            new_it = dict(it)
+            new_it["quantity"] = remaining
+            new_it["line_total"] = float(it.get("unit_price", 0)) * remaining
+            items.append(new_it)
+
+        # Mark all items as fully billed
+        for it in all_order_items:
+            it["qty_billed"] = int(it.get("quantity", 0))
+        order.items = all_order_items
+        flag_modified(order, "items")
+        order.total_amount = Decimal("0")
 
     gst_rate = Decimal(str(body.gst_rate_percent))
     if gst_rate < 0:
@@ -199,10 +265,14 @@ def generate_customer_bill(body: CustomerBillGenerate, db: Session = Depends(get
     upload_bytes(key, pdf_bytes, "application/pdf")
     row.document_key = key
     db.add(row)
-    # Advance order to "billed" status
-    if (order.status or "").strip().lower() == "confirmed":
-        order.status = "billed"
-        db.add(order)
+    # Update order status: if all items billed → close; else keep open
+    all_billed = all(
+        int(it.get("qty_billed", 0)) >= int(it.get("quantity", 0))
+        for it in (order.items if isinstance(order.items, list) else [])
+        if isinstance(it, dict)
+    )
+    order.status = "closed" if all_billed else "open"
+    db.add(order)
     db.commit()
     db.refresh(row)
 

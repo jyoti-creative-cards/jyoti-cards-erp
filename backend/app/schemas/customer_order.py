@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 class CustomerOrderLineIn(BaseModel):
     catalog_product_id: int = Field(..., ge=1)
     quantity: int = Field(..., ge=1)
+    unit_price: Optional[float] = Field(None, description="Override unit price (admin only)")
 
 
 class CustomerOrderCreate(BaseModel):
@@ -51,6 +52,7 @@ class CustomerOrderPublic(BaseModel):
     invoice_date: Optional[datetime] = None
     invoice_no: Optional[str] = None
     receipt_note_no: Optional[str] = None
+    versions: Optional[List[dict]] = None
     created_at: datetime
     updated_at: datetime
 
@@ -61,7 +63,7 @@ class CustomerOrderAdminPublic(CustomerOrderPublic):
 
 
 class CustomerOrderAdminPatch(BaseModel):
-    status: Optional[str] = Field(None, description="confirmed | shipped | cancelled")
+    status: Optional[str] = Field(None, description="open | closed | confirmed | cancelled")
     notes: Optional[str] = Field(None, max_length=4000)
     customer_notes: Optional[str] = Field(None, max_length=2000)
     items: Optional[List[CustomerOrderLineIn]] = Field(None, description="Replace all lines when set")
@@ -71,3 +73,19 @@ class CustomerOrderAdminPatch(BaseModel):
     invoice_date: Optional[datetime] = None
     invoice_no: Optional[str] = Field(None, max_length=100)
     receipt_note_no: Optional[str] = Field(None, max_length=100)
+
+
+class OfflineOrderCreate(BaseModel):
+    """Admin creates an order + immediately generates a bill in one step."""
+    customer_id: int = Field(..., ge=1)
+    items: List[CustomerOrderLineIn] = Field(..., min_length=1)
+    customer_notes: Optional[str] = Field(None, max_length=2000)
+    notes: Optional[str] = Field(None, max_length=4000)
+    # Billing params
+    gst_enabled: bool = False
+    gst_rate_percent: float = Field(default=18.0)
+    discount_percent: Optional[float] = Field(None, ge=0, le=100)
+    freight_charges: Optional[float] = Field(None, ge=0)
+    packaging_charges: Optional[float] = Field(None, ge=0)
+    bill_series_id: Optional[int] = None
+    rate_type: Optional[str] = None  # "order" | "net" | "regular"

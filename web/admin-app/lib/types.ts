@@ -248,6 +248,7 @@ export interface CustomerOrderAdminPublic {
   invoice_date: string | null;
   invoice_no: string | null;
   receipt_note_no: string | null;
+  versions?: { version: number; timestamp: string; event: string; items: unknown[]; total_amount: string; bill_id: number | null }[] | null;
   created_at: string;
   updated_at: string;
 }

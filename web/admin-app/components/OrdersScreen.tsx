@@ -168,6 +168,7 @@ function CustomerOrdersTab({
 }) {
   const [orders, setOrders] = useState<CustomerOrderAdminPublic[]>([]);
   const [catalog, setCatalog] = useState<CatalogProductPublic[]>([]);
+  const [customers, setCustomers] = useState<CustomerPublic[]>([]);
   const [loading, setLoading] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>("open");
   const [search, setSearch] = useState("");
@@ -226,6 +227,26 @@ function CustomerOrdersTab({
   // Shipment form
   const [showShipForm, setShowShipForm] = useState(false);
 
+  // ── Offline order (1-click order + bill) ──
+  const [showOfflineForm, setShowOfflineForm] = useState(false);
+  const [offlineCustomerId, setOfflineCustomerId] = useState("");
+  const [offlineItems, setOfflineItems] = useState<{ cid: string; qty: string; price: string }[]>([{ cid: "", qty: "", price: "" }]);
+  const [offlineGst, setOfflineGst] = useState(false);
+  const [offlineGstRate, setOfflineGstRate] = useState("18");
+  const [offlineDiscount, setOfflineDiscount] = useState("");
+  const [offlineFreight, setOfflineFreight] = useState("");
+  const [offlinePkg, setOfflinePkg] = useState("");
+  const [offlineSeriesId, setOfflineSeriesId] = useState("");
+  const [offlineNotes, setOfflineNotes] = useState("");
+  const [offlineBusy, setOfflineBusy] = useState(false);
+  const [offlineResult, setOfflineResult] = useState<{ bill_no?: string; grand_total?: string; document_url?: string } | null>(null);
+
+  // ── Edit order items ──
+  const [editItemsMode, setEditItemsMode] = useState(false);
+  const [editItemsList, setEditItemsList] = useState<{ cid: string; qty: string; price: string }[]>([]);
+  const [editItemsBusy, setEditItemsBusy] = useState(false);
+  const [showVersions, setShowVersions] = useState(false);
+
   // Edit order state
   const [editStatus, setEditStatus] = useState("open");
   const [editNotes, setEditNotes] = useState("");
@@ -238,18 +259,70 @@ function CustomerOrdersTab({
   const load = useCallback(async () => {
     if (!adminKey.trim()) return;
     setLoading(true);
-    const [or, cr, fvr] = await Promise.all([
+    const [or, cr, fvr, custr] = await Promise.all([
       fetchApi(apiUrl("customer-orders"), { headers: headersAdmin() }),
       fetchApi(apiUrl("catalog"), { headers: headersAdmin() }),
       fetchApi(apiUrl("freight-vendors"), { headers: headersAdmin() }),
+      fetchApi(apiUrl("customers"), { headers: headersAdmin() }),
     ]);
     if (or.ok) setOrders(await or.json());
     if (cr.ok) setCatalog(await cr.json());
     if (fvr.ok) setFreightVendors(await fvr.json());
+    if (custr.ok) setCustomers(await custr.json());
     setLoading(false);
   }, [adminKey]);
 
   useEffect(() => { void load(); }, [load]);
+
+  async function submitOfflineOrder() {
+    if (!offlineCustomerId) return showToast("Select a customer", false);
+    const items = offlineItems
+      .map(r => ({ catalog_product_id: Number(r.cid), quantity: Number(r.qty), unit_price: r.price ? Number(r.price) : undefined }))
+      .filter(i => i.catalog_product_id > 0 && i.quantity > 0);
+    if (!items.length) return showToast("Add at least one item", false);
+    const body: Record<string, unknown> = {
+      customer_id: Number(offlineCustomerId),
+      items,
+      gst_enabled: offlineGst,
+      gst_rate_percent: offlineGst ? Number(offlineGstRate) : 0,
+      notes: offlineNotes.trim() || null,
+    };
+    if (offlineDiscount.trim()) body.discount_percent = Number(offlineDiscount);
+    if (offlineFreight.trim()) body.freight_charges = Number(offlineFreight);
+    if (offlinePkg.trim()) body.packaging_charges = Number(offlinePkg);
+    if (offlineSeriesId) body.bill_series_id = Number(offlineSeriesId);
+    setOfflineBusy(true); setOfflineResult(null);
+    const r = await fetchApi(apiUrl("customer-orders/offline"), { method: "POST", headers: headers(), body: JSON.stringify(body) });
+    const data = await r.json().catch(() => ({})) as { bill?: { bill_no?: string; totals?: { grand_total?: string }; document_url?: string } };
+    setOfflineBusy(false);
+    if (!r.ok) { showToast(formatApiError(data), false); return; }
+    setOfflineResult({
+      bill_no: data.bill?.bill_no || undefined,
+      grand_total: data.bill?.totals?.grand_total,
+      document_url: data.bill?.document_url || undefined,
+    });
+    showToast(data.bill?.bill_no ? `Bill ${data.bill.bill_no} created!` : "Order + Bill created!", true);
+    void load();
+  }
+
+  async function submitEditItems() {
+    if (!selected || !editItemsList.length) return;
+    const items = editItemsList
+      .map(r => ({ catalog_product_id: Number(r.cid), quantity: Number(r.qty), unit_price: r.price ? Number(r.price) : undefined }))
+      .filter(i => i.catalog_product_id > 0 && i.quantity > 0);
+    if (!items.length) return showToast("Add at least one item", false);
+    setEditItemsBusy(true);
+    const r = await fetchApi(apiUrl(`customer-orders/${selected.id}/edit-items`), {
+      method: "PATCH", headers: headers(), body: JSON.stringify({ items }),
+    });
+    const data = await r.json().catch(() => ({}));
+    setEditItemsBusy(false);
+    if (!r.ok) { showToast(formatApiError(data), false); return; }
+    showToast("Order items updated!", true);
+    setEditItemsMode(false);
+    setSelected(data as CustomerOrderAdminPublic);
+    void load();
+  }
 
   async function openOrder(o: CustomerOrderAdminPublic) {
     setSelected(o);
@@ -259,6 +332,7 @@ function CustomerOrdersTab({
     setShipContact(o.shipment_contact ?? "");
     setShipNotes(o.shipment_notes ?? "");
     setSelectedFreightVendorId("");
+    setEditItemsMode(false); setShowVersions(false);
     setBillMsg(""); setSaveMsg(""); setShowBillForm(false); setShowShipForm(false);
     setBillData(null); setShowBillModal(false); setCreditSummary(null);
     setBillSeriesId(""); setItemOverrides({}); setBulkDiscount(""); setRateType("order"); setZeroRateConfirmed(false); setShowZeroRateBanner(false);
@@ -463,6 +537,13 @@ function CustomerOrdersTab({
           <button type="button" onClick={() => void load()} className={BTN_SECONDARY}>↻</button>
           <button
             type="button"
+            onClick={() => { setShowOfflineForm(v => !v); setOfflineResult(null); }}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-semibold transition ${showOfflineForm ? "bg-emerald-600 text-white" : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}`}
+          >
+            ⚡ Offline Order
+          </button>
+          <button
+            type="button"
             onClick={() => { setMergeMode((v) => !v); setSelectedForMerge(new Set()); }}
             className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-semibold transition ${mergeMode ? "bg-orange-500 text-white hover:bg-orange-600" : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}`}
           >
@@ -486,6 +567,96 @@ function CustomerOrdersTab({
               {merging ? "Merging…" : "Merge Selected"}
             </button>
           )}
+        </div>
+      )}
+
+      {/* ── Offline Order form ── */}
+      {showOfflineForm && (
+        <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-5 shadow-sm space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="font-bold text-emerald-800">⚡ Offline / Walk-in Order + Bill (1 step)</h3>
+            <button onClick={() => setShowOfflineForm(false)} className="text-slate-400 hover:text-slate-600 text-lg">✕</button>
+          </div>
+
+          {offlineResult && (
+            <div className="rounded-xl border border-emerald-300 bg-white px-4 py-3 text-sm">
+              <p className="font-semibold text-emerald-700">✓ Done! {offlineResult.bill_no && `Bill ${offlineResult.bill_no}`} {offlineResult.grand_total && `· ₹${offlineResult.grand_total}`}</p>
+              {offlineResult.document_url && (
+                <a href={offlineResult.document_url} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-blue-600 hover:underline">Download PDF →</a>
+              )}
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="col-span-2">
+              <label className={LABEL}>Customer *</label>
+              <select value={offlineCustomerId} onChange={e => setOfflineCustomerId(e.target.value)} className={INPUT}>
+                <option value="">— select —</option>
+                {customers.map(c => <option key={c.id} value={c.id}>{c.company_name || c.name} {c.phone ? `(${c.phone})` : ""}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={LABEL}>Discount %</label>
+              <input type="number" min="0" max="100" value={offlineDiscount} onChange={e => setOfflineDiscount(e.target.value)} placeholder="0" className={INPUT} />
+            </div>
+            <div>
+              <label className={LABEL}>Freight ₹</label>
+              <input type="number" min="0" value={offlineFreight} onChange={e => setOfflineFreight(e.target.value)} placeholder="0" className={INPUT} />
+            </div>
+            <div>
+              <label className={LABEL}>Packaging ₹</label>
+              <input type="number" min="0" value={offlinePkg} onChange={e => setOfflinePkg(e.target.value)} placeholder="0" className={INPUT} />
+            </div>
+            <div className="flex items-end gap-2">
+              <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+                <input type="checkbox" checked={offlineGst} onChange={e => setOfflineGst(e.target.checked)} className="h-4 w-4 rounded" />
+                GST
+              </label>
+              {offlineGst && <input type="number" value={offlineGstRate} onChange={e => setOfflineGstRate(e.target.value)} className="w-16 rounded-lg border border-slate-300 px-2 py-2 text-sm" placeholder="18" />}
+            </div>
+            <div>
+              <label className={LABEL}>Bill Series</label>
+              <select value={offlineSeriesId} onChange={e => setOfflineSeriesId(e.target.value)} className={INPUT}>
+                <option value="">(none)</option>
+                {billSeriesList.map(s => <option key={s.id} value={s.id}>{s.name} – {s.prefix}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={LABEL}>Notes</label>
+              <input value={offlineNotes} onChange={e => setOfflineNotes(e.target.value)} placeholder="Optional" className={INPUT} />
+            </div>
+          </div>
+
+          {/* Item rows */}
+          <div>
+            <label className={LABEL}>Items *</label>
+            {offlineItems.map((row, idx) => (
+              <div key={idx} className="mb-2 flex flex-wrap gap-2">
+                <select value={row.cid}
+                  onChange={e => setOfflineItems(p => p.map((r, i) => i === idx ? { ...r, cid: e.target.value, price: catalog.find(c => String(c.id) === e.target.value)?.selling_price?.toString() || "" } : r))}
+                  className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-2 text-sm">
+                  <option value="">— product —</option>
+                  {catalog.map(c => <option key={c.id} value={c.id}>{c.our_product_id} – {c.name}</option>)}
+                </select>
+                <input type="number" min="1" placeholder="Qty" value={row.qty}
+                  onChange={e => setOfflineItems(p => p.map((r, i) => i === idx ? { ...r, qty: e.target.value } : r))}
+                  className="w-16 rounded-lg border border-slate-300 px-2 py-2 text-sm" />
+                <input type="number" min="0" step="0.01" placeholder="Price" value={row.price}
+                  onChange={e => setOfflineItems(p => p.map((r, i) => i === idx ? { ...r, price: e.target.value } : r))}
+                  className="w-24 rounded-lg border border-slate-300 px-2 py-2 text-sm" />
+                {offlineItems.length > 1 && (
+                  <button type="button" onClick={() => setOfflineItems(p => p.filter((_, i) => i !== idx))} className="text-red-500 hover:text-red-700 text-lg">×</button>
+                )}
+              </div>
+            ))}
+            <button type="button" onClick={() => setOfflineItems(p => [...p, { cid: "", qty: "", price: "" }])}
+              className="text-xs text-blue-600 hover:underline">+ Add item</button>
+          </div>
+
+          <button type="button" onClick={submitOfflineOrder} disabled={offlineBusy}
+            className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-6 py-2.5 text-sm font-bold text-white shadow hover:bg-emerald-700 disabled:opacity-50">
+            {offlineBusy ? "Creating…" : "⚡ Create Order + Bill"}
+          </button>
         </div>
       )}
 
@@ -628,7 +799,74 @@ function CustomerOrdersTab({
 
             {/* Items */}
             <div>
-              <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">Items</div>
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">Items</span>
+                <div className="flex gap-2">
+                  <button type="button"
+                    onClick={() => {
+                      setEditItemsMode(v => !v);
+                      setEditItemsList(selected.items.map(it => ({ cid: String(it.catalog_product_id), qty: String(it.quantity), price: it.unit_price })));
+                      setShowVersions(false);
+                    }}
+                    className={`rounded-lg px-2 py-1 text-xs font-semibold transition ${editItemsMode ? "bg-blue-600 text-white" : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"}`}>
+                    ✏️ Edit Items
+                  </button>
+                  {selected.versions && selected.versions.length > 0 && (
+                    <button type="button" onClick={() => setShowVersions(v => !v)}
+                      className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50">
+                      🕐 History ({selected.versions.length})
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Edit items form */}
+              {editItemsMode && (
+                <div className="mb-3 rounded-xl border border-blue-200 bg-blue-50 p-3 space-y-2">
+                  <p className="text-xs text-blue-700 font-medium">Editing items. If a bill exists, it will be regenerated automatically.</p>
+                  {editItemsList.map((row, idx) => (
+                    <div key={idx} className="flex gap-2">
+                      <select value={row.cid}
+                        onChange={e => setEditItemsList(p => p.map((r, i) => i === idx ? { ...r, cid: e.target.value } : r))}
+                        className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm">
+                        <option value="">— product —</option>
+                        {catalog.map(c => <option key={c.id} value={c.id}>{c.our_product_id}</option>)}
+                      </select>
+                      <input type="number" min="1" placeholder="Qty" value={row.qty}
+                        onChange={e => setEditItemsList(p => p.map((r, i) => i === idx ? { ...r, qty: e.target.value } : r))}
+                        className="w-14 rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+                      <input type="number" min="0" step="0.01" placeholder="Price" value={row.price}
+                        onChange={e => setEditItemsList(p => p.map((r, i) => i === idx ? { ...r, price: e.target.value } : r))}
+                        className="w-20 rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+                      <button type="button" onClick={() => setEditItemsList(p => p.filter((_, i) => i !== idx))} className="text-red-500 hover:text-red-700">×</button>
+                    </div>
+                  ))}
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setEditItemsList(p => [...p, { cid: "", qty: "", price: "" }])} className="text-xs text-blue-600 hover:underline">+ Add row</button>
+                    <button type="button" onClick={submitEditItems} disabled={editItemsBusy}
+                      className="ml-auto rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">
+                      {editItemsBusy ? "Saving…" : "Save Changes"}
+                    </button>
+                    <button type="button" onClick={() => setEditItemsMode(false)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-600">Cancel</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Version history */}
+              {showVersions && selected.versions && (
+                <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 divide-y divide-slate-100 overflow-hidden">
+                  {[...selected.versions].reverse().map((v, i) => (
+                    <div key={i} className="px-3 py-2.5 text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-slate-700">v{v.version} · {v.event}</span>
+                        <span className="text-slate-400">{v.timestamp ? new Date(v.timestamp).toLocaleString("en-IN") : ""}</span>
+                      </div>
+                      <div className="mt-1 text-slate-500">{v.items?.length || 0} items · ₹{v.total_amount}{v.bill_id ? ` · Bill #${v.bill_id}` : ""}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <div className="overflow-hidden rounded-xl border border-slate-200">
                 <table className="w-full text-sm">
                   <thead>
@@ -640,9 +878,7 @@ function CustomerOrdersTab({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {selected.items.map((it) => {
-                      const cat = catalog.find((c) => c.id === it.catalog_product_id);
-                      return (
+                    {selected.items.map((it) => (
                         <tr key={it.catalog_product_id}>
                           <td className="px-3 py-2">
                             <div className="font-medium">{it.name}</div>
@@ -652,8 +888,7 @@ function CustomerOrdersTab({
                           <td className="px-3 py-2 text-right">₹{it.unit_price}</td>
                           <td className="px-3 py-2 text-right font-medium">₹{it.line_total}</td>
                         </tr>
-                      );
-                    })}
+                    ))}
                     <tr className="border-t border-slate-200 bg-slate-50">
                       <td colSpan={3} className="px-3 py-2 text-right font-semibold">Total</td>
                       <td className="px-3 py-2 text-right font-bold text-slate-900">₹{selected.total_amount}</td>

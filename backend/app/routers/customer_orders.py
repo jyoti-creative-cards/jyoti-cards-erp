@@ -27,6 +27,7 @@ from app.schemas.customer_order import (
     CustomerOrderLineIn,
     CustomerOrderLinePublic,
     CustomerOrderPublic,
+    OfflineOrderCreate,
 )
 from app.services.catalog_storage import presigned_url
 from app.services.stock_levels import stock_status_label
@@ -34,7 +35,7 @@ from app.services.stock_levels import stock_status_label
 shop_order_router = APIRouter(prefix="/shop", tags=["shop"])
 admin_customer_order_router = APIRouter(prefix="/customer-orders", tags=["customer-orders"])
 
-CO_STATUSES = frozenset({"confirmed", "billed", "shipped", "cancelled"})
+CO_STATUSES = frozenset({"open", "closed", "confirmed", "billed", "shipped", "cancelled"})
 
 
 def _avail(db: Session, catalog_product_id: int) -> tuple[int, int]:
@@ -74,7 +75,7 @@ def _build_items_customer(db: Session, quantities: dict[int, int]) -> tuple[list
                 detail=f"Insufficient stock for {p.our_product_id}: requested {qty}, available {q_avail}",
             )
         up = Decimal(str(p.selling_price))
-        lt = (up * qty).quantize(Decimal("0.0001"))
+        lt = (up * qty).quantize(Decimal("0.01"))
         total += lt
         items.append(
             {
@@ -91,9 +92,14 @@ def _build_items_customer(db: Session, quantities: dict[int, int]) -> tuple[list
     return items, total
 
 
-def _build_items_admin(db: Session, quantities: dict[int, int]) -> tuple[list[dict], Decimal]:
+def _build_items_admin(
+    db: Session,
+    quantities: dict[int, int],
+    price_overrides: dict[int, float] | None = None,
+) -> tuple[list[dict], Decimal]:
     items: list[dict] = []
     total = Decimal("0")
+    overrides = price_overrides or {}
     for cid in sorted(quantities.keys()):
         qty = quantities[cid]
         if qty < 1:
@@ -101,8 +107,11 @@ def _build_items_admin(db: Session, quantities: dict[int, int]) -> tuple[list[di
         p = db.get(CatalogProduct, cid)
         if p is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"Unknown product id {cid}")
-        up = Decimal(str(p.selling_price))
-        lt = (up * qty).quantize(Decimal("0.0001"))
+        if cid in overrides:
+            up = Decimal(str(overrides[cid]))
+        else:
+            up = Decimal(str(p.selling_price))
+        lt = (up * qty).quantize(Decimal("0.01"))
         total += lt
         items.append(
             {
@@ -144,6 +153,14 @@ def _items_to_public(raw: object) -> List[CustomerOrderLinePublic]:
     return out
 
 
+def _fmt_amount(v) -> str:
+    """Format a Decimal/float as a 2-decimal string, e.g. '8000.00'."""
+    try:
+        return f"{float(v):.2f}"
+    except (TypeError, ValueError):
+        return "0.00"
+
+
 def _order_to_public(row: CustomerOrder) -> CustomerOrderPublic:
     lines = _items_to_public(row.items)
     return CustomerOrderPublic(
@@ -151,7 +168,7 @@ def _order_to_public(row: CustomerOrder) -> CustomerOrderPublic:
         customer_id=row.customer_id,
         status=row.status,
         items=lines,
-        total_amount=format(row.total_amount, "f"),
+        total_amount=_fmt_amount(row.total_amount),
         notes=row.notes,
         customer_notes=row.customer_notes,
         shipment_receipt=row.shipment_receipt,
@@ -161,6 +178,7 @@ def _order_to_public(row: CustomerOrder) -> CustomerOrderPublic:
         invoice_date=row.invoice_date,
         invoice_no=row.invoice_no,
         receipt_note_no=row.receipt_note_no,
+        versions=row.versions if isinstance(row.versions, list) else None,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -397,8 +415,9 @@ def admin_create_customer_order(
     if not customer:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="customer not found")
 
+    price_overrides = {ln.catalog_product_id: ln.unit_price for ln in body.items if ln.unit_price is not None}
     merged = _merge_lines(body.items)
-    items, total = _build_items_admin(db, merged)
+    items, total = _build_items_admin(db, merged, price_overrides or None)
 
     # Credit check
     if customer.credit_limit is not None and not customer.credit_override:
@@ -424,7 +443,7 @@ def admin_create_customer_order(
 
     row = CustomerOrder(
         customer_id=body.customer_id,
-        status="confirmed",
+        status="open",
         items=items,
         total_amount=total,
         notes=(body.notes or "").strip() or None,
@@ -509,12 +528,7 @@ def admin_patch_customer_order(
     if body.receipt_note_no is not None:
         row.receipt_note_no = (body.receipt_note_no or "").strip() or None
 
-    if row.status == "shipped":
-        if not row.shipment_receipt:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                detail="shipment_receipt (AWB/receipt number) is required when status is shipped",
-            )
+    # Shipped is now optional — no longer enforced as a required step
 
     db.add(row)
     db.commit()
@@ -543,6 +557,291 @@ def admin_patch_customer_order(
 
 
 from pydantic import BaseModel as _BaseModel
+from datetime import timezone as _tz
+
+
+def _snapshot_order(row: CustomerOrder, event: str, bill_id: int | None = None) -> dict:
+    """Return a version snapshot of the current order state."""
+    return {
+        "version": len(row.versions or []) + 1,
+        "timestamp": datetime.now(_tz.utc).isoformat(),
+        "event": event,
+        "items": list(row.items) if isinstance(row.items, list) else [],
+        "total_amount": _fmt_amount(row.total_amount),
+        "status": row.status,
+        "bill_id": bill_id,
+    }
+
+
+@admin_customer_order_router.post(
+    "/offline",
+    response_model=dict,
+    status_code=201,
+    dependencies=[Depends(require_admin)],
+)
+def admin_offline_order(body: OfflineOrderCreate, db: Session = Depends(get_db)) -> dict:
+    """Create an order AND immediately generate a bill in a single step (offline/walk-in)."""
+    from decimal import Decimal as _Dec
+    from app.models.bill_series import BillSeries
+    from app.models.customer_bill import CustomerBill
+    from app.services.catalog_storage import storage_configured, upload_bytes
+    from app.services.customer_bill_math import compute_bill_totals
+    from app.services.customer_bill_pdf import render_customer_bill_pdf
+    from app.services.accounting import ensure_ar_for_customer_bill
+    import uuid as _uuid
+
+    customer = db.get(Customer, body.customer_id)
+    if not customer:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="customer not found")
+
+    price_overrides = {ln.catalog_product_id: ln.unit_price for ln in body.items if ln.unit_price is not None}
+    merged = _merge_lines(body.items)
+    items, total = _build_items_admin(db, merged, price_overrides or None)
+
+    # Deduct stock
+    for cid, qty in merged.items():
+        bal = db.get(StockBalance, cid)
+        if bal is None or int(bal.quantity) < qty:
+            p = db.get(CatalogProduct, cid)
+            pid = p.our_product_id if p else str(cid)
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"Insufficient stock for {pid}")
+        bal.quantity = int(bal.quantity) - qty
+        db.add(bal)
+
+    # Create order
+    order = CustomerOrder(
+        customer_id=body.customer_id,
+        status="open",
+        items=items,
+        total_amount=total,
+        notes=(body.notes or "").strip() or None,
+        customer_notes=(body.customer_notes or "").strip() or None,
+    )
+    db.add(order)
+    db.flush()
+
+    # Generate bill immediately
+    gst_rate = _Dec(str(body.gst_rate_percent or 0))
+    rate_type = (body.rate_type or "order").strip().lower()
+    bill_items = list(items)
+
+    if rate_type in ("net", "regular"):
+        overridden: list[dict] = []
+        for it in bill_items:
+            cid = it.get("catalog_product_id")
+            prod = db.get(CatalogProduct, int(cid)) if cid else None
+            new_price = None
+            if prod and rate_type == "net":
+                new_price = float(prod.buying_price or 0)
+            elif prod and rate_type == "regular":
+                new_price = float(prod.selling_price or 0)
+            if new_price is not None:
+                it = dict(it)
+                it["unit_price"] = str(new_price)
+            overridden.append(it)
+        bill_items = overridden
+
+    totals = compute_bill_totals(
+        bill_items,
+        gst_enabled=body.gst_enabled,
+        gst_rate_percent=gst_rate,
+        discount_percent=_Dec(str(body.discount_percent)) if body.discount_percent is not None else None,
+        freight_charges=_Dec(str(body.freight_charges)) if body.freight_charges is not None else None,
+        packaging_charges=_Dec(str(body.packaging_charges)) if body.packaging_charges is not None else None,
+    )
+
+    new_bill_no: str | None = None
+    if body.bill_series_id is not None:
+        series = db.get(BillSeries, body.bill_series_id)
+        if series is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="bill series not found")
+        if series.current_num >= series.end_num:
+            raise HTTPException(status.HTTP_409_CONFLICT, detail="bill series exhausted")
+        next_num = series.current_num + 1 if series.current_num >= series.start_num else series.start_num
+        series.current_num = next_num
+        db.add(series)
+        new_bill_no = f"{series.prefix}{next_num}"
+
+    bill_row = CustomerBill(
+        customer_order_id=order.id,
+        gst_enabled=body.gst_enabled,
+        gst_rate_percent=gst_rate,
+        discount_percent=_Dec(str(body.discount_percent)) if body.discount_percent is not None else None,
+        totals=totals,
+        document_key=None,
+        bill_no=new_bill_no,
+        bill_series_id=body.bill_series_id,
+    )
+    db.add(bill_row)
+    db.flush()
+
+    # Mark order as closed (fully billed in one shot)
+    order.status = "closed"
+    for it in order.items if isinstance(order.items, list) else []:
+        if isinstance(it, dict):
+            it["qty_billed"] = it.get("quantity", 0)
+    from sqlalchemy.orm.attributes import flag_modified as _fm
+    _fm(order, "items")
+    db.add(order)
+
+    db.commit()
+    db.refresh(order)
+    db.refresh(bill_row)
+
+    # Generate PDF
+    cust_name = customer.name or ""
+    company = customer.company_name or None
+    display_name = company or cust_name
+    doc_url = None
+    if storage_configured():
+        try:
+            pdf_bytes = render_customer_bill_pdf(
+                bill_id=bill_row.id,
+                order_id=order.id,
+                customer_name=display_name,
+                customer_company=company,
+                totals=totals,
+                customer_notes=order.customer_notes or None,
+                item_image_urls={},
+                order_created_at=order.created_at,
+            )
+            key = f"customer_bills/{_uuid.uuid4().hex}.pdf"
+            upload_bytes(key, pdf_bytes, "application/pdf")
+            bill_row.document_key = key
+            db.add(bill_row)
+            db.commit()
+            db.refresh(bill_row)
+            from app.services.catalog_storage import presigned_url as _ps
+            doc_url = _ps(key)
+        except Exception as ex:
+            print(f"Offline bill PDF failed: {ex}")
+
+    # AR entry
+    try:
+        ensure_ar_for_customer_bill(db, bill=bill_row, order=order, totals=totals)
+        db.commit()
+    except Exception as ex:
+        print(f"Offline bill AR failed: {ex}")
+
+    from app.services.catalog_storage import presigned_url as _ps2
+    bill_doc_url = _ps2(bill_row.document_key) if bill_row.document_key else None
+    return {
+        "order": _admin_public(db, order).model_dump(),
+        "bill": {
+            "id": bill_row.id,
+            "bill_no": bill_row.bill_no,
+            "totals": totals,
+            "document_url": bill_doc_url,
+        },
+    }
+
+
+@admin_customer_order_router.patch(
+    "/{order_id}/edit-items",
+    response_model=CustomerOrderAdminPublic,
+    dependencies=[Depends(require_admin)],
+)
+def admin_edit_order_items(
+    order_id: int,
+    body: CustomerOrderAdminPatch,
+    db: Session = Depends(get_db),
+) -> CustomerOrderAdminPublic:
+    """Edit order items with version history. If order has a bill, regenerates it."""
+    from sqlalchemy.orm.attributes import flag_modified as _fm
+    from app.models.customer_bill import CustomerBill
+    from app.services.catalog_storage import storage_configured, upload_bytes
+    from app.services.customer_bill_math import compute_bill_totals
+    from app.services.customer_bill_pdf import render_customer_bill_pdf
+    from app.services.accounting import ensure_ar_for_customer_bill
+    import uuid as _uuid
+    from decimal import Decimal as _Dec
+
+    row = db.get(CustomerOrder, order_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="order not found")
+
+    # Find existing bill
+    existing_bill = db.query(CustomerBill).filter(CustomerBill.customer_order_id == order_id).first()
+
+    # Save snapshot before edit
+    snap = _snapshot_order(row, event="edited_with_bill" if existing_bill else "edited", bill_id=existing_bill.id if existing_bill else None)
+    versions = list(row.versions) if isinstance(row.versions, list) else []
+    versions.append(snap)
+    row.versions = versions
+    _fm(row, "versions")
+
+    # Update items
+    if body.items is not None:
+        price_overrides = {ln.catalog_product_id: ln.unit_price for ln in body.items if ln.unit_price is not None}
+        merged = _merge_lines(body.items)
+        items, total = _build_items_admin(db, merged, price_overrides or None)
+        # Preserve qty_billed from old items
+        old_billed = {it["catalog_product_id"]: it.get("qty_billed", 0) for it in (row.items or []) if isinstance(it, dict)}
+        for it in items:
+            cid = it["catalog_product_id"]
+            if cid in old_billed:
+                it["qty_billed"] = old_billed[cid]
+        row.items = items
+        _fm(row, "items")
+        row.total_amount = total
+
+    if body.notes is not None:
+        row.notes = body.notes.strip() or None
+    if body.customer_notes is not None:
+        row.customer_notes = body.customer_notes.strip() or None
+    if body.status is not None:
+        row.status = body.status.strip().lower()
+
+    db.add(row)
+    db.flush()
+
+    # If bill exists, regenerate it
+    if existing_bill and body.items is not None:
+        bill_items = [it for it in (row.items or []) if isinstance(it, dict)]
+        gst_rate = existing_bill.gst_rate_percent or _Dec("0")
+        totals = compute_bill_totals(
+            bill_items,
+            gst_enabled=bool(existing_bill.gst_enabled),
+            gst_rate_percent=gst_rate,
+            discount_percent=existing_bill.discount_percent,
+            freight_charges=None,
+            packaging_charges=None,
+        )
+        existing_bill.totals = totals
+        existing_bill.document_key = None
+        db.add(existing_bill)
+        db.flush()
+
+        if storage_configured():
+            try:
+                cust = db.get(Customer, row.customer_id)
+                cust_name = cust.name if cust else ""
+                company = cust.company_name if cust else None
+                pdf_bytes = render_customer_bill_pdf(
+                    bill_id=existing_bill.id,
+                    order_id=row.id,
+                    customer_name=company or cust_name,
+                    customer_company=company,
+                    totals=totals,
+                    customer_notes=row.customer_notes or None,
+                    item_image_urls={},
+                    order_created_at=row.created_at,
+                )
+                key = f"customer_bills/{_uuid.uuid4().hex}.pdf"
+                upload_bytes(key, pdf_bytes, "application/pdf")
+                existing_bill.document_key = key
+                db.add(existing_bill)
+            except Exception as ex:
+                print(f"Edit-items bill PDF failed: {ex}")
+
+        try:
+            ensure_ar_for_customer_bill(db, bill=existing_bill, order=row, totals=totals)
+        except Exception as ex:
+            print(f"Edit-items AR failed: {ex}")
+
+    db.commit()
+    db.refresh(row)
+    return _admin_public(db, row)
 
 
 @admin_customer_order_router.delete("/{order_id}/permanent", dependencies=[Depends(require_admin)])

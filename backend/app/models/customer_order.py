@@ -24,6 +24,8 @@ class CustomerOrder(Base):
     )
     items: Mapped[list] = mapped_column(JSON, nullable=False)
     total_amount: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False, server_default="0")
+    # Snapshot history: [{version, timestamp, event, items, total_amount, bill_id}]
+    versions: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     customer_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 

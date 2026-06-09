@@ -310,6 +310,7 @@ def init_db() -> None:
     _migrate_v3_features_postgres()
     _migrate_v4_features_postgres()
     _migrate_v5_vendor_receipt_postgres()
+    _migrate_v6b_order_versions_postgres()
     _migrate_v6_vendor_orders_postgres()
     from app.services.accounting import seed_chart_accounts
 
@@ -497,6 +498,14 @@ def _migrate_v5_vendor_receipt_postgres() -> None:
         conn.execute(text("ALTER TABLE portal_stock_receipts ADD COLUMN IF NOT EXISTS extra_charges NUMERIC(14,4)"))
         # Add image_key column (alias for receipt_image_key used in vendor receipt flow)
         conn.execute(text("ALTER TABLE portal_stock_receipts ADD COLUMN IF NOT EXISTS image_key VARCHAR(512)"))
+
+
+def _migrate_v6b_order_versions_postgres() -> None:
+    """Add versions JSONB column to portal_customer_orders."""
+    if engine.dialect.name != "postgresql":
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE portal_customer_orders ADD COLUMN IF NOT EXISTS versions JSONB"))
 
 
 def _migrate_v6_vendor_orders_postgres() -> None:

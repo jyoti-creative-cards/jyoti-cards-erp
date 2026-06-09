@@ -415,6 +415,13 @@ function StatementModal({
   const [orderDetail, setOrderDetail] = useState<Record<string, unknown> | null>(null);
   const [orderLoading, setOrderLoading] = useState(false);
   const [entryFilter, setEntryFilter] = useState<"all" | "bills" | "receipts">("all");
+  const [view, setView] = useState<"ledger" | "summary">("ledger");
+
+  // Date range filter (for summary + ledger)
+  const today = new Date().toISOString().slice(0, 10);
+  const firstOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
   function loadStatement(filter: "all" | "bills" | "receipts") {
     setLoading(true);
@@ -429,6 +436,28 @@ function StatementModal({
   }
 
   useEffect(() => { loadStatement("all"); }, [customer.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Client-side date filtering
+  function filterByDate(entries: StatementEntry[]) {
+    return entries.filter(e => {
+      const d = e.date.slice(0, 10);
+      if (dateFrom && d < dateFrom) return false;
+      if (dateTo && d > dateTo) return false;
+      return true;
+    });
+  }
+
+  const filteredEntries = data ? filterByDate(
+    entryFilter === "bills" ? data.entries.filter(e => e.type === "bill") :
+    entryFilter === "receipts" ? data.entries.filter(e => e.type === "payment") :
+    data.entries
+  ) : [];
+
+  const summaryTotalSales = filteredEntries.filter(e => e.type === "bill").reduce((s, e) => s + (e.debit ?? 0), 0);
+  const summaryTotalReceipts = filteredEntries.filter(e => e.type === "payment").reduce((s, e) => s + (e.credit ?? 0), 0);
+  const summaryOutstanding = summaryTotalSales - summaryTotalReceipts;
+  const summaryBillCount = filteredEntries.filter(e => e.type === "bill").length;
+  const summaryPaymentCount = filteredEntries.filter(e => e.type === "payment").length;
 
   function downloadPdf() {
     const key = adminKey.trim();
@@ -461,29 +490,43 @@ function StatementModal({
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div style={{ padding: "20px 24px 16px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
-          <div>
-            <div style={{ fontSize: 17, fontWeight: 700, color: "#0f172a" }}>{customer.name}</div>
-            <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
-              {customer.phone}{customer.company_name ? ` · ${customer.company_name}` : ""}
+        <div style={{ padding: "16px 24px 12px", borderBottom: "1px solid #e2e8f0" }}>
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 10 }}>
+            <div>
+              <div style={{ fontSize: 17, fontWeight: 700, color: "#0f172a" }}>{customer.name}</div>
+              <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
+                {customer.phone}{customer.company_name ? ` · ${customer.company_name}` : ""}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <button type="button" onClick={downloadPdf}
+                style={{ fontSize: 12, fontWeight: 600, background: "#374151", color: "#fff", border: "none", borderRadius: 8, padding: "7px 14px", cursor: "pointer" }}>
+                🖨️ Print PDF
+              </button>
+              <button type="button" onClick={onClose} style={{ fontSize: 20, lineHeight: 1, background: "none", border: "none", cursor: "pointer", color: "#94a3b8", padding: "2px 6px" }}>✕</button>
             </div>
           </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <button
-              type="button"
-              onClick={downloadPdf}
-              style={{ fontSize: 12, fontWeight: 600, background: "#374151", color: "#fff", border: "none", borderRadius: 8, padding: "7px 14px", cursor: "pointer" }}
-            >
-              🖨️ Print Statement
-            </button>
-            <button
-              type="button"
-              onClick={downloadPdf}
-              style={{ fontSize: 12, fontWeight: 600, background: "#1d4ed8", color: "#fff", border: "none", borderRadius: 8, padding: "7px 14px", cursor: "pointer" }}
-            >
-              ⬇ Download PDF
-            </button>
-            <button type="button" onClick={onClose} style={{ fontSize: 20, lineHeight: 1, background: "none", border: "none", cursor: "pointer", color: "#94a3b8", padding: "2px 6px" }}>✕</button>
+          {/* View toggle + date range */}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+            {(["summary", "ledger"] as const).map(v => (
+              <button key={v} type="button" onClick={() => setView(v)}
+                style={{ padding: "4px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: "pointer", border: "none",
+                  background: view === v ? "#0f172a" : "#f1f5f9", color: view === v ? "#fff" : "#475569" }}>
+                {v === "summary" ? "📊 Summary" : "📋 Ledger"}
+              </button>
+            ))}
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: "auto" }}>
+              <span style={{ fontSize: 11, color: "#94a3b8" }}>From</span>
+              <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+                style={{ border: "1px solid #e2e8f0", borderRadius: 6, padding: "3px 8px", fontSize: 12 }} />
+              <span style={{ fontSize: 11, color: "#94a3b8" }}>To</span>
+              <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+                style={{ border: "1px solid #e2e8f0", borderRadius: 6, padding: "3px 8px", fontSize: 12 }} />
+              {(dateFrom || dateTo) && (
+                <button type="button" onClick={() => { setDateFrom(""); setDateTo(""); }}
+                  style={{ fontSize: 11, color: "#ef4444", background: "none", border: "none", cursor: "pointer" }}>Clear</button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -491,9 +534,80 @@ function StatementModal({
         <div style={{ overflowY: "auto", flex: 1, padding: "16px 24px" }}>
           {loading && <div style={{ textAlign: "center", padding: "48px 0", color: "#94a3b8" }}>Loading…</div>}
           {error && <div style={{ textAlign: "center", padding: "48px 0", color: "#ef4444" }}>{error}</div>}
-          {data && !loading && (
+          {data && !loading && view === "summary" && (
             <>
-              {/* Summary cards */}
+              {/* Big summary cards */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 12, marginBottom: 20 }}>
+                {[
+                  { label: "Total Sales", value: fmt(summaryTotalSales), sub: `${summaryBillCount} bill${summaryBillCount !== 1 ? "s" : ""}`, color: "#1e293b", bg: "#f8fafc" },
+                  { label: "Receipts", value: fmt(summaryTotalReceipts), sub: `${summaryPaymentCount} payment${summaryPaymentCount !== 1 ? "s" : ""}`, color: "#16a34a", bg: "#f0fdf4" },
+                  { label: "Outstanding", value: fmt(summaryOutstanding), sub: "Sales minus receipts", color: summaryOutstanding > 0 ? "#dc2626" : "#16a34a", bg: summaryOutstanding > 0 ? "#fff5f5" : "#f0fdf4" },
+                  { label: "Lifetime Billed", value: fmt(data.total_billed), sub: "All time", color: "#7c3aed", bg: "#faf5ff" },
+                ].map(s => (
+                  <div key={s.label} style={{ background: s.bg, borderRadius: 12, padding: "18px 20px", border: "1px solid #e2e8f0" }}>
+                    <div style={{ fontSize: 22, fontWeight: 800, color: s.color }}>{s.value}</div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "#475569", marginTop: 2 }}>{s.label}</div>
+                    <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 1 }}>{s.sub}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Recent bills */}
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#475569", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                Bills {(dateFrom || dateTo) ? `(filtered)` : ""}
+              </div>
+              {filteredEntries.filter(e => e.type === "bill").length === 0
+                ? <div style={{ padding: "24px 0", textAlign: "center", color: "#94a3b8", fontSize: 13 }}>No bills in this period.</div>
+                : (
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginBottom: 20 }}>
+                  <thead>
+                    <tr style={{ background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
+                      {["Date", "Bill", "Amount"].map((h, i) => (
+                        <th key={h} style={{ padding: "6px 10px", textAlign: i === 2 ? "right" : "left", fontSize: 10, fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredEntries.filter(e => e.type === "bill").map((e, i) => (
+                      <tr key={i} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                        <td style={{ padding: "6px 10px", color: "#64748b" }}>{new Date(e.date).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</td>
+                        <td style={{ padding: "6px 10px", color: "#1d4ed8", fontWeight: 600 }}>{e.bill_no ? `Bill ${e.bill_no}` : e.reference}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 600, color: "#dc2626" }}>{fmt(e.debit)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+
+              {/* Payments */}
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#475569", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>Payments received</div>
+              {filteredEntries.filter(e => e.type === "payment").length === 0
+                ? <div style={{ padding: "24px 0", textAlign: "center", color: "#94a3b8", fontSize: 13 }}>No payments in this period.</div>
+                : (
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
+                      {["Date", "Reference", "Amount"].map((h, i) => (
+                        <th key={h} style={{ padding: "6px 10px", textAlign: i === 2 ? "right" : "left", fontSize: 10, fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredEntries.filter(e => e.type === "payment").map((e, i) => (
+                      <tr key={i} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                        <td style={{ padding: "6px 10px", color: "#64748b" }}>{new Date(e.date).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</td>
+                        <td style={{ padding: "6px 10px", color: "#64748b" }}>{e.reference ?? "—"}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 600, color: "#16a34a" }}>{fmt(e.credit)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </>
+          )}
+          {data && !loading && view === "ledger" && (
+            <>
+              {/* Summary cards (full totals) */}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12, marginBottom: 20 }}>
                 {[
                   { label: "Total Billed", value: fmt(data.total_billed), color: "#1e293b" },
@@ -510,17 +624,10 @@ function StatementModal({
               {/* Filter tabs */}
               <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
                 {(["all", "bills", "receipts"] as const).map((f) => (
-                  <button
-                    key={f}
-                    type="button"
+                  <button key={f} type="button"
                     onClick={() => { setEntryFilter(f); loadStatement(f); }}
-                    style={{
-                      padding: "5px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600,
-                      cursor: "pointer", border: "none",
-                      background: entryFilter === f ? "#1d4ed8" : "#f1f5f9",
-                      color: entryFilter === f ? "#fff" : "#475569",
-                    }}
-                  >
+                    style={{ padding: "5px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: "pointer", border: "none",
+                      background: entryFilter === f ? "#1d4ed8" : "#f1f5f9", color: entryFilter === f ? "#fff" : "#475569" }}>
                     {f === "all" ? "All" : f === "bills" ? "Sales (Bills)" : "Receipts (Payments)"}
                   </button>
                 ))}
@@ -540,7 +647,7 @@ function StatementModal({
                   </tr>
                 </thead>
                 <tbody>
-                  {data.entries.map((en, i) => (
+                  {filteredEntries.map((en, i) => (
                     <tr
                       key={i}
                       onClick={() => en.order_id && openOrderDetail(en.order_id)}
@@ -578,7 +685,7 @@ function StatementModal({
                       </td>
                     </tr>
                   ))}
-                  {data.entries.length === 0 && (
+                  {filteredEntries.length === 0 && (
                     <tr><td colSpan={6} style={{ padding: "48px 0", textAlign: "center", color: "#94a3b8" }}>No transactions yet.</td></tr>
                   )}
                 </tbody>

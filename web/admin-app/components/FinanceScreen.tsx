@@ -128,7 +128,7 @@ function PaymentsTab({ adminKey }: { adminKey: string }) {
     const endpoint = mode === "ar"
       ? `accounting/ar/customer/${selectedEntity}/pay`
       : `accounting/ap/vendor/${selectedEntity}/pay`;
-    const r = await fetchApi(apiUrl(endpoint), { method: "POST", body: formData });
+    const r = await fetchApi(apiUrl(endpoint), { method: "POST", headers: headersAdmin(), body: formData });
     const data = await r.json().catch(() => ({}));
     setSaving(false);
     if (!r.ok) { showToast(formatApiError(data), false); return; }

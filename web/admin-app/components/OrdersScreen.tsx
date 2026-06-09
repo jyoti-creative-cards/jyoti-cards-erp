@@ -198,6 +198,7 @@ function CustomerOrdersTab({
   // Per-item overrides
   const [itemOverrides, setItemOverrides] = useState<Record<number, { enabled: boolean; price: string; discount: string }>>({});
   const [bulkDiscount, setBulkDiscount] = useState("");
+  const [billNarration, setBillNarration] = useState("");
 
   // Partial billing: which items/quantities to bill in this run
   const [partialBillQty, setPartialBillQty] = useState<Record<number, string>>({});
@@ -335,7 +336,7 @@ function CustomerOrdersTab({
     setEditItemsMode(false); setShowVersions(false);
     setBillMsg(""); setSaveMsg(""); setShowBillForm(false); setShowShipForm(false);
     setBillData(null); setShowBillModal(false); setCreditSummary(null);
-    setBillSeriesId(""); setItemOverrides({}); setBulkDiscount(""); setRateType("order"); setZeroRateConfirmed(false); setShowZeroRateBanner(false);
+    setBillSeriesId(""); setItemOverrides({}); setBulkDiscount(""); setRateType("order"); setZeroRateConfirmed(false); setShowZeroRateBanner(false); setBillNarration("");
     setDrawerOpen(true);
     // Fetch existing bill, bill series, credit summary in parallel
     const [billsR, seriesR, creditR] = await Promise.all([
@@ -422,6 +423,7 @@ function CustomerOrdersTab({
     if (discount.trim()) body.discount_percent = Number(discount);
     if (billSeriesId) body.bill_series_id = Number(billSeriesId);
     if (rateType !== "order") body.rate_type = rateType;
+    if (billNarration.trim()) body.narration = billNarration.trim();
 
     const overridesList = selected.items
       .filter((it) => itemOverrides[it.catalog_product_id]?.enabled)
@@ -1070,6 +1072,10 @@ function CustomerOrdersTab({
                     {gstEnabled && (
                       <input value={gstRate} onChange={(e) => setGstRate(e.target.value)} type="number" min="0" max="100" className="w-20 rounded-lg border border-slate-300 px-2 py-2 text-sm" />
                     )}
+                  </div>
+                  <div className="col-span-2">
+                    <label className={LABEL}>Narration (printed on bill)</label>
+                    <input value={billNarration} onChange={e => setBillNarration(e.target.value)} placeholder="e.g. Against PO no. 123 / Transport via XYZ…" className={INPUT} />
                   </div>
                 </div>
 

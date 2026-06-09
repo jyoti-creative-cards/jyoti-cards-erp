@@ -349,14 +349,16 @@ def deactivate_customer(customer_id: int, db: Session = Depends(get_db)) -> dict
 
 class StatementEntry(BaseModel):
     date: datetime
-    type: str
+    type: str          # "bill" | "payment"
     reference: str
     description: str
     debit: float
     credit: float
     running_balance: float
-    order_id: Optional[int] = None  # set for type=="order", enables drill-down popup
+    order_id: Optional[int] = None
     order_status: Optional[str] = None
+    bill_id: Optional[int] = None
+    bill_no: Optional[str] = None
 
 
 class CustomerStatementResponse(BaseModel):
@@ -384,36 +386,58 @@ class CustomerStats(BaseModel):
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def _build_statement(customer_id: int, db: Session) -> CustomerStatementResponse:
+def _build_statement(
+    customer_id: int,
+    db: Session,
+    entry_filter: str = "all",  # "all" | "bills" | "receipts"
+) -> CustomerStatementResponse:
+    from app.models.customer_bill import CustomerBill
+
     cust = db.get(Customer, customer_id)
     if cust is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="customer not found")
 
     events: list[dict] = []
 
-    # debit entries — one per non-cancelled order
+    # debit entries — only orders that have a bill (closed/billed orders)
     orders = (
         db.query(CustomerOrder)
         .filter(
             CustomerOrder.customer_id == customer_id,
-            CustomerOrder.status != "cancelled",
+            CustomerOrder.status.in_(["closed", "billed", "shipped"]),
+            CustomerOrder.deleted_at.is_(None),
         )
         .all()
     )
+    # Pre-fetch bills for these orders
+    order_ids = [o.id for o in orders]
+    bills_by_order: dict[int, CustomerBill] = {}
+    if order_ids:
+        for b in db.query(CustomerBill).filter(CustomerBill.customer_order_id.in_(order_ids)).all():
+            bills_by_order[b.customer_order_id] = b
+
     total_billed = Decimal("0")
     for o in orders:
-        amt = Decimal(str(o.total_amount))
+        bill = bills_by_order.get(o.id)
+        # Use bill grand_total if available (more accurate with GST/discount); else order total
+        if bill and isinstance(bill.totals, dict):
+            amt = Decimal(str(bill.totals.get("grand_total") or o.total_amount))
+        else:
+            amt = Decimal(str(o.total_amount))
         total_billed += amt
         item_count = len(o.items) if isinstance(o.items, list) else 0
+        bill_label = f"Bill {bill.bill_no}" if bill and bill.bill_no else (f"Bill #{bill.id}" if bill else f"Order #{o.id}")
         events.append({
-            "date": o.created_at,
-            "type": "order",
-            "reference": f"ORD-{o.id}",
-            "description": f"Order #{o.id} — {item_count} item{'s' if item_count != 1 else ''}",
+            "date": bill.created_at if bill else o.created_at,
+            "type": "bill",
+            "reference": bill_label,
+            "description": f"{bill_label} — {item_count} item{'s' if item_count != 1 else ''}",
             "debit": float(amt),
             "credit": 0.0,
             "order_id": o.id,
             "order_status": o.status,
+            "bill_id": bill.id if bill else None,
+            "bill_no": bill.bill_no if bill else None,
         })
 
     # credit entries — payments on AR invoices for this customer
@@ -439,12 +463,18 @@ def _build_statement(customer_id: int, db: Session) -> CustomerStatementResponse
                 "date": dt,
                 "type": "payment",
                 "reference": ref,
-                "description": "Payment received",
+                "description": f"Payment received — {ref}",
                 "debit": 0.0,
                 "credit": float(amt),
             })
 
-    # sort chronologically
+    # Apply filter
+    if entry_filter == "bills":
+        events = [e for e in events if e["type"] == "bill"]
+    elif entry_filter == "receipts":
+        events = [e for e in events if e["type"] == "payment"]
+
+    # Sort chronologically
     events.sort(key=lambda e: e["date"] if e["date"] else datetime.min.replace(tzinfo=timezone.utc))
 
     running = Decimal("0")
@@ -462,6 +492,8 @@ def _build_statement(customer_id: int, db: Session) -> CustomerStatementResponse
                 running_balance=float(running),
                 order_id=e.get("order_id"),
                 order_status=e.get("order_status"),
+                bill_id=e.get("bill_id"),
+                bill_no=e.get("bill_no"),
             )
         )
 
@@ -490,8 +522,9 @@ def _build_statement(customer_id: int, db: Session) -> CustomerStatementResponse
 def get_customer_statement(
     customer_id: int,
     db: Session = Depends(get_db),
+    filter: Optional[str] = Query(default="all", alias="filter"),
 ) -> CustomerStatementResponse:
-    return _build_statement(customer_id, db)
+    return _build_statement(customer_id, db, entry_filter=filter or "all")
 
 
 @router.get("/{customer_id}/statement/pdf")

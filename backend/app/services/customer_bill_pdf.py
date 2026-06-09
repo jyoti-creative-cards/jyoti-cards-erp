@@ -54,6 +54,7 @@ def render_customer_bill_pdf(
     totals: Dict[str, Any],
     generated_at: datetime | None = None,
     customer_notes: str | None = None,
+    narration: str | None = None,
     item_image_urls: Dict[int, str | None] | None = None,
     order_created_at: datetime | None = None,
 ) -> bytes:
@@ -246,11 +247,14 @@ def render_customer_bill_pdf(
         "foot", parent=styles["Normal"], fontSize=8,
         textColor=colors.HexColor("#666666"), alignment=TA_CENTER,
     )
+    notes_style = ParagraphStyle(
+        "cnotes", parent=styles["Normal"], fontSize=9,
+        textColor=colors.HexColor("#222222"), spaceAfter=8,
+    )
+    if narration:
+        story.append(Paragraph(f"<b>Narration:</b> {escape(_safe(narration, 1000))}", notes_style))
+        story.append(Spacer(1, 0.15 * cm))
     if customer_notes:
-        notes_style = ParagraphStyle(
-            "cnotes", parent=styles["Normal"], fontSize=9,
-            textColor=colors.HexColor("#222222"), spaceAfter=8,
-        )
         story.append(
             Paragraph(f"<b>Customer notes:</b> {escape(_safe(customer_notes, 500))}", notes_style)
         )

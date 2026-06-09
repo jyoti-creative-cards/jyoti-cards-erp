@@ -39,6 +39,7 @@ def _to_public(row: CustomerBill) -> CustomerBillPublic:
         document_url=doc_url,
         bill_no=row.bill_no,
         bill_series_id=row.bill_series_id,
+        narration=row.narration,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -220,6 +221,8 @@ def generate_customer_bill(body: CustomerBillGenerate, db: Session = Depends(get
         db.add(series)
         new_bill_no = f"{series.prefix}{next_num}"
 
+    narration_val = (body.narration or "").strip() or None
+
     if existing is not None:
         if existing.document_key:
             old_keys.append(existing.document_key)
@@ -228,6 +231,8 @@ def generate_customer_bill(body: CustomerBillGenerate, db: Session = Depends(get
         existing.discount_percent = disc
         existing.totals = totals
         existing.document_key = None
+        if narration_val is not None:
+            existing.narration = narration_val
         if new_bill_no is not None:
             existing.bill_no = new_bill_no
             existing.bill_series_id = body.bill_series_id
@@ -243,6 +248,7 @@ def generate_customer_bill(body: CustomerBillGenerate, db: Session = Depends(get
             document_key=None,
             bill_no=new_bill_no,
             bill_series_id=body.bill_series_id,
+            narration=narration_val,
         )
         db.add(row)
 
@@ -259,6 +265,7 @@ def generate_customer_bill(body: CustomerBillGenerate, db: Session = Depends(get
         customer_company=company,
         totals=totals,
         customer_notes=order.customer_notes or None,
+        narration=row.narration or None,
         item_image_urls=item_image_urls,
         order_created_at=order.created_at,
     )

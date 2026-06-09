@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, Numeric, String, func
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -30,6 +30,7 @@ class CustomerBill(Base):
     document_key: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     bill_no: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     bill_series_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("portal_bill_series.id", ondelete="SET NULL"), nullable=True)
+    narration: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 

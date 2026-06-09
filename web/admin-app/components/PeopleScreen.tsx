@@ -8,7 +8,7 @@ import type { AuthState, CityPublic, CustomerPublic, RoutePublic, VendorPublic }
 
 interface StatementEntry {
   date: string;
-  type: string;
+  type: string;  // "bill" | "payment"
   reference?: string;
   description: string;
   debit: number | null;
@@ -17,6 +17,8 @@ interface StatementEntry {
   running_balance?: number | null;
   order_id?: number | null;
   order_status?: string | null;
+  bill_id?: number | null;
+  bill_no?: string | null;
 }
 interface CustomerStatementData {
   customer_id: number;
@@ -412,18 +414,21 @@ function StatementModal({
   const [error, setError] = useState("");
   const [orderDetail, setOrderDetail] = useState<Record<string, unknown> | null>(null);
   const [orderLoading, setOrderLoading] = useState(false);
+  const [entryFilter, setEntryFilter] = useState<"all" | "bills" | "receipts">("all");
 
-  useEffect(() => {
+  function loadStatement(filter: "all" | "bills" | "receipts") {
     setLoading(true);
     setError("");
-    fetchApi(apiUrl(`customers/${customer.id}/statement`), { headers: headersAdmin() })
+    fetchApi(apiUrl(`customers/${customer.id}/statement?filter=${filter}`), { headers: headersAdmin() })
       .then(async (r) => {
         if (!r.ok) { setError("Failed to load statement."); return; }
         setData(await r.json());
       })
       .catch(() => setError("Network error."))
       .finally(() => setLoading(false));
-  }, [customer.id]);
+  }
+
+  useEffect(() => { loadStatement("all"); }, [customer.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function downloadPdf() {
     const key = adminKey.trim();
@@ -502,8 +507,27 @@ function StatementModal({
                 ))}
               </div>
 
+              {/* Filter tabs */}
+              <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+                {(["all", "bills", "receipts"] as const).map((f) => (
+                  <button
+                    key={f}
+                    type="button"
+                    onClick={() => { setEntryFilter(f); loadStatement(f); }}
+                    style={{
+                      padding: "5px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600,
+                      cursor: "pointer", border: "none",
+                      background: entryFilter === f ? "#1d4ed8" : "#f1f5f9",
+                      color: entryFilter === f ? "#fff" : "#475569",
+                    }}
+                  >
+                    {f === "all" ? "All" : f === "bills" ? "Sales (Bills)" : "Receipts (Payments)"}
+                  </button>
+                ))}
+              </div>
+
               <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 8 }}>
-                💡 Click any order row to see full order details
+                💡 Click any bill row to see order details
               </div>
 
               {/* Entries table */}
@@ -531,12 +555,12 @@ function StatementModal({
                         {new Date(en.date).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
                       </td>
                       <td style={{ padding: "8px 12px" }}>
-                        {en.order_status ? (
-                          <span style={{ fontSize: 11, fontWeight: 600, background: `${statusColor[en.order_status] ?? "#64748b"}18`, color: statusColor[en.order_status] ?? "#64748b", borderRadius: 6, padding: "2px 8px", textTransform: "capitalize" }}>
-                            {en.order_status}
+                        {en.type === "bill" ? (
+                          <span style={{ fontSize: 11, fontWeight: 600, background: "#dbeafe", color: "#1d4ed8", borderRadius: 6, padding: "2px 8px" }}>
+                            {en.bill_no ? `Bill ${en.bill_no}` : "Sale"}
                           </span>
                         ) : (
-                          <span style={{ color: "#16a34a", fontWeight: 600, fontSize: 12 }}>Payment</span>
+                          <span style={{ color: "#16a34a", fontWeight: 600, fontSize: 12, background: "#dcfce7", borderRadius: 6, padding: "2px 8px" }}>Payment</span>
                         )}
                       </td>
                       <td style={{ padding: "8px 12px", color: "#1e293b" }}>

@@ -13,6 +13,7 @@ import { AdminScreen } from "@/components/AdminScreen";
 import { RecycleBinScreen } from "@/components/RecycleBinScreen";
 import { ReturnsScreen } from "@/components/ReturnsScreen";
 import { StaffScreen } from "@/components/StaffScreen";
+import { FindScreen } from "@/components/FindScreen";
 import { apiUrl, authHeaders, fetchApi, formatApiError, jsonAuthHeaders } from "@/lib/api";
 import type { AuthState, StaffPublic } from "@/lib/types";
 import { getApiBase } from "@/lib/api";
@@ -234,6 +235,7 @@ export default function OperationsAdminPage() {
       {mainTab === "create"     && can("create.use")      && <CreateScreen adminKey={adminKey} />}
       {mainTab === "admin"      && (can("admin.setup") || can("admin.audit")) && <AdminScreen adminKey={adminKey} auth={auth} />}
       {mainTab === "staff"      && can("admin.manage")    && <StaffScreen auth={auth} />}
+      {mainTab === "find" && <FindScreen auth={auth} />}
       {mainTab === "recyclebin" && can("recyclebin.view") && <RecycleBinScreen adminKey={adminKey} />}
     </ErpAppShell>
   );

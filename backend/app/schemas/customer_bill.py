@@ -22,6 +22,7 @@ class CustomerBillGenerate(BaseModel):
     # Partial billing: specify which items (and how many) to bill in this run.
     # [{catalog_product_id: int, quantity: int}]  — if omitted, all remaining items are billed.
     bill_items: Optional[list[dict]] = None
+    narration: Optional[str] = None  # Free-text note printed on the bill
 
 
 class CustomerBillPublic(BaseModel):
@@ -35,5 +36,6 @@ class CustomerBillPublic(BaseModel):
     document_url: Optional[str] = None
     bill_no: Optional[str] = None
     bill_series_id: Optional[int] = None
+    narration: Optional[str] = None
     created_at: datetime
     updated_at: datetime

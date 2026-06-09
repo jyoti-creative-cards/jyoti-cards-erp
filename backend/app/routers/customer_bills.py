@@ -3,7 +3,8 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -17,7 +18,7 @@ from app.services.catalog_storage import delete_keys, presigned_url, storage_con
 from app.integrations.whatsapp.client import send_order_billed, upload_media
 from app.services.accounting import ensure_ar_for_customer_bill, order_line_summary
 from app.services.customer_bill_math import compute_bill_totals
-from app.services.customer_bill_pdf import render_customer_bill_pdf
+from app.services.customer_bill_pdf import render_customer_bill_pdf, render_copies_pdf
 from app.models.bill_series import BillSeries
 
 router = APIRouter(prefix="/customer-bills", tags=["customer-bills"])
@@ -335,3 +336,55 @@ def download_bill(bill_id: int, db: Session = Depends(get_db)):
     if not url:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="storage not configured")
     return RedirectResponse(url=url, status_code=302)
+
+
+@router.get("/{bill_id}/print", dependencies=[Depends(require_admin)])
+def print_bill(
+    bill_id: int,
+    db: Session = Depends(get_db),
+    copies: int = Query(default=1, ge=1, le=4, description="Number of copies (1-4)"),
+) -> Response:
+    """Return a multi-copy PDF inline (for browser print dialog).
+    Each copy is labeled ORIGINAL / DUPLICATE / TRIPLICATE / QUADRUPLICATE.
+    """
+    row = db.get(CustomerBill, bill_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="bill not found")
+    order = db.get(CustomerOrder, row.customer_order_id)
+    if order is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="order not found")
+    cust = db.get(Customer, order.customer_id)
+    display_name = (cust.name if cust else "Customer")
+    company = (cust.company_name or None) if cust else None
+
+    # Resolve item image URLs
+    item_image_urls: dict = {}
+    if isinstance(order.items, list):
+        for item in order.items:
+            if isinstance(item, dict) and item.get("catalog_product_id"):
+                cid = int(item["catalog_product_id"])
+                prod = db.get(__import__("app.models.catalog_product", fromlist=["CatalogProduct"]).CatalogProduct, cid)
+                if prod and isinstance(prod.image_keys, list) and prod.image_keys:
+                    url = presigned_url(prod.image_keys[0], expires=600)
+                    if url:
+                        item_image_urls[cid] = url
+
+    totals = row.totals if isinstance(row.totals, dict) else {}
+    pdf_bytes = render_copies_pdf(
+        copies=copies,
+        with_labels=True,
+        bill_id=row.id,
+        order_id=order.id,
+        customer_name=display_name,
+        customer_company=company,
+        totals=totals,
+        narration=row.narration or None,
+        item_image_urls=item_image_urls,
+        order_created_at=order.created_at,
+    )
+    filename = f"Bill_{row.bill_no or row.id}_x{copies}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"inline; filename=\"{filename}\""},
+    )

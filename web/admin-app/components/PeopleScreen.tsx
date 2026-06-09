@@ -501,7 +501,7 @@ function StatementModal({
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <button type="button" onClick={downloadPdf}
                 style={{ fontSize: 12, fontWeight: 600, background: "#374151", color: "#fff", border: "none", borderRadius: 8, padding: "7px 14px", cursor: "pointer" }}>
-                🖨️ Print PDF
+                🖨️ Print Statement
               </button>
               <button type="button" onClick={onClose} style={{ fontSize: 20, lineHeight: 1, background: "none", border: "none", cursor: "pointer", color: "#94a3b8", padding: "2px 6px" }}>✕</button>
             </div>

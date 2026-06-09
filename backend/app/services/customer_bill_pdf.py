@@ -12,7 +12,9 @@ from reportlab.lib.enums import TA_CENTER, TA_RIGHT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
-from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+COPY_LABELS = ["ORIGINAL", "DUPLICATE", "TRIPLICATE", "QUADRUPLICATE"]
 
 
 def _safe(s: object, max_len: int = 80) -> str:
@@ -45,7 +47,7 @@ def _fetch_image(url: str, max_w: float, max_h: float) -> Optional[Image]:
         return None
 
 
-def render_customer_bill_pdf(
+def _build_bill_story(
     *,
     bill_id: int,
     order_id: int,
@@ -57,24 +59,15 @@ def render_customer_bill_pdf(
     narration: str | None = None,
     item_image_urls: Dict[int, str | None] | None = None,
     order_created_at: datetime | None = None,
-) -> bytes:
-    ts = generated_at or datetime.now(timezone.utc)
-    # Use order creation time for the "order date" on the bill
-    order_ts = order_created_at or ts
-    # Convert to IST (UTC+5:30) for display
+    copy_label: str | None = None,
+) -> list:
+    """Build the reportlab story (list of Flowables) for one bill copy."""
     from datetime import timedelta
+    ts = generated_at or datetime.now(timezone.utc)
+    order_ts = order_created_at or ts
     ist_offset = timedelta(hours=5, minutes=30)
     order_ts_ist = order_ts.astimezone(timezone.utc).replace(tzinfo=timezone.utc) + ist_offset
 
-    buf = BytesIO()
-    doc = SimpleDocTemplate(
-        buf,
-        pagesize=A4,
-        rightMargin=1.8 * cm,
-        leftMargin=1.8 * cm,
-        topMargin=1.5 * cm,
-        bottomMargin=1.5 * cm,
-    )
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle(
         "inv_title",
@@ -94,6 +87,32 @@ def render_customer_bill_pdf(
         spaceAfter=14,
     )
     story: list = []
+
+    # Copy label banner (ORIGINAL / DUPLICATE / TRIPLICATE / QUADRUPLICATE)
+    if copy_label:
+        label_style = ParagraphStyle(
+            "copy_label",
+            parent=styles["Normal"],
+            fontName="Helvetica-Bold",
+            fontSize=11,
+            alignment=TA_RIGHT,
+            spaceAfter=2,
+            textColor=colors.HexColor("#ffffff"),
+        )
+        label_table = Table(
+            [[Paragraph(f"  {copy_label} COPY  ", label_style)]],
+            colWidths=["100%"],
+        )
+        label_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#1d4ed8")),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+            ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
+        ]))
+        story.append(label_table)
+        story.append(Spacer(1, 0.3 * cm))
 
     story.append(Paragraph("JYOTI CREATIVE CARDS", title_style))
     story.append(Paragraph("TAX INVOICE", ParagraphStyle(
@@ -265,6 +284,81 @@ def render_customer_bill_pdf(
         else "Amounts in Indian Rupees (Rs.). Thank you for your business!"
     )
     story.append(Paragraph(escape(note), foot))
+    return story
 
-    doc.build(story)
+
+def render_customer_bill_pdf(
+    *,
+    bill_id: int,
+    order_id: int,
+    customer_name: str,
+    customer_company: str | None,
+    totals: Dict[str, Any],
+    generated_at: datetime | None = None,
+    customer_notes: str | None = None,
+    narration: str | None = None,
+    item_image_urls: Dict[int, str | None] | None = None,
+    order_created_at: datetime | None = None,
+) -> bytes:
+    """Render a single-copy bill PDF (no copy label)."""
+    return render_copies_pdf(
+        copies=1,
+        bill_id=bill_id,
+        order_id=order_id,
+        customer_name=customer_name,
+        customer_company=customer_company,
+        totals=totals,
+        generated_at=generated_at,
+        customer_notes=customer_notes,
+        narration=narration,
+        item_image_urls=item_image_urls,
+        order_created_at=order_created_at,
+        with_labels=False,
+    )
+
+
+def render_copies_pdf(
+    *,
+    copies: int = 1,
+    with_labels: bool = True,
+    bill_id: int,
+    order_id: int,
+    customer_name: str,
+    customer_company: str | None,
+    totals: Dict[str, Any],
+    generated_at: datetime | None = None,
+    customer_notes: str | None = None,
+    narration: str | None = None,
+    item_image_urls: Dict[int, str | None] | None = None,
+    order_created_at: datetime | None = None,
+) -> bytes:
+    """Render N copies of the bill in one PDF.
+    Each copy gets a ORIGINAL / DUPLICATE / TRIPLICATE / QUADRUPLICATE banner.
+    """
+    copies = max(1, min(copies, 4))
+    kwargs = dict(
+        bill_id=bill_id, order_id=order_id,
+        customer_name=customer_name, customer_company=customer_company,
+        totals=totals, generated_at=generated_at,
+        customer_notes=customer_notes, narration=narration,
+        item_image_urls=item_image_urls, order_created_at=order_created_at,
+    )
+    combined: list = []
+    for i in range(copies):
+        label = COPY_LABELS[i] if with_labels else None
+        story = _build_bill_story(copy_label=label, **kwargs)
+        combined.extend(story)
+        if i < copies - 1:
+            combined.append(PageBreak())
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        rightMargin=1.8 * cm,
+        leftMargin=1.8 * cm,
+        topMargin=1.5 * cm,
+        bottomMargin=1.5 * cm,
+    )
+    doc.build(combined)
     return buf.getvalue()

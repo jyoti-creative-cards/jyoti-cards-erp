@@ -190,7 +190,6 @@ function CustomerOrdersTab({
   const [billMsg, setBillMsg] = useState("");
   const [billBusy, setBillBusy] = useState(false);
   const [billData, setBillData] = useState<CustomerBillPublic | null>(null);
-  const [printCopies, setPrintCopies] = useState(1);
 
   // Bill series
   const [billSeriesList, setBillSeriesList] = useState<BillSeries[]>([]);
@@ -218,6 +217,29 @@ function CustomerOrdersTab({
 
   // Bill detail modal
   const [showBillModal, setShowBillModal] = useState(false);
+  const [printCopies, setPrintCopies] = useState(1);
+  const [printing, setPrinting] = useState(false);
+
+  async function triggerPrint(billId: number, copies: number) {
+    setPrinting(true);
+    try {
+      const url = apiUrl(`customer-bills/${billId}/print?copies=${copies}&x_admin_key=${encodeURIComponent(adminKey)}`);
+      const res = await fetch(url);
+      if (!res.ok) { setPrinting(false); return; }
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const iframe = document.createElement("iframe");
+      iframe.style.cssText = "position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;border:none;";
+      iframe.src = blobUrl;
+      document.body.appendChild(iframe);
+      iframe.onload = () => {
+        try { iframe.contentWindow?.print(); } catch (_) { window.open(blobUrl, "_blank"); }
+        setTimeout(() => { document.body.removeChild(iframe); URL.revokeObjectURL(blobUrl); }, 60000);
+      };
+    } finally {
+      setPrinting(false);
+    }
+  }
 
   // Credit summary
   const [creditSummary, setCreditSummary] = useState<{ credit_limit: string | null; outstanding: string; remaining: string | null } | null>(null);
@@ -275,104 +297,6 @@ function CustomerOrdersTab({
   }, [adminKey]);
 
   useEffect(() => { void load(); }, [load]);
-
-  // ── Print bill ──────────────────────────────────────────────────────────────
-  const COPY_LABELS = ["Original", "Duplicate", "Triplicate", "Quadruplicate"];
-
-  function printBill(copies: number) {
-    if (!billData || !selected) return;
-    const tot = billData.totals ?? {};
-    const items: { name: string; our_product_id?: string; quantity: number; unit_price: number | string; line_total: number | string }[] = selected.items ?? [];
-    const copyPages = Array.from({ length: copies }, (_, i) => COPY_LABELS[i] ?? `Copy ${i + 1}`);
-
-    const copyHtml = copyPages.map((label) => `
-      <div class="copy">
-        <div class="copy-label">${label}</div>
-        <div class="header">
-          <div class="company">Jyoti Creative Cards</div>
-          <div class="bill-meta">
-            <div><b>Bill No:</b> ${billData.bill_no ?? `#${billData.id}`}</div>
-            <div><b>Date:</b> ${new Date(billData.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</div>
-            <div><b>Party:</b> ${selected.customer_name ?? ""}</div>
-            ${(selected as unknown as Record<string, unknown>).customer_company ? `<div><b>Company:</b> ${(selected as unknown as Record<string, unknown>).customer_company}</div>` : ""}
-          </div>
-        </div>
-        <table>
-          <thead>
-            <tr>
-              <th class="left">#</th>
-              <th class="left">Item</th>
-              <th class="right">Qty</th>
-              <th class="right">Rate (₹)</th>
-              <th class="right">Amount (₹)</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${items.map((it, i) => `
-              <tr>
-                <td>${i + 1}</td>
-                <td>${it.name ?? ""}${it.our_product_id ? ` <span class="code">[${it.our_product_id}]</span>` : ""}</td>
-                <td class="right">${it.quantity}</td>
-                <td class="right">${Number(it.unit_price).toFixed(2)}</td>
-                <td class="right">${Number(it.line_total).toFixed(2)}</td>
-              </tr>`).join("")}
-          </tbody>
-        </table>
-        <div class="totals">
-          ${Number(tot.subtotal ?? 0) ? `<div class="row"><span>Subtotal</span><span>₹${Number(tot.subtotal).toFixed(2)}</span></div>` : ""}
-          ${Number(tot.discount_amount ?? 0) > 0 ? `<div class="row"><span>Discount</span><span>−₹${Number(tot.discount_amount).toFixed(2)}</span></div>` : ""}
-          ${Number(tot.freight_charges ?? 0) > 0 ? `<div class="row"><span>Freight</span><span>₹${Number(tot.freight_charges).toFixed(2)}</span></div>` : ""}
-          ${Number(tot.packaging_charges ?? 0) > 0 ? `<div class="row"><span>Packaging</span><span>₹${Number(tot.packaging_charges).toFixed(2)}</span></div>` : ""}
-          ${Number(tot.gst_amount ?? 0) > 0 ? `<div class="row"><span>GST (${billData.gst_rate_percent ?? 0}%)</span><span>₹${Number(tot.gst_amount).toFixed(2)}</span></div>` : ""}
-          <div class="row grand"><span>Grand Total</span><span>₹${Number(tot.grand_total ?? 0).toFixed(2)}</span></div>
-        </div>
-        ${billData.narration ? `<div class="narration"><b>Narration:</b> ${billData.narration}</div>` : ""}
-        <div class="footer">This is a computer generated ${label.toLowerCase()} bill.</div>
-      </div>`).join('<div class="page-break"></div>');
-
-    const html = `<!DOCTYPE html>
-<html><head>
-<meta charset="utf-8"/>
-<title>Bill ${billData.bill_no ?? billData.id}</title>
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: Arial, sans-serif; font-size: 12px; color: #111; }
-  .copy { padding: 24px 28px; position: relative; }
-  .copy-label { position: absolute; top: 20px; right: 24px; font-size: 11px; font-weight: 700;
-    border: 1.5px solid #111; border-radius: 4px; padding: 2px 10px; text-transform: uppercase; letter-spacing: 0.05em; }
-  .header { margin-bottom: 16px; }
-  .company { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
-  .bill-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 24px; font-size: 12px; }
-  table { width: 100%; border-collapse: collapse; margin: 12px 0; }
-  th, td { padding: 6px 8px; border: 1px solid #ccc; }
-  th { background: #f5f5f5; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }
-  .left { text-align: left; }
-  .right { text-align: right; }
-  td { font-size: 12px; }
-  .code { color: #888; font-size: 10px; }
-  .totals { margin-left: auto; width: 260px; border: 1px solid #ddd; border-radius: 4px; overflow: hidden; }
-  .totals .row { display: flex; justify-content: space-between; padding: 5px 12px; border-bottom: 1px solid #eee; }
-  .totals .row:last-child { border-bottom: none; }
-  .totals .grand { font-weight: 700; font-size: 13px; background: #f8f8f8; }
-  .narration { margin-top: 12px; font-size: 11px; color: #444; border-top: 1px dashed #ccc; padding-top: 8px; }
-  .footer { margin-top: 14px; font-size: 10px; color: #888; text-align: center; border-top: 1px solid #eee; padding-top: 8px; }
-  .page-break { page-break-after: always; height: 0; }
-  @media print {
-    .page-break { page-break-after: always; }
-    @page { margin: 10mm; }
-  }
-</style>
-</head><body>
-${copyHtml}
-<script>setTimeout(function(){ window.print(); }, 300);<\/script>
-</body></html>`;
-
-    const win = window.open("", "_blank", "width=800,height=900");
-    if (win) {
-      win.document.write(html);
-      win.document.close();
-    }
-  }
 
   async function submitOfflineOrder() {
     if (!offlineCustomerId) return showToast("Select a customer", false);
@@ -1016,23 +940,25 @@ ${copyHtml}
                     </button>
                     <div className="text-xs text-amber-700">Click to view full breakdown</div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <div className="flex items-center rounded-lg overflow-hidden border border-slate-300 bg-white shadow-sm">
-                      <button
-                        type="button"
-                        onClick={() => printBill(printCopies)}
-                        className="inline-flex items-center gap-1.5 bg-slate-700 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800"
-                      >
-                        🖨️ Print
-                      </button>
-                      <select value={printCopies} onChange={e => setPrintCopies(Number(e.target.value))}
-                        className="px-2 py-2 text-xs text-slate-700 border-l border-slate-300 bg-white focus:outline-none">
-                        <option value={1}>1 copy</option>
-                        <option value={2}>2 copies</option>
-                        <option value={3}>3 copies</option>
-                        <option value={4}>4 copies</option>
-                      </select>
-                    </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <select
+                      value={printCopies}
+                      onChange={e => setPrintCopies(Number(e.target.value))}
+                      className="rounded-lg border border-slate-300 px-2 py-1.5 text-xs font-semibold text-slate-700"
+                    >
+                      <option value={1}>1 copy (Original)</option>
+                      <option value={2}>2 copies (+ Duplicate)</option>
+                      <option value={3}>3 copies (+ Triplicate)</option>
+                      <option value={4}>4 copies (+ Quadruplicate)</option>
+                    </select>
+                    <button
+                      type="button"
+                      disabled={printing}
+                      onClick={() => triggerPrint(billData.id, printCopies)}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-slate-700 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-slate-800 disabled:opacity-50"
+                    >
+                      {printing ? "Opening…" : "🖨️ Print"}
+                    </button>
                     <a
                       href={`${apiUrl(`customer-bills/${billData.id}/download`)}?x_admin_key=${encodeURIComponent(adminKey)}`}
                       target="_blank"
@@ -1416,19 +1342,25 @@ ${copyHtml}
                 <div className="flex justify-between border-t border-slate-200 pt-1.5 font-bold text-slate-900"><span>Grand total</span><span>₹{billData.totals?.grand_total}</span></div>
               </div>
             </div>
-            <div className="flex flex-wrap justify-end gap-3 border-t border-slate-200 px-6 py-4">
-              <div className="flex items-center rounded-lg overflow-hidden border border-slate-300 shadow-sm">
-                <button type="button" onClick={() => printBill(printCopies)}
-                  className="inline-flex items-center gap-1.5 bg-slate-700 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
-                  🖨️ Print
-                </button>
-                <select value={printCopies} onChange={e => setPrintCopies(Number(e.target.value))}
-                  className="px-2 py-2 text-sm text-slate-700 border-l border-slate-300 bg-white focus:outline-none">
-                  {[1,2,3,4].map(n => (
-                    <option key={n} value={n}>{n === 1 ? "Original only" : n === 2 ? "Orig + Duplicate" : n === 3 ? "Orig + Dup + Trip" : "All 4 copies"}</option>
-                  ))}
-                </select>
-              </div>
+            <div className="flex flex-wrap justify-end gap-3 border-t border-slate-200 px-6 py-4 items-center">
+              <select
+                value={printCopies}
+                onChange={e => setPrintCopies(Number(e.target.value))}
+                className="rounded-lg border border-slate-300 px-2 py-2 text-sm font-semibold text-slate-700"
+              >
+                <option value={1}>1 copy — Original</option>
+                <option value={2}>2 copies — Duplicate</option>
+                <option value={3}>3 copies — Triplicate</option>
+                <option value={4}>4 copies — Quadruplicate</option>
+              </select>
+              <button
+                type="button"
+                disabled={printing}
+                onClick={() => triggerPrint(billData.id, printCopies)}
+                className={BTN_SECONDARY + " disabled:opacity-50"}
+              >
+                {printing ? "Opening…" : "🖨️ Print Bill"}
+              </button>
               <a href={`${apiUrl(`customer-bills/${billData.id}/download`)}?x_admin_key=${encodeURIComponent(adminKey)}`} target="_blank" rel="noreferrer" className={BTN_PRIMARY}>⬇ Download PDF</a>
               <button type="button" onClick={() => setShowBillModal(false)} className={BTN_SECONDARY}>Close</button>
             </div>

@@ -31,7 +31,7 @@ export function AdminScreen({ adminKey, auth }: Props) {
   const canSetup = hasPerm(auth, "admin.setup");
   const canAudit = hasPerm(auth, "admin.audit");
 
-  const [tab, setTab] = useState<"routes" | "categories" | "series" | "yeargroups" | "billseries" | "auditlog">(
+  const [tab, setTab] = useState<"routes" | "categories" | "series" | "yeargroups" | "billseries" | "auditlog" | "appsettings">(
     canSetup ? "routes" : "auditlog"
   );
   const headersAdmin = () => authHeaders(_auth);
@@ -39,11 +39,12 @@ export function AdminScreen({ adminKey, auth }: Props) {
 
   const availableTabs = [
     ...(canSetup ? [
-      { id: "routes" as const,     label: "🗺️ Routes & Cities" },
-      { id: "categories" as const, label: "🏷️ Categories" },
-      { id: "series" as const,     label: "📚 Series" },
-      { id: "yeargroups" as const, label: "📅 Year Groups" },
-      { id: "billseries" as const, label: "🧾 Bill Series" },
+      { id: "routes" as const,      label: "🗺️ Routes & Cities" },
+      { id: "categories" as const,  label: "🏷️ Categories" },
+      { id: "series" as const,      label: "📚 Series" },
+      { id: "yeargroups" as const,  label: "📅 Year Groups" },
+      { id: "billseries" as const,  label: "🧾 Bill Series" },
+      { id: "appsettings" as const, label: "🔐 App Settings" },
     ] : []),
     ...(canAudit ? [{ id: "auditlog" as const, label: "📋 Audit Log" }] : []),
   ];
@@ -93,6 +94,7 @@ export function AdminScreen({ adminKey, auth }: Props) {
       />}
       {tab === "yeargroups" && <YearGroupsTab headersAdmin={headersAdmin} headersJson={headersJson} />}
       {tab === "billseries" && <BillSeriesTab headersAdmin={headersAdmin} headersJson={headersJson} />}
+      {tab === "appsettings" && canSetup && <AppSettingsTab headersJson={headersJson} />}
       {tab === "auditlog" && <AuditLogTab headersAdmin={headersAdmin} />}
     </div>
   );
@@ -713,6 +715,68 @@ function AuditLogTab({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+
+// ─────────────────────── APP SETTINGS TAB ───────────────────────────────────
+
+function AppSettingsTab({ headersJson }: { headersJson: () => Record<string, string> }) {
+  const [pin, setPin] = useState("");
+  const [pinConfirm, setPinConfirm] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  const [currentPin, setCurrentPin] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchApi(apiUrl("app-settings"), { headers: headersJson() })
+      .then(r => r.ok ? r.json() : null)
+      .then((d: { cancel_order_pin?: string } | null) => { if (d) setCurrentPin(d.cancel_order_pin ?? null); })
+      .catch(() => null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function savePin() {
+    if (!pin.trim()) return;
+    if (!/^\d{4,}$/.test(pin)) { setMsg({ text: "PIN must be at least 4 digits", ok: false }); return; }
+    if (pin !== pinConfirm) { setMsg({ text: "PINs do not match", ok: false }); return; }
+    setSaving(true); setMsg(null);
+    const r = await fetchApi(apiUrl("app-settings"), {
+      method: "POST", headers: headersJson(),
+      body: JSON.stringify({ cancel_order_pin: pin }),
+    });
+    const d = await r.json().catch(() => ({})) as { cancel_order_pin?: string };
+    setSaving(false);
+    if (!r.ok) { setMsg({ text: formatApiError(d as Record<string, unknown>), ok: false }); return; }
+    setCurrentPin(d.cancel_order_pin ?? null);
+    setPin(""); setPinConfirm("");
+    setMsg({ text: "PIN updated successfully.", ok: true });
+  }
+
+  return (
+    <div className="space-y-6 max-w-md">
+      <div className={CARD}>
+        <h3 className="mb-1 text-base font-semibold text-slate-700">🔐 Cancel Order PIN</h3>
+        <p className="mb-4 text-sm text-slate-500">
+          Required when cancelling a customer order. Default is 1234.{" "}
+          {currentPin && <>Current PIN is <strong>{currentPin.length}</strong> digits.</>}
+        </p>
+        <div className="space-y-3">
+          <div>
+            <label className={LABEL}>New PIN (min 4 digits)</label>
+            <input type="password" inputMode="numeric" value={pin} onChange={e => setPin(e.target.value)} placeholder="e.g. 1234" className={INPUT} />
+          </div>
+          <div>
+            <label className={LABEL}>Confirm PIN</label>
+            <input type="password" inputMode="numeric" value={pinConfirm} onChange={e => setPinConfirm(e.target.value)} placeholder="Repeat PIN" className={INPUT} />
+          </div>
+          {msg && <div className={`text-sm ${msg.ok ? "text-emerald-600" : "text-red-600"}`}>{msg.text}</div>}
+          <button type="button" onClick={savePin} disabled={saving} className={BTN_PRIMARY}>
+            {saving ? "Saving…" : "Save PIN"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

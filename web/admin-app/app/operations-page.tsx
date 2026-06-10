@@ -52,6 +52,9 @@ function LoginPage({ onAuth }: { onAuth: (a: AuthState) => void }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  const logoutReason = typeof sessionStorage !== "undefined" ? sessionStorage.getItem("erp_logout_reason") : null;
+  useEffect(() => { sessionStorage.removeItem("erp_logout_reason"); }, []);
+
   async function handleAdminKey(e: React.FormEvent) {
     e.preventDefault();
     const key = adminKey.trim();
@@ -117,6 +120,11 @@ function LoginPage({ onAuth }: { onAuth: (a: AuthState) => void }) {
             <h1 className="text-xl font-bold text-white">ERP Portal</h1>
           </div>
 
+        {logoutReason === "inactivity" && (
+          <div className="mb-4 rounded-xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-300 text-center">
+            You were logged out after 15 minutes of inactivity.
+          </div>
+        )}
         <div className="rounded-2xl bg-white/5 border border-white/10 backdrop-blur-sm shadow-2xl overflow-hidden">
           {/* Mode toggle */}
           <div className="flex border-b border-white/10">
@@ -203,11 +211,31 @@ export default function OperationsAdminPage() {
     }
   }
 
-  function onLogout() {
+  function onLogout(reason?: string) {
     setAuth({ type: "none" });
     saveAuth({ type: "none" });
     setMainTab("orders");
+    if (reason) sessionStorage.setItem("erp_logout_reason", reason);
   }
+
+  // Inactivity auto-logout after 15 min
+  useEffect(() => {
+    if (auth.type === "none") return;
+    const TIMEOUT_MS = 15 * 60 * 1000;
+    let timer: ReturnType<typeof setTimeout>;
+    const reset = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => onLogout("inactivity"), TIMEOUT_MS);
+    };
+    const events = ["mousemove", "mousedown", "keydown", "touchstart", "scroll"];
+    events.forEach(e => window.addEventListener(e, reset, { passive: true }));
+    reset();
+    return () => {
+      clearTimeout(timer);
+      events.forEach(e => window.removeEventListener(e, reset));
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auth.type]);
 
   // Legacy adminKey for components still expecting it
   const adminKey = auth.type === "admin_key" ? auth.key : "";

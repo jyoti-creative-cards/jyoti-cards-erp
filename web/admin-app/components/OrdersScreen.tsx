@@ -179,6 +179,11 @@ function CustomerOrdersTab({
   const [selected, setSelected] = useState<CustomerOrderAdminPublic | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
+  // Cancel PIN dialog
+  const [showCancelPin, setShowCancelPin] = useState(false);
+  const [cancelPinInput, setCancelPinInput] = useState("");
+  const [cancelPinError, setCancelPinError] = useState("");
+  const [cancelPinBusy, setCancelPinBusy] = useState(false);
 
   // Bill form
   const [showBillForm, setShowBillForm] = useState(false);
@@ -264,6 +269,7 @@ function CustomerOrdersTab({
   const [showOfflineForm, setShowOfflineForm] = useState(false);
   const [offlineCustomerId, setOfflineCustomerId] = useState("");
   const [offlineItems, setOfflineItems] = useState<{ cid: string; qty: string; price: string }[]>([{ cid: "", qty: "", price: "" }]);
+  const [offlineStockMap, setOfflineStockMap] = useState<Record<string, number>>({}); // cid → qty
   const [offlineGst, setOfflineGst] = useState(false);
   const [offlineGstRate, setOfflineGstRate] = useState("18");
   const [offlineDiscount, setOfflineDiscount] = useState("");
@@ -390,6 +396,12 @@ function CustomerOrdersTab({
 
   async function saveOrder(overrideStatus?: string) {
     if (!selected) return;
+    const targetStatus = overrideStatus ?? editStatus;
+    // Require PIN when cancelling
+    if (targetStatus === "cancelled" && !showCancelPin) {
+      setShowCancelPin(true); setCancelPinInput(""); setCancelPinError("");
+      return;
+    }
     setSaving(true); setSaveMsg("");
     const body: Record<string, unknown> = {
       status: overrideStatus ?? editStatus,
@@ -428,6 +440,18 @@ function CustomerOrdersTab({
     }
 
     void load();
+  }
+
+  async function confirmCancelWithPin() {
+    if (!cancelPinInput.trim()) { setCancelPinError("Enter PIN"); return; }
+    setCancelPinBusy(true); setCancelPinError("");
+    const r = await fetchApi(apiUrl("app-settings"), { headers: headers() }).catch(() => null);
+    const settings = r?.ok ? await r.json() as { cancel_order_pin: string } : { cancel_order_pin: "1234" };
+    const correct = settings.cancel_order_pin || "1234";
+    setCancelPinBusy(false);
+    if (cancelPinInput.trim() !== correct) { setCancelPinError("Wrong PIN. Try again."); return; }
+    setShowCancelPin(false);
+    void saveOrder("cancelled");
   }
 
   function saveDraft() {
@@ -734,14 +758,34 @@ function CustomerOrdersTab({
             {offlineItems.map((row, idx) => (
               <div key={idx} className="mb-2 flex flex-wrap gap-2">
                 <select value={row.cid}
-                  onChange={e => setOfflineItems(p => p.map((r, i) => i === idx ? { ...r, cid: e.target.value, price: catalog.find(c => String(c.id) === e.target.value)?.selling_price?.toString() || "" } : r))}
+                  onChange={async e => {
+                    const newCid = e.target.value;
+                    setOfflineItems(p => p.map((r, i) => i === idx ? { ...r, cid: newCid, price: catalog.find(c => String(c.id) === newCid)?.selling_price?.toString() || "" } : r));
+                    if (newCid && !(newCid in offlineStockMap)) {
+                      const sr = await fetchApi(apiUrl("inventory/stock-check"), {
+                        method: "POST", headers: headers(),
+                        body: JSON.stringify({ catalog_product_ids: [Number(newCid)] }),
+                      }).catch(() => null);
+                      if (sr?.ok) {
+                        const sd = await sr.json() as Record<string, number>;
+                        setOfflineStockMap(m => ({ ...m, [newCid]: sd[Number(newCid)] ?? 0 }));
+                      }
+                    }
+                  }}
                   className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-2 text-sm">
                   <option value="">— product —</option>
                   {catalog.map(c => <option key={c.id} value={c.id}>{c.our_product_id} – {c.name}</option>)}
                 </select>
-                <input type="number" min="1" placeholder="Qty" value={row.qty}
-                  onChange={e => setOfflineItems(p => p.map((r, i) => i === idx ? { ...r, qty: e.target.value } : r))}
-                  className="w-16 rounded-lg border border-slate-300 px-2 py-2 text-sm" />
+                <div className="flex flex-col justify-center">
+                  <input type="number" min="1" placeholder="Qty" value={row.qty}
+                    onChange={e => setOfflineItems(p => p.map((r, i) => i === idx ? { ...r, qty: e.target.value } : r))}
+                    className="w-16 rounded-lg border border-slate-300 px-2 py-2 text-sm" />
+                  {row.cid && row.cid in offlineStockMap && (
+                    <span className={`text-xs text-center mt-0.5 font-medium ${offlineStockMap[row.cid] <= 0 ? "text-red-500" : offlineStockMap[row.cid] < 5 ? "text-amber-500" : "text-emerald-600"}`}>
+                      {offlineStockMap[row.cid] <= 0 ? "Out" : `${offlineStockMap[row.cid]} avail`}
+                    </span>
+                  )}
+                </div>
                 <input type="number" min="0" step="0.01" placeholder="Price" value={row.price}
                   onChange={e => setOfflineItems(p => p.map((r, i) => i === idx ? { ...r, price: e.target.value } : r))}
                   className="w-24 rounded-lg border border-slate-300 px-2 py-2 text-sm" />
@@ -837,9 +881,30 @@ function CustomerOrdersTab({
         width="max-w-xl"
         footer={
           <div className="flex flex-wrap items-center gap-3">
-            <button type="button" onClick={() => void saveOrder()} disabled={saving} className={BTN_PRIMARY}>
-              {saving ? "Saving…" : "Save changes"}
-            </button>
+            {showCancelPin ? (
+              <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2">
+                <span className="text-xs font-semibold text-red-700">Cancel PIN:</span>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  autoFocus
+                  value={cancelPinInput}
+                  onChange={e => setCancelPinInput(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && void confirmCancelWithPin()}
+                  className="w-24 rounded border border-red-300 px-2 py-1 text-sm"
+                  placeholder="Enter PIN"
+                />
+                <button type="button" onClick={() => void confirmCancelWithPin()} disabled={cancelPinBusy} className="rounded bg-red-600 px-3 py-1 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-50">
+                  {cancelPinBusy ? "…" : "Confirm"}
+                </button>
+                <button type="button" onClick={() => { setShowCancelPin(false); setCancelPinInput(""); setCancelPinError(""); }} className="text-slate-400 hover:text-slate-600 text-xs">Cancel</button>
+                {cancelPinError && <span className="text-xs text-red-600">{cancelPinError}</span>}
+              </div>
+            ) : (
+              <button type="button" onClick={() => void saveOrder()} disabled={saving} className={BTN_PRIMARY}>
+                {saving ? "Saving…" : "Save changes"}
+              </button>
+            )}
             {selected && ["open", "confirmed", "billed"].includes(selected.status) && !showBillForm && (
               <button type="button" onClick={() => { setShowBillForm(true); setPartialBillQty({}); }} className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-amber-600">
                 🧾 Generate Bill

@@ -9,6 +9,7 @@ from app.db.session import init_db
 from app.routers import (
     accounting,
     addons,
+    app_settings,
     audit,
     auth,
     bank,
@@ -82,6 +83,7 @@ app.include_router(credit_notes.router, prefix="/api/v1")
 app.include_router(staff.router, prefix="/api/v1")
 app.include_router(vendor_orders.router, prefix="/api/v1")
 app.include_router(reports.router, prefix="/api/v1")
+app.include_router(app_settings.router, prefix="/api/v1")
 
 
 @app.on_event("startup")

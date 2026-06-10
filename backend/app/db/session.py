@@ -502,11 +502,24 @@ def _migrate_v5_vendor_receipt_postgres() -> None:
 
 
 def _migrate_v7_bill_narration_postgres() -> None:
-    """Add narration column to portal_customer_bills."""
+    """Add narration, bill_status, cancelled_by, cancelled_reason; drop unique on customer_order_id."""
     if engine.dialect.name != "postgresql":
         return
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE portal_customer_bills ADD COLUMN IF NOT EXISTS narration TEXT"))
+        conn.execute(text("ALTER TABLE portal_customer_bills ADD COLUMN IF NOT EXISTS bill_status VARCHAR(20) NOT NULL DEFAULT 'active'"))
+        conn.execute(text("ALTER TABLE portal_customer_bills ADD COLUMN IF NOT EXISTS cancelled_by VARCHAR(200)"))
+        conn.execute(text("ALTER TABLE portal_customer_bills ADD COLUMN IF NOT EXISTS cancelled_reason TEXT"))
+        # Drop the unique constraint so multiple bill versions can exist per order
+        # Constraint name may vary; try both common naming patterns
+        try:
+            conn.execute(text("ALTER TABLE portal_customer_bills DROP CONSTRAINT IF EXISTS portal_customer_bills_customer_order_id_key"))
+        except Exception:
+            pass
+        try:
+            conn.execute(text("ALTER TABLE portal_customer_bills DROP CONSTRAINT IF EXISTS uq_portal_customer_bills_customer_order_id"))
+        except Exception:
+            pass
 
 
 def _migrate_v6b_order_versions_postgres() -> None:

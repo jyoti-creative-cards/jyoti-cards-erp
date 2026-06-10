@@ -20,7 +20,6 @@ class CustomerBill(Base):
         Integer,
         ForeignKey("portal_customer_orders.id", ondelete="CASCADE"),
         nullable=False,
-        unique=True,
         index=True,
     )
     gst_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
@@ -31,6 +30,9 @@ class CustomerBill(Base):
     bill_no: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     bill_series_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("portal_bill_series.id", ondelete="SET NULL"), nullable=True)
     narration: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    bill_status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="active")  # active | cancelled
+    cancelled_by: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)  # staff name / "admin"
+    cancelled_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Drawer } from "@/components/Drawer";
 import { Badge, Field } from "@/components/erp-ui";
 import { apiUrl, authHeaders, fetchApi, formatApiError, jsonAuthHeaders } from "@/lib/api";
@@ -414,8 +414,10 @@ function StatementModal({
   const [error, setError] = useState("");
   const [orderDetail, setOrderDetail] = useState<Record<string, unknown> | null>(null);
   const [orderLoading, setOrderLoading] = useState(false);
+  const [billDetail, setBillDetail] = useState<Record<string, unknown> | null>(null);
   const [entryFilter, setEntryFilter] = useState<"all" | "bills" | "receipts">("all");
   const [view, setView] = useState<"ledger" | "summary">("ledger");
+  const [showDetailed, setShowDetailed] = useState(false);
 
   // Date range filter (for summary + ledger)
   const today = new Date().toISOString().slice(0, 10);
@@ -465,6 +467,12 @@ function StatementModal({
     window.open(url, "_blank");
   }
 
+  function openBillDetail(billId: number) {
+    fetchApi(apiUrl(`customer-bills/${billId}`), { headers: headersAdmin() })
+      .then(async r => { if (r.ok) setBillDetail(await r.json()); })
+      .catch(() => {});
+  }
+
   function openOrderDetail(orderId: number) {
     setOrderLoading(true);
     fetchApi(apiUrl(`customer-orders/${orderId}`), { headers: headersAdmin() })
@@ -499,9 +507,13 @@ function StatementModal({
               </div>
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <button type="button" onClick={() => setShowDetailed(v => !v)}
+                style={{ fontSize: 12, fontWeight: 600, background: showDetailed ? "#7c3aed" : "#e0e7ff", color: showDetailed ? "#fff" : "#4338ca", border: "none", borderRadius: 8, padding: "7px 14px", cursor: "pointer" }}>
+                📄 {showDetailed ? "Simple View" : "Detailed Statement"}
+              </button>
               <button type="button" onClick={downloadPdf}
                 style={{ fontSize: 12, fontWeight: 600, background: "#374151", color: "#fff", border: "none", borderRadius: 8, padding: "7px 14px", cursor: "pointer" }}>
-                🖨️ Print Statement
+                🖨️ Print
               </button>
               <button type="button" onClick={onClose} style={{ fontSize: 20, lineHeight: 1, background: "none", border: "none", cursor: "pointer", color: "#94a3b8", padding: "2px 6px" }}>✕</button>
             </div>
@@ -648,11 +660,11 @@ function StatementModal({
                 </thead>
                 <tbody>
                   {filteredEntries.map((en, i) => (
+                    <React.Fragment key={i}>
                     <tr
-                      key={i}
                       onClick={() => en.order_id && openOrderDetail(en.order_id)}
                       style={{
-                        borderBottom: "1px solid #f1f5f9",
+                        borderBottom: showDetailed && en.type === "bill" && en.bill_id ? "none" : "1px solid #f1f5f9",
                         background: en.debit ? "#fff5f5" : en.credit ? "#f0fdf4" : undefined,
                         cursor: en.order_id ? "pointer" : "default",
                       }}
@@ -671,8 +683,14 @@ function StatementModal({
                         )}
                       </td>
                       <td style={{ padding: "8px 12px", color: "#1e293b" }}>
-                        {en.description}
-                        {en.order_id && <span style={{ color: "#94a3b8", fontSize: 11, marginLeft: 6 }}>→ view</span>}
+                        <div>{en.description}</div>
+                        {en.bill_id && (
+                          <button type="button" onClick={e => { e.stopPropagation(); openBillDetail(en.bill_id!); }}
+                            style={{ fontSize: 10, color: "#1d4ed8", background: "none", border: "none", cursor: "pointer", padding: 0, marginTop: 2 }}>
+                            View bill details →
+                          </button>
+                        )}
+                        {en.order_id && !en.bill_id && <span style={{ color: "#94a3b8", fontSize: 11, marginLeft: 6 }}>→ view order</span>}
                       </td>
                       <td style={{ padding: "8px 12px", textAlign: "right", color: en.debit ? "#dc2626" : "#94a3b8", fontWeight: en.debit ? 600 : 400 }}>
                         {en.debit ? fmt(en.debit) : "—"}
@@ -684,6 +702,11 @@ function StatementModal({
                         {fmt(en.running_balance ?? en.balance)}
                       </td>
                     </tr>
+                    {/* Detailed bill rows inline when showDetailed */}
+                    {showDetailed && en.type === "bill" && en.bill_id && (
+                      <BillDetailRow billId={en.bill_id} headersAdmin={headersAdmin} />
+                    )}
+                    </React.Fragment>
                   ))}
                   {filteredEntries.length === 0 && (
                     <tr><td colSpan={6} style={{ padding: "48px 0", textAlign: "center", color: "#94a3b8" }}>No transactions yet.</td></tr>
@@ -759,7 +782,106 @@ function StatementModal({
           </div>
         </div>
       )}
+
+      {/* Bill detail popup */}
+      {billDetail && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 80, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.5)" }}
+          onClick={() => setBillDetail(null)}>
+          <div style={{ background: "#fff", borderRadius: 14, width: "min(560px, 95vw)", maxHeight: "85vh", overflow: "auto", boxShadow: "0 20px 40px rgba(0,0,0,0.3)" }}
+            onClick={e => e.stopPropagation()}>
+            {(() => {
+              const b = billDetail as Record<string, unknown>;
+              const tot = (b.totals ?? {}) as Record<string, unknown>;
+              const lines = Array.isArray(tot.lines) ? tot.lines as Record<string, unknown>[] : [];
+              return (
+                <>
+                  <div style={{ padding: "14px 18px 10px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: 15, color: "#0f172a" }}>
+                        {b.bill_no ? `Bill ${String(b.bill_no)}` : `Bill #${String(b.id)}`}
+                      </div>
+                      <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
+                        Order #{String(b.customer_order_id)} · {b.created_at ? new Date(String(b.created_at)).toLocaleDateString("en-IN") : ""}
+                        {b.bill_status === "cancelled" && <span style={{ marginLeft: 6, color: "#dc2626", fontWeight: 700 }}>CANCELLED</span>}
+                      </div>
+                    </div>
+                    <button onClick={() => setBillDetail(null)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#94a3b8" }}>✕</button>
+                  </div>
+                  <div style={{ padding: "14px 18px" }}>
+                    {!!b.narration && <div style={{ marginBottom: 10, fontSize: 12, color: "#475569", background: "#f8fafc", borderRadius: 8, padding: "8px 12px" }}><b>Narration:</b> {String(b.narration)}</div>}
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                      <thead>
+                        <tr style={{ background: "#f8fafc" }}>
+                          {["Item", "Qty", "Rate", "Total"].map((h, i) => (
+                            <th key={h} style={{ padding: "6px 10px", textAlign: i > 0 ? "right" : "left", fontSize: 11, fontWeight: 600, color: "#64748b", borderBottom: "1px solid #e2e8f0" }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {lines.map((ln, i) => (
+                          <tr key={i} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                            <td style={{ padding: "6px 10px" }}>{String(ln.name ?? ln.our_product_id ?? "")}</td>
+                            <td style={{ padding: "6px 10px", textAlign: "right" }}>{String(ln.quantity ?? "")}</td>
+                            <td style={{ padding: "6px 10px", textAlign: "right" }}>₹{String(ln.rate_inclusive ?? ln.unit_price ?? "")}</td>
+                            <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 600 }}>₹{String(ln.line_total ?? "")}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <div style={{ marginTop: 10, textAlign: "right" }}>
+                      {Number(tot.discount_amount ?? 0) > 0 && <div style={{ fontSize: 12, color: "#64748b" }}>Discount: -₹{String(tot.discount_amount)}</div>}
+                      {Number(tot.gst_amount ?? 0) > 0 && <div style={{ fontSize: 12, color: "#64748b" }}>GST ({String(tot.gst_rate_percent ?? b.gst_rate_percent ?? "")}%): ₹{String(tot.gst_amount)}</div>}
+                      {Number(tot.freight_charges ?? 0) > 0 && <div style={{ fontSize: 12, color: "#64748b" }}>Freight: ₹{String(tot.freight_charges)}</div>}
+                      <div style={{ fontWeight: 800, fontSize: 15, marginTop: 6 }}>Grand Total: ₹{String(tot.grand_total)}</div>
+                    </div>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+function BillDetailRow({ billId, headersAdmin }: { billId: number; headersAdmin: () => Record<string, string> }) {
+  const [bill, setBill] = useState<Record<string, unknown> | null>(null);
+  useEffect(() => {
+    fetchApi(apiUrl(`customer-bills/${billId}`), { headers: headersAdmin() })
+      .then(async r => { if (r.ok) setBill(await r.json()); })
+      .catch(() => {});
+  }, [billId]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!bill) return null;
+  const tot = (bill.totals ?? {}) as Record<string, unknown>;
+  const lines = Array.isArray(tot.lines) ? tot.lines as Record<string, unknown>[] : [];
+  return (
+    <tr>
+      <td colSpan={6} style={{ background: "#f8fafc", padding: "0 12px 10px 24px", borderBottom: "1px solid #e2e8f0" }}>
+        <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              {["Product", "Qty", "Rate", "Amount"].map((h, i) => (
+                <th key={h} style={{ padding: "4px 8px", textAlign: i > 0 ? "right" : "left", color: "#64748b", fontWeight: 600, fontSize: 10, textTransform: "uppercase", borderBottom: "1px solid #e2e8f0" }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {lines.map((ln, i) => (
+              <tr key={i} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                <td style={{ padding: "4px 8px", color: "#1e293b" }}>{String(ln.name ?? ln.our_product_id ?? "")}</td>
+                <td style={{ padding: "4px 8px", textAlign: "right", color: "#475569" }}>{String(ln.quantity ?? "")}</td>
+                <td style={{ padding: "4px 8px", textAlign: "right", color: "#475569" }}>₹{String(ln.rate_inclusive ?? ln.unit_price ?? "")}</td>
+                <td style={{ padding: "4px 8px", textAlign: "right", fontWeight: 600, color: "#0f172a" }}>₹{String(ln.line_total ?? "")}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div style={{ textAlign: "right", fontSize: 12, fontWeight: 700, marginTop: 4, color: "#1d4ed8" }}>
+          Grand Total: ₹{String(tot.grand_total ?? "")}
+        </div>
+      </td>
+    </tr>
   );
 }
 

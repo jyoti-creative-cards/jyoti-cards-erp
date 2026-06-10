@@ -14,7 +14,7 @@ function statusBadge(status: string) {
   const map: Record<string, { label: string; cls: string }> = {
     open:       { label: "Open",       cls: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
     confirmed:  { label: "Open",       cls: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
-    billed:     { label: "Partial",    cls: "bg-amber-50 text-amber-700 ring-amber-200" },
+    billed:     { label: "Billed",     cls: "bg-violet-50 text-violet-700 ring-violet-200" },
     closed:     { label: "Closed",     cls: "bg-slate-100 text-slate-600 ring-slate-200" },
     shipped:    { label: "Shipped",    cls: "bg-blue-50 text-blue-700 ring-blue-200" },
     cancelled:  { label: "Cancelled",  cls: "bg-red-50 text-red-700 ring-red-200" },
@@ -223,19 +223,26 @@ function CustomerOrdersTab({
   async function triggerPrint(billId: number, copies: number) {
     setPrinting(true);
     try {
-      const url = apiUrl(`customer-bills/${billId}/print?copies=${copies}&x_admin_key=${encodeURIComponent(adminKey)}`);
-      const res = await fetch(url);
-      if (!res.ok) { setPrinting(false); return; }
+      const url = apiUrl(`customer-bills/${billId}/print?copies=${copies}`);
+      const headers: Record<string, string> = {};
+      if (adminKey.trim()) headers["X-Admin-Key"] = adminKey.trim();
+      const res = await fetchApi(url, { headers });
+      if (!res.ok) {
+        // Fallback: open download URL in new tab
+        window.open(`${apiUrl(`customer-bills/${billId}/download`)}?x_admin_key=${encodeURIComponent(adminKey)}`, "_blank");
+        return;
+      }
       const blob = await res.blob();
       const blobUrl = URL.createObjectURL(blob);
-      const iframe = document.createElement("iframe");
-      iframe.style.cssText = "position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;border:none;";
-      iframe.src = blobUrl;
-      document.body.appendChild(iframe);
-      iframe.onload = () => {
-        try { iframe.contentWindow?.print(); } catch (_) { window.open(blobUrl, "_blank"); }
-        setTimeout(() => { document.body.removeChild(iframe); URL.revokeObjectURL(blobUrl); }, 60000);
-      };
+      // Open blob in new window then trigger print
+      const w = window.open(blobUrl, "_blank");
+      if (w) {
+        w.onload = () => { try { w.print(); } catch (_) { /* user prints manually */ } };
+        // For PDFs loaded by browser plugin, onload may not fire; auto-focus helps
+        setTimeout(() => { try { w.focus(); } catch (_) {} }, 500);
+      }
+      // Revoke after delay
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 120000);
     } finally {
       setPrinting(false);
     }
@@ -509,8 +516,8 @@ function CustomerOrdersTab({
 
   const filtered = orders.filter((o) => {
     let matchStatus = true;
-    if (statusFilter === "open") matchStatus = o.status === "open" || o.status === "confirmed" || o.status === "billed";
-    else if (statusFilter === "closed") matchStatus = o.status === "closed" || o.status === "shipped";
+    if (statusFilter === "open") matchStatus = o.status === "open" || o.status === "confirmed";
+    else if (statusFilter === "closed") matchStatus = o.status === "closed" || o.status === "shipped" || o.status === "billed";
     else if (statusFilter) matchStatus = o.status === statusFilter;
     const q = search.toLowerCase();
     const matchSearch = !q || o.customer_name.toLowerCase().includes(q) || o.customer_phone.includes(q) || String(o.id).includes(q);
@@ -786,10 +793,10 @@ function CustomerOrdersTab({
                 <label className={LABEL}>Status</label>
                 <select value={editStatus} onChange={(e) => setEditStatus(e.target.value)} className={INPUT}>
                   <option value="open">Open</option>
+                  <option value="billed">Billed</option>
                   <option value="closed">Closed</option>
                   <option value="cancelled">Cancelled</option>
                   <option value="confirmed">Confirmed (legacy)</option>
-                  <option value="billed">Billed (legacy)</option>
                   <option value="shipped">Shipped (legacy)</option>
                 </select>
               </div>

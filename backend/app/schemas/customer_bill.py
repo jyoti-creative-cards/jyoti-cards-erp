@@ -37,5 +37,8 @@ class CustomerBillPublic(BaseModel):
     bill_no: Optional[str] = None
     bill_series_id: Optional[int] = None
     narration: Optional[str] = None
+    bill_status: str = "active"  # active | cancelled
+    cancelled_by: Optional[str] = None
+    cancelled_reason: Optional[str] = None
     created_at: datetime
     updated_at: datetime

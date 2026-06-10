@@ -761,7 +761,10 @@ def admin_edit_order_items(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="order not found")
 
     # Find existing bill
-    existing_bill = db.query(CustomerBill).filter(CustomerBill.customer_order_id == order_id).first()
+    existing_bill = db.query(CustomerBill).filter(
+        CustomerBill.customer_order_id == order_id,
+        CustomerBill.bill_status != "cancelled",
+    ).first()
 
     # Save snapshot before edit
     snap = _snapshot_order(row, event="edited_with_bill" if existing_bill else "edited", bill_id=existing_bill.id if existing_bill else None)
@@ -795,8 +798,18 @@ def admin_edit_order_items(
     db.add(row)
     db.flush()
 
-    # If bill exists, regenerate it
+    # If bill exists and items changed: cancel old bill, create new active bill
     if existing_bill and body.items is not None:
+        from app.models.customer_bill import CustomerBill as _CBill
+
+        # Cancel the old bill
+        existing_bill.bill_status = "cancelled"
+        existing_bill.cancelled_by = "edit"
+        existing_bill.cancelled_reason = f"Replaced by new bill on order edit (was bill #{existing_bill.id})"
+        db.add(existing_bill)
+        db.flush()
+
+        # Build totals for new bill
         bill_items = [it for it in (row.items or []) if isinstance(it, dict)]
         gst_rate = existing_bill.gst_rate_percent or _Dec("0")
         totals = compute_bill_totals(
@@ -807,9 +820,20 @@ def admin_edit_order_items(
             freight_charges=None,
             packaging_charges=None,
         )
-        existing_bill.totals = totals
-        existing_bill.document_key = None
-        db.add(existing_bill)
+
+        # Create new active bill (new row, unique=False on customer_order_id can have duplicates now)
+        new_bill = _CBill(
+            customer_order_id=row.id,
+            gst_enabled=existing_bill.gst_enabled,
+            gst_rate_percent=gst_rate,
+            discount_percent=existing_bill.discount_percent,
+            totals=totals,
+            bill_no=existing_bill.bill_no,  # keep same bill number
+            bill_series_id=existing_bill.bill_series_id,
+            narration=existing_bill.narration,
+            bill_status="active",
+        )
+        db.add(new_bill)
         db.flush()
 
         if storage_configured():
@@ -818,24 +842,25 @@ def admin_edit_order_items(
                 cust_name = cust.name if cust else ""
                 company = cust.company_name if cust else None
                 pdf_bytes = render_customer_bill_pdf(
-                    bill_id=existing_bill.id,
+                    bill_id=new_bill.id,
                     order_id=row.id,
                     customer_name=company or cust_name,
                     customer_company=company,
                     totals=totals,
                     customer_notes=row.customer_notes or None,
+                    narration=new_bill.narration,
                     item_image_urls={},
                     order_created_at=row.created_at,
                 )
                 key = f"customer_bills/{_uuid.uuid4().hex}.pdf"
                 upload_bytes(key, pdf_bytes, "application/pdf")
-                existing_bill.document_key = key
-                db.add(existing_bill)
+                new_bill.document_key = key
+                db.add(new_bill)
             except Exception as ex:
                 print(f"Edit-items bill PDF failed: {ex}")
 
         try:
-            ensure_ar_for_customer_bill(db, bill=existing_bill, order=row, totals=totals)
+            ensure_ar_for_customer_bill(db, bill=new_bill, order=row, totals=totals)
         except Exception as ex:
             print(f"Edit-items AR failed: {ex}")
 

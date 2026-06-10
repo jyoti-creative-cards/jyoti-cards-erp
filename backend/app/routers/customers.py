@@ -413,7 +413,10 @@ def _build_statement(
     order_ids = [o.id for o in orders]
     bills_by_order: dict[int, CustomerBill] = {}
     if order_ids:
-        for b in db.query(CustomerBill).filter(CustomerBill.customer_order_id.in_(order_ids)).all():
+        for b in db.query(CustomerBill).filter(
+            CustomerBill.customer_order_id.in_(order_ids),
+            CustomerBill.bill_status != "cancelled",
+        ).all():
             bills_by_order[b.customer_order_id] = b
 
     total_billed = Decimal("0")
@@ -647,7 +650,7 @@ def get_customer_stats(
     if order_ids:
         invoice_count = (
             db.query(CustomerBill)
-            .filter(CustomerBill.customer_order_id.in_(order_ids))
+            .filter(CustomerBill.customer_order_id.in_(order_ids), CustomerBill.bill_status != "cancelled")
             .count()
         )
 

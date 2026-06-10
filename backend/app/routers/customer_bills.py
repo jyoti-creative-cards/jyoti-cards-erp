@@ -41,6 +41,9 @@ def _to_public(row: CustomerBill) -> CustomerBillPublic:
         bill_no=row.bill_no,
         bill_series_id=row.bill_series_id,
         narration=row.narration,
+        bill_status=row.bill_status or "active",
+        cancelled_by=row.cancelled_by,
+        cancelled_reason=row.cancelled_reason,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -150,12 +153,11 @@ def generate_customer_bill(body: CustomerBillGenerate, db: Session = Depends(get
             new_it["line_total"] = float(it.get("unit_price", 0)) * remaining
             items.append(new_it)
 
-        # Mark all items as fully billed
+        # Mark all items as fully billed (preserve original total_amount)
         for it in all_order_items:
             it["qty_billed"] = int(it.get("quantity", 0))
         order.items = all_order_items
         flag_modified(order, "items")
-        order.total_amount = Decimal("0")
 
     gst_rate = Decimal(str(body.gst_rate_percent))
     if gst_rate < 0:
@@ -206,7 +208,10 @@ def generate_customer_bill(body: CustomerBillGenerate, db: Session = Depends(get
     # Gather product image URLs for PDF
     item_image_urls = _get_item_image_urls(db, items)
 
-    existing = db.query(CustomerBill).filter(CustomerBill.customer_order_id == order.id).first()
+    existing = db.query(CustomerBill).filter(
+        CustomerBill.customer_order_id == order.id,
+        CustomerBill.bill_status != "cancelled",
+    ).first()
     old_keys: list[str] = []
 
     # Resolve bill_no from series if requested
@@ -273,13 +278,13 @@ def generate_customer_bill(body: CustomerBillGenerate, db: Session = Depends(get
     upload_bytes(key, pdf_bytes, "application/pdf")
     row.document_key = key
     db.add(row)
-    # Update order status: if all items billed → close; else keep open
+    # Update order status: if all items billed → billed; else keep open (partial)
     all_billed = all(
         int(it.get("qty_billed", 0)) >= int(it.get("quantity", 0))
         for it in (order.items if isinstance(order.items, list) else [])
         if isinstance(it, dict)
     )
-    order.status = "closed" if all_billed else "open"
+    order.status = "billed" if all_billed else "open"
     db.add(order)
     db.commit()
     db.refresh(row)
@@ -322,6 +327,18 @@ def generate_customer_bill(body: CustomerBillGenerate, db: Session = Depends(get
 
 
 from fastapi.responses import RedirectResponse
+
+
+@router.get("/order/{order_id}/history", response_model=list[CustomerBillPublic], dependencies=[Depends(require_admin)])
+def get_order_bill_history(order_id: int, db: Session = Depends(get_db)) -> list[CustomerBillPublic]:
+    """Return all bills (active + cancelled) for an order, newest first."""
+    rows = (
+        db.query(CustomerBill)
+        .filter(CustomerBill.customer_order_id == order_id)
+        .order_by(CustomerBill.id.desc())
+        .all()
+    )
+    return [_to_public(r) for r in rows]
 
 
 @router.get("/{bill_id}/download", dependencies=[Depends(require_admin)])

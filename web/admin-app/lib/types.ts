@@ -286,6 +286,9 @@ export interface CustomerBillPublic {
   document_key: string | null;
   document_url: string | null;
   narration?: string | null;
+  bill_status?: string;       // "active" | "cancelled"
+  cancelled_by?: string | null;
+  cancelled_reason?: string | null;
   created_at: string;
   updated_at: string;
 }

@@ -199,6 +199,8 @@ function CustomerOrdersTab({
   const [itemOverrides, setItemOverrides] = useState<Record<number, { enabled: boolean; price: string; discount: string }>>({});
   const [bulkDiscount, setBulkDiscount] = useState("");
   const [billNarration, setBillNarration] = useState("");
+  const [stockWarning, setStockWarning] = useState<{items: {name: string; need: number; have: number}[]} | null>(null);
+  const [billBodyPending, setBillBodyPending] = useState<Record<string, unknown> | null>(null);
 
   // Partial billing: which items/quantities to bill in this run
   const [partialBillQty, setPartialBillQty] = useState<Record<number, string>>({});
@@ -428,6 +430,57 @@ function CustomerOrdersTab({
     void load();
   }
 
+  function saveDraft() {
+    if (!selected) return;
+    const draft = { gstEnabled, gstRate, freight, packaging, discount, billSeriesId, rateType, billNarration, itemOverrides, partialBillQty };
+    localStorage.setItem(`bill_draft_${selected.id}`, JSON.stringify(draft));
+    showToast("Draft saved. You can reload it anytime.", true);
+  }
+
+  function loadDraft() {
+    if (!selected) return;
+    const raw = localStorage.getItem(`bill_draft_${selected.id}`);
+    if (!raw) { showToast("No draft found for this order.", false); return; }
+    try {
+      const d = JSON.parse(raw);
+      if (d.gstEnabled !== undefined) setGstEnabled(d.gstEnabled);
+      if (d.gstRate) setGstRate(d.gstRate);
+      if (d.freight) setFreight(d.freight);
+      if (d.packaging) setPackaging(d.packaging);
+      if (d.discount) setDiscount(d.discount);
+      if (d.billSeriesId) setBillSeriesId(d.billSeriesId);
+      if (d.rateType) setRateType(d.rateType);
+      if (d.billNarration) setBillNarration(d.billNarration);
+      if (d.itemOverrides) setItemOverrides(d.itemOverrides);
+      if (d.partialBillQty) setPartialBillQty(d.partialBillQty);
+      showToast("Draft loaded.", true);
+    } catch { showToast("Could not load draft.", false); }
+  }
+
+  function hasDraft() {
+    if (!selected) return false;
+    return !!localStorage.getItem(`bill_draft_${selected.id}`);
+  }
+
+  async function submitBillBody(body: Record<string, unknown>) {
+    setBillBusy(true); setBillMsg(""); setStockWarning(null); setBillBodyPending(null);
+    const r = await fetchApi(apiUrl("customer-bills/generate"), { method: "POST", headers: headers(), body: JSON.stringify(body) });
+    const data = await r.json().catch(() => ({}));
+    setBillBusy(false);
+    if (!r.ok) { setBillMsg(formatApiError(data)); return; }
+    const bill = data as CustomerBillPublic;
+    setBillData(bill);
+    const billLabel = bill.bill_no ? `Bill ${bill.bill_no}` : `Bill #${bill.id}`;
+    setBillMsg(`✓ ${billLabel} generated.`);
+    setShowBillForm(false);
+    if (selected) localStorage.removeItem(`bill_draft_${selected.id}`);
+    void load();
+    if (selected) {
+      const updated = await fetchApi(apiUrl(`customer-orders/${selected.id}`), { headers: headers() });
+      if (updated.ok) setSelected(await updated.json());
+    }
+  }
+
   async function generateBill() {
     if (!selected) return;
 
@@ -442,7 +495,7 @@ function CustomerOrdersTab({
       return;
     }
 
-    setBillBusy(true); setBillMsg(""); setShowZeroRateBanner(false);
+    setShowZeroRateBanner(false);
     const body: Record<string, unknown> = {
       customer_order_id: selected.id,
       gst_enabled: gstEnabled,
@@ -473,19 +526,35 @@ function CustomerOrdersTab({
     const hasPartial = Object.values(partialBillQty).some(v => v.trim() !== "");
     if (hasPartial) body.bill_items = partialItems;
 
-    const r = await fetchApi(apiUrl("customer-bills/generate"), { method: "POST", headers: headers(), body: JSON.stringify(body) });
-    const data = await r.json().catch(() => ({}));
+    // Stock check before billing
+    setBillBusy(true);
+    const itemsToCheck = hasPartial ? partialItems : selected.items.map(it => ({
+      catalog_product_id: it.catalog_product_id,
+      quantity: Number(partialBillQty[it.catalog_product_id] ?? it.quantity),
+    }));
+    const stockR = await fetchApi(apiUrl("inventory/stock-check"), {
+      method: "POST", headers: headers(),
+      body: JSON.stringify({ catalog_product_ids: itemsToCheck.map(i => i.catalog_product_id) }),
+    }).catch(() => null);
     setBillBusy(false);
-    if (!r.ok) { setBillMsg(formatApiError(data)); return; }
-    const bill = data as CustomerBillPublic;
-    setBillData(bill);
-    const billLabel = bill.bill_no ? `Bill ${bill.bill_no}` : `Bill #${bill.id}`;
-    setBillMsg(`✓ ${billLabel} generated and sent to customer via WhatsApp.`);
-    setShowBillForm(false);
-    void load();
-    // Refresh the selected order
-    const updated = await fetchApi(apiUrl(`customer-orders/${selected.id}`), { headers: headersAdmin() });
-    if (updated.ok) setSelected(await updated.json());
+
+    if (stockR?.ok) {
+      const stockData = await stockR.json() as Record<number, number>;
+      const lowItems = itemsToCheck
+        .map(it => {
+          const have = stockData[it.catalog_product_id] ?? 0;
+          const item = selected.items.find(i => i.catalog_product_id === it.catalog_product_id);
+          return { name: String(item?.name || item?.our_product_id || it.catalog_product_id), need: it.quantity, have };
+        })
+        .filter(x => x.have < x.need);
+      if (lowItems.length > 0) {
+        setStockWarning({ items: lowItems });
+        setBillBodyPending(body);
+        return;
+      }
+    }
+
+    void submitBillBody(body);
   }
 
   async function mergeSelectedOrders() {
@@ -993,11 +1062,52 @@ function CustomerOrdersTab({
             )}
 
             {/* Bill form */}
+            {/* Stock warning modal */}
+            {stockWarning && (
+              <div className="rounded-xl border border-red-300 bg-red-50 p-4 space-y-3">
+                <div className="text-sm font-bold text-red-700">⚠️ Insufficient Stock</div>
+                <div className="text-xs text-red-600 space-y-1">
+                  {stockWarning.items.map((it, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <span className="font-semibold">{it.name}</span>
+                      <span>— need <strong>{it.need}</strong>, have <strong className="text-red-700">{it.have}</strong></span>
+                    </div>
+                  ))}
+                </div>
+                <div className="text-xs text-slate-500">Some items are low or out of stock. You can still proceed (stock will go negative) or save as draft.</div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { if (billBodyPending) void submitBillBody(billBodyPending); }}
+                    className="px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-semibold hover:bg-red-700"
+                  >Proceed Anyway</button>
+                  <button
+                    type="button"
+                    onClick={() => { saveDraft(); setStockWarning(null); setBillBodyPending(null); }}
+                    className="px-3 py-1.5 rounded-lg bg-slate-600 text-white text-xs font-semibold hover:bg-slate-700"
+                  >Save as Draft</button>
+                  <button
+                    type="button"
+                    onClick={() => { setStockWarning(null); setBillBodyPending(null); }}
+                    className="px-3 py-1.5 rounded-lg border border-slate-300 text-slate-600 text-xs hover:bg-slate-100"
+                  >Cancel</button>
+                </div>
+              </div>
+            )}
+
             {showBillForm && (
               <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">
                 <div className="flex items-center justify-between">
-                  <div className="text-sm font-semibold text-amber-800">Generate bill</div>
-                  <button type="button" onClick={() => { setShowBillForm(false); setBulkDiscount(""); setRateType("order"); setPartialBillQty({}); }} className="text-slate-400 hover:text-slate-600">✕</button>
+                  <div className="flex items-center gap-2">
+                    <div className="text-sm font-semibold text-amber-800">Generate bill</div>
+                    {hasDraft() && (
+                      <button type="button" onClick={loadDraft} className="text-xs text-blue-600 hover:underline">↓ Load Draft</button>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button type="button" onClick={saveDraft} className="text-xs text-slate-500 hover:text-slate-700">Save Draft</button>
+                    <button type="button" onClick={() => { setShowBillForm(false); setBulkDiscount(""); setRateType("order"); setPartialBillQty({}); }} className="text-slate-400 hover:text-slate-600">✕</button>
+                  </div>
                 </div>
 
                 {/* Partial delivery: choose which items / quantities to bill */}

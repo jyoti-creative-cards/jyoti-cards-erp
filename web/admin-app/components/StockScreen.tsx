@@ -166,6 +166,7 @@ function CurrentStockTab({
   const [vendorFilter, setVendorFilter] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerRow, setDrawerRow] = useState<InventoryRowPublic | null>(null);
+  const [drawerAlternatives, setDrawerAlternatives] = useState<{id: number; alternative_catalog_product_id: number; alternative_our_product_id: string; alternative_name: string; alternative_category: string}[]>([]);
   const [ledgerRow, setLedgerRow] = useState<InventoryRowPublic | null>(null);
   const [ledgerOpen, setLedgerOpen] = useState(false);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
@@ -277,7 +278,11 @@ function CurrentStockTab({
                     <td className="px-4 py-3">
                       <div
                         className="cursor-pointer font-medium text-blue-700 hover:underline"
-                        onClick={() => { setDrawerRow(row); setDrawerOpen(true); }}
+                        onClick={async () => {
+  setDrawerRow(row); setDrawerOpen(true); setDrawerAlternatives([]);
+  const r = await fetchApi(apiUrl(`catalog/${row.catalog_product_id}/alternatives`), { headers: headersAdmin() }).catch(() => null);
+  if (r?.ok) setDrawerAlternatives(await r.json());
+}}
                       >
                         {row.name}
                       </div>
@@ -396,6 +401,30 @@ function CurrentStockTab({
             <div className="text-sm text-slate-500">
               <p><span className="font-medium text-slate-700">Vendor:</span> {vendorName(drawerRow.vendor_id)}</p>
               <p><span className="font-medium text-slate-700">Low threshold:</span> {drawerRow.low_stock_threshold ?? 0}</p>
+            </div>
+
+            {/* Alternatives */}
+            <div>
+              <div className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-slate-500">Alternatives / Substitutes</div>
+              {drawerAlternatives.length === 0 ? (
+                <div className="text-xs text-slate-400 italic">No alternatives configured.</div>
+              ) : (
+                <div className="space-y-1">
+                  {drawerAlternatives.map(alt => {
+                    const altStock = rows.find(r => r.catalog_product_id === alt.alternative_catalog_product_id);
+                    return (
+                      <div key={alt.id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
+                        <div>
+                          <span className="font-semibold text-slate-700">{alt.alternative_name}</span>
+                          <span className="ml-2 text-slate-400">{alt.alternative_our_product_id}</span>
+                          <span className="ml-2 text-slate-400">{alt.alternative_category}</span>
+                        </div>
+                        <div>{altStock ? stockBadge(altStock.stock_status) : <span className="text-slate-400">—</span>}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
         )}

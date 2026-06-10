@@ -263,6 +263,14 @@ def generate_customer_bill(body: CustomerBillGenerate, db: Session = Depends(get
 
     delete_keys(old_keys)
 
+    # Compute credit limit info for PDF footer
+    credit_limit_val: float | None = float(cust.credit_limit) if (cust and cust.credit_limit is not None) else None
+    from app.services.accounting import get_customer_outstanding
+    try:
+        outstanding_val = float(get_customer_outstanding(db, order.customer_id))
+    except Exception:
+        outstanding_val = 0.0
+
     key = f"{_DOC_PREFIX}/{uuid.uuid4().hex}.pdf"
     pdf_bytes = render_customer_bill_pdf(
         bill_id=row.id,
@@ -274,6 +282,8 @@ def generate_customer_bill(body: CustomerBillGenerate, db: Session = Depends(get
         narration=row.narration or None,
         item_image_urls=item_image_urls,
         order_created_at=order.created_at,
+        credit_limit=credit_limit_val,
+        outstanding=outstanding_val,
     )
     upload_bytes(key, pdf_bytes, "application/pdf")
     row.document_key = key

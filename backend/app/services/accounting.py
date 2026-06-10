@@ -500,6 +500,21 @@ def gl_activity(
     return rows
 
 
+def get_customer_outstanding(db: Session, customer_id: int) -> Decimal:
+    """Return total outstanding (unpaid) AR balance for a customer."""
+    open_invoices = db.query(ARInvoice).filter(
+        ARInvoice.customer_id == customer_id,
+        ARInvoice.status != "paid",
+    ).all()
+    total = Decimal("0")
+    for inv in open_invoices:
+        paid = amount_paid_on_ar(db, inv)
+        bal = Decimal(str(inv.amount)) - paid
+        if bal > 0:
+            total += bal
+    return total
+
+
 def count_open_ar(db: Session) -> int:
     return int(db.query(sa_func.count(ARInvoice.id)).filter(ARInvoice.status == "open").scalar() or 0)
 

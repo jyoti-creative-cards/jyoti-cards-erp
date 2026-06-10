@@ -7,6 +7,8 @@ from io import BytesIO
 from typing import Any, Dict, Optional
 from xml.sax.saxutils import escape
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT
 from reportlab.lib.pagesizes import A4
@@ -34,7 +36,7 @@ def _fetch_image(url: str, max_w: float, max_h: float) -> Optional[Image]:
     """Download image from URL and return a reportlab Image scaled to fit."""
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=8) as r:
+        with urllib.request.urlopen(req, timeout=3) as r:  # reduced timeout: 3s
             data = r.read()
         buf = BytesIO(data)
         img = Image(buf)
@@ -45,6 +47,27 @@ def _fetch_image(url: str, max_w: float, max_h: float) -> Optional[Image]:
         return img
     except Exception:
         return None
+
+
+def _prefetch_images_parallel(
+    img_map: Dict[int, str | None],
+    max_w: float,
+    max_h: float,
+) -> Dict[int, Optional[Image]]:
+    """Fetch all item images in parallel, returning {product_id: Image|None}."""
+    result: Dict[int, Optional[Image]] = {}
+    entries = [(k, v) for k, v in img_map.items() if v]
+    if not entries:
+        return result
+    with ThreadPoolExecutor(max_workers=min(len(entries), 8)) as ex:
+        futs = {ex.submit(_fetch_image, url, max_w, max_h): k for k, url in entries}
+        for fut in as_completed(futs):
+            k = futs[fut]
+            try:
+                result[k] = fut.result()
+            except Exception:
+                result[k] = None
+    return result
 
 
 def _build_bill_story(
@@ -60,6 +83,8 @@ def _build_bill_story(
     item_image_urls: Dict[int, str | None] | None = None,
     order_created_at: datetime | None = None,
     copy_label: str | None = None,
+    credit_limit: float | None = None,
+    outstanding: float | None = None,
 ) -> list:
     """Build the reportlab story (list of Flowables) for one bill copy."""
     from datetime import timedelta
@@ -145,20 +170,17 @@ def _build_bill_story(
     gst_on = bool(totals.get("gst_enabled"))
     gst_label = str(totals.get("gst_rate_label") or totals.get("gst_rate_percent") or "")
 
-    # Build item_image_urls lookup by our_product_id position
+    # Pre-fetch all product images in parallel (much faster than sequential)
     img_map: Dict[int, str | None] = item_image_urls or {}
-
-    # Map our_product_id → catalog_product_id for image lookup (items list order)
-    # We use a positional index into img_map keys since lines are in same order as items
+    prefetched: Dict[int, Optional[Image]] = _prefetch_images_parallel(img_map, 1.4 * cm, 1.4 * cm)
     img_keys = list(img_map.keys())
 
     def _get_img_cell(line_idx: int) -> Any:
         if line_idx < len(img_keys):
-            url = img_map.get(img_keys[line_idx])
-            if url:
-                img = _fetch_image(url, 1.4 * cm, 1.4 * cm)
-                if img:
-                    return img
+            k = img_keys[line_idx]
+            img = prefetched.get(k)
+            if img:
+                return img
         return ""
 
     if gst_on:
@@ -278,6 +300,25 @@ def _build_bill_story(
             Paragraph(f"<b>Customer notes:</b> {escape(_safe(customer_notes, 500))}", notes_style)
         )
         story.append(Spacer(1, 0.2 * cm))
+
+    # Credit limit footer
+    if credit_limit is not None and outstanding is not None:
+        bill_total = float(totals.get("grand_total") or totals.get("subtotal") or 0)
+        pending_after = outstanding + bill_total
+        remaining = credit_limit - pending_after
+        cl_color = "#dc2626" if remaining < 0 else "#1d4ed8"
+        cl_text = (
+            f"Credit Limit: Rs.{credit_limit:,.2f}  |  "
+            f"Total Pending (incl. this bill): Rs.{pending_after:,.2f}  |  "
+            f"Available Credit: Rs.{remaining:,.2f}"
+        )
+        cl_style = ParagraphStyle(
+            "credit_line", parent=styles["Normal"], fontSize=8,
+            textColor=colors.HexColor(cl_color), spaceAfter=4,
+        )
+        story.append(Paragraph(escape(cl_text), cl_style))
+        story.append(Spacer(1, 0.1 * cm))
+
     note = (
         "Amounts in Indian Rupees (Rs.). Rates are GST-inclusive; taxable value and GST are derived."
         if gst_on
@@ -299,6 +340,8 @@ def render_customer_bill_pdf(
     narration: str | None = None,
     item_image_urls: Dict[int, str | None] | None = None,
     order_created_at: datetime | None = None,
+    credit_limit: float | None = None,
+    outstanding: float | None = None,
 ) -> bytes:
     """Render a single-copy bill PDF (no copy label)."""
     return render_copies_pdf(
@@ -314,6 +357,8 @@ def render_customer_bill_pdf(
         item_image_urls=item_image_urls,
         order_created_at=order_created_at,
         with_labels=False,
+        credit_limit=credit_limit,
+        outstanding=outstanding,
     )
 
 
@@ -331,6 +376,8 @@ def render_copies_pdf(
     narration: str | None = None,
     item_image_urls: Dict[int, str | None] | None = None,
     order_created_at: datetime | None = None,
+    credit_limit: float | None = None,
+    outstanding: float | None = None,
 ) -> bytes:
     """Render N copies of the bill in one PDF.
     Each copy gets a ORIGINAL / DUPLICATE / TRIPLICATE / QUADRUPLICATE banner.
@@ -342,6 +389,7 @@ def render_copies_pdf(
         totals=totals, generated_at=generated_at,
         customer_notes=customer_notes, narration=narration,
         item_image_urls=item_image_urls, order_created_at=order_created_at,
+        credit_limit=credit_limit, outstanding=outstanding,
     )
     combined: list = []
     for i in range(copies):

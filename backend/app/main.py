@@ -26,6 +26,7 @@ from app.routers import (
     notes,
     product_prices,
     purchase_orders,
+    reports,
     routes,
     shop,
     staff,
@@ -80,6 +81,7 @@ app.include_router(audit.router, prefix="/api/v1")
 app.include_router(credit_notes.router, prefix="/api/v1")
 app.include_router(staff.router, prefix="/api/v1")
 app.include_router(vendor_orders.router, prefix="/api/v1")
+app.include_router(reports.router, prefix="/api/v1")
 
 
 @app.on_event("startup")

@@ -6,7 +6,7 @@ import type { AuthState } from "@/lib/types";
 
 export type ErpMainTab =
   | "orders" | "vendor-orders" | "people" | "stock" | "catalog" | "finance" | "returns"
-  | "find" | "create" | "admin" | "staff" | "recyclebin";
+  | "find" | "reports" | "create" | "admin" | "staff" | "recyclebin";
 
 type NavItem = { id: ErpMainTab; label: string; icon: string; permission?: string };
 type NavSection = { title?: string; items: NavItem[] };
@@ -22,6 +22,7 @@ const NAV_SECTIONS: NavSection[] = [
       { id: "finance",       label: "Finance",         icon: "💰", permission: "finance.view" },
       { id: "returns",       label: "Returns",         icon: "↩️",  permission: "returns.view" },
       { id: "find",          label: "Find",            icon: "🔍",  permission: undefined       },
+      { id: "reports",       label: "Reports",         icon: "📊",  permission: undefined       },
     ],
   },
   {
@@ -38,7 +39,7 @@ const TITLE_MAP: Record<ErpMainTab, string> = {
   orders: "Customer Orders", "vendor-orders": "Vendor Orders", people: "People",
   stock: "Stock", catalog: "Catalog", finance: "Finance",
   returns: "Returns & Credit Notes", create: "Quick Add",
-  find: "Find", admin: "Setup", staff: "Staff Management", recyclebin: "Recycle Bin",
+  find: "Find", reports: "Reports", admin: "Setup", staff: "Staff Management", recyclebin: "Recycle Bin",
 };
 
 function hasPermission(auth: AuthState, perm?: string): boolean {

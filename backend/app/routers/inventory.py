@@ -41,6 +41,24 @@ router = APIRouter(prefix="/inventory", tags=["inventory"])
 _PREFIX = "receipt_documents"
 
 
+@router.post("/stock-check", dependencies=[Depends(require_admin)])
+def bulk_stock_check(
+    body: dict,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Fast bulk stock check. POST {catalog_product_ids: [1,2,3]} → {id: qty}."""
+    ids = [int(x) for x in (body.get("catalog_product_ids") or []) if str(x).isdigit()]
+    if not ids:
+        return {}
+    rows = db.query(StockBalance).filter(StockBalance.catalog_product_id.in_(ids)).all()
+    result = {r.catalog_product_id: int(r.quantity) for r in rows}
+    # products with no balance row = 0 stock
+    for cid in ids:
+        if cid not in result:
+            result[cid] = 0
+    return result
+
+
 def _apply_stock_delta(db: Session, catalog_product_id: int, delta: int) -> StockBalance:
     if delta == 0:
         row = db.get(StockBalance, catalog_product_id)

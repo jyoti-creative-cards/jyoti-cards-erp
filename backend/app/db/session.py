@@ -11,9 +11,35 @@ from app.config import get_settings
 
 Base = declarative_base()
 
+import re as _re
+
 _settings = get_settings()
 _db_url = _settings.database_url.strip()
 _is_sqlite = _db_url.lower().startswith("sqlite:")
+
+
+def _supabase_to_pooler(url: str) -> str:
+    """Transform a Supabase direct connection URL to the pgBouncer pooler URL.
+
+    Direct:  postgresql://postgres:PWD@db.PROJECT.supabase.co:5432/postgres
+    Pooler:  postgresql://postgres.PROJECT:PWD@aws-1-ap-southeast-1.pooler.supabase.com:6543/postgres
+    """
+    m = _re.match(
+        r"postgresql(?:\+psycopg2)?://postgres:([^@]+)@db\.([a-z0-9]+)\.supabase\.co:5432/(.+)",
+        url,
+    )
+    if not m:
+        return url
+    pwd, project, dbname = m.group(1), m.group(2), m.group(3)
+    pooler_host = "aws-1-ap-southeast-1.pooler.supabase.com"
+    new_url = f"postgresql://postgres.{project}:{pwd}@{pooler_host}:6543/{dbname}"
+    print(f"[session] auto-transformed Supabase direct URL → pgBouncer pooler")
+    return new_url
+
+
+if not _is_sqlite and "db." in _db_url and ".supabase.co:5432" in _db_url:
+    _db_url = _supabase_to_pooler(_db_url)
+
 _connect_args: dict = {}
 if _is_sqlite:
     _connect_args["check_same_thread"] = False

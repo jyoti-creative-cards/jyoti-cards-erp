@@ -594,6 +594,31 @@ def admin_offline_order(body: OfflineOrderCreate, db: Session = Depends(get_db))
     if not customer:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="customer not found")
 
+    # Duplicate check: same customer + same items + same qty today
+    if not body.force_duplicate:
+        from datetime import timezone as _tz, timedelta as _td
+        _ist_offset = _td(hours=5, minutes=30)
+        _now_ist = datetime.now(_tz.utc) + _ist_offset
+        _today_start = _now_ist.replace(hour=0, minute=0, second=0, microsecond=0) - _ist_offset
+        _today_end = _now_ist.replace(hour=23, minute=59, second=59, microsecond=999999) - _ist_offset
+        _today_orders = db.query(CustomerOrder).filter(
+            CustomerOrder.customer_id == body.customer_id,
+            CustomerOrder.created_at >= _today_start,
+            CustomerOrder.created_at <= _today_end,
+        ).all()
+        _req_items = sorted([(ln.catalog_product_id, ln.quantity) for ln in body.items])
+        for _to in _today_orders:
+            _existing_items = sorted([
+                (int(it.get("catalog_product_id", 0)), int(it.get("quantity", 0)))
+                for it in (_to.items if isinstance(_to.items, list) else [])
+                if isinstance(it, dict)
+            ])
+            if _existing_items == _req_items:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    detail={"duplicate": True, "message": f"Duplicate — same customer and items already ordered today (Order #{_to.id}).", "existing_id": _to.id},
+                )
+
     price_overrides = {ln.catalog_product_id: ln.unit_price for ln in body.items if ln.unit_price is not None}
     merged = _merge_lines(body.items)
     items, total = _build_items_admin(db, merged, price_overrides or None)

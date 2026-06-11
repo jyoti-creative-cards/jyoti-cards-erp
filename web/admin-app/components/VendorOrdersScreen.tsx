@@ -131,6 +131,26 @@ export function VendorOrdersScreen({ auth }: { auth: AuthState }) {
   const [placeItems, setPlaceItems] = useState<{ cid: string; qty: string; price: string; notes: string }[]>([{ cid: "", qty: "", price: "", notes: "" }]);
   const [placing, setPlacing] = useState(false);
 
+  const [vendorDupWarning, setVendorDupWarning] = useState<{ message: string; pendingVendorId: string; pendingItems: typeof placeItems } | null>(null);
+
+  async function placeOrderBody(vendorId: string, items: {catalog_product_id: number; qty_ordered: number; unit_price: number; notes: string}[], forceDuplicate = false) {
+    setPlacing(true);
+    const r = await fetchApi(apiUrl(`vendor-orders/${vendorId}/add-items`), { method: "POST", headers: jh(), body: JSON.stringify({ items, force_duplicate: forceDuplicate }) });
+    const data = await r.json().catch(() => ({})) as Record<string, unknown>;
+    setPlacing(false);
+    if (r.status === 409 && (data.detail as Record<string, unknown>)?.duplicate) {
+      const detail = data.detail as Record<string, unknown>;
+      setVendorDupWarning({ message: String(detail.message || "Duplicate vendor order detected."), pendingVendorId: vendorId, pendingItems: placeItems });
+      return;
+    }
+    if (!r.ok) return showToast(formatApiError(data) || "Failed", false);
+    showToast("Order placed!", true);
+    setVendorDupWarning(null);
+    setPlaceItems([{ cid: "", qty: "", price: "", notes: "" }]);
+    setPlaceVendorId("");
+    await loadAll();
+  }
+
   async function placeOrder() {
     if (!placeVendorId) return showToast("Select a vendor", false);
     const items = placeItems.map(r => ({
@@ -138,15 +158,8 @@ export function VendorOrdersScreen({ auth }: { auth: AuthState }) {
       unit_price: Number(r.price || 0), notes: r.notes,
     })).filter(i => i.catalog_product_id > 0 && i.qty_ordered > 0);
     if (!items.length) return showToast("Add at least one item", false);
-    setPlacing(true);
-    const r = await fetchApi(apiUrl(`vendor-orders/${placeVendorId}/add-items`), { method: "POST", headers: jh(), body: JSON.stringify({ items }) });
-    const data = await r.json().catch(() => ({}));
-    setPlacing(false);
-    if (!r.ok) return showToast(formatApiError(data) || "Failed", false);
-    showToast("Order placed!", true);
-    setPlaceItems([{ cid: "", qty: "", price: "", notes: "" }]);
-    setPlaceVendorId("");
-    await loadAll();
+    setVendorDupWarning(null);
+    await placeOrderBody(placeVendorId, items);
   }
 
   // ── Active order drawer ──
@@ -265,13 +278,28 @@ export function VendorOrdersScreen({ auth }: { auth: AuthState }) {
                 </div>
               ))}
 
-              <div className="mt-2 flex gap-2">
+              <div className="mt-2 flex gap-2 flex-wrap">
                 <button type="button" onClick={() => setPlaceItems(p => [...p, { cid: "", qty: "", price: "", notes: "" }])}
                   className={BTN_SECONDARY + " text-xs"}>+ Add item</button>
                 <button type="button" onClick={placeOrder} disabled={placing} className={BTN_PRIMARY}>
                   {placing ? "Placing…" : "Place Order"}
                 </button>
               </div>
+              {vendorDupWarning && (
+                <div className="mt-2 rounded-xl border border-amber-300 bg-amber-50 p-3 space-y-2">
+                  <div className="text-sm font-semibold text-amber-800">⚠️ Duplicate Order Detected</div>
+                  <div className="text-xs text-amber-700">{vendorDupWarning.message}</div>
+                  <div className="flex gap-2">
+                    <button type="button" disabled={placing} onClick={() => {
+                      const items = vendorDupWarning.pendingItems.map(r => ({ catalog_product_id: Number(r.cid), qty_ordered: Number(r.qty), unit_price: Number(r.price || 0), notes: r.notes })).filter(i => i.catalog_product_id > 0 && i.qty_ordered > 0);
+                      void placeOrderBody(vendorDupWarning.pendingVendorId, items, true);
+                    }} className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50">
+                      {placing ? "Placing…" : "Proceed Anyway"}
+                    </button>
+                    <button type="button" onClick={() => setVendorDupWarning(null)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-100">Cancel</button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Order list */}

@@ -237,6 +237,45 @@ def create_product(body: CatalogProductCreate, db: Session = Depends(get_db)) ->
     return _to_public(row)
 
 
+@router.post("/bulk", dependencies=[Depends(require_admin)])
+def bulk_create_products(body: list[CatalogProductCreate], db: Session = Depends(get_db)) -> dict:
+    """Create multiple catalog products in one request. Returns created list + any errors."""
+    created = []
+    errors = []
+    for i, item in enumerate(body):
+        oid = item.our_product_id.strip()
+        if not oid or not safe_catalog_stem(oid):
+            errors.append({"row": i, "error": f"Invalid our_product_id: {oid}"})
+            continue
+        if db.get(Vendor, item.vendor_id) is None:
+            errors.append({"row": i, "error": f"Vendor {item.vendor_id} not found"})
+            continue
+        cat = item.category.strip()
+        row = CatalogProduct(
+            our_product_id=oid,
+            vendor_id=item.vendor_id,
+            name=item.name.strip(),
+            vendor_product_id=item.vendor_product_id.strip(),
+            category=cat,
+            series=(item.series.strip() if item.series else None),
+            year_group=(item.year_group.strip() if item.year_group else None),
+            unit=(item.unit or "pcs"),
+            buying_price=Decimal(str(item.buying_price)),
+            selling_price=Decimal(str(item.selling_price)),
+            image_keys=[],
+        )
+        db.add(row)
+        try:
+            db.flush()
+            _ensure_category_label(db, cat)
+            created.append({"row": i, "our_product_id": oid})
+        except IntegrityError:
+            db.rollback()
+            errors.append({"row": i, "error": f"Duplicate product ID: {oid}"})
+    db.commit()
+    return {"created": len(created), "errors": errors, "items": created}
+
+
 @router.patch("/{product_id}", response_model=CatalogProductPublic, dependencies=[Depends(require_admin)])
 def update_product(
     product_id: int,

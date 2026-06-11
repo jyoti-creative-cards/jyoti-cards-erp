@@ -84,6 +84,7 @@ def get_customer_bill(bill_id: int, db: Session = Depends(get_db)) -> CustomerBi
 def generate_customer_bill(body: CustomerBillGenerate, db: Session = Depends(get_db)) -> CustomerBillPublic:
     from sqlalchemy.orm.attributes import flag_modified
 
+    from datetime import timezone as _tz, timedelta as _td
     order = db.get(CustomerOrder, body.customer_order_id)
     if order is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="order not found")
@@ -93,6 +94,35 @@ def generate_customer_bill(body: CustomerBillGenerate, db: Session = Depends(get
             status.HTTP_400_BAD_REQUEST,
             detail=f"customer bill can be generated when order status is open/confirmed/billed (got: {order.status})",
         )
+
+    # Duplicate bill check: same customer, same day, same item set
+    if not body.force_duplicate:
+        _ist_offset = _td(hours=5, minutes=30)
+        _now_ist = __import__("datetime").datetime.now(_tz.utc) + _ist_offset
+        _today_start = _now_ist.replace(hour=0, minute=0, second=0, microsecond=0) - _ist_offset
+        _today_end = _now_ist.replace(hour=23, minute=59, second=59, microsecond=999999) - _ist_offset
+        # Get all active bills for orders of the same customer today
+        _same_day_bills = (
+            db.query(CustomerBill)
+            .join(CustomerOrder, CustomerOrder.id == CustomerBill.customer_order_id)
+            .filter(
+                CustomerOrder.customer_id == order.customer_id,
+                CustomerBill.bill_status == "active",
+                CustomerBill.created_at >= _today_start,
+                CustomerBill.created_at <= _today_end,
+                CustomerBill.customer_order_id != order.id,  # different order
+            ).all()
+        )
+        _this_items = sorted([(int(it.get("catalog_product_id", 0)), int(it.get("quantity", 0))) for it in (order.items if isinstance(order.items, list) else []) if isinstance(it, dict)])
+        for _b in _same_day_bills:
+            _b_order = db.get(CustomerOrder, _b.customer_order_id)
+            if _b_order:
+                _b_items = sorted([(int(it.get("catalog_product_id", 0)), int(it.get("quantity", 0))) for it in (_b_order.items if isinstance(_b_order.items, list) else []) if isinstance(it, dict)])
+                if _b_items == _this_items:
+                    raise HTTPException(
+                        status.HTTP_409_CONFLICT,
+                        detail={"duplicate": True, "message": f"Duplicate bill detected — same customer and items already billed today (Bill #{_b.bill_no or _b.id}).", "existing_id": _b.id},
+                    )
 
     raw_items = order.items if isinstance(order.items, list) else []
     all_order_items = [x for x in raw_items if isinstance(x, dict)]

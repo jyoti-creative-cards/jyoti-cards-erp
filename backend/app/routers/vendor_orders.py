@@ -113,6 +113,7 @@ def _get_or_create_open_order(db: Session, vendor_id: int) -> VendorOrder:
 
 class AddItemsBody(BaseModel):
     items: list[dict]  # [{catalog_product_id, qty_ordered, unit_price, notes?}]
+    force_duplicate: bool = False
 
 
 class ReceiveItemsBody(BaseModel):
@@ -207,6 +208,25 @@ def add_items_to_order(vendor_id: int, body: AddItemsBody, db: Session = Depends
     vo = _get_or_create_open_order(db, vendor_id)
     items: list = list(vo.items) if isinstance(vo.items, list) else []
     now = _now_iso()
+
+    # Duplicate check: same vendor + same items + same qty added today
+    if not body.force_duplicate:
+        from datetime import timedelta as _td, timezone as _tz
+        _ist_offset = _td(hours=5, minutes=30)
+        _now_ist = datetime.now(_tz.utc) + _ist_offset
+        _today_str = _now_ist.strftime("%Y-%m-%d")
+        _req_pairs = sorted([(int(it.get("catalog_product_id", 0)), _int(it.get("qty_ordered", 0))) for it in body.items])
+        # Check items already in today's open order
+        _existing_today = sorted([
+            (int(li.get("catalog_product_id", 0)), _int(li.get("qty_ordered", 0)))
+            for li in items
+            if (li.get("date_ordered") or "")[:10] == _today_str
+        ])
+        if _req_pairs and _existing_today and _req_pairs == _existing_today:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail={"duplicate": True, "message": f"Duplicate vendor order — same items with same quantities already added today.", "existing_id": vo.id},
+            )
 
     for item in body.items:
         cid = int(item.get("catalog_product_id", 0))

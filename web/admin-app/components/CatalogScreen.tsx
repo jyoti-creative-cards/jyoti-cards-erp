@@ -161,6 +161,14 @@ function ProductsTab({
   // Addon state
   const [addonId, setAddonId] = useState<string>("");
   const [addons, setAddons] = useState<{ id: number; name: string }[]>([]);
+  // Bulk add state
+  const [showBulk, setShowBulk] = useState(false);
+  type BulkRow = { our_product_id: string; vendor_product_id: string; category: string; unit: string; buying_price: string; selling_price: string };
+  const emptyRow = (): BulkRow => ({ our_product_id: "", vendor_product_id: "", category: "", unit: "pcs", buying_price: "", selling_price: "" });
+  const [bulkVendorId, setBulkVendorId] = useState("");
+  const [bulkRows, setBulkRows] = useState<BulkRow[]>([emptyRow(), emptyRow(), emptyRow()]);
+  const [bulkSaving, setBulkSaving] = useState(false);
+  const [bulkResult, setBulkResult] = useState<{ created: number; errors: {row: number; error: string}[] } | null>(null);
 
   useEffect(() => {
     if (!adminKey.trim()) return;
@@ -169,6 +177,30 @@ function ProductsTab({
       .then((data: { id: number; name: string }[]) => setAddons(data))
       .catch(() => {/* ignore */});
   }, [adminKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function submitBulk() {
+    if (!bulkVendorId) { showToast("Select a vendor", false); return; }
+    const rows = bulkRows.filter(r => r.our_product_id.trim());
+    if (!rows.length) { showToast("Add at least one product", false); return; }
+    setBulkSaving(true); setBulkResult(null);
+    const body = rows.map(r => ({
+      our_product_id: r.our_product_id.trim(),
+      vendor_id: Number(bulkVendorId),
+      name: r.category.trim() || r.our_product_id.trim(),
+      vendor_product_id: r.vendor_product_id.trim() || r.our_product_id.trim(),
+      category: r.category.trim() || "Uncategorised",
+      unit: r.unit || "pcs",
+      buying_price: Number(r.buying_price) || 0,
+      selling_price: Number(r.selling_price) || 0,
+    }));
+    const r = await fetchApi(apiUrl("catalog/bulk"), { method: "POST", headers: { ...headersAdmin(), "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const data = await r.json().catch(() => ({})) as { created: number; errors: {row: number; error: string}[] };
+    setBulkSaving(false);
+    if (!r.ok) { showToast(formatApiError(data as Record<string, unknown>), false); return; }
+    setBulkResult(data);
+    if (data.created > 0) { onRefresh(); showToast(`${data.created} product(s) created.`, true); }
+    if (data.errors?.length === 0) { setBulkRows([emptyRow(), emptyRow(), emptyRow()]); }
+  }
 
   function openProduct(p: CatalogProductPublic | null) {
     setEditing(p);
@@ -300,7 +332,76 @@ function ProductsTab({
         <button type="button" onClick={() => openProduct(null)} className={BTN_PRIMARY}>
           + New product
         </button>
+        <button type="button" onClick={() => { setShowBulk(b => !b); setBulkResult(null); }} className={BTN_SECONDARY}>
+          + Bulk Add
+        </button>
       </div>
+
+      {/* Bulk add panel */}
+      {showBulk && (
+        <div className="mb-4 rounded-2xl border border-blue-200 bg-blue-50 p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-bold text-blue-800">Bulk Add Products</div>
+            <button type="button" onClick={() => setShowBulk(false)} className="text-slate-400 hover:text-slate-600">✕</button>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-slate-500">Vendor *</label>
+            <select value={bulkVendorId} onChange={e => setBulkVendorId(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm w-full max-w-xs">
+              <option value="">— Select vendor —</option>
+              {vendors.map(v => <option key={v.id} value={v.id}>{v.company_name || v.person_name}</option>)}
+            </select>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-slate-500 font-semibold">
+                  <th className="pb-1 pr-2 text-left">Our Product ID *</th>
+                  <th className="pb-1 pr-2 text-left">Vendor Product ID</th>
+                  <th className="pb-1 pr-2 text-left">Category</th>
+                  <th className="pb-1 pr-2 text-left">Unit</th>
+                  <th className="pb-1 pr-2 text-left">Buy Price</th>
+                  <th className="pb-1 pr-2 text-left">Sell Price</th>
+                  <th className="pb-1 text-left"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {bulkRows.map((row, idx) => (
+                  <tr key={idx}>
+                    {(["our_product_id", "vendor_product_id", "category", "unit", "buying_price", "selling_price"] as const).map(field => (
+                      <td key={field} className="pr-2 pb-1">
+                        <input
+                          type={field.includes("price") ? "number" : "text"}
+                          value={row[field]}
+                          placeholder={field === "unit" ? "pcs" : ""}
+                          onChange={e => setBulkRows(rows => rows.map((r, i) => i === idx ? { ...r, [field]: e.target.value } : r))}
+                          className="w-full rounded border border-slate-300 px-2 py-1 text-xs focus:border-blue-400 focus:outline-none"
+                        />
+                      </td>
+                    ))}
+                    <td className="pb-1">
+                      <button type="button" onClick={() => setBulkRows(rows => rows.filter((_, i) => i !== idx))} className="text-red-400 hover:text-red-600">×</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex items-center gap-3 flex-wrap">
+            <button type="button" onClick={() => setBulkRows(r => [...r, emptyRow()])} className="text-xs text-blue-600 hover:underline">+ Add row</button>
+            <button type="button" onClick={submitBulk} disabled={bulkSaving} className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
+              {bulkSaving ? "Creating…" : "Create All"}
+            </button>
+          </div>
+          {bulkResult && (
+            <div className="text-xs space-y-1">
+              <div className="text-emerald-600 font-semibold">✓ {bulkResult.created} product(s) created</div>
+              {bulkResult.errors.map((e, i) => (
+                <div key={i} className="text-red-600">Row {e.row + 1}: {e.error}</div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Grid */}
       {filtered.length === 0 ? (

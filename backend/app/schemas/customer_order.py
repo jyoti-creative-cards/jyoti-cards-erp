@@ -89,3 +89,4 @@ class OfflineOrderCreate(BaseModel):
     packaging_charges: Optional[float] = Field(None, ge=0)
     bill_series_id: Optional[int] = None
     rate_type: Optional[str] = None  # "order" | "net" | "regular"
+    force_duplicate: bool = False  # skip duplicate check if True

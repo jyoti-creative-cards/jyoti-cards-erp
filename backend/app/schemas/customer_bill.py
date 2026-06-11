@@ -23,6 +23,7 @@ class CustomerBillGenerate(BaseModel):
     # [{catalog_product_id: int, quantity: int}]  — if omitted, all remaining items are billed.
     bill_items: Optional[list[dict]] = None
     narration: Optional[str] = None  # Free-text note printed on the bill
+    force_duplicate: bool = False  # skip duplicate check if True
 
 
 class CustomerBillPublic(BaseModel):

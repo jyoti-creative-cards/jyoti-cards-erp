@@ -279,6 +279,7 @@ function CustomerOrdersTab({
   const [offlineNotes, setOfflineNotes] = useState("");
   const [offlineBusy, setOfflineBusy] = useState(false);
   const [offlineResult, setOfflineResult] = useState<{ bill_no?: string; grand_total?: string; document_url?: string } | null>(null);
+  const [offlineDupWarning, setOfflineDupWarning] = useState<{ message: string; pendingBody: Record<string, unknown> } | null>(null);
 
   // ── Edit order items ──
   const [editItemsMode, setEditItemsMode] = useState(false);
@@ -313,6 +314,25 @@ function CustomerOrdersTab({
 
   useEffect(() => { void load(); }, [load]);
 
+  async function submitOfflineOrderBody(body: Record<string, unknown>) {
+    setOfflineBusy(true); setOfflineResult(null); setOfflineDupWarning(null);
+    const r = await fetchApi(apiUrl("customer-orders/offline"), { method: "POST", headers: headers(), body: JSON.stringify(body) });
+    const data = await r.json().catch(() => ({})) as { bill?: { bill_no?: string; totals?: { grand_total?: string }; document_url?: string }; detail?: { duplicate?: boolean; message?: string } };
+    setOfflineBusy(false);
+    if (r.status === 409 && data.detail && (data.detail as Record<string, unknown>).duplicate) {
+      setOfflineDupWarning({ message: String((data.detail as Record<string, unknown>).message || "Duplicate order detected."), pendingBody: { ...body, force_duplicate: true } });
+      return;
+    }
+    if (!r.ok) { showToast(formatApiError(data as Record<string, unknown>), false); return; }
+    setOfflineResult({
+      bill_no: data.bill?.bill_no || undefined,
+      grand_total: data.bill?.totals?.grand_total,
+      document_url: data.bill?.document_url || undefined,
+    });
+    showToast(data.bill?.bill_no ? `Bill ${data.bill.bill_no} created!` : "Order + Bill created!", true);
+    void load();
+  }
+
   async function submitOfflineOrder() {
     if (!offlineCustomerId) return showToast("Select a customer", false);
     const items = offlineItems
@@ -330,18 +350,7 @@ function CustomerOrdersTab({
     if (offlineFreight.trim()) body.freight_charges = Number(offlineFreight);
     if (offlinePkg.trim()) body.packaging_charges = Number(offlinePkg);
     if (offlineSeriesId) body.bill_series_id = Number(offlineSeriesId);
-    setOfflineBusy(true); setOfflineResult(null);
-    const r = await fetchApi(apiUrl("customer-orders/offline"), { method: "POST", headers: headers(), body: JSON.stringify(body) });
-    const data = await r.json().catch(() => ({})) as { bill?: { bill_no?: string; totals?: { grand_total?: string }; document_url?: string } };
-    setOfflineBusy(false);
-    if (!r.ok) { showToast(formatApiError(data), false); return; }
-    setOfflineResult({
-      bill_no: data.bill?.bill_no || undefined,
-      grand_total: data.bill?.totals?.grand_total,
-      document_url: data.bill?.document_url || undefined,
-    });
-    showToast(data.bill?.bill_no ? `Bill ${data.bill.bill_no} created!` : "Order + Bill created!", true);
-    void load();
+    void submitOfflineOrderBody(body);
   }
 
   async function submitEditItems() {
@@ -489,10 +498,17 @@ function CustomerOrdersTab({
   async function submitBillBody(body: Record<string, unknown>) {
     setBillBusy(true); setBillMsg(""); setStockWarning(null); setBillBodyPending(null);
     const r = await fetchApi(apiUrl("customer-bills/generate"), { method: "POST", headers: headers(), body: JSON.stringify(body) });
-    const data = await r.json().catch(() => ({}));
+    const data = await r.json().catch(() => ({})) as Record<string, unknown>;
     setBillBusy(false);
+    if (r.status === 409 && (data.detail as Record<string, unknown>)?.duplicate) {
+      const detail = data.detail as Record<string, unknown>;
+      const msg = String(detail.message || "Duplicate bill detected.");
+      if (!window.confirm(`${msg}\n\nProceed anyway and create the bill?`)) return;
+      void submitBillBody({ ...body, force_duplicate: true });
+      return;
+    }
     if (!r.ok) { setBillMsg(formatApiError(data)); return; }
-    const bill = data as CustomerBillPublic;
+    const bill = data as unknown as CustomerBillPublic;
     setBillData(bill);
     const billLabel = bill.bill_no ? `Bill ${bill.bill_no}` : `Bill #${bill.id}`;
     setBillMsg(`✓ ${billLabel} generated.`);
@@ -798,10 +814,23 @@ function CustomerOrdersTab({
               className="text-xs text-blue-600 hover:underline">+ Add item</button>
           </div>
 
-          <button type="button" onClick={submitOfflineOrder} disabled={offlineBusy}
-            className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-6 py-2.5 text-sm font-bold text-white shadow hover:bg-emerald-700 disabled:opacity-50">
-            {offlineBusy ? "Creating…" : "⚡ Create Order + Bill"}
-          </button>
+          {offlineDupWarning ? (
+            <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 space-y-2">
+              <div className="text-sm font-semibold text-amber-800">⚠️ Duplicate Detected</div>
+              <div className="text-xs text-amber-700">{offlineDupWarning.message}</div>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => void submitOfflineOrderBody(offlineDupWarning.pendingBody)} disabled={offlineBusy} className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50">
+                  {offlineBusy ? "Creating…" : "Proceed Anyway"}
+                </button>
+                <button type="button" onClick={() => setOfflineDupWarning(null)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-100">Cancel</button>
+              </div>
+            </div>
+          ) : (
+            <button type="button" onClick={submitOfflineOrder} disabled={offlineBusy}
+              className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-6 py-2.5 text-sm font-bold text-white shadow hover:bg-emerald-700 disabled:opacity-50">
+              {offlineBusy ? "Creating…" : "⚡ Create Order + Bill"}
+            </button>
+          )}
         </div>
       )}
 

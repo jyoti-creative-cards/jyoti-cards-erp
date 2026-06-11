@@ -1602,7 +1602,7 @@ function CustomerOrdersTab({
                     <button type="button" onClick={() => setAdditionalCharges(p => [...p, { name: "", amount: "" }])} className="text-xs text-blue-600 hover:underline">+ Add charge</button>
                   </div>
                   {additionalCharges.length === 0 && (
-                    <p className="text-xs text-slate-400 italic">None — click "+ Add charge" to add VAT, handling fee, etc.</p>
+                    <p className="text-xs text-slate-400 italic">None &mdash; click &quot;+ Add charge&quot; to add VAT, handling fee, etc.</p>
                   )}
                   {additionalCharges.map((ac, idx) => (
                     <div key={idx} className="mb-1.5 flex gap-2 items-center">

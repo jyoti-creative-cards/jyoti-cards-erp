@@ -56,6 +56,7 @@ interface CatalogItem {
   our_product_id: string;
   name: string;
   buying_price?: string;
+  vendor_id?: number;
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────

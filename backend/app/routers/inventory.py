@@ -434,7 +434,7 @@ def adhoc_receipt(body: AdhocReceiptBody, db: Session = Depends(get_db)) -> dict
         vendor_id=body.vendor_id,
         status="created_manually",
         notes=(body.notes or "").strip() or "Ad-hoc manual stock entry",
-        lines=po_lines,
+        items=po_lines,
     )
     db.add(po)
     db.flush()

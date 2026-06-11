@@ -263,7 +263,7 @@ export function VendorOrdersScreen({ auth }: { auth: AuthState }) {
                     onChange={e => setPlaceItems(p => p.map((r, i) => i === idx ? { ...r, cid: e.target.value, price: catalog.find(c => String(c.id) === e.target.value)?.buying_price || "" } : r))}
                     className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm">
                     <option value="">— product —</option>
-                    {catalog.map(c => <option key={c.id} value={c.id}>{c.our_product_id}</option>)}
+                    {catalog.filter(c => !placeVendorId || String(c.vendor_id) === placeVendorId).map(c => <option key={c.id} value={c.id}>{c.our_product_id}</option>)}
                   </select>
                   <input type="number" min="1" placeholder="Qty" value={row.qty}
                     onChange={e => setPlaceItems(p => p.map((r, i) => i === idx ? { ...r, qty: e.target.value } : r))}

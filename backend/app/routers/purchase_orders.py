@@ -25,7 +25,7 @@ from app.services.catalog_storage import presigned_urls
 
 router = APIRouter(prefix="/purchase-orders", tags=["purchase-orders"])
 
-ALLOWED_STATUSES = frozenset({"booked", "in_progress", "closed", "disputed", "cancelled"})
+ALLOWED_STATUSES = frozenset({"booked", "in_progress", "closed", "disputed", "cancelled", "created_manually"})
 
 RECEIPT_ALLOWED_PO_STATUSES = frozenset({"booked", "in_progress"})
 
@@ -259,7 +259,8 @@ def create_order(
     body: PurchaseOrderCreate,
     db: Session = Depends(get_db),
 ) -> PurchaseOrderPublic:
-    if db.get(Vendor, body.vendor_id) is None:
+    vendor = db.get(Vendor, body.vendor_id)
+    if vendor is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="vendor not found")
     items = _build_items(db, body.vendor_id, body.items)
     row = VendorPurchaseOrder(
@@ -270,6 +271,14 @@ def create_order(
     db.add(row)
     db.commit()
     db.refresh(row)
+    try:
+        from app.services.audit import log_action
+        log_action(db, action="create", entity_type="purchase_order", entity_id=row.id,
+                   description=f"PO#{row.id} created for vendor '{vendor.company_name or vendor.person_name}' with {len(items)} item(s)",
+                   performed_by="admin")
+        db.commit()
+    except Exception as ex:
+        db.rollback(); print(f"Audit log failed: {ex}")
     return _to_public(db, row)
 
 

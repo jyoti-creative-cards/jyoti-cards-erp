@@ -726,7 +726,7 @@ function ReceiveGoodsTab({
   adminKey: string;
   onRefresh: () => void;
 }) {
-  const [mode, setMode] = useState<"vendor" | "po" | "manual">("vendor");
+  const [mode, setMode] = useState<"vendor" | "manual">("vendor");
 
   // Vendor receive state
   const [selVendorId, setSelVendorId] = useState("");
@@ -855,21 +855,29 @@ function ReceiveGoodsTab({
     onRefresh();
   }
 
+  // Ad-hoc / Manual state
+  const [manualVendorId, setManualVendorId] = useState("");
+  const [manualRows, setManualRows] = useState<{ cid: string; qty: string }[]>([{ cid: "", qty: "" }]);
+  const [manualNotes, setManualNotes] = useState("");
+  const [manualSaving, setManualSaving] = useState(false);
+
+  const manualVendorProducts = catalog.filter((p) => manualVendorId && String(p.vendor_id) === manualVendorId);
+
   async function manualReceive(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setSaving(true);
-    const fd = new FormData(e.currentTarget);
-    const body = {
-      catalog_product_id: Number(fd.get("catalog_product_id")),
-      quantity_delta: Number(fd.get("quantity")),
-      reason: `Manual receive: ${fd.get("reason") || "goods in"}`,
-    };
-    const r = await fetchApi(apiUrl("inventory/adjustments"), { method: "POST", headers: headers(), body: JSON.stringify(body) });
+    if (!manualVendorId) { showToast("Select a vendor", false); return; }
+    const items = manualRows
+      .filter((r) => r.cid && Number(r.qty) > 0)
+      .map((r) => ({ catalog_product_id: Number(r.cid), quantity: Number(r.qty) }));
+    if (!items.length) { showToast("Add at least one item with quantity", false); return; }
+    setManualSaving(true);
+    const body = { vendor_id: Number(manualVendorId), items, notes: manualNotes.trim() || undefined };
+    const r = await fetchApi(apiUrl("inventory/receipts/adhoc"), { method: "POST", headers: headers(), body: JSON.stringify(body) });
     const data = await r.json().catch(() => ({}));
-    setSaving(false);
+    setManualSaving(false);
     if (!r.ok) { showToast(formatApiError(data), false); return; }
-    showToast("Stock added.", true);
-    (e.target as HTMLFormElement).reset();
+    showToast("Stock added and vendor order created.", true);
+    setManualVendorId(""); setManualRows([{ cid: "", qty: "" }]); setManualNotes("");
     onRefresh();
   }
 
@@ -886,10 +894,9 @@ function ReceiveGoodsTab({
       <div className="mb-4 flex flex-wrap gap-2">
         {[
           { id: "vendor", label: "📦 Receive from Vendor" },
-          { id: "po", label: "Receive against PO" },
           { id: "manual", label: "Ad-hoc / Manual" },
         ].map((m) => (
-          <button key={m.id} type="button" onClick={() => setMode(m.id as "vendor" | "po" | "manual")}
+          <button key={m.id} type="button" onClick={() => setMode(m.id as "vendor" | "manual")}
             className={`rounded-lg px-4 py-2 text-sm font-semibold ${mode === m.id ? "bg-blue-600 text-white" : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}`}>
             {m.label}
           </button>
@@ -1018,105 +1025,58 @@ function ReceiveGoodsTab({
         </div>
       )}
 
-      {mode === "po" && (
-        <div className="space-y-4">
-          <div>
-            <label className={LABEL}>Select open purchase order</label>
-            <select value={selPoId} onChange={(e) => setSelPoId(e.target.value)} className={INPUT + " max-w-sm"}>
-              <option value="">— select PO —</option>
-              {openPos.map((p) => {
-                const v = vendors.find((vv) => vv.id === p.vendor_id);
-                const vname = v?.company_name || v?.person_name || `Vendor #${p.vendor_id}`;
-                return <option key={p.id} value={p.id}>PO #{p.id} — {vname} ({p.status})</option>;
-              })}
-            </select>
-          </div>
-
-          {selPo && (
-            <form onSubmit={receiveFromPo} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div><label className={LABEL}>Vendor Bill No.</label><input value={vendorBillNo} onChange={(e) => setVendorBillNo(e.target.value)} placeholder="Bill number on vendor's paper" className={INPUT} /></div>
-                <div><label className={LABEL}>Receipt number</label><input value={receiptNo} onChange={(e) => setReceiptNo(e.target.value)} className={INPUT} /></div>
-                <div><label className={LABEL}>Contact number</label><input value={contactNo} onChange={(e) => setContactNo(e.target.value)} className={INPUT} /></div>
-                <div><label className={LABEL}>Notes</label><input value={notes} onChange={(e) => setNotes(e.target.value)} className={INPUT} /></div>
-                <div className="col-span-2">
-                  <label className={LABEL}>Bill photo (optional)</label>
-                  <input type="file" accept="image/*,.pdf" onChange={(e) => setBillPhoto(e.target.files?.[0] ?? null)} className="block w-full text-sm text-slate-500 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-semibold hover:file:bg-slate-200" />
-                </div>
-              </div>
-
-              <div className="overflow-hidden rounded-xl border border-slate-200">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase text-slate-500">
-                      <th className="px-3 py-2 text-left">Product</th>
-                      <th className="px-3 py-2 text-right">Ordered</th>
-                      <th className="px-3 py-2 text-right">Receive qty</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {selPo.items.map((it) => {
-                      const entered = Number(recvQty[it.catalog_product_id] ?? 0);
-                      const overDelivery = entered > it.quantity;
-                      return (
-                        <tr key={it.catalog_product_id}>
-                          <td className="px-3 py-2 font-medium">{it.name}</td>
-                          <td className="px-3 py-2 text-right">{it.quantity}</td>
-                          <td className="px-3 py-2 text-right">
-                            <div className="flex items-center justify-end gap-2">
-                              <input type="number" min="0"
-                                value={recvQty[it.catalog_product_id] ?? ""}
-                                onChange={(e) => setRecvQty((p) => ({ ...p, [it.catalog_product_id]: e.target.value }))}
-                                className="w-20 rounded border border-slate-300 px-2 py-1 text-right text-sm" />
-                              {overDelivery && (
-                                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">Over-delivery</span>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-4">
-                <label className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={partial} onChange={(e) => setPartial(e.target.checked)} className="h-4 w-4 rounded" />
-                  Partial delivery
-                </label>
-                <label className="flex items-center gap-2 text-sm text-amber-700">
-                  <input type="checkbox" checked={forceClose} onChange={(e) => setForceClose(e.target.checked)} className="h-4 w-4 rounded" />
-                  Force close this PO after receipt
-                </label>
-                <button type="submit" disabled={saving} className={BTN_PRIMARY}>
-                  {saving ? "Saving…" : "Confirm receipt"}
-                </button>
-              </div>
-            </form>
-          )}
-        </div>
-      )}
 
       {mode === "manual" && (
-        <form onSubmit={manualReceive} className="max-w-md space-y-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <form onSubmit={manualReceive} className="max-w-xl space-y-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-xs text-slate-500">Adds stock immediately and auto-creates a vendor order (status: created manually).</p>
           <div>
-            <label className={LABEL}>Product *</label>
-            <select name="catalog_product_id" required className={INPUT}>
-              <option value="">— select product —</option>
-              {catalog.map((p) => <option key={p.id} value={p.id}>{p.our_product_id} — {p.name}</option>)}
+            <label className={LABEL}>Vendor *</label>
+            <select value={manualVendorId} onChange={(e) => { setManualVendorId(e.target.value); setManualRows([{ cid: "", qty: "" }]); }} className={INPUT} required>
+              <option value="">— select vendor —</option>
+              {vendors.map((v) => <option key={v.id} value={v.id}>{v.company_name || v.person_name}</option>)}
             </select>
           </div>
+
+          {manualVendorId && (
+            <div>
+              <label className={LABEL}>Products * ({manualVendorProducts.length} from this vendor)</label>
+              <div className="space-y-2">
+                {manualRows.map((row, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <select
+                      value={row.cid}
+                      onChange={(e) => {
+                        const updated = manualRows.map((r, i) => i === idx ? { ...r, cid: e.target.value } : r);
+                        if (idx === manualRows.length - 1 && e.target.value) updated.push({ cid: "", qty: "" });
+                        setManualRows(updated);
+                      }}
+                      className="flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
+                    >
+                      <option value="">— select product —</option>
+                      {manualVendorProducts.map((p) => <option key={p.id} value={p.id}>{p.our_product_id}</option>)}
+                    </select>
+                    <input
+                      type="number" min="1" placeholder="Qty"
+                      value={row.qty}
+                      onChange={(e) => setManualRows(manualRows.map((r, i) => i === idx ? { ...r, qty: e.target.value } : r))}
+                      className="w-20 rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
+                    />
+                    {manualRows.length > 1 && (
+                      <button type="button" onClick={() => setManualRows(manualRows.filter((_, i) => i !== idx))}
+                        className="text-red-400 hover:text-red-600 text-xs px-1">✕</button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div>
-            <label className={LABEL}>Quantity to add *</label>
-            <input name="quantity" type="number" required min="1" className={INPUT} />
+            <label className={LABEL}>Notes</label>
+            <input value={manualNotes} onChange={(e) => setManualNotes(e.target.value)} className={INPUT} placeholder="e.g. Direct purchase, urgent restock" />
           </div>
-          <div>
-            <label className={LABEL}>Reason / note</label>
-            <input name="reason" className={INPUT} placeholder="e.g. Direct purchase" />
-          </div>
-          <button type="submit" disabled={saving} className={BTN_PRIMARY}>
-            {saving ? "Saving…" : "Add to stock"}
+          <button type="submit" disabled={manualSaving} className={BTN_PRIMARY}>
+            {manualSaving ? "Saving…" : "Add to stock + create vendor order"}
           </button>
         </form>
       )}

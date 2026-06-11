@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from pydantic import BaseModel
 from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
@@ -319,6 +320,15 @@ def create_adjustment(body: StockAdjustmentCreate, db: Session = Depends(get_db)
     db.add(adj)
     db.commit()
     db.refresh(adj)
+    try:
+        from app.services.audit import log_action
+        sign = "+" if body.quantity_delta > 0 else ""
+        log_action(db, action="adjust_stock", entity_type="stock_adjustment", entity_id=adj.id,
+                   description=f"Stock adjustment for '{p.our_product_id}': {sign}{body.quantity_delta} units. Note: {adj.note or 'none'}",
+                   performed_by="admin")
+        db.commit()
+    except Exception as ex:
+        db.rollback(); print(f"Audit log failed: {ex}")
     return StockAdjustmentPublic(
         id=adj.id,
         catalog_product_id=adj.catalog_product_id,
@@ -373,6 +383,104 @@ def delete_adjustment(adjustment_id: int, db: Session = Depends(get_db)) -> dict
     db.delete(row)
     db.commit()
     return {"ok": True, "id": adjustment_id}
+
+
+class AdhocReceiptItem(BaseModel):
+    catalog_product_id: int
+    quantity: int
+    unit_price: Optional[float] = None
+
+
+class AdhocReceiptBody(BaseModel):
+    vendor_id: int
+    items: List[AdhocReceiptItem]
+    notes: Optional[str] = None
+
+
+@router.post("/receipts/adhoc", response_model=dict, dependencies=[Depends(require_admin)],
+             status_code=status.HTTP_201_CREATED)
+def adhoc_receipt(body: AdhocReceiptBody, db: Session = Depends(get_db)) -> dict:
+    """Create a PO (status=created_manually) + immediately add stock for each item."""
+    from app.models.vendor import Vendor
+    from app.models.vendor_purchase_order import VendorPurchaseOrder
+    from app.models.stock_receipt import StockReceipt
+    from app.services.audit import log_action
+
+    vendor = db.get(Vendor, body.vendor_id)
+    if vendor is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="vendor not found")
+    if not body.items:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="at least one item required")
+
+    # Validate all products belong to this vendor
+    for item in body.items:
+        p = db.get(CatalogProduct, item.catalog_product_id)
+        if p is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"product {item.catalog_product_id} not found")
+        if p.vendor_id != body.vendor_id:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"product {p.our_product_id} does not belong to this vendor")
+        if item.quantity < 1:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="quantity must be >= 1")
+
+    # Build PO lines data
+    po_lines = [
+        {"catalog_product_id": item.catalog_product_id, "quantity": item.quantity,
+         "unit_price": item.unit_price or 0.0}
+        for item in body.items
+    ]
+
+    # Create the PO with status created_manually
+    po = VendorPurchaseOrder(
+        vendor_id=body.vendor_id,
+        status="created_manually",
+        notes=(body.notes or "").strip() or "Ad-hoc manual stock entry",
+        lines=po_lines,
+    )
+    db.add(po)
+    db.flush()
+
+    # Add stock delta for each item + build single receipt
+    line_items_json = []
+    for item in body.items:
+        _apply_stock_delta(db, item.catalog_product_id, item.quantity)
+        p = db.get(CatalogProduct, item.catalog_product_id)
+        line_items_json.append({
+            "catalog_product_id": item.catalog_product_id,
+            "our_product_id": p.our_product_id if p else str(item.catalog_product_id),
+            "quantity_received": item.quantity,
+            "unit_price": item.unit_price or 0.0,
+        })
+
+    sr = StockReceipt(
+        purchase_order_id=po.id,
+        vendor_id=body.vendor_id,
+        line_items=line_items_json,
+        note=(body.notes or "").strip() or "Ad-hoc manual stock entry",
+        is_partial=False,
+    )
+    db.add(sr)
+    db.commit()
+
+    # Audit log
+    try:
+        names = []
+        for item in body.items:
+            p = db.get(CatalogProduct, item.catalog_product_id)
+            names.append(f"{p.our_product_id if p else item.catalog_product_id} x{item.quantity}")
+        log_action(
+            db,
+            action="create",
+            entity_type="adhoc_receipt",
+            entity_id=po.id,
+            description=f"Ad-hoc stock entry PO#{po.id} for vendor '{vendor.company_name or vendor.person_name}': {', '.join(names)}",
+            performed_by="admin",
+        )
+        db.commit()
+    except Exception as ex:
+        db.rollback()
+        print(f"Audit log failed: {ex}")
+
+    return {"ok": True, "po_id": po.id, "items_received": len(body.items)}
 
 
 def _parse_bool_form(raw: Optional[str]) -> bool:

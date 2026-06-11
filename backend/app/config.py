@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     whatsapp_api_version: str = "v22.0"
     whatsapp_disable: bool = False
 
+    customer_portal_url: str = ""  # e.g. https://portal.example.com
+
     # Supabase Storage (S3-compatible) — catalog product images under product_images/
     s3_endpoint_url: str = ""
     s3_region: str = ""

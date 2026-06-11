@@ -78,6 +78,7 @@ def _build_bill_story(
     customer_company: str | None,
     totals: Dict[str, Any],
     generated_at: datetime | None = None,
+    printed_at: datetime | None = None,
     customer_notes: str | None = None,
     narration: str | None = None,
     item_image_urls: Dict[int, str | None] | None = None,
@@ -89,9 +90,12 @@ def _build_bill_story(
     """Build the reportlab story (list of Flowables) for one bill copy."""
     from datetime import timedelta
     ts = generated_at or datetime.now(timezone.utc)
+    printed_ts = printed_at or datetime.now(timezone.utc)
     order_ts = order_created_at or ts
     ist_offset = timedelta(hours=5, minutes=30)
     order_ts_ist = order_ts.astimezone(timezone.utc).replace(tzinfo=timezone.utc) + ist_offset
+    bill_ts_ist = ts.astimezone(timezone.utc).replace(tzinfo=timezone.utc) + ist_offset
+    printed_ts_ist = printed_ts.astimezone(timezone.utc).replace(tzinfo=timezone.utc) + ist_offset
 
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle(
@@ -150,7 +154,8 @@ def _build_bill_story(
             escape(
                 f"Bill #{bill_id}   |   Order #{order_id}   |   "
                 f"Order Date: {order_ts_ist.strftime('%d %b %Y %I:%M %p')} IST   |   "
-                f"Generated: {ts.strftime('%d %b %Y')}"
+                f"Bill Generated: {bill_ts_ist.strftime('%d %b %Y %I:%M %p')} IST   |   "
+                f"Printed: {printed_ts_ist.strftime('%d %b %Y %I:%M %p')} IST"
             ),
             subtitle_style,
         )
@@ -183,6 +188,17 @@ def _build_bill_story(
                 return img
         return ""
 
+    def _rate(ln: dict) -> str:
+        """Return the rate cell value, falling back across field names for older bills."""
+        return _safe(
+            ln.get("rate_inclusive") or ln.get("unit_price") or ln.get("effective_price") or ln.get("base_unit_price")
+        )
+
+    def _amount(ln: dict) -> str:
+        return _safe(
+            ln.get("line_total") or ln.get("line_inclusive_after_discount") or ln.get("line_total_inclusive")
+        )
+
     if gst_on:
         head = ["", "Code", "Description", "Qty", "Rate (Rs.)", "Taxable (Rs.)", f"GST ({gst_label})", "Total (Rs.)"]
         col_widths = [1.6 * cm, 2.0 * cm, 4.2 * cm, 1.0 * cm, 1.9 * cm, 2.0 * cm, 2.0 * cm, 2.1 * cm]
@@ -195,11 +211,11 @@ def _build_bill_story(
                 _get_img_cell(i),
                 _safe(ln.get("our_product_id"), 24),
                 _safe(ln.get("name"), 48),
-                str(qty),
-                _safe(ln.get("rate_inclusive")),
-                _safe(ln.get("line_taxable_value")),
-                _safe(ln.get("line_gst_amount")),
-                _safe(ln.get("line_total")),
+                str(qty) if qty else _safe(ln.get("quantity")),
+                _rate(ln),
+                _safe(ln.get("line_taxable_value") or ln.get("line_total")),
+                _safe(ln.get("line_gst_amount") or "0.00"),
+                _amount(ln),
             ])
     else:
         head = ["", "Code", "Description", "Qty", "Rate (Rs.)", "Amount (Rs.)"]
@@ -213,9 +229,9 @@ def _build_bill_story(
                 _get_img_cell(i),
                 _safe(ln.get("our_product_id"), 24),
                 _safe(ln.get("name"), 56),
-                str(qty),
-                _safe(ln.get("rate_inclusive")),
-                _safe(ln.get("line_total")),
+                str(qty) if qty else _safe(ln.get("quantity")),
+                _rate(ln),
+                _amount(ln),
             ])
 
     if len(data) < 2:
@@ -255,6 +271,7 @@ def _build_bill_story(
     grand = _safe(totals.get("grand_total"))
 
     right_style = ParagraphStyle("r", parent=styles["Normal"], fontSize=10, alignment=TA_RIGHT)
+    additional_charges = totals.get("additional_charges")
     summary_rows: list[list[Any]] = [["Subtotal (incl.)", f"Rs. {sub}"]]
     if dp:
         summary_rows.append([f"Discount ({_safe(dp)}%)", f"- Rs. {disc_amt}"])
@@ -265,6 +282,10 @@ def _build_bill_story(
         summary_rows.append(["Freight charges", f"Rs. {_safe(freight)}"])
     if packaging:
         summary_rows.append(["Packaging charges", f"Rs. {_safe(packaging)}"])
+    if additional_charges and isinstance(additional_charges, list):
+        for ac in additional_charges:
+            if isinstance(ac, dict) and ac.get("name") and ac.get("amount"):
+                summary_rows.append([_safe(ac["name"]), f"Rs. {_safe(ac['amount'])}"])
     summary_rows.append(["Grand Total", f"Rs. {grand}"])
 
     sum_table = Table(summary_rows, colWidths=[9 * cm, 6 * cm])
@@ -336,6 +357,7 @@ def render_customer_bill_pdf(
     customer_company: str | None,
     totals: Dict[str, Any],
     generated_at: datetime | None = None,
+    printed_at: datetime | None = None,
     customer_notes: str | None = None,
     narration: str | None = None,
     item_image_urls: Dict[int, str | None] | None = None,
@@ -352,6 +374,7 @@ def render_customer_bill_pdf(
         customer_company=customer_company,
         totals=totals,
         generated_at=generated_at,
+        printed_at=printed_at,
         customer_notes=customer_notes,
         narration=narration,
         item_image_urls=item_image_urls,
@@ -372,6 +395,7 @@ def render_copies_pdf(
     customer_company: str | None,
     totals: Dict[str, Any],
     generated_at: datetime | None = None,
+    printed_at: datetime | None = None,
     customer_notes: str | None = None,
     narration: str | None = None,
     item_image_urls: Dict[int, str | None] | None = None,
@@ -383,10 +407,12 @@ def render_copies_pdf(
     Each copy gets a ORIGINAL / DUPLICATE / TRIPLICATE / QUADRUPLICATE banner.
     """
     copies = max(1, min(copies, 4))
+    now = datetime.now(timezone.utc)
     kwargs = dict(
         bill_id=bill_id, order_id=order_id,
         customer_name=customer_name, customer_company=customer_company,
         totals=totals, generated_at=generated_at,
+        printed_at=printed_at or now,
         customer_notes=customer_notes, narration=narration,
         item_image_urls=item_image_urls, order_created_at=order_created_at,
         credit_limit=credit_limit, outstanding=outstanding,

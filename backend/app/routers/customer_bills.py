@@ -222,6 +222,7 @@ def generate_customer_bill(body: CustomerBillGenerate, db: Session = Depends(get
         freight_charges=freight,
         packaging_charges=packaging,
         item_overrides=body.item_overrides,
+        additional_charges=body.additional_charges,
     )
 
     cust = db.get(Customer, order.customer_id)
@@ -363,6 +364,15 @@ def generate_customer_bill(body: CustomerBillGenerate, db: Session = Depends(get
             print(f"WA order_billed failed #{order.id}: {e}")
             traceback.print_exc()
 
+    try:
+        from app.services.audit import log_action as _log
+        _log(db, "CREATE", "customer_bill", row.id,
+             f"Bill {row.bill_no or row.id} generated for Order #{order.id}. Total: {tot.get('grand_total','?')}")
+        db.commit()
+    except Exception as _audit_ex:
+        print(f"Audit log failed (non-fatal): {_audit_ex}")
+        db.rollback()
+
     return _to_public(row)
 
 
@@ -426,7 +436,30 @@ def print_bill(
                     if url:
                         item_image_urls[cid] = url
 
+    from datetime import datetime as _dt, timezone as _tz2
     totals = row.totals if isinstance(row.totals, dict) else {}
+
+    # If stored totals have no lines (or lines lack rate_inclusive), regenerate from order items
+    stored_lines = totals.get("lines", [])
+    needs_regen = (
+        not stored_lines or
+        all(not (ln.get("rate_inclusive") or ln.get("unit_price")) for ln in stored_lines if isinstance(ln, dict))
+    )
+    if needs_regen and isinstance(order.items, list) and order.items:
+        from app.services.customer_bill_math import compute_bill_totals as _cbt
+        from decimal import Decimal as _Dec2
+        fresh = _cbt(
+            order.items,
+            gst_enabled=bool(row.gst_enabled),
+            gst_rate_percent=row.gst_rate_percent or _Dec2("0"),
+            discount_percent=row.discount_percent,
+            freight_charges=None,
+            packaging_charges=None,
+            additional_charges=totals.get("additional_charges"),
+        )
+        totals = {**totals, "lines": fresh["lines"]}
+
+    printed_now = _dt.now(_tz2.utc)
     pdf_bytes = render_copies_pdf(
         copies=copies,
         with_labels=True,
@@ -435,10 +468,21 @@ def print_bill(
         customer_name=display_name,
         customer_company=company,
         totals=totals,
+        generated_at=row.created_at,
+        printed_at=printed_now,
         narration=row.narration or None,
         item_image_urls=item_image_urls,
         order_created_at=order.created_at,
     )
+    try:
+        from app.services.audit import log_action as _log2
+        _log2(db, "PRINT", "customer_bill", row.id,
+              f"Bill {row.bill_no or row.id} printed ({copies} cop{'y' if copies==1 else 'ies'})")
+        db.commit()
+    except Exception as _audit_ex:
+        print(f"Audit log failed (non-fatal): {_audit_ex}")
+        db.rollback()
+
     filename = f"Bill_{row.bill_no or row.id}_x{copies}.pdf"
     return Response(
         content=pdf_bytes,

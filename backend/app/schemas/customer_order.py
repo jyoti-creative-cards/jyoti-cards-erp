@@ -26,6 +26,7 @@ class CustomerOrderAdminCreate(BaseModel):
     invoice_date: Optional[datetime] = None
     invoice_no: Optional[str] = Field(None, max_length=100)
     receipt_note_no: Optional[str] = Field(None, max_length=100)
+    force_stock: bool = False  # allow negative stock if True
 
 
 class CustomerOrderLinePublic(BaseModel):
@@ -87,6 +88,9 @@ class OfflineOrderCreate(BaseModel):
     discount_percent: Optional[float] = Field(None, ge=0, le=100)
     freight_charges: Optional[float] = Field(None, ge=0)
     packaging_charges: Optional[float] = Field(None, ge=0)
+    additional_charges: Optional[List[dict]] = None  # [{name: str, amount: float}]
+    narration: Optional[str] = Field(None, max_length=2000)
     bill_series_id: Optional[int] = None
     rate_type: Optional[str] = None  # "order" | "net" | "regular"
     force_duplicate: bool = False  # skip duplicate check if True
+    force_stock: bool = False  # allow negative stock if True

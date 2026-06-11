@@ -24,6 +24,7 @@ def compute_bill_totals(
     freight_charges: Decimal | None = None,
     packaging_charges: Decimal | None = None,
     item_overrides: list[dict] | None = None,
+    additional_charges: list[dict] | None = None,
 ) -> Dict[str, Any]:
     """
     Order line unit_price is GST-inclusive.
@@ -176,7 +177,28 @@ def compute_bill_totals(
     packaging = (packaging_charges or Decimal("0")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     if packaging < 0:
         packaging = Decimal("0")
-    grand = (after_discount_inclusive + freight + packaging).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    # Additional charges (e.g. VAT, handling, etc.)
+    extra_charges_out: list[dict] = []
+    extra_total = Decimal("0")
+    if additional_charges:
+        for ac in additional_charges:
+            if not isinstance(ac, dict):
+                continue
+            ac_name = str(ac.get("name") or "").strip()
+            if not ac_name:
+                continue
+            try:
+                ac_amt = Decimal(str(ac.get("amount") or "0")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            except Exception:
+                ac_amt = Decimal("0")
+            if ac_amt < 0:
+                ac_amt = Decimal("0")
+            if ac_amt > 0:
+                extra_charges_out.append({"name": ac_name, "amount": _fmt2(ac_amt)})
+                extra_total += ac_amt
+
+    grand = (after_discount_inclusive + freight + packaging + extra_total).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
     return {
         "lines": lines_out,
@@ -186,6 +208,7 @@ def compute_bill_totals(
         "after_discount_inclusive": _fmt2(after_discount_inclusive),
         "freight_charges": _fmt2(freight) if freight > 0 else None,
         "packaging_charges": _fmt2(packaging) if packaging > 0 else None,
+        "additional_charges": extra_charges_out if extra_charges_out else None,
         "gst_enabled": gst_enabled,
         "gst_rate_percent": _fmt2(r),
         "gst_rate_label": f"{gst_rate_display}%",

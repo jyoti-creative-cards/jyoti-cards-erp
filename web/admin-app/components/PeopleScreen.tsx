@@ -147,7 +147,11 @@ function CustomersTab({
 
   const filtered = customers.filter((c) => {
     const q = search.toLowerCase();
-    const matchSearch = !q || c.name.toLowerCase().includes(q) || c.phone.includes(q) || (c.alias ?? "").toLowerCase().includes(q);
+    const matchSearch = !q
+      || (c.company_name ?? "").toLowerCase().includes(q)
+      || c.name.toLowerCase().includes(q)
+      || c.phone.includes(q)
+      || (c.alias ?? "").toLowerCase().includes(q);
     const matchRoute = !routeFilter || String(c.route_id) === routeFilter;
     return matchSearch && matchRoute;
   });
@@ -157,10 +161,12 @@ function CustomersTab({
     if (!adminKey.trim()) return;
     setSaving(true);
     const fd = new FormData(e.currentTarget);
+    const personName = String(fd.get("person_name") || "").trim();
+    const companyName = String(fd.get("company_name") || "").trim();
     const body: Record<string, unknown> = {
-      name: fd.get("name"),
+      company_name: companyName,
+      name: personName || companyName, // display name = person name if given, else shop name
       phone: fd.get("phone"),
-      company_name: emptyToNull(fd.get("company_name")),
       alias: emptyToNull(fd.get("alias")),
       address: emptyToNull(fd.get("address")),
       secondary_phone: emptyToNull(fd.get("secondary_phone")),
@@ -242,9 +248,9 @@ function CustomersTab({
           <table className="w-full border-collapse text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                <th className="px-4 py-3 text-left">Name</th>
+                <th className="px-4 py-3 text-left">Shop Name</th>
                 <th className="px-4 py-3 text-left">Phone</th>
-                <th className="px-4 py-3 text-left">Company</th>
+                <th className="px-4 py-3 text-left">Person</th>
                 <th className="px-4 py-3 text-left">Route / City</th>
                 <th className="px-4 py-3 text-left">Credit</th>
                 <th className="px-4 py-3 text-right">Bills</th>
@@ -260,11 +266,13 @@ function CustomersTab({
                   onClick={() => { openDrawer(c); setDrawerOpen(true); }}
                 >
                   <td className="px-4 py-3 font-medium text-slate-900">
-                    {c.name}
+                    {c.company_name || c.name}
                     {c.alias && <span className="ml-2 text-xs text-slate-400">({c.alias})</span>}
                   </td>
                   <td className="px-4 py-3 font-mono text-slate-600">{c.phone}</td>
-                  <td className="px-4 py-3 text-slate-500">{c.company_name ?? "—"}</td>
+                  <td className="px-4 py-3 text-slate-500">
+                    {c.company_name && c.name !== c.company_name ? c.name : "—"}
+                  </td>
                   <td className="px-4 py-3 text-slate-500">
                     {routeName(c.route_id) || cityName(c.city_id) || c.city || "—"}
                   </td>
@@ -318,8 +326,8 @@ function CustomersTab({
       <Drawer
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
-        title={editing ? editing.name : "New customer"}
-        subtitle={editing ? `ID #${editing.id} · ${editing.phone}` : "Fill in the details below"}
+        title={editing ? (editing.company_name || editing.name) : "New customer"}
+        subtitle={editing ? `ID #${editing.id} · ${editing.phone}${editing.company_name && editing.name !== editing.company_name ? ` · ${editing.name}` : ""}` : "Fill in the details below"}
         footer={
           <div className="flex items-center gap-3">
             <button type="submit" form="customer-form" disabled={saving} className={BTN_PRIMARY}>
@@ -332,8 +340,8 @@ function CustomersTab({
         <form id="customer-form" onSubmit={onSave} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">
-              <label className={LABEL}>Full name *</label>
-              <input name="name" required defaultValue={editing?.name ?? ""} className={INPUT} />
+              <label className={LABEL}>Shop / Business name *</label>
+              <input name="company_name" required defaultValue={editing?.company_name ?? (editing?.name ?? "")} placeholder="e.g. Sharma General Store" className={INPUT} />
             </div>
             <div>
               <label className={LABEL}>Phone *</label>
@@ -344,8 +352,8 @@ function CustomersTab({
               <input name="secondary_phone" defaultValue={editing?.secondary_phone ?? ""} className={INPUT} />
             </div>
             <div className="col-span-2">
-              <label className={LABEL}>Company name</label>
-              <input name="company_name" defaultValue={editing?.company_name ?? ""} className={INPUT} />
+              <label className={LABEL}>Person name (optional)</label>
+              <input name="person_name" defaultValue={editing && editing.name !== editing.company_name ? editing.name : ""} placeholder="Contact person's name" className={INPUT} />
             </div>
             <div className="col-span-2">
               <label className={LABEL}>Alias (for quick search)</label>
@@ -501,7 +509,7 @@ function StatementModal({
         <div style={{ padding: "16px 24px 12px", borderBottom: "1px solid #e2e8f0" }}>
           <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 10 }}>
             <div>
-              <div style={{ fontSize: 17, fontWeight: 700, color: "#0f172a" }}>{customer.name}</div>
+              <div style={{ fontSize: 17, fontWeight: 700, color: "#0f172a" }}>{customer.company_name || customer.name}</div>
               <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
                 {customer.phone}{customer.company_name ? ` · ${customer.company_name}` : ""}
               </div>
@@ -921,7 +929,11 @@ function VendorsTab({
 
   const filtered = vendors.filter((v) => {
     const q = search.toLowerCase();
-    return !q || v.person_name.toLowerCase().includes(q) || v.phone.includes(q) || (v.company_name ?? "").toLowerCase().includes(q) || (v.alias ?? "").toLowerCase().includes(q);
+    return !q
+      || (v.company_name ?? "").toLowerCase().includes(q)
+      || v.person_name.toLowerCase().includes(q)
+      || v.phone.includes(q)
+      || (v.alias ?? "").toLowerCase().includes(q);
   });
 
   async function onSave(e: React.FormEvent<HTMLFormElement>) {
@@ -929,15 +941,18 @@ function VendorsTab({
     if (!adminKey.trim()) return;
     setSaving(true);
     const fd = new FormData(e.currentTarget);
+    const personName = String(fd.get("person_name") || "").trim();
+    const companyName = String(fd.get("company_name") || "").trim();
     const body = {
-      person_name: fd.get("person_name"),
+      company_name: companyName,
+      person_name: personName || companyName,
       phone: fd.get("phone"),
-      company_name: emptyToNull(fd.get("company_name")),
       alias: emptyToNull(fd.get("alias")),
       secondary_phone: emptyToNull(fd.get("secondary_phone")),
       address: emptyToNull(fd.get("address")),
       billing_percentage: emptyToNull(fd.get("billing_percentage")) ? Number(fd.get("billing_percentage")) : null,
       city: emptyToNull(fd.get("city")),
+      gst_number: emptyToNull(fd.get("gst_number")),
     };
     const url = editing ? apiUrl(`vendors/${editing.id}`) : apiUrl("vendors");
     const method = editing ? "PUT" : "POST";
@@ -993,9 +1008,9 @@ function VendorsTab({
           <table className="w-full border-collapse text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                <th className="px-4 py-3 text-left">Name</th>
+                <th className="px-4 py-3 text-left">Shop Name</th>
                 <th className="px-4 py-3 text-left">Phone</th>
-                <th className="px-4 py-3 text-left">Company</th>
+                <th className="px-4 py-3 text-left">Person</th>
                 <th className="px-4 py-3 text-left">City</th>
                 <th className="px-4 py-3 text-left">Bill %</th>
                 <th className="px-4 py-3" />
@@ -1009,11 +1024,13 @@ function VendorsTab({
                   onClick={() => { setEditing(v); setDrawerOpen(true); }}
                 >
                   <td className="px-4 py-3 font-medium text-slate-900">
-                    {v.person_name}
+                    {v.company_name || v.person_name}
                     {v.alias && <span className="ml-2 text-xs text-slate-400">({v.alias})</span>}
                   </td>
                   <td className="px-4 py-3 font-mono text-slate-600">{v.phone}</td>
-                  <td className="px-4 py-3 text-slate-500">{v.company_name ?? "—"}</td>
+                  <td className="px-4 py-3 text-slate-500">
+                    {v.company_name && v.person_name !== v.company_name ? v.person_name : "—"}
+                  </td>
                   <td className="px-4 py-3 text-slate-500">{v.city ?? "—"}</td>
                   <td className="px-4 py-3 text-slate-500">{v.billing_percentage != null ? `${v.billing_percentage}%` : "—"}</td>
                   <td className="px-4 py-3 text-right">
@@ -1038,8 +1055,8 @@ function VendorsTab({
       <Drawer
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
-        title={editing ? editing.person_name : "New vendor"}
-        subtitle={editing ? `ID #${editing.id} · ${editing.phone}` : "Fill in the details below"}
+        title={editing ? (editing.company_name || editing.person_name) : "New vendor"}
+        subtitle={editing ? `ID #${editing.id} · ${editing.phone}${editing.company_name && editing.person_name !== editing.company_name ? ` · ${editing.person_name}` : ""}` : "Fill in the details below"}
         footer={
           <div className="flex gap-3">
             <button type="submit" form="vendor-form" disabled={saving} className={BTN_PRIMARY}>
@@ -1052,8 +1069,8 @@ function VendorsTab({
         <form id="vendor-form" onSubmit={onSave} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">
-              <label className={LABEL}>Person name *</label>
-              <input name="person_name" required defaultValue={editing?.person_name ?? ""} className={INPUT} />
+              <label className={LABEL}>Shop / Business name *</label>
+              <input name="company_name" required defaultValue={editing?.company_name ?? (editing?.person_name ?? "")} placeholder="e.g. Sharma Traders" className={INPUT} />
             </div>
             <div>
               <label className={LABEL}>Phone *</label>
@@ -1064,8 +1081,8 @@ function VendorsTab({
               <input name="secondary_phone" defaultValue={editing?.secondary_phone ?? ""} className={INPUT} />
             </div>
             <div className="col-span-2">
-              <label className={LABEL}>Company name</label>
-              <input name="company_name" defaultValue={editing?.company_name ?? ""} className={INPUT} />
+              <label className={LABEL}>Person name (optional)</label>
+              <input name="person_name" defaultValue={editing && editing.person_name !== editing.company_name ? editing.person_name : ""} placeholder="Contact person's name" className={INPUT} />
             </div>
             <div className="col-span-2">
               <label className={LABEL}>Alias (for quick search)</label>
@@ -1082,6 +1099,10 @@ function VendorsTab({
             <div>
               <label className={LABEL}>Billing %</label>
               <input name="billing_percentage" type="number" min={0} max={100} defaultValue={editing?.billing_percentage ?? ""} placeholder="e.g. 2" className={INPUT} />
+            </div>
+            <div className="col-span-2">
+              <label className={LABEL}>GST Number</label>
+              <input name="gst_number" defaultValue={editing?.gst_number ?? ""} placeholder="e.g. 22AAAAA0000A1Z5" className={INPUT} style={{ textTransform: "uppercase" }} />
             </div>
           </div>
         </form>

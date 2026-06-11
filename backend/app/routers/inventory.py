@@ -41,6 +41,13 @@ router = APIRouter(prefix="/inventory", tags=["inventory"])
 _PREFIX = "receipt_documents"
 
 
+@router.get("/stock-balances", dependencies=[Depends(require_admin)])
+def get_all_stock_balances(db: Session = Depends(get_db)) -> list[dict]:
+    """Return all stock balances as [{catalog_product_id, balance}] list."""
+    rows = db.query(StockBalance).all()
+    return [{"catalog_product_id": r.catalog_product_id, "balance": int(r.quantity)} for r in rows]
+
+
 @router.post("/stock-check", dependencies=[Depends(require_admin)])
 def bulk_stock_check(
     body: dict,
@@ -163,14 +170,14 @@ def list_inventory(
     ),
     stock_status: Optional[str] = Query(
         None,
-        description="Filter: in_stock | low_stock | out_of_stock",
+        description="Filter: in_stock | low_stock | out_of_stock | negative_stock",
     ),
 ) -> List[InventoryRowPublic]:
     st_f = (stock_status or "").strip().lower()
-    if st_f and st_f not in ("in_stock", "low_stock", "out_of_stock"):
+    if st_f and st_f not in ("in_stock", "low_stock", "out_of_stock", "negative_stock"):
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            detail="stock_status must be in_stock, low_stock, or out_of_stock",
+            detail="stock_status must be in_stock, low_stock, out_of_stock, or negative_stock",
         )
 
     out: List[InventoryRowPublic] = []

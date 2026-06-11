@@ -50,14 +50,16 @@ def create_vendor(body: VendorCreate, db: Session = Depends(get_db)) -> Vendor:
     if sec and not sec_norm:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="invalid secondary phone")
 
+    display_name = (body.person_name or "").strip() or body.company_name.strip()
     row = Vendor(
-        person_name=body.person_name.strip(),
+        person_name=display_name,
         phone=phone,
-        company_name=(body.company_name.strip() if body.company_name else None),
+        company_name=body.company_name.strip(),
         secondary_phone=sec_norm,
         address=(body.address.strip() if body.address else None),
         billing_percentage=body.billing_percentage,
         city=(body.city.strip() if body.city else None),
+        gst_number=(body.gst_number.strip().upper() if body.gst_number else None),
         is_active=True,
     )
     db.add(row)
@@ -110,6 +112,10 @@ def update_vendor(
 
     if "billing_percentage" in data:
         row.billing_percentage = data.pop("billing_percentage")
+
+    if "gst_number" in data:
+        v = data.pop("gst_number")
+        row.gst_number = v.strip().upper() if isinstance(v, str) and v.strip() else None
 
     if "secondary_phone" in data:
         sec = data.pop("secondary_phone")

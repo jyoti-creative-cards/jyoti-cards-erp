@@ -32,6 +32,7 @@ export function CatalogScreen({ adminKey }: Props) {
   // Shared catalog data
   const [products, setProducts] = useState<CatalogProductPublic[]>([]);
   const [vendors, setVendors] = useState<VendorPublic[]>([]);
+  const [categoryList, setCategoryList] = useState<string[]>([]);
   // Unit management — stored locally, seeded from existing products
   const [units, setUnits] = useState<string[]>(["pcs", "bundle", "box", "dozen", "set", "pair", "roll", "sheet"]);
   const [seriesList, setSeriesList] = useState<string[]>([]);
@@ -39,11 +40,12 @@ export function CatalogScreen({ adminKey }: Props) {
 
   const loadProducts = useCallback(async () => {
     if (!adminKey.trim()) return;
-    const [pr, vr, sr, yr] = await Promise.all([
+    const [pr, vr, sr, yr, cr] = await Promise.all([
       fetchApi(apiUrl("catalog"), { headers: headersAdmin() }),
       fetchApi(apiUrl("vendors"), { headers: headersAdmin() }),
       fetchApi(apiUrl("catalog/series"), { headers: headersAdmin() }),
       fetchApi(apiUrl("catalog/year-groups"), { headers: headersAdmin() }),
+      fetchApi(apiUrl("catalog/categories"), { headers: headersAdmin() }),
     ]);
     if (pr.ok) {
       const data: CatalogProductPublic[] = await pr.json();
@@ -55,6 +57,7 @@ export function CatalogScreen({ adminKey }: Props) {
     if (vr.ok) setVendors(await vr.json());
     if (sr.ok) { const d = await sr.json(); setSeriesList(d.series ?? []); }
     if (yr.ok) { const d = await yr.json(); setYearGroups(d.year_groups ?? []); }
+    if (cr.ok) { const d = await cr.json(); setCategoryList((d.categories ?? []).sort()); }
   }, [adminKey]);
 
   useEffect(() => { void loadProducts(); }, [loadProducts]);
@@ -63,8 +66,6 @@ export function CatalogScreen({ adminKey }: Props) {
     const v = vendors.find((v) => v.id === id);
     return v?.company_name || v?.person_name || `#${id}`;
   };
-
-  const categories = [...new Set(products.map((p) => p.category))].sort();
 
   return (
     <div>
@@ -92,7 +93,7 @@ export function CatalogScreen({ adminKey }: Props) {
           products={products}
           vendors={vendors}
           vendorName={vendorName}
-          categories={categories}
+          categories={categoryList}
           units={units}
           setUnits={setUnits}
           seriesList={seriesList}
@@ -364,18 +365,42 @@ function ProductsTab({
                   <th className="pb-1 text-left"></th>
                 </tr>
               </thead>
+              {/* datalist removed — category is now a strict select */}
+              <datalist id="bulk-units-list">
+                {units.map(u => <option key={u} value={u} />)}
+              </datalist>
               <tbody>
                 {bulkRows.map((row, idx) => (
                   <tr key={idx}>
                     {(["our_product_id", "vendor_product_id", "category", "unit", "buying_price", "selling_price"] as const).map(field => (
                       <td key={field} className="pr-2 pb-1">
-                        <input
-                          type={field.includes("price") ? "number" : "text"}
-                          value={row[field]}
-                          placeholder={field === "unit" ? "pcs" : ""}
-                          onChange={e => setBulkRows(rows => rows.map((r, i) => i === idx ? { ...r, [field]: e.target.value } : r))}
-                          className="w-full rounded border border-slate-300 px-2 py-1 text-xs focus:border-blue-400 focus:outline-none"
-                        />
+                        {field === "category" ? (
+                          <select
+                            value={row[field]}
+                            onChange={e => setBulkRows(rows => rows.map((r, i) => i === idx ? { ...r, [field]: e.target.value } : r))}
+                            className="w-full rounded border border-slate-300 px-2 py-1 text-xs focus:border-blue-400 focus:outline-none"
+                          >
+                            <option value="">— select —</option>
+                            {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                          </select>
+                        ) : field === "unit" ? (
+                          <input
+                            type="text"
+                            list="bulk-units-list"
+                            value={row[field]}
+                            placeholder="pcs"
+                            onChange={e => setBulkRows(rows => rows.map((r, i) => i === idx ? { ...r, [field]: e.target.value } : r))}
+                            className="w-full rounded border border-slate-300 px-2 py-1 text-xs focus:border-blue-400 focus:outline-none"
+                          />
+                        ) : (
+                          <input
+                            type={field.includes("price") ? "number" : "text"}
+                            value={row[field]}
+                            placeholder=""
+                            onChange={e => setBulkRows(rows => rows.map((r, i) => i === idx ? { ...r, [field]: e.target.value } : r))}
+                            className="w-full rounded border border-slate-300 px-2 py-1 text-xs focus:border-blue-400 focus:outline-none"
+                          />
+                        )}
                       </td>
                     ))}
                     <td className="pb-1">

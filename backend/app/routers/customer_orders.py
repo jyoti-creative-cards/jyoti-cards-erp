@@ -64,7 +64,7 @@ def _build_items_customer(db: Session, quantities: dict[int, int]) -> tuple[list
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"Unknown product id {cid}")
         q_avail, th = _avail(db, cid)
         label = stock_status_label(q_avail, th)
-        if label == "out_of_stock" or q_avail <= 0:
+        if label in ("out_of_stock", "negative_stock") or q_avail <= 0:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
                 detail=f"Product {p.our_product_id} is not available to order (out of stock)",
@@ -623,14 +623,26 @@ def admin_offline_order(body: OfflineOrderCreate, db: Session = Depends(get_db))
     merged = _merge_lines(body.items)
     items, total = _build_items_admin(db, merged, price_overrides or None)
 
-    # Deduct stock
+    # Deduct stock (warn if insufficient unless force_stock is set)
+    if not body.force_stock:
+        low_items = []
+        for cid, qty in merged.items():
+            bal = db.get(StockBalance, cid)
+            have = int(bal.quantity) if bal else 0
+            if have < qty:
+                p = db.get(CatalogProduct, cid)
+                low_items.append({"name": p.our_product_id if p else str(cid), "need": qty, "have": have})
+        if low_items:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail={"insufficient_stock": True, "items": low_items, "message": "Insufficient stock for one or more items."},
+            )
     for cid, qty in merged.items():
         bal = db.get(StockBalance, cid)
-        if bal is None or int(bal.quantity) < qty:
-            p = db.get(CatalogProduct, cid)
-            pid = p.our_product_id if p else str(cid)
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"Insufficient stock for {pid}")
-        bal.quantity = int(bal.quantity) - qty
+        if bal is None:
+            bal = StockBalance(catalog_product_id=cid, quantity=-qty, low_stock_threshold=0)
+        else:
+            bal.quantity = int(bal.quantity) - qty
         db.add(bal)
 
     # Create order
@@ -673,6 +685,7 @@ def admin_offline_order(body: OfflineOrderCreate, db: Session = Depends(get_db))
         discount_percent=_Dec(str(body.discount_percent)) if body.discount_percent is not None else None,
         freight_charges=_Dec(str(body.freight_charges)) if body.freight_charges is not None else None,
         packaging_charges=_Dec(str(body.packaging_charges)) if body.packaging_charges is not None else None,
+        additional_charges=body.additional_charges,
     )
 
     new_bill_no: str | None = None
@@ -696,6 +709,7 @@ def admin_offline_order(body: OfflineOrderCreate, db: Session = Depends(get_db))
         document_key=None,
         bill_no=new_bill_no,
         bill_series_id=body.bill_series_id,
+        narration=body.narration or None,
     )
     db.add(bill_row)
     db.flush()
@@ -749,6 +763,15 @@ def admin_offline_order(body: OfflineOrderCreate, db: Session = Depends(get_db))
         print(f"Offline bill AR failed: {ex}")
 
     from app.services.catalog_storage import presigned_url as _ps2
+    try:
+        from app.services.audit import log_action as _log
+        _log(db, "CREATE", "customer_order_bill", order.id,
+             f"Offline order #{order.id} + Bill {bill_row.bill_no or bill_row.id} created for {customer.name}. Total: {totals.get('grand_total','?')}")
+        db.commit()
+    except Exception as _audit_ex:
+        print(f"Audit log failed (non-fatal): {_audit_ex}")
+        db.rollback()
+
     bill_doc_url = _ps2(bill_row.document_key) if bill_row.document_key else None
     return {
         "order": _admin_public(db, order).model_dump(),
@@ -809,6 +832,23 @@ def admin_edit_order_items(
             cid = it["catalog_product_id"]
             if cid in old_billed:
                 it["qty_billed"] = old_billed[cid]
+
+        # Adjust inventory for quantity changes
+        old_qtys = {it["catalog_product_id"]: int(it.get("quantity", 0)) for it in (row.items or []) if isinstance(it, dict)}
+        all_cids = set(old_qtys.keys()) | set(merged.keys())
+        for cid in all_cids:
+            old_q = old_qtys.get(cid, 0)
+            new_q = merged.get(cid, 0)
+            delta = new_q - old_q  # positive = more stock needed, negative = return stock
+            if delta == 0:
+                continue
+            bal = db.get(StockBalance, cid)
+            if bal is None:
+                bal = StockBalance(catalog_product_id=cid, quantity=-delta, low_stock_threshold=0)
+            else:
+                bal.quantity = int(bal.quantity) - delta
+            db.add(bal)
+
         row.items = items
         _fm(row, "items")
         row.total_amount = total
@@ -889,7 +929,14 @@ def admin_edit_order_items(
         except Exception as ex:
             print(f"Edit-items AR failed: {ex}")
 
-    db.commit()
+    try:
+        from app.services.audit import log_action as _log
+        _log(db, "UPDATE", "customer_order", row.id,
+             f"Order #{row.id} items edited. New item count: {len(row.items or [])}")
+        db.commit()
+    except Exception as _audit_ex:
+        print(f"Audit log failed (non-fatal): {_audit_ex}")
+        db.rollback()
     db.refresh(row)
     return _admin_public(db, row)
 
@@ -901,6 +948,13 @@ def permanently_delete_customer_order(order_id: int, db: Session = Depends(get_d
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="order not found")
     db.delete(row)
     db.commit()
+    try:
+        from app.services.audit import log_action as _log
+        _log(db, "DELETE", "customer_order", order_id, f"Order #{order_id} permanently deleted")
+        db.commit()
+    except Exception as _audit_ex:
+        print(f"Audit log failed (non-fatal): {_audit_ex}")
+        db.rollback()
     return {"ok": True, "id": order_id, "permanently_deleted": True}
 
 
@@ -913,6 +967,13 @@ def soft_delete_customer_order(order_id: int, db: Session = Depends(get_db)) -> 
     row.status = "cancelled"
     db.add(row)
     db.commit()
+    try:
+        from app.services.audit import log_action as _log
+        _log(db, "DELETE", "customer_order", order_id, f"Order #{order_id} cancelled/soft-deleted")
+        db.commit()
+    except Exception as _audit_ex:
+        print(f"Audit log failed (non-fatal): {_audit_ex}")
+        db.rollback()
     return {"ok": True, "id": order_id, "deleted": True}
 
 
@@ -924,6 +985,13 @@ def restore_customer_order(order_id: int, db: Session = Depends(get_db)) -> dict
     row.deleted_at = None
     db.add(row)
     db.commit()
+    try:
+        from app.services.audit import log_action as _log
+        _log(db, "UPDATE", "customer_order", order_id, f"Order #{order_id} restored")
+        db.commit()
+    except Exception as _audit_ex:
+        print(f"Audit log failed (non-fatal): {_audit_ex}")
+        db.rollback()
     return {"ok": True, "id": order_id, "restored": True}
 
 

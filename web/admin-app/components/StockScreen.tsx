@@ -37,8 +37,9 @@ const LABEL = "mb-1 block text-xs font-semibold text-slate-500 uppercase trackin
 const BTN_PRIMARY = "inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-50";
 const BTN_SECONDARY = "inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50";
 
-function stockBadge(status: string) {
-  if (status === "out_of_stock") return <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">Out of stock</span>;
+function stockBadge(status: string, qty?: number) {
+  if (status === "negative_stock") return <span className="rounded-full bg-red-200 px-2 py-0.5 text-xs font-bold text-red-800">{qty !== undefined ? `${qty}` : "Negative"}</span>;
+  if (status === "out_of_stock") return <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">0 (Out)</span>;
   if (status === "low_stock") return <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">Low stock</span>;
   return <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">In stock</span>;
 }
@@ -221,11 +222,12 @@ function CurrentStockTab({
       )}
 
       {/* Stats row */}
-      <div className="mb-4 grid grid-cols-3 gap-3">
+      <div className="mb-4 grid grid-cols-4 gap-3">
         {[
-          { label: "In stock",     key: "in_stock",     count: rows.filter((r) => r.stock_status === "in_stock").length,     color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
-          { label: "Low stock",    key: "low_stock",    count: rows.filter((r) => r.stock_status === "low_stock").length,    color: "bg-amber-50 text-amber-700 border-amber-200" },
-          { label: "Out of stock", key: "out_of_stock", count: rows.filter((r) => r.stock_status === "out_of_stock").length, color: "bg-red-50 text-red-700 border-red-200" },
+          { label: "In stock",     key: "in_stock",       count: rows.filter((r) => r.stock_status === "in_stock").length,       color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+          { label: "Low stock",    key: "low_stock",      count: rows.filter((r) => r.stock_status === "low_stock").length,      color: "bg-amber-50 text-amber-700 border-amber-200" },
+          { label: "Zero stock",   key: "out_of_stock",   count: rows.filter((r) => r.stock_status === "out_of_stock").length,   color: "bg-red-50 text-red-700 border-red-200" },
+          { label: "Negative",     key: "negative_stock", count: rows.filter((r) => r.stock_status === "negative_stock").length, color: "bg-red-100 text-red-800 border-red-300" },
         ].map((s) => (
           <div key={s.label} className={`cursor-pointer rounded-xl border p-3 text-center transition hover:shadow-sm ${s.color}`}
             onClick={() => setStatusFilter(statusFilter === s.key ? "" : s.key)}>
@@ -321,7 +323,7 @@ function CurrentStockTab({
                         </button>
                       )}
                     </td>
-                    <td className="px-4 py-3">{stockBadge(row.stock_status)}</td>
+                    <td className="px-4 py-3">{stockBadge(row.stock_status, row.quantity)}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1">
                         <input
@@ -394,7 +396,7 @@ function CurrentStockTab({
                 <div className="text-xs text-slate-500">Buying price</div>
               </div>
               <div className="rounded-xl bg-slate-50 p-3 text-center">
-                <div className="text-lg font-bold">{stockBadge(drawerRow.stock_status)}</div>
+                <div className="text-lg font-bold">{stockBadge(drawerRow.stock_status, drawerRow.quantity)}</div>
                 <div className="text-xs text-slate-500 mt-1">Status</div>
               </div>
             </div>
@@ -419,7 +421,7 @@ function CurrentStockTab({
                           <span className="ml-2 text-slate-400">{alt.alternative_our_product_id}</span>
                           <span className="ml-2 text-slate-400">{alt.alternative_category}</span>
                         </div>
-                        <div>{altStock ? stockBadge(altStock.stock_status) : <span className="text-slate-400">—</span>}</div>
+                        <div>{altStock ? stockBadge(altStock.stock_status, altStock.quantity) : <span className="text-slate-400">—</span>}</div>
                       </div>
                     );
                   })}

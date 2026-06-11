@@ -204,6 +204,7 @@ function CustomerOrdersTab({
   const [itemOverrides, setItemOverrides] = useState<Record<number, { enabled: boolean; price: string; discount: string }>>({});
   const [bulkDiscount, setBulkDiscount] = useState("");
   const [billNarration, setBillNarration] = useState("");
+  const [additionalCharges, setAdditionalCharges] = useState<{ name: string; amount: string }[]>([]);
   const [stockWarning, setStockWarning] = useState<{items: {name: string; need: number; have: number}[]} | null>(null);
   const [billBodyPending, setBillBodyPending] = useState<Record<string, unknown> | null>(null);
 
@@ -277,15 +278,38 @@ function CustomerOrdersTab({
   const [offlinePkg, setOfflinePkg] = useState("");
   const [offlineSeriesId, setOfflineSeriesId] = useState("");
   const [offlineNotes, setOfflineNotes] = useState("");
+  const [offlineNarration, setOfflineNarration] = useState("");
   const [offlineBusy, setOfflineBusy] = useState(false);
   const [offlineResult, setOfflineResult] = useState<{ bill_no?: string; grand_total?: string; document_url?: string } | null>(null);
   const [offlineDupWarning, setOfflineDupWarning] = useState<{ message: string; pendingBody: Record<string, unknown> } | null>(null);
+  const [offlineStockWarning, setOfflineStockWarning] = useState<{ items: { name: string; need: number; have: number }[]; pendingBody: Record<string, unknown> } | null>(null);
+  const [offlineAdditionalCharges, setOfflineAdditionalCharges] = useState<{ name: string; amount: string }[]>([{ name: "", amount: "" }]);
+
+  // ── Shared stock map (catalog_product_id → available qty) ──
+  const [stockMap, setStockMap] = useState<Record<string, number>>({});
+
+  const loadStockMap = useCallback(async () => {
+    const r = await fetchApi(apiUrl("inventory/stock-balances"), { headers: headersAdmin() });
+    if (!r.ok) return;
+    const data: { catalog_product_id: number; balance: number }[] = await r.json();
+    const m: Record<string, number> = {};
+    for (const item of data) m[String(item.catalog_product_id)] = item.balance;
+    setStockMap(m);
+    setOfflineStockMap(m);
+  }, [adminKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Edit order items ──
   const [editItemsMode, setEditItemsMode] = useState(false);
   const [editItemsList, setEditItemsList] = useState<{ cid: string; qty: string; price: string }[]>([]);
   const [editItemsBusy, setEditItemsBusy] = useState(false);
   const [showVersions, setShowVersions] = useState(false);
+
+  // ── Edit bill ──
+  const [editBillMode, setEditBillMode] = useState(false);
+  const [editBillList, setEditBillList] = useState<{ cid: string; qty: string; price: string }[]>([]);
+  const [editBillBusy, setEditBillBusy] = useState(false);
+  const [billHistory, setBillHistory] = useState<CustomerBillPublic[]>([]);
+  const [showBillHistory, setShowBillHistory] = useState(false);
 
   // Edit order state
   const [editStatus, setEditStatus] = useState("open");
@@ -299,29 +323,42 @@ function CustomerOrdersTab({
   const load = useCallback(async () => {
     if (!adminKey.trim()) return;
     setLoading(true);
-    const [or, cr, fvr, custr] = await Promise.all([
+    const [or, cr, fvr, custr, serR] = await Promise.all([
       fetchApi(apiUrl("customer-orders"), { headers: headersAdmin() }),
       fetchApi(apiUrl("catalog"), { headers: headersAdmin() }),
       fetchApi(apiUrl("freight-vendors"), { headers: headersAdmin() }),
       fetchApi(apiUrl("customers"), { headers: headersAdmin() }),
+      fetchApi(apiUrl("bill-series"), { headers: headersAdmin() }),
     ]);
     if (or.ok) setOrders(await or.json());
     if (cr.ok) setCatalog(await cr.json());
     if (fvr.ok) setFreightVendors(await fvr.json());
     if (custr.ok) setCustomers(await custr.json());
+    if (serR.ok) {
+      const sl: BillSeries[] = await serR.json();
+      setBillSeriesList(sl.filter((s) => s.is_active && s.current_num < s.end_num));
+    }
     setLoading(false);
-  }, [adminKey]);
+    void loadStockMap();
+  }, [adminKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { void load(); }, [load]);
 
   async function submitOfflineOrderBody(body: Record<string, unknown>) {
-    setOfflineBusy(true); setOfflineResult(null); setOfflineDupWarning(null);
+    setOfflineBusy(true); setOfflineResult(null); setOfflineDupWarning(null); setOfflineStockWarning(null);
     const r = await fetchApi(apiUrl("customer-orders/offline"), { method: "POST", headers: headers(), body: JSON.stringify(body) });
-    const data = await r.json().catch(() => ({})) as { bill?: { bill_no?: string; totals?: { grand_total?: string }; document_url?: string }; detail?: { duplicate?: boolean; message?: string } };
+    const data = await r.json().catch(() => ({})) as { bill?: { bill_no?: string; totals?: { grand_total?: string }; document_url?: string }; detail?: Record<string, unknown> };
     setOfflineBusy(false);
-    if (r.status === 409 && data.detail && (data.detail as Record<string, unknown>).duplicate) {
-      setOfflineDupWarning({ message: String((data.detail as Record<string, unknown>).message || "Duplicate order detected."), pendingBody: { ...body, force_duplicate: true } });
-      return;
+    if (r.status === 409 && data.detail) {
+      if (data.detail.duplicate) {
+        setOfflineDupWarning({ message: String(data.detail.message || "Duplicate order detected."), pendingBody: { ...body, force_duplicate: true } });
+        return;
+      }
+      if (data.detail.insufficient_stock) {
+        const items = (data.detail.items as { name: string; need: number; have: number }[]) || [];
+        setOfflineStockWarning({ items, pendingBody: { ...body, force_stock: true } });
+        return;
+      }
     }
     if (!r.ok) { showToast(formatApiError(data as Record<string, unknown>), false); return; }
     setOfflineResult({
@@ -350,6 +387,9 @@ function CustomerOrdersTab({
     if (offlineFreight.trim()) body.freight_charges = Number(offlineFreight);
     if (offlinePkg.trim()) body.packaging_charges = Number(offlinePkg);
     if (offlineSeriesId) body.bill_series_id = Number(offlineSeriesId);
+    if (offlineNarration.trim()) body.narration = offlineNarration.trim();
+    const validCharges = offlineAdditionalCharges.filter(c => c.name.trim() && c.amount.trim() && Number(c.amount) > 0);
+    if (validCharges.length) body.additional_charges = validCharges.map(c => ({ name: c.name.trim(), amount: Number(c.amount) }));
     void submitOfflineOrderBody(body);
   }
 
@@ -368,7 +408,51 @@ function CustomerOrdersTab({
     if (!r.ok) { showToast(formatApiError(data), false); return; }
     showToast("Order items updated!", true);
     setEditItemsMode(false);
+    setEditBillMode(false);
     setSelected(data as CustomerOrderAdminPublic);
+    // Refresh active bill and bill history
+    const [billsR, billHistR] = await Promise.all([
+      fetchApi(apiUrl("customer-bills"), { headers: headersAdmin() }),
+      fetchApi(apiUrl(`customer-bills/order/${selected.id}/history`), { headers: headersAdmin() }),
+    ]);
+    if (billsR.ok) {
+      const bills: CustomerBillPublic[] = await billsR.json();
+      const b = bills.find((b) => b.customer_order_id === selected.id && (b.bill_status === "active" || !b.bill_status));
+      setBillData(b ?? null);
+    }
+    if (billHistR.ok) {
+      const hist: CustomerBillPublic[] = await billHistR.json();
+      setBillHistory(hist);
+    }
+    void load();
+  }
+
+  async function submitEditBill() {
+    if (!selected || !editBillList.length) return;
+    const items = editBillList
+      .map(r => ({ catalog_product_id: Number(r.cid), quantity: Number(r.qty), unit_price: r.price ? Number(r.price) : undefined }))
+      .filter(i => i.catalog_product_id > 0 && i.quantity > 0);
+    if (!items.length) return showToast("Add at least one item", false);
+    setEditBillBusy(true);
+    const r = await fetchApi(apiUrl(`customer-orders/${selected.id}/edit-items`), {
+      method: "PATCH", headers: headers(), body: JSON.stringify({ items }),
+    });
+    const data = await r.json().catch(() => ({}));
+    setEditBillBusy(false);
+    if (!r.ok) { showToast(formatApiError(data), false); return; }
+    showToast("Bill updated! History saved.", true);
+    setEditBillMode(false);
+    setSelected(data as CustomerOrderAdminPublic);
+    const [billsR, billHistR] = await Promise.all([
+      fetchApi(apiUrl("customer-bills"), { headers: headersAdmin() }),
+      fetchApi(apiUrl(`customer-bills/order/${selected.id}/history`), { headers: headersAdmin() }),
+    ]);
+    if (billsR.ok) {
+      const bills: CustomerBillPublic[] = await billsR.json();
+      const b = bills.find((b) => b.customer_order_id === selected.id && (b.bill_status === "active" || !b.bill_status));
+      setBillData(b ?? null);
+    }
+    if (billHistR.ok) setBillHistory(await billHistR.json());
     void load();
   }
 
@@ -383,18 +467,26 @@ function CustomerOrdersTab({
     setEditItemsMode(false); setShowVersions(false);
     setBillMsg(""); setSaveMsg(""); setShowBillForm(false); setShowShipForm(false);
     setBillData(null); setShowBillModal(false); setCreditSummary(null);
-    setBillSeriesId(""); setItemOverrides({}); setBulkDiscount(""); setRateType("order"); setZeroRateConfirmed(false); setShowZeroRateBanner(false); setBillNarration("");
+    setBillSeriesId(""); setItemOverrides({}); setBulkDiscount(""); setRateType("order"); setZeroRateConfirmed(false); setShowZeroRateBanner(false);
+    setBillNarration(o.customer_notes?.trim() || "");
+    setAdditionalCharges([]);
     setDrawerOpen(true);
+    setEditBillMode(false); setShowBillHistory(false); setBillHistory([]);
     // Fetch existing bill, bill series, credit summary in parallel
-    const [billsR, seriesR, creditR] = await Promise.all([
+    const [billsR, seriesR, creditR, billHistR] = await Promise.all([
       fetchApi(apiUrl("customer-bills"), { headers: headersAdmin() }),
       fetchApi(apiUrl("bill-series"), { headers: headersAdmin() }),
       o.customer_id ? fetchApi(apiUrl(`customers/${o.customer_id}/credit-summary`), { headers: headersAdmin() }) : Promise.resolve(null),
+      fetchApi(apiUrl(`customer-bills/order/${o.id}/history`), { headers: headersAdmin() }),
     ]);
     if (billsR.ok) {
       const bills: CustomerBillPublic[] = await billsR.json();
-      const b = bills.find((b) => b.customer_order_id === o.id);
+      const b = bills.find((b) => b.customer_order_id === o.id && (b.bill_status === "active" || !b.bill_status));
       if (b) setBillData(b);
+    }
+    if (billHistR?.ok) {
+      const hist: CustomerBillPublic[] = await billHistR.json();
+      setBillHistory(hist);
     }
     if (seriesR.ok) {
       const sl: BillSeries[] = await seriesR.json();
@@ -519,6 +611,11 @@ function CustomerOrdersTab({
       const updated = await fetchApi(apiUrl(`customer-orders/${selected.id}`), { headers: headers() });
       if (updated.ok) setSelected(await updated.json());
     }
+    // Refresh bill history after generating bill
+    if (selected) {
+      const bhR = await fetchApi(apiUrl(`customer-bills/order/${selected.id}/history`), { headers: headersAdmin() });
+      if (bhR.ok) setBillHistory(await bhR.json());
+    }
   }
 
   async function generateBill() {
@@ -547,6 +644,8 @@ function CustomerOrdersTab({
     if (billSeriesId) body.bill_series_id = Number(billSeriesId);
     if (rateType !== "order") body.rate_type = rateType;
     if (billNarration.trim()) body.narration = billNarration.trim();
+    const validAdditional = additionalCharges.filter(c => c.name.trim() && c.amount.trim() && Number(c.amount) > 0);
+    if (validAdditional.length) body.additional_charges = validAdditional.map(c => ({ name: c.name.trim(), amount: Number(c.amount) }));
 
     const overridesList = selected.items
       .filter((it) => itemOverrides[it.catalog_product_id]?.enabled)
@@ -763,8 +862,12 @@ function CustomerOrdersTab({
               </select>
             </div>
             <div>
-              <label className={LABEL}>Notes</label>
+              <label className={LABEL}>Notes (internal)</label>
               <input value={offlineNotes} onChange={e => setOfflineNotes(e.target.value)} placeholder="Optional" className={INPUT} />
+            </div>
+            <div className="col-span-2 sm:col-span-4">
+              <label className={LABEL}>Narration (printed on bill)</label>
+              <input value={offlineNarration} onChange={e => setOfflineNarration(e.target.value)} placeholder="e.g. Against PO no. 123 / Payment by cash…" className={INPUT} />
             </div>
           </div>
 
@@ -776,7 +879,14 @@ function CustomerOrdersTab({
                 <select value={row.cid}
                   onChange={async e => {
                     const newCid = e.target.value;
-                    setOfflineItems(p => p.map((r, i) => i === idx ? { ...r, cid: newCid, price: catalog.find(c => String(c.id) === newCid)?.selling_price?.toString() || "" } : r));
+                    setOfflineItems(prev => {
+                      const updated = prev.map((r, i) => i === idx ? { ...r, cid: newCid, price: catalog.find(c => String(c.id) === newCid)?.selling_price?.toString() || "" } : r);
+                      // Auto-add new blank row if this was the last row
+                      if (newCid && idx === prev.length - 1) {
+                        updated.push({ cid: "", qty: "", price: "" });
+                      }
+                      return updated;
+                    });
                     if (newCid && !(newCid in offlineStockMap)) {
                       const sr = await fetchApi(apiUrl("inventory/stock-check"), {
                         method: "POST", headers: headers(),
@@ -790,7 +900,11 @@ function CustomerOrdersTab({
                   }}
                   className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-2 text-sm">
                   <option value="">— product —</option>
-                  {catalog.map(c => <option key={c.id} value={c.id}>{c.our_product_id} – {c.name}</option>)}
+                  {catalog.map(c => {
+                    const avail = stockMap[String(c.id)];
+                    const stockLabel = avail !== undefined ? ` [${avail} avail]` : "";
+                    return <option key={c.id} value={c.id}>{c.our_product_id} – {c.name}{stockLabel}</option>;
+                  })}
                 </select>
                 <div className="flex flex-col justify-center">
                   <input type="number" min="1" placeholder="Qty" value={row.qty}
@@ -798,7 +912,7 @@ function CustomerOrdersTab({
                     className="w-16 rounded-lg border border-slate-300 px-2 py-2 text-sm" />
                   {row.cid && row.cid in offlineStockMap && (
                     <span className={`text-xs text-center mt-0.5 font-medium ${offlineStockMap[row.cid] <= 0 ? "text-red-500" : offlineStockMap[row.cid] < 5 ? "text-amber-500" : "text-emerald-600"}`}>
-                      {offlineStockMap[row.cid] <= 0 ? "Out" : `${offlineStockMap[row.cid]} avail`}
+                      {offlineStockMap[row.cid] <= 0 ? `${offlineStockMap[row.cid]} avail` : `${offlineStockMap[row.cid]} avail`}
                     </span>
                   )}
                 </div>
@@ -814,7 +928,50 @@ function CustomerOrdersTab({
               className="text-xs text-blue-600 hover:underline">+ Add item</button>
           </div>
 
-          {offlineDupWarning ? (
+          {/* Additional Charges */}
+          <div>
+            <label className={LABEL}>Additional Charges (e.g. VAT, Handling…)</label>
+            {offlineAdditionalCharges.map((ac, idx) => (
+              <div key={idx} className="mb-1.5 flex gap-2 items-center">
+                <input
+                  type="text"
+                  placeholder="Charge name (e.g. VAT)"
+                  value={ac.name}
+                  onChange={e => setOfflineAdditionalCharges(p => p.map((c, i) => i === idx ? { ...c, name: e.target.value } : c))}
+                  className="flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+                />
+                <input
+                  type="number" min="0" step="0.01"
+                  placeholder="Amount ₹"
+                  value={ac.amount}
+                  onChange={e => setOfflineAdditionalCharges(p => p.map((c, i) => i === idx ? { ...c, amount: e.target.value } : c))}
+                  className="w-28 rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+                />
+                <button type="button" onClick={() => setOfflineAdditionalCharges(p => p.filter((_, i) => i !== idx))} className="text-red-500 hover:text-red-700">×</button>
+              </div>
+            ))}
+            <button type="button" onClick={() => setOfflineAdditionalCharges(p => [...p, { name: "", amount: "" }])} className="text-xs text-blue-600 hover:underline">+ Add charge</button>
+          </div>
+
+          {offlineStockWarning ? (
+            <div className="rounded-xl border border-red-300 bg-red-50 p-3 space-y-2">
+              <div className="text-sm font-semibold text-red-700">⚠️ Insufficient Stock</div>
+              <div className="text-xs text-red-600 space-y-0.5">
+                {offlineStockWarning.items.map((it, i) => (
+                  <div key={i}>
+                    <strong>{it.name}</strong> — need <strong>{it.need}</strong>, have <strong className="text-red-700">{it.have}</strong>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-slate-500">Stock will go negative. Proceed anyway?</p>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => void submitOfflineOrderBody(offlineStockWarning.pendingBody)} disabled={offlineBusy} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-50">
+                  {offlineBusy ? "Creating…" : "Proceed Anyway"}
+                </button>
+                <button type="button" onClick={() => setOfflineStockWarning(null)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-100">Cancel</button>
+              </div>
+            </div>
+          ) : offlineDupWarning ? (
             <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 space-y-2">
               <div className="text-sm font-semibold text-amber-800">⚠️ Duplicate Detected</div>
               <div className="text-xs text-amber-700">{offlineDupWarning.message}</div>
@@ -1020,12 +1177,17 @@ function CustomerOrdersTab({
                 <div className="mb-3 rounded-xl border border-blue-200 bg-blue-50 p-3 space-y-2">
                   <p className="text-xs text-blue-700 font-medium">Editing items. If a bill exists, it will be regenerated automatically.</p>
                   {editItemsList.map((row, idx) => (
-                    <div key={idx} className="flex gap-2">
+                    <div key={idx} className="flex gap-2 flex-col">
+                      <div className="flex gap-2">
                       <select value={row.cid}
                         onChange={e => setEditItemsList(p => p.map((r, i) => i === idx ? { ...r, cid: e.target.value } : r))}
                         className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm">
                         <option value="">— product —</option>
-                        {catalog.map(c => <option key={c.id} value={c.id}>{c.our_product_id}</option>)}
+                        {catalog.map(c => {
+                          const avail = stockMap[String(c.id)];
+                          const stockLabel = avail !== undefined ? ` [${avail} avail]` : "";
+                          return <option key={c.id} value={c.id}>{c.our_product_id} – {c.name}{stockLabel}</option>;
+                        })}
                       </select>
                       <input type="number" min="1" placeholder="Qty" value={row.qty}
                         onChange={e => setEditItemsList(p => p.map((r, i) => i === idx ? { ...r, qty: e.target.value } : r))}
@@ -1034,6 +1196,12 @@ function CustomerOrdersTab({
                         onChange={e => setEditItemsList(p => p.map((r, i) => i === idx ? { ...r, price: e.target.value } : r))}
                         className="w-20 rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
                       <button type="button" onClick={() => setEditItemsList(p => p.filter((_, i) => i !== idx))} className="text-red-500 hover:text-red-700">×</button>
+                      </div>
+                      {row.cid && stockMap[row.cid] !== undefined && (
+                        <span className={`text-xs font-medium ${stockMap[row.cid] <= 0 ? "text-red-500" : stockMap[row.cid] < 5 ? "text-amber-500" : "text-emerald-600"}`}>
+                          Stock: {stockMap[row.cid]} avail
+                        </span>
+                      )}
                     </div>
                   ))}
                   <div className="flex gap-2">
@@ -1095,7 +1263,7 @@ function CustomerOrdersTab({
 
             {/* Bill info if already billed */}
             {billData && (
-              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="text-xs font-semibold uppercase text-amber-600">
@@ -1111,6 +1279,27 @@ function CustomerOrdersTab({
                     <div className="text-xs text-amber-700">Click to view full breakdown</div>
                   </div>
                   <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditBillMode(v => !v);
+                        setEditBillList(selected.items.map(it => ({ cid: String(it.catalog_product_id), qty: String(it.quantity), price: it.unit_price })));
+                        setEditItemsMode(false);
+                        setShowBillHistory(false);
+                      }}
+                      className={`rounded-lg px-2 py-1.5 text-xs font-semibold transition ${editBillMode ? "bg-amber-600 text-white" : "border border-amber-400 bg-white text-amber-700 hover:bg-amber-50"}`}
+                    >
+                      ✏️ Edit Bill
+                    </button>
+                    {billHistory.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => setShowBillHistory(v => !v)}
+                        className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                      >
+                        🕐 Bill History ({billHistory.length})
+                      </button>
+                    )}
                     <select
                       value={printCopies}
                       onChange={e => setPrintCopies(Number(e.target.value))}
@@ -1140,6 +1329,91 @@ function CustomerOrdersTab({
                     </a>
                   </div>
                 </div>
+
+                {/* Edit Bill form */}
+                {editBillMode && (
+                  <div className="rounded-lg border border-amber-300 bg-white p-3 space-y-2">
+                    <p className="text-xs font-medium text-amber-700">Edit bill items. Order and inventory will be adjusted automatically. History is saved.</p>
+                    {editBillList.map((row, idx) => (
+                      <div key={idx} className="flex gap-2 items-start flex-col">
+                        <div className="flex gap-2 items-center w-full">
+                        <select value={row.cid}
+                          onChange={e => setEditBillList(p => p.map((r, i) => i === idx ? { ...r, cid: e.target.value } : r))}
+                          className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm">
+                          <option value="">— product —</option>
+                          {catalog.map(c => {
+                            const avail = stockMap[String(c.id)];
+                            const stockLabel = avail !== undefined ? ` [${avail} avail]` : "";
+                            return <option key={c.id} value={c.id}>{c.our_product_id} – {c.name}{stockLabel}</option>;
+                          })}
+                        </select>
+                        <div className="flex flex-col">
+                          <span className="text-xs text-slate-400 text-center">Qty</span>
+                          <input type="number" min="1" placeholder="Qty" value={row.qty}
+                            onChange={e => setEditBillList(p => p.map((r, i) => i === idx ? { ...r, qty: e.target.value } : r))}
+                            className="w-16 rounded-lg border border-slate-300 px-2 py-1.5 text-sm text-right" />
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-xs text-slate-400 text-center">Price ₹</span>
+                          <input type="number" min="0" step="0.01" placeholder="Price" value={row.price}
+                            onChange={e => setEditBillList(p => p.map((r, i) => i === idx ? { ...r, price: e.target.value } : r))}
+                            className="w-22 rounded-lg border border-slate-300 px-2 py-1.5 text-sm text-right" />
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-xs text-slate-400 text-center">Line</span>
+                          <span className="w-20 text-right text-sm font-medium text-slate-700 py-1.5 px-1">
+                            {row.qty && row.price ? `₹${(Number(row.qty) * Number(row.price)).toFixed(2)}` : "—"}
+                          </span>
+                        </div>
+                        <button type="button" onClick={() => setEditBillList(p => p.filter((_, i) => i !== idx))} className="mt-3 text-red-500 hover:text-red-700">×</button>
+                        </div>
+                        {row.cid && stockMap[row.cid] !== undefined && (
+                          <span className={`text-xs font-medium ml-1 ${stockMap[row.cid] <= 0 ? "text-red-500" : stockMap[row.cid] < 5 ? "text-amber-500" : "text-emerald-600"}`}>
+                            Stock: {stockMap[row.cid]} avail
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                    {editBillList.length > 0 && (
+                      <div className="text-right text-sm font-bold text-slate-800 border-t border-amber-200 pt-1">
+                        Subtotal: ₹{editBillList.reduce((s, r) => s + (Number(r.qty) || 0) * (Number(r.price) || 0), 0).toFixed(2)}
+                      </div>
+                    )}
+                    <div className="flex gap-2 pt-1">
+                      <button type="button" onClick={() => setEditBillList(p => [...p, { cid: "", qty: "", price: "" }])} className="text-xs text-blue-600 hover:underline">+ Add row</button>
+                      <button type="button" onClick={submitEditBill} disabled={editBillBusy}
+                        className="ml-auto rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">
+                        {editBillBusy ? "Saving…" : "Save Bill Changes"}
+                      </button>
+                      <button type="button" onClick={() => setEditBillMode(false)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-600">Cancel</button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Bill history */}
+                {showBillHistory && billHistory.length > 0 && (
+                  <div className="rounded-lg border border-slate-200 bg-white divide-y divide-slate-100 overflow-hidden">
+                    <div className="px-3 py-2 text-xs font-semibold uppercase text-slate-500 bg-slate-50">Bill History</div>
+                    {billHistory.map((bh, i) => (
+                      <div key={bh.id} className={`px-3 py-2 text-xs ${bh.bill_status === "active" ? "bg-emerald-50" : "text-slate-400"}`}>
+                        <div className="flex items-center justify-between">
+                          <span className={`font-semibold ${bh.bill_status === "active" ? "text-emerald-700" : "line-through"}`}>
+                            {bh.bill_no ? `Bill ${bh.bill_no}` : `Bill #${bh.id}`}
+                            {i === 0 ? " (latest)" : ""}
+                          </span>
+                          <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${bh.bill_status === "active" ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>
+                            {bh.bill_status || "active"}
+                          </span>
+                        </div>
+                        <div className="mt-0.5 flex gap-3">
+                          <span>₹{bh.totals?.grand_total ?? "—"}</span>
+                          {bh.cancelled_reason && <span className="text-red-500">Replaced by edit</span>}
+                          {bh.created_at && <span>{new Date(bh.created_at).toLocaleString("en-IN")}</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
@@ -1317,8 +1591,38 @@ function CustomerOrdersTab({
                   </div>
                   <div className="col-span-2">
                     <label className={LABEL}>Narration (printed on bill)</label>
-                    <input value={billNarration} onChange={e => setBillNarration(e.target.value)} placeholder="e.g. Against PO no. 123 / Transport via XYZ…" className={INPUT} />
+                    <input value={billNarration} onChange={e => setBillNarration(e.target.value)} placeholder="Auto-filled from customer notes if blank" className={INPUT} />
                   </div>
+                </div>
+
+                {/* Additional charges */}
+                <div>
+                  <div className="mb-1.5 flex items-center justify-between">
+                    <label className={LABEL}>Additional Charges</label>
+                    <button type="button" onClick={() => setAdditionalCharges(p => [...p, { name: "", amount: "" }])} className="text-xs text-blue-600 hover:underline">+ Add charge</button>
+                  </div>
+                  {additionalCharges.length === 0 && (
+                    <p className="text-xs text-slate-400 italic">None — click "+ Add charge" to add VAT, handling fee, etc.</p>
+                  )}
+                  {additionalCharges.map((ac, idx) => (
+                    <div key={idx} className="mb-1.5 flex gap-2 items-center">
+                      <input
+                        type="text"
+                        placeholder="Charge name (e.g. VAT)"
+                        value={ac.name}
+                        onChange={e => setAdditionalCharges(p => p.map((c, i) => i === idx ? { ...c, name: e.target.value } : c))}
+                        className="flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
+                      />
+                      <input
+                        type="number" min="0" step="0.01"
+                        placeholder="Amount ₹"
+                        value={ac.amount}
+                        onChange={e => setAdditionalCharges(p => p.map((c, i) => i === idx ? { ...c, amount: e.target.value } : c))}
+                        className="w-28 rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+                      />
+                      <button type="button" onClick={() => setAdditionalCharges(p => p.filter((_, i) => i !== idx))} className="text-red-500 hover:text-red-700 text-lg">×</button>
+                    </div>
+                  ))}
                 </div>
 
                 {/* Per-item overrides */}
@@ -1545,11 +1849,14 @@ function CustomerOrdersTab({
                 </table>
               </div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 space-y-1.5 text-sm">
-                {billData.totals?.subtotal !== undefined && <div className="flex justify-between"><span className="text-slate-500">Subtotal</span><span>₹{billData.totals.subtotal}</span></div>}
+                {(billData.totals?.subtotal_inclusive ?? billData.totals?.subtotal) !== undefined && <div className="flex justify-between"><span className="text-slate-500">Subtotal</span><span>₹{String(billData.totals?.subtotal_inclusive ?? billData.totals?.subtotal ?? "")}</span></div>}
                 {Number(billData.totals?.discount_amount ?? 0) > 0 && <div className="flex justify-between"><span className="text-slate-500">Discount</span><span className="text-red-600">−₹{billData.totals?.discount_amount}</span></div>}
                 {Number(billData.totals?.freight_charges ?? 0) > 0 && <div className="flex justify-between"><span className="text-slate-500">Freight</span><span>₹{billData.totals?.freight_charges}</span></div>}
                 {Number(billData.totals?.packaging_charges ?? 0) > 0 && <div className="flex justify-between"><span className="text-slate-500">Packaging</span><span>₹{billData.totals?.packaging_charges}</span></div>}
                 {Number(billData.totals?.gst_amount ?? 0) > 0 && <div className="flex justify-between"><span className="text-slate-500">GST ({billData.gst_rate_percent ?? 0}%)</span><span>₹{billData.totals?.gst_amount}</span></div>}
+                {Array.isArray(billData.totals?.additional_charges) && (billData.totals.additional_charges as {name:string;amount:string}[]).map((ac, i) => (
+                  <div key={i} className="flex justify-between"><span className="text-slate-500">{ac.name}</span><span>₹{ac.amount}</span></div>
+                ))}
                 <div className="flex justify-between border-t border-slate-200 pt-1.5 font-bold text-slate-900"><span>Grand total</span><span>₹{billData.totals?.grand_total}</span></div>
               </div>
             </div>

@@ -44,7 +44,9 @@ def _to_public(row: Customer) -> CustomerPublic:
 
 def _send_wa_safe(name: str, phone: str, plain: str) -> None:
     try:
-        send_account_creation(phone=phone, customer_name=name, login_phone=phone, password=plain)
+        from app.config import get_settings as _gs
+        portal_url = (_gs().customer_portal_url or "").strip()
+        send_account_creation(phone=phone, customer_name=name, login_phone=phone, password=plain, portal_url_suffix=portal_url)
     except Exception as ex:
         print("WhatsApp send failed:", ex)
 
@@ -141,11 +143,12 @@ def create_customer(
         )
         return existing
 
+    display_name = (body.name or "").strip() or body.company_name.strip()
     row = Customer(
-        name=body.name.strip(),
+        name=display_name,
         phone=phone,
         password_hash=hash_password(plain),
-        company_name=(body.company_name.strip() if body.company_name else None),
+        company_name=body.company_name.strip(),
         alias=(body.alias.strip() if body.alias else None),
         address=(body.address.strip() if body.address else None),
         secondary_phone=sec_norm,

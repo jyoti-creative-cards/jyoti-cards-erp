@@ -262,6 +262,13 @@ def _migrate_v4_features_postgres() -> None:
         conn.execute(text("ALTER TABLE portal_credit_notes ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"))
 
 
+def _migrate_v8_vendor_gst_postgres() -> None:
+    if engine.dialect.name != "postgresql":
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE portal_vendors ADD COLUMN IF NOT EXISTS gst_number VARCHAR(20)"))
+
+
 def init_db() -> None:
     from app.models import (  # noqa: F401
         addon_product,
@@ -313,6 +320,7 @@ def init_db() -> None:
     _migrate_v6b_order_versions_postgres()
     _migrate_v7_bill_narration_postgres()
     _migrate_v6_vendor_orders_postgres()
+    _migrate_v8_vendor_gst_postgres()
     from app.services.accounting import seed_chart_accounts
 
     s = SessionLocal()

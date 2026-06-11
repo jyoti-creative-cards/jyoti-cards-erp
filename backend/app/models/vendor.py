@@ -22,6 +22,7 @@ class Vendor(Base):
     address: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     billing_percentage: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     city: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    gst_number: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=sql_true()
     )

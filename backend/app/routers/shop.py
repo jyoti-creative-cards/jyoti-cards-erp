@@ -76,7 +76,7 @@ def _alternatives_in_stock_only(db: Session, parent_id: int) -> List[ShopProduct
         seen.add(aid)
         qty, th = _qty_threshold(db, aid)
         lbl = stock_status_label(qty, th)
-        if lbl == "out_of_stock":
+        if lbl in ("out_of_stock", "negative_stock"):
             continue
         p = db.get(CatalogProduct, aid)
         if p is None or not legacy_active_value(p.is_active):
@@ -154,20 +154,22 @@ def product_search(
             continue
         alts: List[ShopProductAlternativePublic] = []
         # Show alternatives when primary is low or out of stock
-        if label in ("out_of_stock", "low_stock"):
+        if label in ("out_of_stock", "negative_stock", "low_stock"):
             alts = _alternatives_in_stock_only(db, p.id)
         sp = p.selling_price
         try:
             sp_str = format(Decimal(str(sp)), "f") if sp is not None else "0"
         except (ValueError, InvalidOperation, ArithmeticError):
             sp_str = "0"
+        # Expose negative_stock as out_of_stock to customers
+        customer_label = "out_of_stock" if label == "negative_stock" else label
         out.append(
             ShopProductPublic(
                 catalog_product_id=p.id,
                 our_product_id=p.our_product_id,
                 image_url=_first_image_url(db, p),
                 selling_price=sp_str,
-                stock_status=label,
+                stock_status=customer_label,
                 alternatives=alts,
             )
         )

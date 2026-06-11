@@ -88,6 +88,7 @@ export interface VendorPublic {
   address: string | null;
   billing_percentage: number | null;
   city: string | null;
+  gst_number: string | null;
   created_at: string;
   updated_at: string;
 }

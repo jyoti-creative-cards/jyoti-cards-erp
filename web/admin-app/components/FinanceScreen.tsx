@@ -754,10 +754,16 @@ function ReportsTab({ adminKey }: { adminKey: string }) {
   const headersAdmin = (): Record<string, string> => adminKey.trim() ? { "X-Admin-Key": adminKey.trim() } : {};
 
   const today = new Date().toISOString().slice(0, 10);
-  const firstOfYear = new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0, 10);
+  const _fy = new Date();
+  const _fiscalFrom = _fy.getMonth() >= 6
+    ? new Date(_fy.getFullYear(), 6, 1)
+    : new Date(_fy.getFullYear() - 1, 6, 1);
+  const _fiscalTo = new Date(_fiscalFrom.getFullYear() + 1, 5, 30);
+  const firstOfFiscal = _fiscalFrom.toISOString().slice(0, 10);
+  const endOfFiscal = _fiscalTo.toISOString().slice(0, 10);
 
-  const [dateFrom, setDateFrom] = useState(firstOfYear);
-  const [dateTo, setDateTo]     = useState(today);
+  const [dateFrom, setDateFrom] = useState(firstOfFiscal);
+  const [dateTo, setDateTo]     = useState(endOfFiscal);
   const [view, setView]         = useState<"pnl" | "gl" | "journal">("pnl");
   const [loading, setLoading]   = useState(false);
 

@@ -60,6 +60,7 @@ def create_vendor(body: VendorCreate, db: Session = Depends(get_db)) -> Vendor:
         billing_percentage=body.billing_percentage,
         city=(body.city.strip() if body.city else None),
         gst_number=(body.gst_number.strip().upper() if body.gst_number else None),
+        alias=(body.alias.strip() if body.alias else None),
         is_active=True,
     )
     db.add(row)
@@ -116,6 +117,10 @@ def update_vendor(
     if "gst_number" in data:
         v = data.pop("gst_number")
         row.gst_number = v.strip().upper() if isinstance(v, str) and v.strip() else None
+
+    if "alias" in data:
+        v = data.pop("alias")
+        row.alias = v.strip() if isinstance(v, str) and v.strip() else None
 
     if "secondary_phone" in data:
         sec = data.pop("secondary_phone")

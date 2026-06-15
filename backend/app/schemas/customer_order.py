@@ -94,3 +94,4 @@ class OfflineOrderCreate(BaseModel):
     rate_type: Optional[str] = None  # "order" | "net" | "regular"
     force_duplicate: bool = False  # skip duplicate check if True
     force_stock: bool = False  # allow negative stock if True
+    freight_vendor_id: Optional[int] = None  # link freight charges to a freight vendor

@@ -280,10 +280,11 @@ function CustomerOrdersTab({
   const [offlineNotes, setOfflineNotes] = useState("");
   const [offlineNarration, setOfflineNarration] = useState("");
   const [offlineBusy, setOfflineBusy] = useState(false);
-  const [offlineResult, setOfflineResult] = useState<{ bill_no?: string; grand_total?: string; document_url?: string } | null>(null);
+  const [offlineResult, setOfflineResult] = useState<{ bill_no?: string; grand_total?: string; document_url?: string; bill_id?: number } | null>(null);
   const [offlineDupWarning, setOfflineDupWarning] = useState<{ message: string; pendingBody: Record<string, unknown> } | null>(null);
   const [offlineStockWarning, setOfflineStockWarning] = useState<{ items: { name: string; need: number; have: number }[]; pendingBody: Record<string, unknown> } | null>(null);
   const [offlineAdditionalCharges, setOfflineAdditionalCharges] = useState<{ name: string; amount: string }[]>([{ name: "", amount: "" }]);
+  const [offlineFreightVendorId, setOfflineFreightVendorId] = useState("");
 
   // ── Shared stock map (catalog_product_id → available qty) ──
   const [stockMap, setStockMap] = useState<Record<string, number>>({});
@@ -361,12 +362,27 @@ function CustomerOrdersTab({
       }
     }
     if (!r.ok) { showToast(formatApiError(data as Record<string, unknown>), false); return; }
+    // Reset form for next order
+    setOfflineCustomerId("");
+    setOfflineItems([{ cid: "", qty: "", price: "" }]);
+    setOfflineGst(false);
+    setOfflineGstRate("18");
+    setOfflineDiscount("");
+    setOfflineFreight("");
+    setOfflinePkg("");
+    setOfflineNotes("");
+    setOfflineNarration("");
+    setOfflineAdditionalCharges([{ name: "", amount: "" }]);
+    setOfflineFreightVendorId("");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const billData = data.bill as any;
     setOfflineResult({
-      bill_no: data.bill?.bill_no || undefined,
-      grand_total: data.bill?.totals?.grand_total,
-      document_url: data.bill?.document_url || undefined,
+      bill_no: billData?.bill_no || undefined,
+      grand_total: billData?.totals?.rounded_grand_total || billData?.totals?.grand_total,
+      document_url: billData?.document_url || undefined,
+      bill_id: billData?.id,
     });
-    showToast(data.bill?.bill_no ? `Bill ${data.bill.bill_no} created!` : "Order + Bill created!", true);
+    showToast(billData?.bill_no ? `Bill ${billData.bill_no} created!` : "Order + Bill created!", true);
     void load();
   }
 
@@ -386,6 +402,7 @@ function CustomerOrdersTab({
     if (offlineDiscount.trim()) body.discount_percent = Number(offlineDiscount);
     if (offlineFreight.trim()) body.freight_charges = Number(offlineFreight);
     if (offlinePkg.trim()) body.packaging_charges = Number(offlinePkg);
+    if (offlineFreightVendorId) body.freight_vendor_id = Number(offlineFreightVendorId);
     if (offlineSeriesId) body.bill_series_id = Number(offlineSeriesId);
     if (offlineNarration.trim()) body.narration = offlineNarration.trim();
     const validCharges = offlineAdditionalCharges.filter(c => c.name.trim() && c.amount.trim() && Number(c.amount) > 0);
@@ -819,11 +836,25 @@ function CustomerOrdersTab({
           </div>
 
           {offlineResult && (
-            <div className="rounded-xl border border-emerald-300 bg-white px-4 py-3 text-sm">
-              <p className="font-semibold text-emerald-700">✓ Done! {offlineResult.bill_no && `Bill ${offlineResult.bill_no}`} {offlineResult.grand_total && `· ₹${offlineResult.grand_total}`}</p>
-              {offlineResult.document_url && (
-                <a href={offlineResult.document_url} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-blue-600 hover:underline">Download PDF →</a>
-              )}
+            <div className="rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm space-y-2">
+              <p className="font-bold text-emerald-700 text-base">✓ {offlineResult.bill_no ? `Bill ${offlineResult.bill_no} created!` : "Order created!"} {offlineResult.grand_total && `· Grand Total: ₹${offlineResult.grand_total}`}</p>
+              <div className="flex flex-wrap gap-2">
+                {offlineResult.bill_id && (
+                  <button
+                    type="button"
+                    onClick={() => triggerPrint(offlineResult.bill_id!, 1)}
+                    className="inline-flex items-center gap-1 rounded-lg bg-slate-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
+                  >
+                    🖨️ Print Bill
+                  </button>
+                )}
+                {offlineResult.document_url && (
+                  <a href={offlineResult.document_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">
+                    ⬇ Download PDF
+                  </a>
+                )}
+                <button type="button" onClick={() => setOfflineResult(null)} className="text-xs text-slate-400 hover:text-slate-600 px-2">✕ Dismiss</button>
+              </div>
             </div>
           )}
 
@@ -843,6 +874,15 @@ function CustomerOrdersTab({
               <label className={LABEL}>Freight ₹</label>
               <input type="number" min="0" value={offlineFreight} onChange={e => setOfflineFreight(e.target.value)} placeholder="0" className={INPUT} />
             </div>
+            {offlineFreight && Number(offlineFreight) > 0 && (
+              <div>
+                <label className={LABEL}>Freight Agent</label>
+                <select value={offlineFreightVendorId} onChange={e => setOfflineFreightVendorId(e.target.value)} className={INPUT}>
+                  <option value="">— optional —</option>
+                  {freightVendors.map(fv => <option key={fv.id} value={fv.id}>{fv.name}</option>)}
+                </select>
+              </div>
+            )}
             <div>
               <label className={LABEL}>Packaging ₹</label>
               <input type="number" min="0" value={offlinePkg} onChange={e => setOfflinePkg(e.target.value)} placeholder="0" className={INPUT} />
@@ -952,6 +992,37 @@ function CustomerOrdersTab({
             ))}
             <button type="button" onClick={() => setOfflineAdditionalCharges(p => [...p, { name: "", amount: "" }])} className="text-xs text-blue-600 hover:underline">+ Add charge</button>
           </div>
+
+          {/* Live grand total */}
+          {(() => {
+            const itemsTotal = offlineItems
+              .filter(r => r.cid && r.qty && r.price)
+              .reduce((sum, r) => sum + Number(r.qty) * Number(r.price), 0);
+            if (itemsTotal <= 0) return null;
+            const disc = itemsTotal * (offlineDiscount ? Number(offlineDiscount) / 100 : 0);
+            const afterDisc = itemsTotal - disc;
+            const extraTotal = offlineAdditionalCharges
+              .filter(c => c.name.trim() && c.amount.trim())
+              .reduce((s, c) => s + Number(c.amount), 0);
+            const gross = afterDisc + (offlineFreight ? Number(offlineFreight) : 0) + (offlinePkg ? Number(offlinePkg) : 0) + extraTotal;
+            const rounded = Math.round(gross);
+            const roundOff = rounded - gross;
+            return (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
+                <div className="flex justify-between text-slate-600">
+                  <span>Subtotal</span><span>₹{itemsTotal.toFixed(2)}</span>
+                </div>
+                {disc > 0 && <div className="flex justify-between text-slate-500"><span>Discount</span><span>-₹{disc.toFixed(2)}</span></div>}
+                {offlineFreight && Number(offlineFreight) > 0 && <div className="flex justify-between text-slate-500"><span>Freight</span><span>₹{Number(offlineFreight).toFixed(2)}</span></div>}
+                {offlinePkg && Number(offlinePkg) > 0 && <div className="flex justify-between text-slate-500"><span>Packaging</span><span>₹{Number(offlinePkg).toFixed(2)}</span></div>}
+                {extraTotal > 0 && <div className="flex justify-between text-slate-500"><span>Other charges</span><span>₹{extraTotal.toFixed(2)}</span></div>}
+                {Math.abs(roundOff) > 0.001 && <div className="flex justify-between text-slate-400"><span>Round off</span><span>{roundOff > 0 ? "+" : ""}₹{roundOff.toFixed(2)}</span></div>}
+                <div className="mt-1 flex justify-between border-t border-slate-300 pt-1 font-bold text-slate-800">
+                  <span>Grand Total</span><span>₹{rounded.toFixed(2)}</span>
+                </div>
+              </div>
+            );
+          })()}
 
           {offlineStockWarning ? (
             <div className="rounded-xl border border-red-300 bg-red-50 p-3 space-y-2">
@@ -2077,8 +2148,12 @@ function PurchaseOrdersTab({
                                     <button
                                       key={p.id}
                                       type="button"
-                                      onClick={() => setLines((prev) => prev.map((l, j) => j === i ? { ...l, catalog_product_id: String(p.id), search: "" } : l))}
-                                      className="flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm hover:bg-blue-50"
+                      onClick={() => setLines((prev) => {
+                        const updated = prev.map((l, j) => j === i ? { ...l, catalog_product_id: String(p.id), search: "" } : l);
+                        if (i === prev.length - 1) updated.push({ catalog_product_id: "", quantity: "1", search: "" });
+                        return updated;
+                      })}
+                      className="flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm hover:bg-blue-50"
                                     >
                                       <span className="font-mono text-xs text-slate-400 w-20 shrink-0">{p.our_product_id}</span>
                                       <span className="flex-1 font-medium text-slate-800">{p.category}</span>

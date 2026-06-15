@@ -15,6 +15,7 @@ class VendorCreate(BaseModel):
     billing_percentage: Optional[int] = Field(None, ge=0, le=100)
     city: Optional[str] = Field(None, max_length=200)
     gst_number: Optional[str] = Field(None, max_length=20)
+    alias: Optional[str] = Field(None, max_length=200)
 
 
 class VendorUpdate(BaseModel):
@@ -26,6 +27,7 @@ class VendorUpdate(BaseModel):
     billing_percentage: Optional[int] = Field(None, ge=0, le=100)
     city: Optional[str] = Field(None, max_length=200)
     gst_number: Optional[str] = Field(None, max_length=20)
+    alias: Optional[str] = Field(None, max_length=200)
 
 
 class VendorPublic(BaseModel):
@@ -33,6 +35,7 @@ class VendorPublic(BaseModel):
     person_name: str
     phone: str
     company_name: Optional[str]
+    alias: Optional[str]
     secondary_phone: Optional[str]
     address: Optional[str]
     billing_percentage: Optional[int]

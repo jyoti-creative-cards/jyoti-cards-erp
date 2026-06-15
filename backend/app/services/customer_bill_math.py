@@ -200,6 +200,10 @@ def compute_bill_totals(
 
     grand = (after_discount_inclusive + freight + packaging + extra_total).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
+    # Round-off: difference to nearest rupee (< 0.50 → round down, ≥ 0.50 → round up)
+    rounded_grand = grand.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    round_off = (rounded_grand - grand).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
     return {
         "lines": lines_out,
         "subtotal_inclusive": _fmt2(subtotal_inclusive),
@@ -215,4 +219,6 @@ def compute_bill_totals(
         "taxable_value": _fmt2(taxable_total),
         "gst_amount": _fmt2(gst_total),
         "grand_total": _fmt2(grand),
+        "round_off": _fmt2(round_off) if round_off != 0 else None,
+        "rounded_grand_total": _fmt2(rounded_grand),
     }

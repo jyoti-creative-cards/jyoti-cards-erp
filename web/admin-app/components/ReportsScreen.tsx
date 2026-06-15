@@ -37,8 +37,14 @@ export function ReportsScreen({ adminKey, auth }: Props) {
   const [customerId, setCustomerId] = useState("");
   const [vendorId, setVendorId]     = useState("");
   const [productId, setProductId]   = useState("");
-  const [dateFrom, setDateFrom]     = useState("");
-  const [dateTo, setDateTo]         = useState("");
+  // Default to current fiscal year: July 1 → June 30
+  const _today = new Date();
+  const _fiscalStart = _today.getMonth() >= 6
+    ? new Date(_today.getFullYear(), 6, 1)
+    : new Date(_today.getFullYear() - 1, 6, 1);
+  const _fiscalEnd = new Date(_fiscalStart.getFullYear() + 1, 5, 30);
+  const [dateFrom, setDateFrom]     = useState(_fiscalStart.toISOString().slice(0, 10));
+  const [dateTo, setDateTo]         = useState(_fiscalEnd.toISOString().slice(0, 10));
   const [loading, setLoading]       = useState(false);
   const [error, setError]           = useState("");
   const [result, setResult]         = useState<{ summary: Record<string, unknown>; rows: Record<string, unknown>[] } | null>(null);

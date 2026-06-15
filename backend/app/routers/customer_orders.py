@@ -739,6 +739,9 @@ def admin_offline_order(body: OfflineOrderCreate, db: Session = Depends(get_db))
                 order_id=order.id,
                 customer_name=display_name,
                 customer_company=company,
+                customer_phone=getattr(customer, "phone", None),
+                customer_address=getattr(customer, "address", None),
+                customer_city=getattr(customer, "city", None),
                 totals=totals,
                 customer_notes=order.customer_notes or None,
                 item_image_urls={},
@@ -761,6 +764,32 @@ def admin_offline_order(body: OfflineOrderCreate, db: Session = Depends(get_db))
         db.commit()
     except Exception as ex:
         print(f"Offline bill AR failed: {ex}")
+
+    # Freight vendor ledger entry
+    if body.freight_vendor_id and body.freight_charges and float(body.freight_charges) > 0:
+        try:
+            from app.models.freight_vendor import FreightVendor
+            from app.models.freight_ledger_entry import FreightLedgerEntry
+            from datetime import date as _date, datetime as _dt
+            fv = db.get(FreightVendor, body.freight_vendor_id)
+            if fv:
+                from decimal import Decimal as _FDec
+                fv_amount = _FDec(str(body.freight_charges))
+                fv.balance_due = (fv.balance_due or _FDec("0")) + fv_amount
+                db.add(fv)
+                fe = FreightLedgerEntry(
+                    freight_vendor_id=fv.id,
+                    entry_date=_date.today(),
+                    entry_type="charge",
+                    amount=fv_amount,
+                    reference=f"Bill {bill_row.bill_no or bill_row.id}",
+                    notes=f"Auto-charge from offline order #{order.id}",
+                )
+                db.add(fe)
+                db.commit()
+        except Exception as ex:
+            print(f"Freight vendor ledger failed (non-fatal): {ex}")
+            db.rollback()
 
     from app.services.catalog_storage import presigned_url as _ps2
     try:

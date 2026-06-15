@@ -76,6 +76,9 @@ def _build_bill_story(
     order_id: int,
     customer_name: str,
     customer_company: str | None,
+    customer_phone: str | None = None,
+    customer_address: str | None = None,
+    customer_city: str | None = None,
     totals: Dict[str, Any],
     generated_at: datetime | None = None,
     printed_at: datetime | None = None,
@@ -164,6 +167,12 @@ def _build_bill_story(
     bill_to_lines = ["<b>Bill to</b>", escape(_safe(customer_name, 120))]
     if customer_company:
         bill_to_lines.append(escape(_safe(customer_company, 120)))
+    if customer_phone:
+        bill_to_lines.append(f"Ph: {escape(_safe(customer_phone, 32))}")
+    if customer_address:
+        bill_to_lines.append(escape(_safe(customer_address, 200)))
+    if customer_city:
+        bill_to_lines.append(escape(_safe(customer_city, 100)))
     story.append(
         Paragraph(
             "<br/>".join(bill_to_lines),
@@ -272,6 +281,8 @@ def _build_bill_story(
 
     right_style = ParagraphStyle("r", parent=styles["Normal"], fontSize=10, alignment=TA_RIGHT)
     additional_charges = totals.get("additional_charges")
+    round_off = totals.get("round_off")
+    rounded_grand = totals.get("rounded_grand_total") or grand
     summary_rows: list[list[Any]] = [["Subtotal (incl.)", f"Rs. {sub}"]]
     if dp:
         summary_rows.append([f"Discount ({_safe(dp)}%)", f"- Rs. {disc_amt}"])
@@ -286,7 +297,15 @@ def _build_bill_story(
         for ac in additional_charges:
             if isinstance(ac, dict) and ac.get("name") and ac.get("amount"):
                 summary_rows.append([_safe(ac["name"]), f"Rs. {_safe(ac['amount'])}"])
-    summary_rows.append(["Grand Total", f"Rs. {grand}"])
+    if round_off and round_off not in ("0.00", "0"):
+        try:
+            ro_val = float(round_off)
+            if ro_val != 0:
+                sign = "+" if ro_val > 0 else ""
+                summary_rows.append(["Round Off", f"{sign}Rs. {_safe(round_off)}"])
+        except (ValueError, TypeError):
+            pass
+    summary_rows.append(["Grand Total", f"Rs. {_safe(rounded_grand)}"])
 
     sum_table = Table(summary_rows, colWidths=[9 * cm, 6 * cm])
     sum_table.setStyle(
@@ -355,6 +374,9 @@ def render_customer_bill_pdf(
     order_id: int,
     customer_name: str,
     customer_company: str | None,
+    customer_phone: str | None = None,
+    customer_address: str | None = None,
+    customer_city: str | None = None,
     totals: Dict[str, Any],
     generated_at: datetime | None = None,
     printed_at: datetime | None = None,
@@ -372,6 +394,9 @@ def render_customer_bill_pdf(
         order_id=order_id,
         customer_name=customer_name,
         customer_company=customer_company,
+        customer_phone=customer_phone,
+        customer_address=customer_address,
+        customer_city=customer_city,
         totals=totals,
         generated_at=generated_at,
         printed_at=printed_at,
@@ -393,6 +418,9 @@ def render_copies_pdf(
     order_id: int,
     customer_name: str,
     customer_company: str | None,
+    customer_phone: str | None = None,
+    customer_address: str | None = None,
+    customer_city: str | None = None,
     totals: Dict[str, Any],
     generated_at: datetime | None = None,
     printed_at: datetime | None = None,
@@ -411,6 +439,8 @@ def render_copies_pdf(
     kwargs = dict(
         bill_id=bill_id, order_id=order_id,
         customer_name=customer_name, customer_company=customer_company,
+        customer_phone=customer_phone, customer_address=customer_address,
+        customer_city=customer_city,
         totals=totals, generated_at=generated_at,
         printed_at=printed_at or now,
         customer_notes=customer_notes, narration=narration,

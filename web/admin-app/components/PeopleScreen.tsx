@@ -955,7 +955,7 @@ function VendorsTab({
       gst_number: emptyToNull(fd.get("gst_number")),
     };
     const url = editing ? apiUrl(`vendors/${editing.id}`) : apiUrl("vendors");
-    const method = editing ? "PUT" : "POST";
+    const method = editing ? "PATCH" : "POST";
     const r = await fetchApi(url, { method, headers: headers(), body: JSON.stringify(body) });
     const data = await r.json().catch(() => ({}));
     setSaving(false);

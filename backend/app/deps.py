@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Query, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -37,11 +37,13 @@ def _staff_from_bearer(authorization: Optional[str], db: Session):  # type: igno
 
 
 def require_admin(
-    x_admin_key: Optional[str] = Header(None, alias="X-Admin-Key"),
+    x_admin_key_header: Optional[str] = Header(None, alias="X-Admin-Key"),
+    x_admin_key_query: Optional[str] = Query(None, alias="x_admin_key"),
     authorization: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ) -> None:
-    """Accept either the admin API key or a valid active staff Bearer token."""
+    """Accept either the admin API key (header or query param) or a valid staff Bearer token."""
+    x_admin_key = x_admin_key_header or x_admin_key_query
     if _is_valid_admin_key(x_admin_key):
         return
     if _staff_from_bearer(authorization, db) is not None:

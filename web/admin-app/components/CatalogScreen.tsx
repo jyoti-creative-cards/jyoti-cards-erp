@@ -152,6 +152,7 @@ function ProductsTab({
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("");
   const [vendorFilter, setVendorFilter] = useState("");
+  const [yearFilter, setYearFilter] = useState("2026-27");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editing, setEditing] = useState<CatalogProductPublic | null>(null);
   const [saving, setSaving] = useState(false);
@@ -220,7 +221,8 @@ function ProductsTab({
     const matchSearch = !q || p.our_product_id.toLowerCase().includes(q) || p.category.toLowerCase().includes(q) || p.vendor_product_id.toLowerCase().includes(q);
     const matchCat = !catFilter || p.category === catFilter;
     const matchVendor = !vendorFilter || String(p.vendor_id) === vendorFilter;
-    return matchSearch && matchCat && matchVendor;
+    const matchYear = !yearFilter || p.year_group === yearFilter;
+    return matchSearch && matchCat && matchVendor && matchYear;
   });
 
   async function onSave(e: React.FormEvent<HTMLFormElement>) {
@@ -328,6 +330,10 @@ function ProductsTab({
         <select value={vendorFilter} onChange={(e) => setVendorFilter(e.target.value)} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none">
           <option value="">All vendors</option>
           {vendors.map((v) => <option key={v.id} value={v.id}>{v.company_name || v.person_name}</option>)}
+        </select>
+        <select value={yearFilter} onChange={(e) => setYearFilter(e.target.value)} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none">
+          <option value="">All years</option>
+          {["2026-27", ...yearGroups.filter(y => y !== "2026-27")].map((y) => <option key={y} value={y}>{y}</option>)}
         </select>
         <button type="button" onClick={onRefresh} className={BTN_SECONDARY}>↻ Refresh</button>
         <button type="button" onClick={() => openProduct(null)} className={BTN_PRIMARY}>
@@ -559,7 +565,7 @@ function ProductsTab({
             </div>
             <div>
               <label className={LABEL}>Year group (optional)</label>
-              <input name="year_group" list="yg-list" defaultValue={editing?.year_group ?? ""} placeholder={`e.g. ${new Date().getFullYear()}-${String(new Date().getFullYear()+1).slice(-2)}`} className={INPUT} />
+              <input name="year_group" list="yg-list" defaultValue={editing?.year_group ?? "2026-27"} placeholder="2026-27" className={INPUT} />
               <datalist id="yg-list">
                 {yearGroups.map((y) => <option key={y} value={y} />)}
               </datalist>

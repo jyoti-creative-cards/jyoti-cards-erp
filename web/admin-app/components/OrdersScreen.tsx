@@ -374,15 +374,16 @@ function CustomerOrdersTab({
     setOfflineNarration("");
     setOfflineAdditionalCharges([{ name: "", amount: "" }]);
     setOfflineFreightVendorId("");
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const billData = data.bill as any;
+    // Treat the bill response as a loosely-typed record so we can access extra fields
+    const billAny = data.bill as Record<string, unknown>;
+    const billTotals = (billAny?.totals ?? {}) as Record<string, unknown>;
     setOfflineResult({
-      bill_no: billData?.bill_no || undefined,
-      grand_total: billData?.totals?.rounded_grand_total || billData?.totals?.grand_total,
-      document_url: billData?.document_url || undefined,
-      bill_id: billData?.id,
+      bill_no: typeof billAny?.bill_no === "string" ? billAny.bill_no : undefined,
+      grand_total: (billTotals?.rounded_grand_total ?? billTotals?.grand_total) as string | undefined,
+      document_url: typeof billAny?.document_url === "string" ? billAny.document_url : undefined,
+      bill_id: typeof billAny?.id === "number" ? billAny.id : undefined,
     });
-    showToast(billData?.bill_no ? `Bill ${billData.bill_no} created!` : "Order + Bill created!", true);
+    showToast(billAny?.bill_no ? `Bill ${billAny.bill_no} created!` : "Order + Bill created!", true);
     void load();
   }
 

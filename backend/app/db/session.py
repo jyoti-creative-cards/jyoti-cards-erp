@@ -295,6 +295,23 @@ def _migrate_v8_vendor_gst_postgres() -> None:
         conn.execute(text("ALTER TABLE portal_vendors ADD COLUMN IF NOT EXISTS gst_number VARCHAR(20)"))
 
 
+def _migrate_v9_customer_gst_postgres() -> None:
+    if engine.dialect.name != "postgresql":
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE portal_customers ADD COLUMN IF NOT EXISTS gst_number VARCHAR(20)"))
+
+
+def _migrate_v9_vendor_order_debit_note_postgres() -> None:
+    if engine.dialect.name != "postgresql":
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE portal_debit_notes ADD COLUMN IF NOT EXISTS vendor_order_id INTEGER REFERENCES portal_vendor_orders(id) ON DELETE RESTRICT"))
+        conn.execute(text("ALTER TABLE portal_debit_notes ALTER COLUMN purchase_order_id DROP NOT NULL"))
+        conn.execute(text("ALTER TABLE portal_debit_notes ADD COLUMN IF NOT EXISTS note_type VARCHAR(20) NOT NULL DEFAULT 'value'"))
+        conn.execute(text("ALTER TABLE portal_debit_notes ADD COLUMN IF NOT EXISTS items JSONB"))
+
+
 def init_db() -> None:
     from app.models import (  # noqa: F401
         addon_product,
@@ -324,6 +341,7 @@ def init_db() -> None:
         staff_user,
         vendor,
         vendor_bill,
+        vendor_order,
         vendor_purchase_order,
     )
 
@@ -347,6 +365,8 @@ def init_db() -> None:
     _migrate_v7_bill_narration_postgres()
     _migrate_v6_vendor_orders_postgres()
     _migrate_v8_vendor_gst_postgres()
+    _migrate_v9_customer_gst_postgres()
+    _migrate_v9_vendor_order_debit_note_postgres()
     from app.services.accounting import seed_chart_accounts
 
     s = SessionLocal()

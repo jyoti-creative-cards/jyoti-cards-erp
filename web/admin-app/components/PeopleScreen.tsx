@@ -174,6 +174,7 @@ function CustomersTab({
       route_id: selectedRouteId ? Number(selectedRouteId) : null,
       credit_limit: emptyToNull(fd.get("credit_limit")),
       credit_override: fd.get("credit_override") === "on",
+      gst_number: emptyToNull(fd.get("gst_number")),
     };
     const pw = fd.get("password");
     if (pw && String(pw).trim()) body.password = String(pw).trim();
@@ -391,6 +392,10 @@ function CustomersTab({
                 <input name="password" type="password" autoComplete="new-password" className={INPUT} />
               </div>
             )}
+            <div className="col-span-2">
+              <label className={LABEL}>GST Number (optional)</label>
+              <input name="gst_number" defaultValue={editing?.gst_number ?? ""} placeholder="e.g. 22AAAAA0000A1Z5" className={INPUT} style={{ textTransform: "uppercase" }} />
+            </div>
           </div>
         </form>
 
@@ -691,7 +696,11 @@ function StatementModal({
                         )}
                       </td>
                       <td style={{ padding: "8px 12px", color: "#1e293b" }}>
-                        <div>{en.description}</div>
+                        <div>
+                          {en.description.split("\n").map((line, li) => (
+                            <div key={li} style={{ fontSize: li > 0 ? 11 : 13, color: li > 0 ? "#64748b" : "#1e293b", marginTop: li > 0 ? 2 : 0, fontFamily: li > 0 ? "monospace" : "inherit", wordBreak: "break-word" }}>{line}</div>
+                          ))}
+                        </div>
                         {en.bill_id && (
                           <button type="button" onClick={e => { e.stopPropagation(); openBillDetail(en.bill_id!); }}
                             style={{ fontSize: 10, color: "#1d4ed8", background: "none", border: "none", cursor: "pointer", padding: 0, marginTop: 2 }}>

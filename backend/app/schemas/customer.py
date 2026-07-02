@@ -20,6 +20,7 @@ class CustomerCreate(BaseModel):
     route_id: Optional[int] = None
     credit_limit: Optional[Decimal] = None
     credit_override: bool = False
+    gst_number: Optional[str] = Field(None, max_length=20)
 
 
 class CustomerUpdate(BaseModel):
@@ -35,6 +36,7 @@ class CustomerUpdate(BaseModel):
     route_id: Optional[int] = None
     credit_limit: Optional[Decimal] = None
     credit_override: Optional[bool] = None
+    gst_number: Optional[str] = Field(None, max_length=20)
 
 
 class CustomerPublic(BaseModel):
@@ -50,6 +52,7 @@ class CustomerPublic(BaseModel):
     route_id: Optional[int]
     credit_limit: Optional[str]
     credit_override: bool
+    gst_number: Optional[str]
     created_at: datetime
     updated_at: datetime
 

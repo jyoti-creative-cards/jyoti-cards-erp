@@ -225,6 +225,13 @@ function ProductsTab({
     return matchSearch && matchCat && matchVendor && matchYear;
   });
 
+  const PAGE_SIZE = 100;
+  const [page, setPage] = useState(0);
+  // Reset page when filters change
+  useEffect(() => { setPage(0); }, [search, catFilter, vendorFilter, yearFilter]);
+  const pageCount = Math.ceil(filtered.length / PAGE_SIZE);
+  const pagedProducts = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+
   async function onSave(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!adminKey.trim()) return;
@@ -441,35 +448,44 @@ function ProductsTab({
           <div className="mt-2 font-medium">No products</div>
         </div>
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {filtered.map((p) => (
-            <div
-              key={p.id}
-              className="cursor-pointer rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-blue-300 hover:shadow-md"
-              onClick={() => openProduct(p)}
-            >
-              {/* Image */}
-              <div className="mb-3 flex h-24 items-center justify-center overflow-hidden rounded-lg bg-slate-100">
-                {p.image_urls[0] ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={p.image_urls[0]} alt={p.name} className="h-full w-full object-cover" />
-                ) : (
-                  <span className="text-3xl text-slate-300">📦</span>
-                )}
+        <>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {pagedProducts.map((p) => (
+              <div
+                key={p.id}
+                className="cursor-pointer rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-blue-300 hover:shadow-md"
+                onClick={() => openProduct(p)}
+              >
+                {/* Image */}
+                <div className="mb-3 flex h-24 items-center justify-center overflow-hidden rounded-lg bg-slate-100">
+                  {p.image_urls[0] ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={p.image_urls[0]} alt={p.name} className="h-full w-full object-cover" />
+                  ) : (
+                    <span className="text-3xl text-slate-300">📦</span>
+                  )}
+                </div>
+                {/* Info */}
+                <div className="text-xs font-mono text-slate-400">{p.our_product_id}</div>
+                <div className="mt-0.5 font-semibold text-slate-800 leading-tight">{p.category}</div>
+                <div className="mt-1 flex items-center gap-1.5">
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">{p.unit || "pcs"}</span>
+                </div>
+                <div className="mt-2 flex items-center justify-between">
+                  <span className="text-sm font-bold text-slate-900">₹{p.selling_price}</span>
+                  <span className="text-xs text-slate-400">{vendorName(p.vendor_id)}</span>
+                </div>
               </div>
-              {/* Info */}
-              <div className="text-xs font-mono text-slate-400">{p.our_product_id}</div>
-              <div className="mt-0.5 font-semibold text-slate-800 leading-tight">{p.category}</div>
-              <div className="mt-1 flex items-center gap-1.5">
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">{p.unit || "pcs"}</span>
-              </div>
-              <div className="mt-2 flex items-center justify-between">
-                <span className="text-sm font-bold text-slate-900">₹{p.selling_price}</span>
-                <span className="text-xs text-slate-400">{vendorName(p.vendor_id)}</span>
-              </div>
+            ))}
+          </div>
+          {pageCount > 1 && (
+            <div className="mt-4 flex items-center justify-center gap-2 text-sm">
+              <button type="button" disabled={page === 0} onClick={() => setPage(p => p - 1)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-slate-600 hover:bg-slate-50 disabled:opacity-40">← Prev</button>
+              <span className="text-slate-500">Page {page + 1} of {pageCount} · {filtered.length} products</span>
+              <button type="button" disabled={page >= pageCount - 1} onClick={() => setPage(p => p + 1)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-slate-600 hover:bg-slate-50 disabled:opacity-40">Next →</button>
             </div>
-          ))}
-        </div>
+          )}
+        </>
       )}
 
       {/* Drawer */}

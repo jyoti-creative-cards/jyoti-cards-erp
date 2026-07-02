@@ -31,6 +31,9 @@ class Customer(Base):
     city_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("portal_cities.id", ondelete="SET NULL"), nullable=True, index=True)
     route_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("portal_routes.id", ondelete="SET NULL"), nullable=True, index=True)
 
+    # GST
+    gst_number: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+
     # Credit management
     credit_limit: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 4), nullable=True)
     credit_override: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")

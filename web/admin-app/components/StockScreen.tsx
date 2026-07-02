@@ -62,19 +62,30 @@ export function StockScreen({ adminKey }: Props) {
   const [catalog, setCatalog] = useState<CatalogProductPublic[]>([]);
   const [vendors, setVendors] = useState<VendorPublic[]>([]);
   const [pos, setPos] = useState<PurchaseOrderPublic[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
 
   const loadAll = useCallback(async () => {
     if (!adminKey.trim()) return;
-    const [ir, cr, vr, pr] = await Promise.all([
-      fetchApi(apiUrl("inventory") + "?all_catalog=true", { headers: headersAdmin() }),
-      fetchApi(apiUrl("catalog"), { headers: headersAdmin() }),
-      fetchApi(apiUrl("vendors"), { headers: headersAdmin() }),
-      fetchApi(apiUrl("purchase-orders"), { headers: headersAdmin() }),
-    ]);
-    if (ir.ok) setRows(await ir.json());
-    if (cr.ok) setCatalog(await cr.json());
-    if (vr.ok) setVendors(await vr.json());
-    if (pr.ok) setPos(await pr.json());
+    setLoading(true);
+    setLoadError("");
+    try {
+      const [ir, cr, vr, pr] = await Promise.all([
+        fetchApi(apiUrl("inventory") + "?all_catalog=true", { headers: headersAdmin() }),
+        fetchApi(apiUrl("catalog"), { headers: headersAdmin() }),
+        fetchApi(apiUrl("vendors"), { headers: headersAdmin() }),
+        fetchApi(apiUrl("purchase-orders"), { headers: headersAdmin() }),
+      ]);
+      if (ir.ok) setRows(await ir.json());
+      else setLoadError("Failed to load inventory.");
+      if (cr.ok) setCatalog(await cr.json());
+      if (vr.ok) setVendors(await vr.json());
+      if (pr.ok) setPos(await pr.json());
+    } catch {
+      setLoadError("Network error loading stock data.");
+    } finally {
+      setLoading(false);
+    }
   }, [adminKey]);
 
   useEffect(() => { void loadAll(); }, [loadAll]);
@@ -86,6 +97,11 @@ export function StockScreen({ adminKey }: Props) {
 
   return (
     <div>
+      {loadError && (
+        <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {loadError} <button type="button" onClick={() => void loadAll()} className="ml-2 underline">Retry</button>
+        </div>
+      )}
       <div className="mb-6 flex gap-2">
         {([
           { id: "current",     label: "📊 Current stock" },
@@ -115,6 +131,7 @@ export function StockScreen({ adminKey }: Props) {
           headersAdmin={headersAdmin}
           adminKey={adminKey}
           onRefresh={loadAll}
+          loading={loading}
         />
       )}
       {tab === "receive" && (
@@ -152,6 +169,7 @@ function CurrentStockTab({
   headersAdmin,
   adminKey,
   onRefresh,
+  loading,
 }: {
   rows: InventoryRowPublic[];
   catalog: CatalogProductPublic[];
@@ -161,6 +179,7 @@ function CurrentStockTab({
   headersAdmin: () => Record<string, string>;
   adminKey: string;
   onRefresh: () => void;
+  loading?: boolean;
 }) {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -254,8 +273,11 @@ function CurrentStockTab({
 
       {filtered.length === 0 ? (
         <div className="rounded-xl border-2 border-dashed border-slate-200 py-16 text-center text-slate-400">
-          <div className="text-4xl">🏪</div>
-          <div className="mt-2 font-medium">No stock items found</div>
+          {loading ? (
+            <><div className="text-4xl">⏳</div><div className="mt-2 font-medium">Loading stock…</div></>
+          ) : (
+            <><div className="text-4xl">🏪</div><div className="mt-2 font-medium">No stock items found</div></>
+          )}
         </div>
       ) : (
         <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">

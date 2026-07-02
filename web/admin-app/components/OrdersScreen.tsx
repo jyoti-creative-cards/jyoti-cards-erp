@@ -285,6 +285,7 @@ function CustomerOrdersTab({
   const [offlineStockWarning, setOfflineStockWarning] = useState<{ items: { name: string; need: number; have: number }[]; pendingBody: Record<string, unknown> } | null>(null);
   const [offlineAdditionalCharges, setOfflineAdditionalCharges] = useState<{ name: string; amount: string }[]>([{ name: "", amount: "" }]);
   const [offlineFreightVendorId, setOfflineFreightVendorId] = useState("");
+  const [offlineShipType, setOfflineShipType] = useState<"" | "bus" | "transport">("");
 
   // ── Shared stock map (catalog_product_id → available qty) ──
   const [stockMap, setStockMap] = useState<Record<string, number>>({});
@@ -374,6 +375,7 @@ function CustomerOrdersTab({
     setOfflineNarration("");
     setOfflineAdditionalCharges([{ name: "", amount: "" }]);
     setOfflineFreightVendorId("");
+    setOfflineShipType("");
     // Treat the bill response as a loosely-typed record so we can access extra fields
     const billAny = data.bill as Record<string, unknown>;
     const billTotals = (billAny?.totals ?? {}) as Record<string, unknown>;
@@ -872,19 +874,6 @@ function CustomerOrdersTab({
               <input type="number" min="0" max="100" value={offlineDiscount} onChange={e => setOfflineDiscount(e.target.value)} placeholder="0" className={INPUT} />
             </div>
             <div>
-              <label className={LABEL}>Freight ₹</label>
-              <input type="number" min="0" value={offlineFreight} onChange={e => setOfflineFreight(e.target.value)} placeholder="0" className={INPUT} />
-            </div>
-            {offlineFreight && Number(offlineFreight) > 0 && (
-              <div>
-                <label className={LABEL}>Freight Agent</label>
-                <select value={offlineFreightVendorId} onChange={e => setOfflineFreightVendorId(e.target.value)} className={INPUT}>
-                  <option value="">— optional —</option>
-                  {freightVendors.map(fv => <option key={fv.id} value={fv.id}>{fv.name}</option>)}
-                </select>
-              </div>
-            )}
-            <div>
               <label className={LABEL}>Packaging ₹</label>
               <input type="number" min="0" value={offlinePkg} onChange={e => setOfflinePkg(e.target.value)} placeholder="0" className={INPUT} />
             </div>
@@ -994,6 +983,40 @@ function CustomerOrdersTab({
             <button type="button" onClick={() => setOfflineAdditionalCharges(p => [...p, { name: "", amount: "" }])} className="text-xs text-blue-600 hover:underline">+ Add charge</button>
           </div>
 
+          {/* Shipping / Freight */}
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-3">
+            <label className={LABEL}>Shipping / Freight</label>
+            <div className="flex flex-wrap gap-3 items-end">
+              <div>
+                <label className="mb-1 block text-xs text-slate-500">Send via</label>
+                <select value={offlineShipType} onChange={e => setOfflineShipType(e.target.value as "" | "bus" | "transport")} className="rounded-lg border border-slate-300 px-2 py-2 text-sm focus:border-blue-500 focus:outline-none">
+                  <option value="">— none —</option>
+                  <option value="bus">Bus</option>
+                  <option value="transport">Transport</option>
+                </select>
+              </div>
+              {offlineShipType && (
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">{offlineShipType === "bus" ? "Bus" : "Transport"} Charge ₹</label>
+                  <input type="number" min="0" value={offlineFreight} onChange={e => setOfflineFreight(e.target.value)} placeholder="0" className="w-32 rounded-lg border border-slate-300 px-2 py-2 text-sm focus:border-blue-500 focus:outline-none" />
+                </div>
+              )}
+              {offlineShipType && offlineFreight && Number(offlineFreight) > 0 && freightVendors.length > 0 && (
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">Agent</label>
+                  <select value={offlineFreightVendorId} onChange={e => setOfflineFreightVendorId(e.target.value)} className="rounded-lg border border-slate-300 px-2 py-2 text-sm focus:border-blue-500 focus:outline-none">
+                    <option value="">— optional —</option>
+                    {freightVendors.map(fv => <option key={fv.id} value={fv.id}>{fv.name}</option>)}
+                  </select>
+                </div>
+              )}
+              <div>
+                <label className="mb-1 block text-xs text-slate-500">Packaging ₹</label>
+                <input type="number" min="0" value={offlinePkg} onChange={e => setOfflinePkg(e.target.value)} placeholder="0" className="w-28 rounded-lg border border-slate-300 px-2 py-2 text-sm focus:border-blue-500 focus:outline-none" />
+              </div>
+            </div>
+          </div>
+
           {/* Live grand total */}
           {(() => {
             const itemsTotal = offlineItems
@@ -1014,7 +1037,7 @@ function CustomerOrdersTab({
                   <span>Subtotal</span><span>₹{itemsTotal.toFixed(2)}</span>
                 </div>
                 {disc > 0 && <div className="flex justify-between text-slate-500"><span>Discount</span><span>-₹{disc.toFixed(2)}</span></div>}
-                {offlineFreight && Number(offlineFreight) > 0 && <div className="flex justify-between text-slate-500"><span>Freight</span><span>₹{Number(offlineFreight).toFixed(2)}</span></div>}
+                {offlineFreight && Number(offlineFreight) > 0 && <div className="flex justify-between text-slate-500"><span>{offlineShipType === "bus" ? "Bus charge" : offlineShipType === "transport" ? "Transport charge" : "Freight"}</span><span>₹{Number(offlineFreight).toFixed(2)}</span></div>}
                 {offlinePkg && Number(offlinePkg) > 0 && <div className="flex justify-between text-slate-500"><span>Packaging</span><span>₹{Number(offlinePkg).toFixed(2)}</span></div>}
                 {extraTotal > 0 && <div className="flex justify-between text-slate-500"><span>Other charges</span><span>₹{extraTotal.toFixed(2)}</span></div>}
                 {Math.abs(roundOff) > 0.001 && <div className="flex justify-between text-slate-400"><span>Round off</span><span>{roundOff > 0 ? "+" : ""}₹{roundOff.toFixed(2)}</span></div>}

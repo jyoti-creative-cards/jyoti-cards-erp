@@ -72,6 +72,7 @@ export interface CustomerPublic {
   route_id: number | null;
   credit_limit: string | null;
   credit_override: boolean;
+  gst_number: string | null;
   created_at: string;
   updated_at: string;
   invoice_count?: number;

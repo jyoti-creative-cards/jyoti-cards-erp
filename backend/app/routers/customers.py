@@ -37,6 +37,7 @@ def _to_public(row: Customer) -> CustomerPublic:
         route_id=row.route_id,
         credit_limit=format(row.credit_limit, "f") if row.credit_limit is not None else None,
         credit_override=row.credit_override or False,
+        gst_number=getattr(row, "gst_number", None),
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -157,6 +158,7 @@ def create_customer(
         route_id=body.route_id,
         credit_limit=body.credit_limit,
         credit_override=body.credit_override or False,
+        gst_number=(body.gst_number.strip().upper() if body.gst_number else None),
     )
     db.add(row)
     try:
@@ -245,9 +247,12 @@ def update_customer(
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="invalid secondary phone")
             row.secondary_phone = sec_norm
 
-    for field in ("alias", "city_id", "route_id", "credit_limit", "credit_override"):
+    for field in ("alias", "city_id", "route_id", "credit_limit", "credit_override", "gst_number"):
         if field in data:
-            setattr(row, field, data.pop(field))
+            val = data.pop(field)
+            if field == "gst_number" and val:
+                val = str(val).strip().upper()
+            setattr(row, field, val)
 
     if data:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"unknown fields: {list(data.keys())}")
@@ -433,11 +438,38 @@ def _build_statement(
         total_billed += amt
         item_count = len(o.items) if isinstance(o.items, list) else 0
         bill_label = f"Bill {bill.bill_no}" if bill and bill.bill_no else (f"Bill #{bill.id}" if bill else f"Order #{o.id}")
+        # Build item detail string: "ProductID – Name ×qty"
+        item_details = ""
+        if isinstance(o.items, list) and o.items:
+            parts = []
+            for it in o.items:
+                pid = it.get("our_product_id") or it.get("product_code") or ""
+                name = it.get("name") or ""
+                qty = it.get("quantity") or it.get("qty") or ""
+                price = it.get("unit_price") or ""
+                part = ""
+                if pid:
+                    part += pid
+                if name:
+                    part += (f" – {name}" if pid else name)
+                if qty:
+                    part += f" ×{qty}"
+                if price:
+                    part += f" @₹{price}"
+                if part:
+                    parts.append(part)
+            if parts:
+                item_details = " | ".join(parts)
+        description = f"{bill_label}"
+        if item_details:
+            description += f"\n{item_details}"
+        else:
+            description += f" — {item_count} item{'s' if item_count != 1 else ''}"
         events.append({
             "date": bill.created_at if bill else o.created_at,
             "type": "bill",
             "reference": bill_label,
-            "description": f"{bill_label} — {item_count} item{'s' if item_count != 1 else ''}",
+            "description": description,
             "debit": float(amt),
             "credit": 0.0,
             "order_id": o.id,

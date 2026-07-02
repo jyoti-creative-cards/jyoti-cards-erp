@@ -13,6 +13,19 @@ interface VendorPublic {
   phone?: string;
 }
 
+interface DebitNotePublic {
+  id: number;
+  vendor_order_id: number | null;
+  vendor_id: number;
+  amount: string;
+  reason: string | null;
+  status: string;
+  note_type: string;
+  items: { product_name: string; qty: number; unit_price: number; line_amount: number }[] | null;
+  note_date: string | null;
+  created_at: string;
+}
+
 interface OrderLine {
   line_id: string;
   catalog_product_id: number;
@@ -175,11 +188,29 @@ export function VendorOrdersScreen({ auth }: { auth: AuthState }) {
   const [billFile, setBillFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
 
+  // ── Debit note ──
+  const [debitMode, setDebitMode] = useState(false);
+  const [debitNoteType, setDebitNoteType] = useState<"value" | "item">("value");
+  const [debitAmount, setDebitAmount] = useState("");
+  const [debitReason, setDebitReason] = useState("");
+  const [debitItems, setDebitItems] = useState<Record<string, string>>({}); // line_id → qty
+  const [debitSaving, setDebitSaving] = useState(false);
+  const [debitNotes, setDebitNotes] = useState<DebitNotePublic[]>([]);
+
   function openOrder(vo: VendorOrder) {
     setActiveOrder(vo);
     setReceiveMode(false);
     setBillMode(false);
+    setDebitMode(false);
+    setDebitAmount("");
+    setDebitReason("");
+    setDebitItems({});
+    setDebitNoteType("value");
     setRecvQty({});
+    // Load existing debit notes for this order
+    fetchApi(apiUrl(`notes/debit?vendor_order_id=${vo.id}`), { headers: h() })
+      .then(async r => { if (r.ok) setDebitNotes(await r.json()); })
+      .catch(() => {});
   }
 
   async function doReceive() {
@@ -215,6 +246,46 @@ export function VendorOrdersScreen({ auth }: { auth: AuthState }) {
     setActiveOrder(data as VendorOrder);
     setBillMode(false);
     await loadAll();
+  }
+
+  }
+
+  async function doCreateDebitNote() {
+    if (!activeOrder) return;
+    setDebitSaving(true);
+    const fd = new FormData();
+    fd.append("vendor_order_id", String(activeOrder.id));
+    fd.append("note_type", debitNoteType);
+
+    if (debitNoteType === "value") {
+      if (!debitAmount || Number(debitAmount) <= 0) { showToast("Enter amount", false); setDebitSaving(false); return; }
+      fd.append("amount", debitAmount);
+    } else {
+      // item-wise: compute amount from items
+      const itemLines = activeOrder.items.filter(it => debitItems[it.line_id] && Number(debitItems[it.line_id]) > 0);
+      if (!itemLines.length) { showToast("Enter qty for at least one item", false); setDebitSaving(false); return; }
+      const total = itemLines.reduce((s, it) => s + Number(debitItems[it.line_id]) * it.unit_price, 0);
+      fd.append("amount", String(total.toFixed(2)));
+      fd.append("items_json", JSON.stringify(itemLines.map(it => ({
+        catalog_product_id: it.catalog_product_id,
+        product_name: it.product_name,
+        qty: Number(debitItems[it.line_id]),
+        unit_price: it.unit_price,
+        line_amount: Number(debitItems[it.line_id]) * it.unit_price,
+      }))));
+    }
+    if (debitReason.trim()) fd.append("reason", debitReason.trim());
+
+    const r = await fetchApi(apiUrl("notes/debit"), { method: "POST", headers: h(), body: fd });
+    const data = await r.json().catch(() => ({}));
+    setDebitSaving(false);
+    if (!r.ok) return showToast(formatApiError(data) || "Failed", false);
+    showToast("Debit note created!", true);
+    setDebitNotes(prev => [data as DebitNotePublic, ...prev]);
+    setDebitMode(false);
+    setDebitAmount("");
+    setDebitReason("");
+    setDebitItems({});
   }
 
   async function doClose(voId: number) {
@@ -261,7 +332,14 @@ export function VendorOrdersScreen({ auth }: { auth: AuthState }) {
               {placeItems.map((row, idx) => (
                 <div key={idx} className="mb-2 flex flex-wrap gap-2 rounded-lg border border-slate-100 bg-slate-50 p-2">
                   <select value={row.cid}
-                    onChange={e => setPlaceItems(p => p.map((r, i) => i === idx ? { ...r, cid: e.target.value, price: catalog.find(c => String(c.id) === e.target.value)?.buying_price || "" } : r))}
+                    onChange={e => {
+                      const newCid = e.target.value;
+                      setPlaceItems(p => {
+                        const updated = p.map((r, i) => i === idx ? { ...r, cid: newCid, price: catalog.find(c => String(c.id) === newCid)?.buying_price || "" } : r);
+                        if (newCid && idx === p.length - 1) updated.push({ cid: "", qty: "", price: "", notes: "" });
+                        return updated;
+                      });
+                    }}
                     className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm">
                     <option value="">— product —</option>
                     {catalog.filter(c => !placeVendorId || String(c.vendor_id) === placeVendorId).map(c => <option key={c.id} value={c.id}>{c.our_product_id}</option>)}
@@ -280,8 +358,6 @@ export function VendorOrdersScreen({ auth }: { auth: AuthState }) {
               ))}
 
               <div className="mt-2 flex gap-2 flex-wrap">
-                <button type="button" onClick={() => setPlaceItems(p => [...p, { cid: "", qty: "", price: "", notes: "" }])}
-                  className={BTN_SECONDARY + " text-xs"}>+ Add item</button>
                 <button type="button" onClick={placeOrder} disabled={placing} className={BTN_PRIMARY}>
                   {placing ? "Placing…" : "Place Order"}
                 </button>
@@ -365,11 +441,14 @@ export function VendorOrdersScreen({ auth }: { auth: AuthState }) {
                 {/* Action buttons */}
                 {activeOrder.status === "open" && (
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <button type="button" onClick={() => { setReceiveMode(true); setBillMode(false); }} className={BTN_PRIMARY + " text-xs"}>
+                    <button type="button" onClick={() => { setReceiveMode(true); setBillMode(false); setDebitMode(false); }} className={BTN_PRIMARY + " text-xs"}>
                       📦 Receive Goods
                     </button>
-                    <button type="button" onClick={() => { setBillMode(true); setReceiveMode(false); }} className={BTN_SECONDARY + " text-xs"}>
+                    <button type="button" onClick={() => { setBillMode(true); setReceiveMode(false); setDebitMode(false); }} className={BTN_SECONDARY + " text-xs"}>
                       🧾 Upload Bill
+                    </button>
+                    <button type="button" onClick={() => { setDebitMode(true); setReceiveMode(false); setBillMode(false); }} className={BTN_SECONDARY + " text-xs"}>
+                      📋 Debit Note
                     </button>
                     <button type="button" onClick={() => doClose(activeOrder.id)} className={BTN_SECONDARY + " text-xs"}>
                       ✓ Close Order
@@ -457,6 +536,103 @@ export function VendorOrdersScreen({ auth }: { auth: AuthState }) {
                       {uploading ? "Saving…" : "Save Bill"}
                     </button>
                     <button type="button" onClick={() => setBillMode(false)} className={BTN_SECONDARY}>Cancel</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Debit note form */}
+              {debitMode && (
+                <div className="border-b border-slate-100 bg-orange-50/40 px-5 py-4 space-y-3">
+                  <h4 className="text-sm font-semibold text-orange-800">Create Debit Note</h4>
+                  <div className="flex gap-3">
+                    <label className="flex items-center gap-1.5 cursor-pointer text-sm">
+                      <input type="radio" checked={debitNoteType === "value"} onChange={() => setDebitNoteType("value")} />
+                      Value-wise
+                    </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer text-sm">
+                      <input type="radio" checked={debitNoteType === "item"} onChange={() => setDebitNoteType("item")} />
+                      Item-wise
+                    </label>
+                  </div>
+
+                  {debitNoteType === "value" ? (
+                    <div>
+                      <label className={LBL}>Debit amount (₹) *</label>
+                      <input type="number" min="0.01" step="0.01" value={debitAmount}
+                        onChange={e => setDebitAmount(e.target.value)} placeholder="e.g. 1000" className={INPUT + " max-w-xs"} />
+                      {activeOrder.summary.bill_discrepancy != null && (
+                        <p className="mt-1 text-xs text-orange-700">Bill discrepancy: {fmt(activeOrder.summary.bill_discrepancy)}</p>
+                      )}
+                    </div>
+                  ) : (
+                    <div>
+                      <label className={LBL}>Select items &amp; qty to return</label>
+                      <div className="overflow-hidden rounded-xl border border-slate-200">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="bg-slate-50 text-xs font-semibold uppercase text-slate-500">
+                              <th className="px-3 py-2 text-left">Product</th>
+                              <th className="px-3 py-2 text-right">Unit Price</th>
+                              <th className="px-3 py-2 text-right">Return Qty</th>
+                              <th className="px-3 py-2 text-right">Amount</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {activeOrder.items.map(it => {
+                              const rqty = Number(debitItems[it.line_id] || 0);
+                              return (
+                                <tr key={it.line_id}>
+                                  <td className="px-3 py-2 font-medium text-slate-800">{it.product_name}</td>
+                                  <td className="px-3 py-2 text-right tabular-nums">{fmt(it.unit_price)}</td>
+                                  <td className="px-3 py-2 text-right">
+                                    <input type="number" min="0" max={it.qty_ordered}
+                                      value={debitItems[it.line_id] ?? ""}
+                                      onChange={e => setDebitItems(p => ({ ...p, [it.line_id]: e.target.value }))}
+                                      className="w-20 rounded border border-slate-300 px-2 py-1 text-right text-sm" />
+                                  </td>
+                                  <td className="px-3 py-2 text-right tabular-nums text-orange-700">
+                                    {rqty > 0 ? fmt(rqty * it.unit_price) : "—"}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div className="mt-1 text-right text-sm font-semibold text-orange-800">
+                        Total debit: {fmt(activeOrder.items.reduce((s, it) => s + Number(debitItems[it.line_id] || 0) * it.unit_price, 0))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div>
+                    <label className={LBL}>Reason</label>
+                    <input value={debitReason} onChange={e => setDebitReason(e.target.value)}
+                      placeholder="e.g. Short delivery, overcharged" className={INPUT} />
+                  </div>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={doCreateDebitNote} disabled={debitSaving} className={BTN_PRIMARY}>
+                      {debitSaving ? "Saving…" : "Create Debit Note"}
+                    </button>
+                    <button type="button" onClick={() => setDebitMode(false)} className={BTN_SECONDARY}>Cancel</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Existing debit notes */}
+              {debitNotes.length > 0 && (
+                <div className="border-b border-orange-100 bg-orange-50/30 px-5 py-3">
+                  <div className="mb-2 text-xs font-bold uppercase tracking-wide text-orange-700">Debit Notes</div>
+                  <div className="space-y-1">
+                    {debitNotes.map(dn => (
+                      <div key={dn.id} className="flex items-center justify-between text-sm">
+                        <span className="text-slate-700">DN-{dn.id} · {dn.note_type === "item" ? "Item-wise" : "Value-wise"}{dn.reason ? ` · ${dn.reason}` : ""}</span>
+                        <div className="flex items-center gap-3">
+                          <span className="font-semibold text-orange-700">{fmt(Number(dn.amount))}</span>
+                          <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${dn.status === "open" ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-600"}`}>{dn.status}</span>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}

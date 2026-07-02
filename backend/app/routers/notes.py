@@ -52,11 +52,14 @@ class CreditNotePublic(BaseModel):
 
 class DebitNotePublic(BaseModel):
     id: int
-    purchase_order_id: int
+    purchase_order_id: Optional[int]
+    vendor_order_id: Optional[int]
     vendor_id: int
     amount: str
     reason: Optional[str]
     status: str
+    note_type: str
+    items: Optional[list]
     document_url: Optional[str]
     note_date: Optional[date]
     created_at: str
@@ -82,10 +85,13 @@ def _dn_pub(row: DebitNote) -> DebitNotePublic:
     return DebitNotePublic(
         id=row.id,
         purchase_order_id=row.purchase_order_id,
+        vendor_order_id=getattr(row, "vendor_order_id", None),
         vendor_id=row.vendor_id,
         amount=str(row.amount),
         reason=row.reason,
         status=row.status,
+        note_type=getattr(row, "note_type", "value") or "value",
+        items=getattr(row, "items", None),
         document_url=url,
         note_date=row.note_date,
         created_at=row.created_at.isoformat(),
@@ -156,22 +162,44 @@ def create_credit_note(
 
 
 @router.get("/debit", response_model=List[DebitNotePublic], dependencies=[Depends(require_admin)])
-def list_debit_notes(db: Session = Depends(get_db)) -> List[DebitNotePublic]:
-    return [_dn_pub(r) for r in db.query(DebitNote).order_by(DebitNote.id.desc()).limit(500).all()]
+def list_debit_notes(
+    db: Session = Depends(get_db),
+    vendor_order_id: Optional[int] = None,
+) -> List[DebitNotePublic]:
+    q = db.query(DebitNote).order_by(DebitNote.id.desc())
+    if vendor_order_id is not None:
+        q = q.filter(DebitNote.vendor_order_id == vendor_order_id)
+    return [_dn_pub(r) for r in q.limit(500).all()]
 
 
 @router.post("/debit", response_model=DebitNotePublic, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin)])
 def create_debit_note(
     db: Session = Depends(get_db),
-    purchase_order_id: int = Form(...),
+    purchase_order_id: Optional[int] = Form(None),
+    vendor_order_id: Optional[int] = Form(None),
     amount: str = Form(...),
+    note_type: str = Form("value"),
+    items_json: Optional[str] = Form(None),
     reason: Optional[str] = Form(None),
     note_date: Optional[str] = Form(None),
     file: Optional[UploadFile] = File(None),
 ) -> DebitNotePublic:
-    po = db.get(VendorPurchaseOrder, purchase_order_id)
-    if po is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="purchase order not found")
+    from app.models.vendor_order import VendorOrder as VendorOrderModel
+    vendor_id: Optional[int] = None
+
+    if vendor_order_id:
+        vo = db.get(VendorOrderModel, vendor_order_id)
+        if vo is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="vendor order not found")
+        vendor_id = vo.vendor_id
+    elif purchase_order_id:
+        po = db.get(VendorPurchaseOrder, purchase_order_id)
+        if po is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="purchase order not found")
+        vendor_id = po.vendor_id
+    else:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="purchase_order_id or vendor_order_id required")
+
     amt = Decimal(amount)
     if amt <= 0:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="amount must be positive")
@@ -181,15 +209,27 @@ def create_debit_note(
             nd = date.fromisoformat(str(note_date).strip()[:10])
         except ValueError:
             pass
+
+    items_data = None
+    if items_json:
+        import json as _json
+        try:
+            items_data = _json.loads(items_json)
+        except Exception:
+            pass
+
     doc_key = _upload_doc(file)
     seed_chart_accounts(db)
     row = DebitNote(
         purchase_order_id=purchase_order_id,
-        vendor_id=po.vendor_id,
+        vendor_order_id=vendor_order_id,
+        vendor_id=vendor_id,
         amount=amt,
         reason=(reason or "").strip() or None,
         document_key=doc_key,
         note_date=nd,
+        note_type=note_type if note_type in ("value", "item") else "value",
+        items=items_data,
         status="open",
     )
     db.add(row)

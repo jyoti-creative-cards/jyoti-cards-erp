@@ -248,8 +248,6 @@ export function VendorOrdersScreen({ auth }: { auth: AuthState }) {
     await loadAll();
   }
 
-  }
-
   async function doCreateDebitNote() {
     if (!activeOrder) return;
     setDebitSaving(true);

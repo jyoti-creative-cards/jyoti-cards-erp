@@ -31,7 +31,7 @@ export function AdminScreen({ adminKey, auth }: Props) {
   const canSetup = hasPerm(auth, "admin.setup");
   const canAudit = hasPerm(auth, "admin.audit");
 
-  const [tab, setTab] = useState<"routes" | "categories" | "series" | "yeargroups" | "billseries" | "auditlog" | "appsettings">(
+  const [tab, setTab] = useState<"routes" | "categories" | "units" | "series" | "yeargroups" | "billseries" | "auditlog" | "appsettings">(
     canSetup ? "routes" : "auditlog"
   );
   const headersAdmin = () => authHeaders(_auth);
@@ -41,6 +41,7 @@ export function AdminScreen({ adminKey, auth }: Props) {
     ...(canSetup ? [
       { id: "routes" as const,      label: "🗺️ Routes & Cities" },
       { id: "categories" as const,  label: "🏷️ Categories" },
+      { id: "units" as const,       label: "📦 Units" },
       { id: "series" as const,      label: "📚 Series" },
       { id: "yeargroups" as const,  label: "📅 Year Groups" },
       { id: "billseries" as const,  label: "🧾 Bill Series" },
@@ -79,6 +80,16 @@ export function AdminScreen({ adminKey, auth }: Props) {
         listKey="categories"
         createEndpoint="catalog/categories"
         deleteEndpoint={(name) => `catalog/categories/${encodeURIComponent(name)}`}
+        headersAdmin={headersAdmin}
+        headersJson={headersJson}
+      />}
+      {tab === "units" && <SimpleListTab
+        label="Unit"
+        icon="📦"
+        listEndpoint="catalog/units"
+        listKey="units"
+        createEndpoint="catalog/units"
+        deleteEndpoint={(name) => `catalog/units/${encodeURIComponent(name)}`}
         headersAdmin={headersAdmin}
         headersJson={headersJson}
       />}

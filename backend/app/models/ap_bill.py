@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import Date, DateTime, ForeignKey, Numeric, String, func
+from sqlalchemy import Date, DateTime, ForeignKey, Integer, Numeric, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -19,8 +19,8 @@ class APBill(Base):
         ForeignKey("portal_vendor_bills.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
     )
     vendor_id: Mapped[int] = mapped_column(ForeignKey("portal_vendors.id"), nullable=False, index=True)
-    purchase_order_id: Mapped[int] = mapped_column(
-        ForeignKey("portal_vendor_purchase_orders.id"), nullable=False, index=True
+    purchase_order_id: Mapped[Optional[int]] = mapped_column(
+        Integer, nullable=True, index=True
     )
     amount: Mapped[float] = mapped_column(Numeric(14, 4), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, index=True)  # open | paid

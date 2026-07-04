@@ -14,12 +14,41 @@ from app.db.session import get_db
 from app.deps import require_admin
 from app.models.credit_debit_note import CreditNote, DebitNote
 from app.models.customer_order import CustomerOrder
-from app.models.vendor_purchase_order import VendorPurchaseOrder
 from app.services.accounting import ACC_AP, ACC_AR, ACC_REV, ACC_PUR, create_journal, seed_chart_accounts
 from app.services.catalog_storage import presigned_url, storage_configured, upload_bytes
 
 router = APIRouter(prefix="/notes", tags=["notes"])
 _NOTE_PREFIX = "credit_debit_notes"
+
+
+def _apply_debit_to_ap(db: Session, vendor_order_id: int, vendor_id: int, amount: Decimal) -> None:
+    """Reduce open AP bills for a vendor order by debit note amount (FIFO)."""
+    from app.models.ap_bill import APBill
+    from app.models.vendor_bill import VendorBill
+    remaining = amount
+    # Find all open APBills for this vendor order (oldest first)
+    ap_bills = (
+        db.query(APBill)
+        .join(VendorBill, APBill.vendor_bill_id == VendorBill.id)
+        .filter(
+            VendorBill.vendor_order_id == vendor_order_id,
+            APBill.status == "open",
+        )
+        .order_by(APBill.id.asc())
+        .all()
+    )
+    for ap in ap_bills:
+        if remaining <= 0:
+            break
+        ap_balance = Decimal(str(ap.amount))
+        if ap_balance <= remaining:
+            remaining -= ap_balance
+            ap.amount = Decimal("0")
+            ap.status = "paid"
+        else:
+            ap.amount = ap_balance - remaining
+            remaining = Decimal("0")
+        db.add(ap)
 
 
 def _upload_doc(file: Optional[UploadFile]) -> Optional[str]:
@@ -52,7 +81,6 @@ class CreditNotePublic(BaseModel):
 
 class DebitNotePublic(BaseModel):
     id: int
-    purchase_order_id: Optional[int]
     vendor_order_id: Optional[int]
     vendor_id: int
     amount: str
@@ -84,7 +112,6 @@ def _dn_pub(row: DebitNote) -> DebitNotePublic:
     url = presigned_url(row.document_key) if row.document_key else None
     return DebitNotePublic(
         id=row.id,
-        purchase_order_id=row.purchase_order_id,
         vendor_order_id=getattr(row, "vendor_order_id", None),
         vendor_id=row.vendor_id,
         amount=str(row.amount),
@@ -175,8 +202,7 @@ def list_debit_notes(
 @router.post("/debit", response_model=DebitNotePublic, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin)])
 def create_debit_note(
     db: Session = Depends(get_db),
-    purchase_order_id: Optional[int] = Form(None),
-    vendor_order_id: Optional[int] = Form(None),
+    vendor_order_id: int = Form(...),
     amount: str = Form(...),
     note_type: str = Form("value"),
     items_json: Optional[str] = Form(None),
@@ -185,20 +211,10 @@ def create_debit_note(
     file: Optional[UploadFile] = File(None),
 ) -> DebitNotePublic:
     from app.models.vendor_order import VendorOrder as VendorOrderModel
-    vendor_id: Optional[int] = None
-
-    if vendor_order_id:
-        vo = db.get(VendorOrderModel, vendor_order_id)
-        if vo is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="vendor order not found")
-        vendor_id = vo.vendor_id
-    elif purchase_order_id:
-        po = db.get(VendorPurchaseOrder, purchase_order_id)
-        if po is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="purchase order not found")
-        vendor_id = po.vendor_id
-    else:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="purchase_order_id or vendor_order_id required")
+    vo = db.get(VendorOrderModel, vendor_order_id)
+    if vo is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="vendor order not found")
+    vendor_id: int = vo.vendor_id
 
     amt = Decimal(amount)
     if amt <= 0:
@@ -221,7 +237,7 @@ def create_debit_note(
     doc_key = _upload_doc(file)
     seed_chart_accounts(db)
     row = DebitNote(
-        purchase_order_id=purchase_order_id,
+        purchase_order_id=None,
         vendor_order_id=vendor_order_id,
         vendor_id=vendor_id,
         amount=amt,
@@ -253,6 +269,10 @@ def create_debit_note(
             raise HTTPException(status.HTTP_409_CONFLICT, detail=str(e)) from e
         raise
     row.journal_entry_id = je.id
+
+    # Wire debit note to reduce open AP bills for this vendor order
+    _apply_debit_to_ap(db, vendor_order_id=vendor_order_id, vendor_id=vendor_id, amount=amt)
+
     db.commit()
     db.refresh(row)
     return _dn_pub(row)

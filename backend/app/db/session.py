@@ -51,6 +51,10 @@ elif "supabase" in _db_url.lower():
 engine = create_engine(
     _db_url,
     pool_pre_ping=not _is_sqlite,
+    pool_size=5 if not _is_sqlite else 1,
+    max_overflow=10 if not _is_sqlite else 0,
+    pool_recycle=300 if not _is_sqlite else -1,
+    pool_timeout=30,
     connect_args=_connect_args,
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -169,11 +173,6 @@ def _migrate_po_notes_and_receipt_contact_postgres() -> None:
     if engine.dialect.name != "postgresql":
         return
     with engine.begin() as conn:
-        conn.execute(
-            text(
-                "ALTER TABLE portal_vendor_purchase_orders ADD COLUMN IF NOT EXISTS notes TEXT"
-            )
-        )
         conn.execute(
             text(
                 "ALTER TABLE portal_stock_receipts ADD COLUMN IF NOT EXISTS "
@@ -302,6 +301,52 @@ def _migrate_v9_customer_gst_postgres() -> None:
         conn.execute(text("ALTER TABLE portal_customers ADD COLUMN IF NOT EXISTS gst_number VARCHAR(20)"))
 
 
+def _migrate_v10_vendor_city_id_postgres() -> None:
+    if engine.dialect.name != "postgresql":
+        return
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE portal_vendors ADD COLUMN IF NOT EXISTS city_id INTEGER REFERENCES portal_cities(id) ON DELETE SET NULL"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_stock_adj_product_created ON portal_stock_adjustments (catalog_product_id, created_at)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_stock_receipt_vendor_created ON portal_stock_receipts (vendor_id, created_at)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_customer_orders_status ON portal_customer_orders (status, deleted_at)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_customer_orders_customer ON portal_customer_orders (customer_id, id DESC)"
+        ))
+
+
+def _migrate_v11_normalize_open_status_postgres() -> None:
+    """Normalize all legacy 'open' and 'confirmed' customer orders to 'received'."""
+    if engine.dialect.name != "postgresql":
+        return
+    with engine.begin() as conn:
+        conn.execute(text(
+            "UPDATE portal_customer_orders SET status = 'received' WHERE status IN ('open', 'confirmed')"
+        ))
+
+
+def _migrate_v12_vendor_bill_columns_postgres() -> None:
+    """Add vendor_order_id, vendor_id, bill_number, bill_amount to portal_vendor_bills."""
+    if engine.dialect.name != "postgresql":
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE portal_vendor_bills ADD COLUMN IF NOT EXISTS vendor_order_id INTEGER REFERENCES portal_vendor_orders(id) ON DELETE SET NULL"))
+        conn.execute(text("ALTER TABLE portal_vendor_bills ADD COLUMN IF NOT EXISTS vendor_id INTEGER REFERENCES portal_vendors(id) ON DELETE SET NULL"))
+        conn.execute(text("ALTER TABLE portal_vendor_bills ADD COLUMN IF NOT EXISTS bill_number VARCHAR(200)"))
+        conn.execute(text("ALTER TABLE portal_vendor_bills ADD COLUMN IF NOT EXISTS bill_amount NUMERIC(14,4)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_vendor_bills_vendor_order ON portal_vendor_bills(vendor_order_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_vendor_bills_vendor ON portal_vendor_bills(vendor_id)"))
+        # Also add items column to customer bills for per-bill line tracking
+        conn.execute(text("ALTER TABLE portal_customer_bills ADD COLUMN IF NOT EXISTS items JSONB"))
+
+
 def _migrate_v9_vendor_order_debit_note_postgres() -> None:
     if engine.dialect.name != "postgresql":
         return
@@ -342,7 +387,6 @@ def init_db() -> None:
         vendor,
         vendor_bill,
         vendor_order,
-        vendor_purchase_order,
     )
 
     Base.metadata.create_all(bind=engine)
@@ -367,6 +411,9 @@ def init_db() -> None:
     _migrate_v8_vendor_gst_postgres()
     _migrate_v9_customer_gst_postgres()
     _migrate_v9_vendor_order_debit_note_postgres()
+    _migrate_v10_vendor_city_id_postgres()
+    _migrate_v11_normalize_open_status_postgres()
+    _migrate_v12_vendor_bill_columns_postgres()
     from app.services.accounting import seed_chart_accounts
 
     s = SessionLocal()
@@ -511,9 +558,6 @@ def _migrate_v2_features_postgres() -> None:
         ))
         conn.execute(text(
             "ALTER TABLE portal_customer_orders ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ"
-        ))
-        conn.execute(text(
-            "ALTER TABLE portal_vendor_purchase_orders ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ"
         ))
 
 

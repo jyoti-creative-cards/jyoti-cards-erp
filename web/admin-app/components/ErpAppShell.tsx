@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import type { AuthState } from "@/lib/types";
 
 export type ErpMainTab =
-  | "orders" | "vendor-orders" | "people" | "stock" | "catalog" | "finance" | "returns"
+  | "dashboard" | "people" | "orders" | "stock" | "finance"
   | "find" | "reports" | "create" | "admin" | "staff" | "recyclebin";
 
 type NavItem = { id: ErpMainTab; label: string; icon: string; permission?: string };
@@ -14,13 +14,11 @@ type NavSection = { title?: string; items: NavItem[] };
 const NAV_SECTIONS: NavSection[] = [
   {
     items: [
-      { id: "orders",        label: "Customer Orders", icon: "🛒", permission: "orders.view"  },
-      { id: "vendor-orders", label: "Vendor Orders",   icon: "🏭", permission: "orders.view"  },
+      { id: "dashboard",     label: "Dashboard",       icon: "🏠", permission: undefined       },
       { id: "people",        label: "People",          icon: "👥", permission: "people.view"  },
+      { id: "orders",        label: "Orders",          icon: "📋", permission: "orders.view"  },
       { id: "stock",         label: "Stock",           icon: "🏪", permission: "stock.view"   },
-      { id: "catalog",       label: "Catalog",         icon: "📦", permission: "catalog.view" },
       { id: "finance",       label: "Finance",         icon: "💰", permission: "finance.view" },
-      { id: "returns",       label: "Returns",         icon: "↩️",  permission: "returns.view" },
       { id: "find",          label: "Find",            icon: "🔍",  permission: undefined       },
       { id: "reports",       label: "Reports",         icon: "📊",  permission: undefined       },
     ],
@@ -36,9 +34,9 @@ const NAV_SECTIONS: NavSection[] = [
 ];
 
 const TITLE_MAP: Record<ErpMainTab, string> = {
-  orders: "Customer Orders", "vendor-orders": "Vendor Orders", people: "People",
-  stock: "Stock", catalog: "Catalog", finance: "Finance",
-  returns: "Returns & Credit Notes", create: "Quick Add",
+  dashboard: "Dashboard", orders: "Orders", people: "People",
+  stock: "Stock", finance: "Finance",
+  create: "Quick Add",
   find: "Find", reports: "Reports", admin: "Setup", staff: "Staff Management", recyclebin: "Recycle Bin",
 };
 

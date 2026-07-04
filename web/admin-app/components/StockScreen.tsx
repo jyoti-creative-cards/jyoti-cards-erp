@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { Drawer } from "@/components/Drawer";
+import { CatalogScreen } from "@/components/CatalogScreen";
 import { apiUrl, fetchApi, formatApiError } from "@/lib/api";
-import type { CatalogProductPublic, InventoryRowPublic, PurchaseOrderPublic, StockAdjustmentPublic, VendorPublic } from "@/lib/types";
+import type { CatalogProductPublic, InventoryRowPublic, StockAdjustmentPublic, VendorPublic } from "@/lib/types";
 
 interface LedgerEntryDetail {
   date: string;
@@ -28,8 +29,29 @@ interface ProductLedgerResponse {
   our_product_id: string;
   name: string;
   current_stock: number;
-  invoice_count: number;
+  invoice_count?: number;
   months: LedgerMonthSummary[];
+}
+
+interface VendorOrderLine {
+  line_id: string;
+  catalog_product_id: number;
+  product_name: string;
+  qty_ordered: number;
+  qty_received: number;
+  unit_price: number;
+  date_ordered: string;
+  date_received: string | null;
+  notes: string;
+}
+interface VendorOrderRecord {
+  id: number;
+  vendor_id: number;
+  vendor_name: string | null;
+  status: "open" | "closed";
+  items: VendorOrderLine[];
+  created_at: string;
+  updated_at: string;
 }
 
 const INPUT = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
@@ -38,10 +60,10 @@ const BTN_PRIMARY = "inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-
 const BTN_SECONDARY = "inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50";
 
 function stockBadge(status: string, qty?: number) {
-  if (status === "negative_stock") return <span className="rounded-full bg-red-200 px-2 py-0.5 text-xs font-bold text-red-800">{qty !== undefined ? `${qty}` : "Negative"}</span>;
-  if (status === "out_of_stock") return <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">0 (Out)</span>;
-  if (status === "low_stock") return <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">Low stock</span>;
-  return <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">In stock</span>;
+  if (status === "negative_stock") return <span className="rounded-full bg-red-200 px-2 py-0.5 text-xs font-bold text-red-900">Negative Stock</span>;
+  if (status === "out_of_stock") return <span className="rounded-full bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-600">Out of Stock</span>;
+  if (status === "low_stock") return <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">Low Stock</span>;
+  return <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">In Stock</span>;
 }
 
 interface Props {
@@ -49,7 +71,7 @@ interface Props {
 }
 
 export function StockScreen({ adminKey }: Props) {
-  const [tab, setTab] = useState<"current" | "receive" | "adjustments">("current");
+  const [tab, setTab] = useState<"current" | "receive" | "adjustments" | "catalog">("current");
 
   const headers = () => {
     const h: Record<string, string> = { "Content-Type": "application/json" };
@@ -61,7 +83,7 @@ export function StockScreen({ adminKey }: Props) {
   const [rows, setRows] = useState<InventoryRowPublic[]>([]);
   const [catalog, setCatalog] = useState<CatalogProductPublic[]>([]);
   const [vendors, setVendors] = useState<VendorPublic[]>([]);
-  const [pos, setPos] = useState<PurchaseOrderPublic[]>([]);
+  const [openVendorOrders, setOpenVendorOrders] = useState<VendorOrderRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
 
@@ -70,17 +92,23 @@ export function StockScreen({ adminKey }: Props) {
     setLoading(true);
     setLoadError("");
     try {
-      const [ir, cr, vr, pr] = await Promise.all([
+      const [ir, cr, vr, vor] = await Promise.all([
         fetchApi(apiUrl("inventory") + "?all_catalog=true", { headers: headersAdmin() }),
-        fetchApi(apiUrl("catalog"), { headers: headersAdmin() }),
+        fetchApi(apiUrl("catalog") + "?limit=5000", { headers: headersAdmin() }),
         fetchApi(apiUrl("vendors"), { headers: headersAdmin() }),
-        fetchApi(apiUrl("purchase-orders"), { headers: headersAdmin() }),
+        fetchApi(apiUrl("vendor-orders"), { headers: headersAdmin() }),
       ]);
       if (ir.ok) setRows(await ir.json());
       else setLoadError("Failed to load inventory.");
-      if (cr.ok) setCatalog(await cr.json());
+      if (cr.ok) {
+        const cd = await cr.json() as { items: CatalogProductPublic[] } | CatalogProductPublic[];
+        setCatalog(Array.isArray(cd) ? cd : (cd.items ?? []));
+      }
       if (vr.ok) setVendors(await vr.json());
-      if (pr.ok) setPos(await pr.json());
+      if (vor.ok) {
+        const all: VendorOrderRecord[] = await vor.json();
+        setOpenVendorOrders(all.filter((v) => v.status === "open"));
+      }
     } catch {
       setLoadError("Network error loading stock data.");
     } finally {
@@ -102,18 +130,19 @@ export function StockScreen({ adminKey }: Props) {
           {loadError} <button type="button" onClick={() => void loadAll()} className="ml-2 underline">Retry</button>
         </div>
       )}
-      <div className="mb-6 flex gap-2">
+      <div className="mb-6 inline-flex rounded-xl border border-slate-200 bg-white p-1 shadow-sm flex-wrap gap-1">
         {([
-          { id: "current",     label: "📊 Current stock" },
-          { id: "receive",     label: "📥 Receive goods" },
-          { id: "adjustments", label: "✏️ Adjustments log" },
+          { id: "current",     label: "📊 Stock" },
+          { id: "receive",     label: "📥 Receive" },
+          { id: "adjustments", label: "✏️ Adjustments" },
+          { id: "catalog",     label: "📦 Catalog" },
         ] as const).map((t) => (
           <button
             key={t.id}
             type="button"
             onClick={() => setTab(t.id)}
-            className={`rounded-full px-5 py-2 text-sm font-semibold transition ${
-              tab === t.id ? "bg-blue-600 text-white shadow" : "bg-white text-slate-600 shadow-sm hover:bg-slate-50"
+            className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
+              tab === t.id ? "bg-blue-600 text-white shadow" : "text-slate-600 hover:bg-slate-50"
             }`}
           >
             {t.label}
@@ -137,8 +166,8 @@ export function StockScreen({ adminKey }: Props) {
       {tab === "receive" && (
         <ReceiveGoodsTab
           catalog={catalog}
-          pos={pos}
           vendors={vendors}
+          openVendorOrders={openVendorOrders}
           headers={headers}
           headersAdmin={headersAdmin}
           adminKey={adminKey}
@@ -153,6 +182,9 @@ export function StockScreen({ adminKey }: Props) {
           adminKey={adminKey}
           onRefresh={loadAll}
         />
+      )}
+      {tab === "catalog" && (
+        <CatalogScreen adminKey={adminKey} />
       )}
     </div>
   );
@@ -184,6 +216,12 @@ function CurrentStockTab({
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [vendorFilter, setVendorFilter] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [qtySort, setQtySort] = useState<"" | "asc" | "desc">("");
+  const [invoiceSort, setInvoiceSort] = useState<"" | "asc" | "desc">("");
+  const [invoiceFilter, setInvoiceFilter] = useState<Set<number>>(new Set());
+  const [sellSort, setSellSort] = useState<"" | "asc" | "desc">("");
+  const [colDropdown, setColDropdown] = useState<"" | "status" | "category" | "qty" | "invoice" | "sell">("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerRow, setDrawerRow] = useState<InventoryRowPublic | null>(null);
   const [drawerAlternatives, setDrawerAlternatives] = useState<{id: number; alternative_catalog_product_id: number; alternative_our_product_id: string; alternative_name: string; alternative_category: string}[]>([]);
@@ -198,13 +236,35 @@ function CurrentStockTab({
 
   const showToast = (msg: string, ok: boolean) => { setToast({ msg, ok }); setTimeout(() => setToast(null), 3500); };
 
+  // Close column dropdowns on outside click
+  useEffect(() => {
+    if (!colDropdown) return;
+    const handler = () => setColDropdown("");
+    document.addEventListener("click", handler);
+    return () => document.removeEventListener("click", handler);
+  }, [colDropdown]);
+
   const filtered = rows.filter((r) => {
     const q = search.toLowerCase();
     const matchSearch = !q || r.name.toLowerCase().includes(q) || r.our_product_id.toLowerCase().includes(q) || r.category.toLowerCase().includes(q);
     const matchStatus = !statusFilter || r.stock_status === statusFilter;
     const matchVendor = !vendorFilter || String(r.vendor_id) === vendorFilter;
-    return matchSearch && matchStatus && matchVendor;
+    const matchCategory = !categoryFilter || r.category === categoryFilter;
+    const matchInvoice = invoiceFilter.size === 0 || invoiceFilter.has(r.invoice_count ?? 0);
+    return matchSearch && matchStatus && matchVendor && matchCategory && matchInvoice;
+  }).sort((a, b) => {
+    if (invoiceSort === "asc") return (a.invoice_count ?? 0) - (b.invoice_count ?? 0);
+    if (invoiceSort === "desc") return (b.invoice_count ?? 0) - (a.invoice_count ?? 0);
+    const catA = a.selling_price ?? 0; const catB = b.selling_price ?? 0;
+    if (sellSort === "asc") return catA - catB;
+    if (sellSort === "desc") return catB - catA;
+    if (qtySort === "asc") return a.quantity - b.quantity;
+    if (qtySort === "desc") return b.quantity - a.quantity;
+    return 0;
   });
+
+  const categories = Array.from(new Set(rows.map((r) => r.category).filter(Boolean))).sort();
+  const invoiceCounts = Array.from(new Set(rows.map((r) => r.invoice_count ?? 0))).sort((a, b) => a - b);
 
   async function saveQty(catalogProductId: number, newQty: number) {
     const current = rows.find((r) => r.catalog_product_id === catalogProductId);
@@ -285,11 +345,138 @@ function CurrentStockTab({
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase text-slate-500">
                 <th className="px-4 py-3 text-left">Product</th>
-                <th className="px-4 py-3 text-left">Category</th>
-                <th className="px-4 py-3 text-right">Invoices</th>
-                <th className="px-4 py-3 text-right">Sell ₹</th>
-                <th className="px-4 py-3 text-right">Qty</th>
-                <th className="px-4 py-3 text-left">Status</th>
+                {/* Category column with filter */}
+                <th className="px-4 py-3 text-left">
+                  <div className="relative inline-flex items-center gap-1">
+                    <span>Category</span>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); setColDropdown(colDropdown === "category" ? "" : "category"); }}
+                      className={`rounded px-1 py-0.5 text-xs transition ${categoryFilter ? "bg-blue-100 text-blue-700" : "hover:bg-slate-200 text-slate-400"}`}
+                      title="Filter category"
+                    >▼</button>
+                    {colDropdown === "category" && (
+                      <div className="absolute left-0 top-7 z-30 min-w-[160px] rounded-xl border border-slate-200 bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+                        <div className="border-b border-slate-100 px-3 py-2 text-xs font-bold uppercase text-slate-500">Category</div>
+                        <button type="button" onClick={() => { setCategoryFilter(""); setColDropdown(""); }}
+                          className={`w-full px-3 py-1.5 text-left text-xs hover:bg-slate-50 ${!categoryFilter ? "font-bold text-blue-600" : ""}`}>All</button>
+                        {categories.map((c) => (
+                          <button key={c} type="button" onClick={() => { setCategoryFilter(c); setColDropdown(""); }}
+                            className={`w-full px-3 py-1.5 text-left text-xs hover:bg-slate-50 ${categoryFilter === c ? "font-bold text-blue-600" : ""}`}>{c}</button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </th>
+                {/* Invoices column with filter + sort */}
+                <th className="px-4 py-3 text-right">
+                  <div className="relative inline-flex items-center justify-end gap-1">
+                    <span>Invoices</span>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); setColDropdown(colDropdown === "invoice" ? "" : "invoice"); }}
+                      className={`rounded px-1 py-0.5 text-xs transition ${invoiceFilter.size > 0 || invoiceSort ? "bg-blue-100 text-blue-700" : "hover:bg-slate-200 text-slate-400"}`}
+                    >{invoiceSort === "asc" ? "↑" : invoiceSort === "desc" ? "↓" : "▼"}</button>
+                    {colDropdown === "invoice" && (
+                      <div className="absolute right-0 top-7 z-30 min-w-[170px] rounded-xl border border-slate-200 bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+                        <div className="border-b border-slate-100 px-3 py-2 text-xs font-bold uppercase text-slate-500">Sort</div>
+                        <button type="button" onClick={() => setInvoiceSort("")} className={`w-full px-3 py-1.5 text-left text-xs hover:bg-slate-50 ${!invoiceSort ? "font-bold text-blue-600" : ""}`}>Default</button>
+                        <button type="button" onClick={() => setInvoiceSort("asc")} className={`w-full px-3 py-1.5 text-left text-xs hover:bg-slate-50 ${invoiceSort === "asc" ? "font-bold text-blue-600" : ""}`}>↑ Low to High</button>
+                        <button type="button" onClick={() => setInvoiceSort("desc")} className={`w-full px-3 py-1.5 text-left text-xs hover:bg-slate-50 ${invoiceSort === "desc" ? "font-bold text-blue-600" : ""}`}>↓ High to Low</button>
+                        <div className="border-t border-slate-100 px-3 py-2 text-xs font-bold uppercase text-slate-500">Filter by count</div>
+                        <div className="max-h-40 overflow-y-auto">
+                          <label className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-xs hover:bg-slate-50">
+                            <input type="checkbox" checked={invoiceFilter.size === 0} onChange={() => setInvoiceFilter(new Set())} />
+                            All
+                          </label>
+                          {invoiceCounts.map((n) => (
+                            <label key={n} className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-xs hover:bg-slate-50">
+                              <input type="checkbox" checked={invoiceFilter.has(n)} onChange={() => {
+                                const s = new Set(invoiceFilter);
+                                s.has(n) ? s.delete(n) : s.add(n);
+                                setInvoiceFilter(s);
+                              }} />
+                              {n} order{n !== 1 ? "s" : ""}
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </th>
+                {/* Vendor Orders column */}
+                <th className="px-4 py-3 text-right">
+                  <span className="text-indigo-600">Vendor Orders</span>
+                </th>
+                {/* Sell ₹ column with sort */}
+                <th className="px-4 py-3 text-right">
+                  <div className="relative inline-flex items-center justify-end gap-1">
+                    <span>Sell ₹</span>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); setColDropdown(colDropdown === "sell" ? "" : "sell"); }}
+                      className={`rounded px-1 py-0.5 text-xs transition ${sellSort ? "bg-blue-100 text-blue-700" : "hover:bg-slate-200 text-slate-400"}`}
+                    >{sellSort === "asc" ? "↑" : sellSort === "desc" ? "↓" : "▼"}</button>
+                    {colDropdown === "sell" && (
+                      <div className="absolute right-0 top-7 z-30 min-w-[150px] rounded-xl border border-slate-200 bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+                        <div className="border-b border-slate-100 px-3 py-2 text-xs font-bold uppercase text-slate-500">Sort Sell ₹</div>
+                        <button type="button" onClick={() => { setSellSort(""); setColDropdown(""); }} className={`w-full px-3 py-1.5 text-left text-xs hover:bg-slate-50 ${!sellSort ? "font-bold text-blue-600" : ""}`}>Default</button>
+                        <button type="button" onClick={() => { setSellSort("asc"); setColDropdown(""); }} className={`w-full px-3 py-1.5 text-left text-xs hover:bg-slate-50 ${sellSort === "asc" ? "font-bold text-blue-600" : ""}`}>↑ Low to High</button>
+                        <button type="button" onClick={() => { setSellSort("desc"); setColDropdown(""); }} className={`w-full px-3 py-1.5 text-left text-xs hover:bg-slate-50 ${sellSort === "desc" ? "font-bold text-blue-600" : ""}`}>↓ High to Low</button>
+                      </div>
+                    )}
+                  </div>
+                </th>
+                {/* Qty column with sort */}
+                <th className="px-4 py-3 text-right">
+                  <div className="relative inline-flex items-center justify-end gap-1">
+                    <span>Qty</span>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); setColDropdown(colDropdown === "qty" ? "" : "qty"); }}
+                      className={`rounded px-1 py-0.5 text-xs transition ${qtySort ? "bg-blue-100 text-blue-700" : "hover:bg-slate-200 text-slate-400"}`}
+                      title="Sort qty"
+                    >{qtySort === "asc" ? "↑" : qtySort === "desc" ? "↓" : "▼"}</button>
+                    {colDropdown === "qty" && (
+                      <div className="absolute right-0 top-7 z-30 min-w-[140px] rounded-xl border border-slate-200 bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+                        <div className="border-b border-slate-100 px-3 py-2 text-xs font-bold uppercase text-slate-500">Sort Qty</div>
+                        <button type="button" onClick={() => { setQtySort(""); setColDropdown(""); }}
+                          className={`w-full px-3 py-1.5 text-left text-xs hover:bg-slate-50 ${!qtySort ? "font-bold text-blue-600" : ""}`}>Default</button>
+                        <button type="button" onClick={() => { setQtySort("asc"); setColDropdown(""); }}
+                          className={`w-full px-3 py-1.5 text-left text-xs hover:bg-slate-50 ${qtySort === "asc" ? "font-bold text-blue-600" : ""}`}>↑ Low to High</button>
+                        <button type="button" onClick={() => { setQtySort("desc"); setColDropdown(""); }}
+                          className={`w-full px-3 py-1.5 text-left text-xs hover:bg-slate-50 ${qtySort === "desc" ? "font-bold text-blue-600" : ""}`}>↓ High to Low</button>
+                      </div>
+                    )}
+                  </div>
+                </th>
+                {/* Status column with filter */}
+                <th className="px-4 py-3 text-left">
+                  <div className="relative inline-flex items-center gap-1">
+                    <span>Status</span>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); setColDropdown(colDropdown === "status" ? "" : "status"); }}
+                      className={`rounded px-1 py-0.5 text-xs transition ${statusFilter ? "bg-blue-100 text-blue-700" : "hover:bg-slate-200 text-slate-400"}`}
+                      title="Filter status"
+                    >▼</button>
+                    {colDropdown === "status" && (
+                      <div className="absolute left-0 top-7 z-30 min-w-[160px] rounded-xl border border-slate-200 bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+                        <div className="border-b border-slate-100 px-3 py-2 text-xs font-bold uppercase text-slate-500">Status</div>
+                        {[
+                          { key: "", label: "All" },
+                          { key: "in_stock", label: "In Stock" },
+                          { key: "low_stock", label: "Low Stock" },
+                          { key: "out_of_stock", label: "Out of Stock" },
+                          { key: "negative_stock", label: "Negative Stock" },
+                        ].map((o) => (
+                          <button key={o.key} type="button" onClick={() => { setStatusFilter(o.key); setColDropdown(""); }}
+                            className={`w-full px-3 py-1.5 text-left text-xs hover:bg-slate-50 ${statusFilter === o.key ? "font-bold text-blue-600" : ""}`}>{o.label}</button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </th>
                 <th className="px-4 py-3 text-left">Low threshold</th>
                 <th className="px-4 py-3" />
               </tr>
@@ -301,19 +488,20 @@ function CurrentStockTab({
                   <tr key={row.catalog_product_id} className="transition hover:bg-blue-50/40">
                     <td className="px-4 py-3">
                       <div
-                        className="cursor-pointer font-medium text-blue-700 hover:underline"
+                        className="cursor-pointer font-mono font-semibold text-blue-700 hover:underline"
                         onClick={async () => {
   setDrawerRow(row); setDrawerOpen(true); setDrawerAlternatives([]);
   const r = await fetchApi(apiUrl(`catalog/${row.catalog_product_id}/alternatives`), { headers: headersAdmin() }).catch(() => null);
   if (r?.ok) setDrawerAlternatives(await r.json());
 }}
                       >
-                        {row.name}
+                        {row.our_product_id}
                       </div>
-                      <div className="text-xs font-mono text-slate-400">{row.our_product_id}</div>
+                      <div className="text-xs text-slate-500">{row.name}</div>
                     </td>
                     <td className="px-4 py-3 text-slate-500">{row.category}</td>
                     <td className="px-4 py-3 text-right text-slate-600">{row.invoice_count ?? "—"}</td>
+                    <td className="px-4 py-3 text-right text-indigo-600 font-medium">{row.vendor_order_count ?? "—"}</td>
                     <td className="px-4 py-3 text-right font-medium text-slate-700">
                       {row.selling_price != null ? `₹${row.selling_price}` : catRow ? `₹${catRow.selling_price}` : "—"}
                     </td>
@@ -459,6 +647,17 @@ function CurrentStockTab({
 
 // ────────────────────────── LEDGER MODAL ──────────────────────────
 
+function fmtLedgerDate(raw: string | null | undefined): string {
+  if (!raw) return "—";
+  try {
+    const d = new Date(raw);
+    return d.toLocaleString("en-IN", {
+      day: "2-digit", month: "short", year: "numeric",
+      hour: "2-digit", minute: "2-digit", hour12: true,
+    });
+  } catch { return raw; }
+}
+
 function LedgerModal({
   row,
   headersAdmin,
@@ -472,6 +671,14 @@ function LedgerModal({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set());
+  const [typeFilter, setTypeFilter] = useState<"all" | "inward" | "outward" | "adjustment">("all");
+  const [detail, setDetail] = useState<{ ref: string; data: Record<string, unknown> } | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  useEffect(() => {
+    if (!data) return;
+    setExpandedMonths(new Set(data.months.map((m) => `${m.year}-${m.month}`)));
+  }, [data]);
 
   useEffect(() => {
     setLoading(true);
@@ -493,87 +700,276 @@ function LedgerModal({
     });
   }
 
+  async function openDetail(reference: string) {
+    setDetailLoading(true);
+    setDetail(null);
+    try {
+      let url = "";
+      if (reference.startsWith("ORD-")) url = apiUrl(`customer-orders/${reference.slice(4)}`);
+      else if (reference.startsWith("VO-")) url = apiUrl(`vendor-orders/${reference.slice(3)}`);
+      else if (reference.startsWith("ADJ-")) { setDetail({ ref: reference, data: { note: "Stock adjustment", id: reference } }); setDetailLoading(false); return; }
+      else { setDetail({ ref: reference, data: { note: reference } }); setDetailLoading(false); return; }
+      const r = await fetchApi(url, { headers: headersAdmin() });
+      const d = await r.json();
+      setDetail({ ref: reference, data: d });
+    } catch { setDetail({ ref: reference, data: { error: "Could not load details." } }); }
+    setDetailLoading(false);
+  }
+
+  // Flatten all entries for filtering
+  const allEntries = data ? data.months.flatMap((m) => m.entries) : [];
+  const filtered = allEntries.filter((en) => typeFilter === "all" || en.type === typeFilter);
+
   return (
     <div
       style={{ position: "fixed", inset: 0, zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.45)" }}
       onClick={onClose}
     >
       <div
-        style={{ background: "#fff", borderRadius: 16, width: "min(780px, 95vw)", maxHeight: "90vh", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 25px 50px rgba(0,0,0,0.25)" }}
+        style={{ background: "#fff", borderRadius: 16, width: "min(900px, 96vw)", maxHeight: "92vh", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 25px 50px rgba(0,0,0,0.25)" }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div style={{ padding: "20px 24px 16px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+        <div style={{ padding: "18px 24px 14px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
           <div>
-            <div style={{ fontSize: 17, fontWeight: 700, color: "#0f172a" }}>{row.name}</div>
+            <div style={{ fontSize: 17, fontWeight: 700, color: "#0f172a" }}>📒 Ledger — {row.name}</div>
             <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
-              {row.our_product_id} · Stock: <strong>{data?.current_stock ?? row.quantity}</strong>
-              {data?.invoice_count != null && <> · Invoices: <strong>{data.invoice_count}</strong></>}
+              {row.our_product_id} · Current stock: <strong>{data?.current_stock ?? row.quantity}</strong>
+              {data?.invoice_count != null && <> · Sales orders: <strong>{data.invoice_count}</strong></>}
             </div>
           </div>
           <button type="button" onClick={onClose} style={{ fontSize: 20, lineHeight: 1, background: "none", border: "none", cursor: "pointer", color: "#94a3b8", padding: "2px 6px" }}>✕</button>
         </div>
 
-        {/* Body */}
-        <div style={{ overflowY: "auto", flex: 1, padding: "16px 24px" }}>
-          {loading && <div style={{ textAlign: "center", padding: "48px 0", color: "#94a3b8" }}>Loading…</div>}
-          {error && <div style={{ textAlign: "center", padding: "48px 0", color: "#ef4444" }}>{error}</div>}
-          {data && !loading && (
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-              <thead>
-                <tr style={{ background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
-                  <th style={{ padding: "8px 12px", textAlign: "left", fontSize: 11, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>Month</th>
-                  <th style={{ padding: "8px 12px", textAlign: "right", fontSize: 11, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>Opening</th>
-                  <th style={{ padding: "8px 12px", textAlign: "right", fontSize: 11, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>Inward</th>
-                  <th style={{ padding: "8px 12px", textAlign: "right", fontSize: 11, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>Outward</th>
-                  <th style={{ padding: "8px 12px", textAlign: "right", fontSize: 11, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>Closing</th>
-                  <th style={{ padding: "8px 12px", width: 32 }} />
-                </tr>
-              </thead>
-              <tbody>
-                {data.months.map((m) => {
-                  const key = `${m.year}-${m.month}`;
-                  const expanded = expandedMonths.has(key);
-                  return (
-                    <>
-                      <tr
-                        key={key}
-                        style={{ borderBottom: "1px solid #f1f5f9", cursor: "pointer", background: expanded ? "#eff6ff" : undefined }}
-                        onClick={() => toggleMonth(key)}
-                      >
-                        <td style={{ padding: "9px 12px", fontWeight: 600, color: "#1e293b" }}>{m.month_label}</td>
-                        <td style={{ padding: "9px 12px", textAlign: "right", color: "#475569" }}>{m.opening}</td>
-                        <td style={{ padding: "9px 12px", textAlign: "right", color: "#16a34a", fontWeight: 600 }}>{m.inward > 0 ? `+${m.inward}` : m.inward}</td>
-                        <td style={{ padding: "9px 12px", textAlign: "right", color: "#dc2626", fontWeight: 600 }}>{m.outward > 0 ? `-${m.outward}` : m.outward}</td>
-                        <td style={{ padding: "9px 12px", textAlign: "right", fontWeight: 700, color: "#0f172a" }}>{m.closing}</td>
-                        <td style={{ padding: "9px 12px", textAlign: "center", color: "#94a3b8", fontSize: 11 }}>{expanded ? "▲" : "▼"}</td>
-                      </tr>
-                      {expanded && m.entries.map((en, i) => (
-                        <tr key={i} style={{ background: "#f8fafc", borderBottom: "1px solid #f1f5f9" }}>
-                          <td style={{ padding: "6px 12px 6px 24px", color: "#64748b" }}>{en.date}</td>
-                          <td colSpan={2} style={{ padding: "6px 12px", color: "#475569" }}>
-                            <span style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: en.type === "inward" ? "#16a34a" : en.type === "outward" ? "#dc2626" : "#7c3aed", marginRight: 6 }}>{en.type}</span>
-                            {en.party && <span style={{ marginRight: 6 }}>{en.party}</span>}
-                            <span style={{ color: "#94a3b8", fontSize: 12 }}>{en.reference}</span>
-                          </td>
-                          <td style={{ padding: "6px 12px", textAlign: "right", fontWeight: 700, color: en.type === "inward" ? "#16a34a" : en.type === "outward" ? "#dc2626" : "#475569" }}>
-                            {en.type === "inward" ? `+${en.qty}` : en.type === "outward" ? `-${en.qty}` : en.qty}
-                          </td>
-                          <td style={{ padding: "6px 12px", textAlign: "right", color: "#0f172a", fontWeight: 600 }}>{en.running_balance}</td>
-                          <td />
-                        </tr>
-                      ))}
-                    </>
-                  );
-                })}
-                {data.months.length === 0 && (
-                  <tr><td colSpan={6} style={{ padding: "48px 0", textAlign: "center", color: "#94a3b8" }}>No ledger entries yet.</td></tr>
-                )}
-              </tbody>
-            </table>
+        {/* Filters */}
+        <div style={{ padding: "10px 24px", borderBottom: "1px solid #f1f5f9", display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          {(["all", "inward", "outward", "adjustment"] as const).map((t) => (
+            <button key={t} type="button" onClick={() => setTypeFilter(t)}
+              style={{
+                padding: "4px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600, border: "1px solid",
+                cursor: "pointer",
+                background: typeFilter === t ? (t === "inward" ? "#dcfce7" : t === "outward" ? "#fee2e2" : t === "adjustment" ? "#ede9fe" : "#eff6ff") : "#f8fafc",
+                color: typeFilter === t ? (t === "inward" ? "#15803d" : t === "outward" ? "#b91c1c" : t === "adjustment" ? "#6d28d9" : "#1d4ed8") : "#64748b",
+                borderColor: typeFilter === t ? "currentColor" : "#e2e8f0",
+              }}>
+              {t === "all" ? `All (${allEntries.length})` : t === "inward" ? `↓ Inward (${allEntries.filter(e => e.type === "inward").length})` : t === "outward" ? `↑ Outward (${allEntries.filter(e => e.type === "outward").length})` : `⚙ Adjustment (${allEntries.filter(e => e.type === "adjustment").length})`}
+            </button>
+          ))}
+          <span style={{ marginLeft: "auto", fontSize: 11, color: "#94a3b8" }}>Click any row to view details</span>
+        </div>
+
+        {/* Body: split view if detail is open */}
+        <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+          {/* Ledger table */}
+          <div style={{ flex: 1, overflowY: "auto", padding: "0 0 16px 0" }}>
+            {loading && <div style={{ textAlign: "center", padding: "48px 0", color: "#94a3b8" }}>Loading…</div>}
+            {error && <div style={{ textAlign: "center", padding: "48px 0", color: "#ef4444" }}>{error}</div>}
+            {data && !loading && (
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead style={{ position: "sticky", top: 0, zIndex: 2 }}>
+                  <tr style={{ background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
+                    <th style={{ padding: "8px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>Date & Time</th>
+                    <th style={{ padding: "8px 12px", textAlign: "left", fontSize: 11, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>Type</th>
+                    <th style={{ padding: "8px 12px", textAlign: "left", fontSize: 11, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>Party / Reference</th>
+                    <th style={{ padding: "8px 12px", textAlign: "right", fontSize: 11, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>Qty</th>
+                    <th style={{ padding: "8px 16px", textAlign: "right", fontSize: 11, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>Balance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {typeFilter === "all" ? (
+                    // grouped by month
+                    data.months.map((m) => {
+                      const key = `${m.year}-${m.month}`;
+                      const expanded = expandedMonths.has(key);
+                      return (
+                        <React.Fragment key={key}>
+                          <tr style={{ background: "#f1f5f9", cursor: "pointer", borderBottom: "1px solid #e2e8f0" }} onClick={() => toggleMonth(key)}>
+                            <td colSpan={3} style={{ padding: "7px 16px", fontWeight: 700, color: "#334155", fontSize: 12 }}>
+                              {expanded ? "▾" : "▸"} {m.month_label}
+                              <span style={{ marginLeft: 12, fontWeight: 400, color: "#64748b", fontSize: 11 }}>
+                                {m.entries.length} transactions · Opening {m.opening} → Closing {m.closing}
+                              </span>
+                            </td>
+                            <td style={{ padding: "7px 12px", textAlign: "right", fontSize: 12 }}>
+                              <span style={{ color: "#16a34a", fontWeight: 600 }}>{m.inward > 0 ? `+${m.inward}` : ""}</span>
+                              {m.inward > 0 && m.outward > 0 && <span style={{ color: "#94a3b8", margin: "0 4px" }}>/</span>}
+                              <span style={{ color: "#dc2626", fontWeight: 600 }}>{m.outward > 0 ? `-${m.outward}` : ""}</span>
+                            </td>
+                            <td style={{ padding: "7px 16px", textAlign: "right", fontWeight: 700, color: "#0f172a", fontSize: 12 }}>{m.closing}</td>
+                          </tr>
+                          {expanded && m.entries.map((en, i) => (
+                            <EntryRow key={i} en={en} onClick={() => openDetail(en.reference)} active={detail?.ref === en.reference} />
+                          ))}
+                        </React.Fragment>
+                      );
+                    })
+                  ) : (
+                    // flat filtered list
+                    filtered.map((en, i) => (
+                      <EntryRow key={i} en={en} onClick={() => openDetail(en.reference)} active={detail?.ref === en.reference} />
+                    ))
+                  )}
+                  {(typeFilter === "all" ? data.months.length === 0 : filtered.length === 0) && (
+                    <tr><td colSpan={5} style={{ padding: "48px 0", textAlign: "center", color: "#94a3b8" }}>No entries found.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          {/* Detail panel */}
+          {(detail || detailLoading) && (
+            <div style={{ width: 300, borderLeft: "1px solid #e2e8f0", overflowY: "auto", padding: "16px", background: "#fafafa", flexShrink: 0 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <span style={{ fontWeight: 700, fontSize: 13, color: "#0f172a" }}>{detail?.ref ?? "Loading…"}</span>
+                <button type="button" onClick={() => setDetail(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 16 }}>✕</button>
+              </div>
+              {detailLoading && <div style={{ color: "#94a3b8", fontSize: 12 }}>Loading…</div>}
+              {detail && !detailLoading && <DetailPanel ref_={detail.ref} data={detail.data} />}
+            </div>
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function EntryRow({ en, onClick, active }: { en: LedgerEntryDetail; onClick: () => void; active: boolean }) {
+  return (
+    <tr
+      onClick={onClick}
+      style={{
+        borderBottom: "1px solid #f1f5f9",
+        cursor: "pointer",
+        background: active ? "#eff6ff" : undefined,
+        transition: "background 0.1s",
+      }}
+      onMouseEnter={(e) => { if (!active) (e.currentTarget as HTMLTableRowElement).style.background = "#f8fafc"; }}
+      onMouseLeave={(e) => { if (!active) (e.currentTarget as HTMLTableRowElement).style.background = ""; }}
+    >
+      <td style={{ padding: "7px 16px", color: "#475569", fontSize: 12, whiteSpace: "nowrap" }}>{fmtLedgerDate(String(en.date))}</td>
+      <td style={{ padding: "7px 12px" }}>
+        <span style={{
+          display: "inline-block", padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 600,
+          background: en.type === "inward" ? "#dcfce7" : en.type === "outward" ? "#fee2e2" : "#ede9fe",
+          color: en.type === "inward" ? "#15803d" : en.type === "outward" ? "#b91c1c" : "#6d28d9",
+        }}>
+          {en.type === "inward" ? "↓ Inward" : en.type === "outward" ? "↑ Outward" : "⚙ Adj"}
+        </span>
+      </td>
+      <td style={{ padding: "7px 12px", color: "#334155", fontSize: 12 }}>
+        {en.party && <span style={{ fontWeight: 500, marginRight: 6 }}>{en.party}</span>}
+        <span style={{ color: "#94a3b8", fontSize: 11 }}>{en.reference}</span>
+      </td>
+      <td style={{ padding: "7px 12px", textAlign: "right", fontWeight: 700, color: en.type === "inward" ? "#15803d" : en.type === "outward" ? "#b91c1c" : "#475569" }}>
+        {en.type === "inward" ? `+${en.qty}` : en.type === "outward" ? `−${Math.abs(en.qty)}` : en.qty > 0 ? `+${en.qty}` : en.qty}
+      </td>
+      <td style={{ padding: "7px 16px", textAlign: "right", fontWeight: 700, color: "#0f172a" }}>{en.running_balance}</td>
+    </tr>
+  );
+}
+
+function DetailPanel({ ref_, data }: { ref_: string; data: Record<string, unknown> }) {
+  const isOrder = ref_.startsWith("ORD-");
+  const isVO = ref_.startsWith("VO-");
+
+  if (data.error) return <div style={{ color: "#ef4444", fontSize: 12 }}>{String(data.error)}</div>;
+
+  if (isOrder) {
+    const o = data as Record<string, unknown>;
+    const items = (o.items as Record<string, unknown>[]) ?? [];
+    const total = o.total_amount ?? o.grand_total;
+    return (
+      <div style={{ fontSize: 12, color: "#334155" }}>
+        <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: "1px solid #e2e8f0" }}>
+          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>Order #{String(o.id)}</div>
+          <span style={{ padding: "2px 10px", borderRadius: 10, background: "#f1f5f9", fontSize: 11, fontWeight: 600, color: "#475569" }}>{String(o.status ?? "")}</span>
+        </div>
+        <div style={{ marginBottom: 4 }}><strong>Customer:</strong> {String(o.customer_name ?? o.customer_id ?? "—")}</div>
+        {o.customer_phone && <div style={{ marginBottom: 4 }}><strong>Phone:</strong> {String(o.customer_phone)}</div>}
+        <div style={{ marginBottom: 4 }}><strong>Date:</strong> {fmtLedgerDate(String(o.created_at ?? ""))}</div>
+        {o.invoice_no && <div style={{ marginBottom: 4 }}><strong>Invoice:</strong> {String(o.invoice_no)}</div>}
+        {o.notes && <div style={{ marginBottom: 4 }}><strong>Notes:</strong> {String(o.notes)}</div>}
+        {o.customer_notes && <div style={{ marginBottom: 4 }}><strong>Customer notes:</strong> {String(o.customer_notes)}</div>}
+        <div style={{ marginTop: 12, marginBottom: 6, fontWeight: 700, fontSize: 11, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>Items</div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+          <thead>
+            <tr style={{ background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
+              <th style={{ padding: "4px 6px", textAlign: "left", color: "#64748b", fontWeight: 600 }}>Item #</th>
+              <th style={{ padding: "4px 6px", textAlign: "left", color: "#64748b", fontWeight: 600 }}>Name</th>
+              <th style={{ padding: "4px 6px", textAlign: "right", color: "#64748b", fontWeight: 600 }}>Qty</th>
+              <th style={{ padding: "4px 6px", textAlign: "right", color: "#64748b", fontWeight: 600 }}>Rate</th>
+              <th style={{ padding: "4px 6px", textAlign: "right", color: "#64748b", fontWeight: 600 }}>Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((it, i) => (
+              <tr key={i} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                <td style={{ padding: "5px 6px", fontFamily: "monospace", color: "#475569", whiteSpace: "nowrap" }}>{String(it.our_product_id ?? it.catalog_product_id ?? "—")}</td>
+                <td style={{ padding: "5px 6px", fontWeight: 500 }}>{String(it.name ?? it.product_name ?? "—")}</td>
+                <td style={{ padding: "5px 6px", textAlign: "right" }}>{String(it.quantity ?? it.qty ?? "—")}</td>
+                <td style={{ padding: "5px 6px", textAlign: "right" }}>₹{String(it.unit_price ?? it.price ?? "—")}</td>
+                <td style={{ padding: "5px 6px", textAlign: "right", fontWeight: 600 }}>₹{String(it.line_total ?? "—")}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {total && (
+          <div style={{ marginTop: 8, textAlign: "right", fontWeight: 700, fontSize: 13, color: "#0f172a", borderTop: "2px solid #e2e8f0", paddingTop: 6 }}>
+            Total: ₹{String(total)}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (isVO) {
+    const o = data as Record<string, unknown>;
+    const items = (o.items as Record<string, unknown>[]) ?? [];
+    return (
+      <div style={{ fontSize: 12, color: "#334155" }}>
+        <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: "1px solid #e2e8f0" }}>
+          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>Vendor Order #{String(o.id)}</div>
+          <span style={{ padding: "2px 10px", borderRadius: 10, background: "#f1f5f9", fontSize: 11, fontWeight: 600, color: "#475569" }}>{String(o.status ?? "")}</span>
+        </div>
+        <div style={{ marginBottom: 4 }}><strong>Vendor:</strong> {String(o.vendor_name ?? o.vendor_id ?? "—")}</div>
+        <div style={{ marginBottom: 4 }}><strong>Date:</strong> {fmtLedgerDate(String(o.created_at ?? ""))}</div>
+        {o.bill_number && <div style={{ marginBottom: 4 }}><strong>Bill:</strong> {String(o.bill_number)}</div>}
+        {o.bill_amount && <div style={{ marginBottom: 4 }}><strong>Bill amount:</strong> ₹{String(o.bill_amount)}</div>}
+        {o.notes && <div style={{ marginBottom: 4 }}><strong>Notes:</strong> {String(o.notes)}</div>}
+        <div style={{ marginTop: 12, marginBottom: 6, fontWeight: 700, fontSize: 11, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>Items</div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+          <thead>
+            <tr style={{ background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
+              <th style={{ padding: "4px 6px", textAlign: "left", color: "#64748b", fontWeight: 600 }}>Item #</th>
+              <th style={{ padding: "4px 6px", textAlign: "left", color: "#64748b", fontWeight: 600 }}>Name</th>
+              <th style={{ padding: "4px 6px", textAlign: "right", color: "#64748b", fontWeight: 600 }}>Ordered</th>
+              <th style={{ padding: "4px 6px", textAlign: "right", color: "#64748b", fontWeight: 600 }}>Received</th>
+              <th style={{ padding: "4px 6px", textAlign: "right", color: "#64748b", fontWeight: 600 }}>Rate</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((it, i) => (
+              <tr key={i} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                <td style={{ padding: "5px 6px", fontFamily: "monospace", color: "#475569" }}>{String(it.our_product_id ?? it.catalog_product_id ?? "—")}</td>
+                <td style={{ padding: "5px 6px", fontWeight: 500 }}>{String(it.product_name ?? it.name ?? "—")}</td>
+                <td style={{ padding: "5px 6px", textAlign: "right" }}>{String(it.qty_ordered ?? "—")}</td>
+                <td style={{ padding: "5px 6px", textAlign: "right", color: it.qty_received ? "#16a34a" : "#94a3b8", fontWeight: 600 }}>{String(it.qty_received ?? "0")}</td>
+                <td style={{ padding: "5px 6px", textAlign: "right" }}>₹{String(it.unit_price ?? "—")}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ fontSize: 12, color: "#334155" }}>
+      <div style={{ marginBottom: 6, fontWeight: 600 }}>{ref_}</div>
+      {Object.entries(data).map(([k, v]) => (
+        <div key={k} style={{ marginBottom: 3 }}><strong>{k}:</strong> {String(v ?? "—")}</div>
+      ))}
     </div>
   );
 }
@@ -710,170 +1106,74 @@ function AdjustmentsTab({
 
 // ────────────────────────── RECEIVE GOODS ──────────────────────────
 
-interface VendorPendingItem {
-  po_id: number;
-  po_date: string | null;
-  catalog_product_id: number;
-  product_name: string;
-  ordered_qty: number;
-  received_qty: number;
-  pending_qty: number;
-  unit_price: number;
-  pending_value: number;
-}
-
-interface VendorPendingResponse {
-  vendor_id: number;
-  vendor_name: string;
-  pending_items: VendorPendingItem[];
-  total_pending_value: number;
-  total_owed: number;
-  open_po_count: number;
-}
-
 function ReceiveGoodsTab({
   catalog,
-  pos,
   vendors,
+  openVendorOrders,
   headers,
   headersAdmin,
   adminKey,
   onRefresh,
 }: {
   catalog: CatalogProductPublic[];
-  pos: PurchaseOrderPublic[];
   vendors: VendorPublic[];
+  openVendorOrders: VendorOrderRecord[];
   headers: () => Record<string, string>;
   headersAdmin: () => Record<string, string>;
   adminKey: string;
   onRefresh: () => void;
 }) {
-  const [mode, setMode] = useState<"vendor" | "manual">("vendor");
+  const [mode, setMode] = useState<"vo" | "manual">("vo");
 
-  // Vendor receive state
-  const [selVendorId, setSelVendorId] = useState("");
-  const [vendorPending, setVendorPending] = useState<VendorPendingResponse | null>(null);
-  const [vendorPendingLoading, setVendorPendingLoading] = useState(false);
-  const [vendorRecvQty, setVendorRecvQty] = useState<Record<number, string>>({});
-  const [vendorUnitPrice, setVendorUnitPrice] = useState<Record<number, string>>({});
-  const [vendorExtraCharges, setVendorExtraCharges] = useState("");
-  const [vendorNotes, setVendorNotes] = useState("");
-  const [vendorBillFile, setVendorBillFile] = useState<File | null>(null);
-  const [vendorSaving, setVendorSaving] = useState(false);
-  const [vendorAdHocItems, setVendorAdHocItems] = useState<{ cid: string; qty: string; price: string }[]>([]);
-
-  useEffect(() => {
-    if (!selVendorId) { setVendorPending(null); return; }
-    setVendorPendingLoading(true);
-    fetchApi(apiUrl(`purchase-orders/vendor/${selVendorId}/pending`), { headers: headersAdmin() })
-      .then((r) => r.json())
-      .then((data: VendorPendingResponse) => {
-        setVendorPending(data);
-        const qty: Record<number, string> = {};
-        const price: Record<number, string> = {};
-        (data.pending_items || []).forEach((it) => {
-          qty[it.catalog_product_id] = String(it.pending_qty);
-          price[it.catalog_product_id] = String(it.unit_price || "");
-        });
-        setVendorRecvQty(qty);
-        setVendorUnitPrice(price);
-      })
-      .catch(() => setVendorPending(null))
-      .finally(() => setVendorPendingLoading(false));
-  }, [selVendorId, headersAdmin]);
-
-  async function receiveFromVendor(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    if (!selVendorId) return;
-    setVendorSaving(true);
-
-    const items: { catalog_product_id: number; quantity: number; unit_price: number }[] = [];
-
-    // Items from pending POs
-    (vendorPending?.pending_items || []).forEach((it) => {
-      const qty = Number(vendorRecvQty[it.catalog_product_id] || 0);
-      if (qty > 0) {
-        items.push({ catalog_product_id: it.catalog_product_id, quantity: qty, unit_price: Number(vendorUnitPrice[it.catalog_product_id] || it.unit_price || 0) });
-      }
-    });
-
-    // Ad-hoc items
-    vendorAdHocItems.forEach((row) => {
-      const cid = Number(row.cid);
-      const qty = Number(row.qty);
-      if (cid > 0 && qty > 0) {
-        items.push({ catalog_product_id: cid, quantity: qty, unit_price: Number(row.price || 0) });
-      }
-    });
-
-    if (items.length === 0) { showToast("No items to receive", false); setVendorSaving(false); return; }
-
-    const fd = new FormData();
-    fd.append("vendor_id", selVendorId);
-    fd.append("items", JSON.stringify(items));
-    fd.append("extra_charges", vendorExtraCharges || "0");
-    if (vendorNotes.trim()) fd.append("notes", vendorNotes.trim());
-    if (vendorBillFile) fd.append("bill_photo", vendorBillFile);
-
-    const r = await fetchApi(apiUrl("inventory/receipts/from-vendor"), { method: "POST", headers: headersAdmin(), body: fd });
-    const data = await r.json().catch(() => ({}));
-    setVendorSaving(false);
-    if (!r.ok) { showToast(formatApiError(data) || "Failed", false); return; }
-    showToast(`Goods received! ${(data as { items_received?: number }).items_received ?? items.length} item(s) added to stock.`, true);
-    setSelVendorId(""); setVendorPending(null); setVendorRecvQty({}); setVendorUnitPrice({}); setVendorExtraCharges(""); setVendorNotes(""); setVendorBillFile(null); setVendorAdHocItems([]);
-    onRefresh();
-  }
-
-  const [selPoId, setSelPoId] = useState("");
-  const [selPo, setSelPo] = useState<PurchaseOrderPublic | null>(null);
-  const [recvQty, setRecvQty] = useState<Record<number, string>>({});
-  const [receiptNo, setReceiptNo] = useState("");
-  const [vendorBillNo, setVendorBillNo] = useState("");
-  const [billPhoto, setBillPhoto] = useState<File | null>(null);
-  const [contactNo, setContactNo] = useState("");
-  const [notes, setNotes] = useState("");
-  const [partial, setPartial] = useState(false);
-  const [forceClose, setForceClose] = useState(false);
-  const [saving, setSaving] = useState(false);
+  // ── Vendor Orders (new system) state ──────────────────────────────────
+  const [voVendorFilter, setVoVendorFilter] = useState("");
+  const [selVo, setSelVo] = useState<VendorOrderRecord | null>(null);
+  const [voRecvQty, setVoRecvQty] = useState<Record<string, string>>({});
+  const [voDate, setVoDate] = useState(new Date().toISOString().slice(0, 10));
+  const [voBillNum, setVoBillNum] = useState("");
+  const [voBillAmt, setVoBillAmt] = useState("");
+  const [voSaving, setVoSaving] = useState(false);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
-
   const showToast = (msg: string, ok: boolean) => { setToast({ msg, ok }); setTimeout(() => setToast(null), 3500); };
 
-  useEffect(() => {
-    if (!selPoId) { setSelPo(null); return; }
-    const po = pos.find((p) => String(p.id) === selPoId);
-    setSelPo(po ?? null);
-    if (po) {
-      const init: Record<number, string> = {};
-      po.items.forEach((it) => { init[it.catalog_product_id] = String(it.quantity_pending ?? it.quantity); });
-      setRecvQty(init);
-    }
-  }, [selPoId, pos]);
+  const filteredVOs = openVendorOrders.filter((vo) =>
+    !voVendorFilter || String(vo.vendor_id) === voVendorFilter
+  );
 
-  async function receiveFromPo(e: React.FormEvent<HTMLFormElement>) {
+  function selectVo(vo: VendorOrderRecord) {
+    setSelVo(vo);
+    const init: Record<string, string> = {};
+    vo.items.forEach((it) => {
+      const pending = it.qty_ordered - it.qty_received;
+      if (pending > 0) init[it.line_id] = String(pending);
+    });
+    setVoRecvQty(init);
+  }
+
+  async function receiveFromVo(e: React.FormEvent) {
     e.preventDefault();
-    if (!selPo) return;
-    setSaving(true);
-    const lines = selPo.items.map((it) => ({
-      catalog_product_id: it.catalog_product_id,
-      quantity: Number(recvQty[it.catalog_product_id] ?? 0),
-    })).filter((l) => l.quantity > 0);
-    const fd = new FormData();
-    fd.append("purchase_order_id", String(selPo.id));
-    fd.append("lines", JSON.stringify(lines));
-    fd.append("is_partial", partial ? "true" : "false");
-    if (receiptNo) fd.append("receipt_number", receiptNo);
-    if (vendorBillNo.trim()) fd.append("vendor_bill_no", vendorBillNo.trim());
-    if (contactNo) fd.append("contact_number", contactNo);
-    if (notes) fd.append("notes", notes);
-    if (forceClose) fd.append("force_close", "true");
-    if (billPhoto) fd.append("bill_photo", billPhoto);
-    const r = await fetchApi(apiUrl("inventory/receipts/from-po"), { method: "POST", headers: headersAdmin(), body: fd });
+    if (!selVo) return;
+    if (!voBillNum.trim()) { showToast("Enter vendor's bill number", false); return; }
+    if (!voBillAmt.trim() || Number(voBillAmt) <= 0) { showToast("Enter vendor's bill amount", false); return; }
+    const lines = selVo.items
+      .filter((it) => Number(voRecvQty[it.line_id] || 0) > 0)
+      .map((it) => ({
+        line_id: it.line_id,
+        catalog_product_id: it.catalog_product_id,
+        qty_received: Number(voRecvQty[it.line_id]),
+        date_received: new Date(voDate).toISOString(),
+      }));
+    if (!lines.length) { showToast("Enter qty for at least one item", false); return; }
+    setVoSaving(true);
+    const r = await fetchApi(apiUrl(`vendor-orders/${selVo.id}/receive`), {
+      method: "POST", headers: { ...headersAdmin(), "Content-Type": "application/json" },
+      body: JSON.stringify({ lines, bill_number: voBillNum.trim(), bill_amount: Number(voBillAmt) }),
+    });
     const data = await r.json().catch(() => ({}));
-    setSaving(false);
-    if (!r.ok) { showToast(formatApiError(data), false); return; }
-    showToast("Goods received.", true);
-    setSelPoId(""); setSelPo(null); setReceiptNo(""); setVendorBillNo(""); setBillPhoto(null); setContactNo(""); setNotes(""); setPartial(false); setForceClose(false);
+    setVoSaving(false);
+    if (!r.ok) { showToast(formatApiError(data) || "Failed", false); return; }
+    showToast("Stock received + AP entry created!", true);
+    setSelVo(null); setVoRecvQty({}); setVoBillNum(""); setVoBillAmt("");
     onRefresh();
   }
 
@@ -903,8 +1203,6 @@ function ReceiveGoodsTab({
     onRefresh();
   }
 
-  const openPos = pos.filter((p) => p.status === "booked" || p.status === "in_progress");
-
   return (
     <div>
       {toast && (
@@ -915,138 +1213,122 @@ function ReceiveGoodsTab({
 
       <div className="mb-4 flex flex-wrap gap-2">
         {[
-          { id: "vendor", label: "📦 Receive from Vendor" },
+          { id: "vo", label: `📋 Open Vendor Orders (${openVendorOrders.length})` },
           { id: "manual", label: "Ad-hoc / Manual" },
         ].map((m) => (
-          <button key={m.id} type="button" onClick={() => setMode(m.id as "vendor" | "manual")}
+          <button key={m.id} type="button" onClick={() => setMode(m.id as "vo" | "manual")}
             className={`rounded-lg px-4 py-2 text-sm font-semibold ${mode === m.id ? "bg-blue-600 text-white" : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}`}>
             {m.label}
           </button>
         ))}
       </div>
 
-      {mode === "vendor" && (
+      {/* ── Vendor Orders mode ── */}
+      {mode === "vo" && (
         <div className="space-y-4">
-          <div>
-            <label className={LABEL}>Select vendor</label>
-            <select value={selVendorId} onChange={(e) => setSelVendorId(e.target.value)} className={INPUT + " max-w-sm"}>
-              <option value="">— select vendor —</option>
+          <div className="flex flex-wrap items-center gap-3">
+            <select value={voVendorFilter} onChange={(e) => { setVoVendorFilter(e.target.value); setSelVo(null); }}
+              className={INPUT + " max-w-xs"}>
+              <option value="">All vendors</option>
               {vendors.map((v) => <option key={v.id} value={v.id}>{v.company_name || v.person_name}</option>)}
             </select>
+            {voVendorFilter && <button type="button" onClick={() => { setVoVendorFilter(""); setSelVo(null); }} className="text-xs text-slate-400 hover:text-slate-600">✕ Clear</button>}
           </div>
 
-          {vendorPendingLoading && <p className="text-sm text-slate-500">Loading pending items…</p>}
-
-          {vendorPending && (
-            <form onSubmit={receiveFromVendor} className="space-y-4">
-              {/* Vendor status summary */}
-              <div className="flex flex-wrap gap-4 rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm">
-                <span><strong>{vendorPending.open_po_count}</strong> open POs</span>
-                <span><strong>₹{vendorPending.total_pending_value.toFixed(2)}</strong> pending value</span>
-                <span><strong>₹{vendorPending.total_owed.toFixed(2)}</strong> owed to vendor</span>
-              </div>
-
-              {/* Pending items from POs */}
-              {vendorPending.pending_items.length > 0 && (
-                <div>
-                  <p className={LABEL}>Pending items from open POs</p>
-                  <div className="overflow-hidden rounded-xl border border-slate-200">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase text-slate-500">
-                          <th className="px-3 py-2 text-left">Product</th>
-                          <th className="px-3 py-2 text-left">PO #</th>
-                          <th className="px-3 py-2 text-left">PO Date</th>
-                          <th className="px-3 py-2 text-right">Pending</th>
-                          <th className="px-3 py-2 text-right">Unit Price</th>
-                          <th className="px-3 py-2 text-right">Receive Qty</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {vendorPending.pending_items.map((it) => (
-                          <tr key={`${it.po_id}-${it.catalog_product_id}`}>
-                            <td className="px-3 py-2 font-medium">{it.product_name}</td>
-                            <td className="px-3 py-2 text-slate-500">PO #{it.po_id}</td>
-                            <td className="px-3 py-2 text-slate-500 text-xs">{it.po_date ? new Date(it.po_date).toLocaleDateString() : "—"}</td>
-                            <td className="px-3 py-2 text-right tabular-nums">{it.pending_qty}</td>
-                            <td className="px-3 py-2 text-right">
-                              <input type="number" min="0" step="0.01"
-                                value={vendorUnitPrice[it.catalog_product_id] ?? ""}
-                                onChange={(e) => setVendorUnitPrice((p) => ({ ...p, [it.catalog_product_id]: e.target.value }))}
-                                className="w-24 rounded border border-slate-300 px-2 py-1 text-right text-sm" />
-                            </td>
-                            <td className="px-3 py-2 text-right">
-                              <input type="number" min="0"
-                                value={vendorRecvQty[it.catalog_product_id] ?? ""}
-                                onChange={(e) => setVendorRecvQty((p) => ({ ...p, [it.catalog_product_id]: e.target.value }))}
-                                className="w-20 rounded border border-slate-300 px-2 py-1 text-right text-sm" />
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {/* Ad-hoc items not in any PO */}
-              <div>
-                <div className="flex items-center justify-between">
-                  <p className={LABEL}>Extra items (not in any PO)</p>
-                  <button type="button" onClick={() => setVendorAdHocItems((p) => [...p, { cid: "", qty: "", price: "" }])}
-                    className={BTN_SECONDARY + " text-xs"}>+ Add item</button>
-                </div>
-                {vendorAdHocItems.map((row, idx) => (
-                  <div key={idx} className="mt-2 flex flex-wrap gap-2">
-                    <select value={row.cid} onChange={(e) => setVendorAdHocItems((p) => p.map((r, i) => i === idx ? { ...r, cid: e.target.value } : r))}
-                      className={INPUT + " max-w-[200px]"}>
-                      <option value="">— product —</option>
-                      {catalog.map((c) => <option key={c.id} value={c.id}>{c.our_product_id}</option>)}
-                    </select>
-                    <input type="number" min="1" placeholder="Qty" value={row.qty}
-                      onChange={(e) => setVendorAdHocItems((p) => p.map((r, i) => i === idx ? { ...r, qty: e.target.value } : r))}
-                      className="w-24 rounded border border-slate-300 px-2 py-1 text-sm" />
-                    <input type="number" min="0" step="0.01" placeholder="Unit price" value={row.price}
-                      onChange={(e) => setVendorAdHocItems((p) => p.map((r, i) => i === idx ? { ...r, price: e.target.value } : r))}
-                      className="w-28 rounded border border-slate-300 px-2 py-1 text-sm" />
-                    <button type="button" onClick={() => setVendorAdHocItems((p) => p.filter((_, i) => i !== idx))}
-                      className="text-xs font-semibold text-red-600 hover:underline">Remove</button>
-                  </div>
-                ))}
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className={LABEL}>Extra charges (transport, etc.)</label>
-                  <input type="number" min="0" step="0.01" value={vendorExtraCharges}
-                    onChange={(e) => setVendorExtraCharges(e.target.value)} placeholder="0.00" className={INPUT} />
-                </div>
-                <div>
-                  <label className={LABEL}>Notes</label>
-                  <input value={vendorNotes} onChange={(e) => setVendorNotes(e.target.value)} className={INPUT} />
-                </div>
-                <div className="col-span-2">
-                  <label className={LABEL}>Upload vendor bill (optional)</label>
-                  <input type="file" accept="image/*,.pdf" onChange={(e) => setVendorBillFile(e.target.files?.[0] ?? null)}
-                    className="block w-full text-sm text-slate-500 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-semibold hover:file:bg-slate-200" />
-                </div>
-              </div>
-
-              <button type="submit" disabled={vendorSaving} className={BTN_PRIMARY}>
-                {vendorSaving ? "Adding stock…" : "Add Stock"}
-              </button>
-            </form>
+          {filteredVOs.length === 0 && (
+            <div className="rounded-xl border-2 border-dashed border-slate-200 py-12 text-center text-slate-400">
+              <div className="text-3xl">📋</div>
+              <div className="mt-2 font-medium">No open vendor orders{voVendorFilter ? " for this vendor" : ""}</div>
+            </div>
           )}
 
-          {selVendorId && !vendorPendingLoading && vendorPending && vendorPending.pending_items.length === 0 && vendorAdHocItems.length === 0 && (
-            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
-              No pending PO items for this vendor. Use &quot;+ Add item&quot; above to receive goods not tied to a PO.
-              <button type="button" onClick={() => setVendorAdHocItems([{ cid: "", qty: "", price: "" }])} className={BTN_PRIMARY + " mt-3 mx-auto"}>+ Add item</button>
+          {filteredVOs.length > 0 && !selVo && (
+            <div className="space-y-2">
+              <p className="text-sm text-slate-500">Select an order to receive goods:</p>
+              {filteredVOs.map((vo) => {
+                const pending = vo.items.filter((it) => it.qty_ordered - it.qty_received > 0);
+                return (
+                  <div key={vo.id} onClick={() => selectVo(vo)}
+                    className="cursor-pointer rounded-xl border border-slate-200 bg-white p-4 hover:border-blue-400 hover:shadow-sm transition">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="font-semibold text-slate-800">{vo.vendor_name ?? `Vendor #${vo.vendor_id}`}</span>
+                        <span className="ml-2 text-xs text-slate-400">VO-{vo.id}</span>
+                      </div>
+                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">{pending.length} items pending</span>
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {pending.map((it) => `${it.product_name}: ${it.qty_ordered - it.qty_received} pending`).join(" · ")}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
+          )}
+
+          {selVo && (
+            <form onSubmit={receiveFromVo} className="space-y-4">
+              <div className="flex items-center gap-3">
+                <button type="button" onClick={() => setSelVo(null)} className="text-sm text-blue-600 hover:underline">← Back to orders</button>
+                <span className="font-semibold text-slate-800">{selVo.vendor_name} — VO-{selVo.id}</span>
+              </div>
+
+              <div>
+                <label className={LABEL}>Receipt date</label>
+                <input type="date" value={voDate} onChange={(e) => setVoDate(e.target.value)} className={INPUT + " max-w-xs"} />
+              </div>
+
+              <div className="overflow-hidden rounded-xl border border-slate-200">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase text-slate-500">
+                      <th className="px-3 py-2 text-left">Product</th>
+                      <th className="px-3 py-2 text-right">Ordered</th>
+                      <th className="px-3 py-2 text-right">Received so far</th>
+                      <th className="px-3 py-2 text-right">Pending</th>
+                      <th className="px-3 py-2 text-right">Receive now</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {selVo.items.filter((it) => it.qty_ordered - it.qty_received > 0).map((it) => (
+                      <tr key={it.line_id}>
+                        <td className="px-3 py-2 font-medium text-slate-800">{it.product_name}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{it.qty_ordered}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-emerald-700">{it.qty_received}</td>
+                        <td className="px-3 py-2 text-right tabular-nums font-semibold text-amber-700">{it.qty_ordered - it.qty_received}</td>
+                        <td className="px-3 py-2 text-right">
+                          <input type="number" min="0"
+                            value={voRecvQty[it.line_id] ?? ""}
+                            onChange={(e) => setVoRecvQty((p) => ({ ...p, [it.line_id]: e.target.value }))}
+                            className="w-24 rounded border border-slate-300 px-2 py-1 text-right text-sm"
+                            title="Can enter more than pending (over-delivery allowed)" />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 space-y-3">
+                <h5 className="text-xs font-bold text-amber-800 uppercase tracking-wide">Vendor Bill (mandatory — bill comes with goods)</h5>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className={LABEL}>Vendor Bill Number *</label>
+                    <input value={voBillNum} onChange={(e) => setVoBillNum(e.target.value)} placeholder="e.g. VB-2024-001" className={INPUT} required />
+                  </div>
+                  <div>
+                    <label className={LABEL}>Vendor Bill Amount ₹ *</label>
+                    <input type="number" step="0.01" value={voBillAmt} onChange={(e) => setVoBillAmt(e.target.value)} placeholder="Total as per vendor invoice" className={INPUT} required />
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button type="submit" disabled={voSaving} className={BTN_PRIMARY}>{voSaving ? "Saving…" : "✓ Add Stock + Create AP"}</button>
+                <button type="button" onClick={() => { setSelVo(null); setVoBillNum(""); setVoBillAmt(""); }} className={BTN_SECONDARY}>Cancel</button>
+              </div>
+            </form>
           )}
         </div>
       )}
-
 
       {mode === "manual" && (
         <form onSubmit={manualReceive} className="max-w-xl space-y-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">

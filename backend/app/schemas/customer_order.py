@@ -33,6 +33,7 @@ class CustomerOrderLinePublic(BaseModel):
     catalog_product_id: int
     our_product_id: str = ""
     name: str = ""
+    category: str = ""
     quantity: int = Field(..., ge=1)
     unit_price: str = Field(default="0")
     line_total: str = Field(default="0")
@@ -46,13 +47,6 @@ class CustomerOrderPublic(BaseModel):
     total_amount: str
     notes: Optional[str] = None
     customer_notes: Optional[str] = None
-    shipment_receipt: Optional[str] = None
-    shipment_contact: Optional[str] = None
-    shipment_notes: Optional[str] = None
-    customer_confirmed_delivery_at: Optional[datetime] = None
-    invoice_date: Optional[datetime] = None
-    invoice_no: Optional[str] = None
-    receipt_note_no: Optional[str] = None
     versions: Optional[List[dict]] = None
     created_at: datetime
     updated_at: datetime
@@ -64,16 +58,10 @@ class CustomerOrderAdminPublic(CustomerOrderPublic):
 
 
 class CustomerOrderAdminPatch(BaseModel):
-    status: Optional[str] = Field(None, description="open | closed | confirmed | cancelled")
+    status: Optional[str] = Field(None, description="received | billed | closed")
     notes: Optional[str] = Field(None, max_length=4000)
     customer_notes: Optional[str] = Field(None, max_length=2000)
     items: Optional[List[CustomerOrderLineIn]] = Field(None, description="Replace all lines when set")
-    shipment_receipt: Optional[str] = Field(None, max_length=255)
-    shipment_contact: Optional[str] = Field(None, max_length=128)
-    shipment_notes: Optional[str] = Field(None, max_length=4000)
-    invoice_date: Optional[datetime] = None
-    invoice_no: Optional[str] = Field(None, max_length=100)
-    receipt_note_no: Optional[str] = Field(None, max_length=100)
 
 
 class OfflineOrderCreate(BaseModel):

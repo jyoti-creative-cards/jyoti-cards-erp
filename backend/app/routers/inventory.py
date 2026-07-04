@@ -21,8 +21,7 @@ from app.models.customer_order import CustomerOrder
 from app.models.stock_adjustment import StockAdjustment
 from app.models.stock_balance import StockBalance
 from app.models.stock_receipt import StockReceipt
-from app.models.vendor_purchase_order import VendorPurchaseOrder
-from app.routers.purchase_orders import _int_snap, _to_public, receipt_allowed_status
+from app.models.vendor_order import VendorOrder as VendorOrderModel
 from app.schemas.inventory import (
     BalanceThresholdBody,
     InventoryRowPublic,
@@ -118,11 +117,34 @@ def _invoice_count_for_product(db: Session, catalog_product_id: int) -> int:
     return count
 
 
+def _vendor_order_count_for_product(db: Session, catalog_product_id: int) -> int:
+    """Count vendor orders that include this product (any status)."""
+    try:
+        dialect = db.bind.dialect.name  # type: ignore[union-attr]
+    except Exception:
+        dialect = "postgresql"
+    if dialect == "postgresql":
+        sql = text(
+            "SELECT COUNT(*) FROM portal_vendor_orders "
+            "WHERE items::jsonb @> (:filter)::jsonb"
+        )
+        row = db.execute(sql, {"filter": json.dumps([{"catalog_product_id": catalog_product_id}])}).scalar()
+        return int(row or 0)
+    count = 0
+    vorders = db.query(VendorOrderModel).all()
+    for vo in vorders:
+        items = vo.items if isinstance(vo.items, list) else []
+        if any(isinstance(i, dict) and i.get("catalog_product_id") == catalog_product_id for i in items):
+            count += 1
+    return count
+
+
 def _inventory_row_public(
     db: Session,
     p: CatalogProduct,
     bal: Optional[StockBalance],
     invoice_count: int = 0,
+    vendor_order_count: int = 0,
     selling_price: float = 0.0,
 ) -> InventoryRowPublic:
     qty = int(bal.quantity) if bal else 0
@@ -140,6 +162,7 @@ def _inventory_row_public(
         stock_status=stock_status_label(qty, th),
         image_urls=presigned_urls(keys_str),
         invoice_count=invoice_count,
+        vendor_order_count=vendor_order_count,
         selling_price=selling_price,
     )
 
@@ -183,6 +206,41 @@ def list_inventory(
 
     out: List[InventoryRowPublic] = []
 
+    # ── bulk-fetch counts once (avoids N+1) ─────────────────────────────
+    try:
+        dialect = db.bind.dialect.name  # type: ignore[union-attr]
+    except Exception:
+        dialect = "postgresql"
+
+    if dialect == "postgresql":
+        inv_rows = db.execute(text(
+            "SELECT items_elem->>'catalog_product_id' AS pid, COUNT(*) AS cnt "
+            "FROM portal_customer_orders, jsonb_array_elements(items::jsonb) AS items_elem "
+            "WHERE status != 'cancelled' GROUP BY 1"
+        )).fetchall()
+        invoice_counts: dict[int, int] = {int(r[0]): int(r[1]) for r in inv_rows if r[0]}
+
+        vo_rows = db.execute(text(
+            "SELECT items_elem->>'catalog_product_id' AS pid, COUNT(*) AS cnt "
+            "FROM portal_vendor_orders, jsonb_array_elements(items::jsonb) AS items_elem "
+            "GROUP BY 1"
+        )).fetchall()
+        vo_counts: dict[int, int] = {int(r[0]): int(r[1]) for r in vo_rows if r[0]}
+    else:
+        # sqlite fallback — scan in Python
+        invoice_counts = {}
+        for co in db.query(CustomerOrder).filter(CustomerOrder.status != "cancelled").all():
+            for item in (co.items if isinstance(co.items, list) else []):
+                if isinstance(item, dict) and item.get("catalog_product_id"):
+                    pid = int(item["catalog_product_id"])
+                    invoice_counts[pid] = invoice_counts.get(pid, 0) + 1
+        vo_counts = {}
+        for vo in db.query(VendorOrderModel).all():
+            for item in (vo.items if isinstance(vo.items, list) else []):
+                if isinstance(item, dict) and item.get("catalog_product_id"):
+                    pid = int(item["catalog_product_id"])
+                    vo_counts[pid] = vo_counts.get(pid, 0) + 1
+
     if all_catalog:
         qry = db.query(CatalogProduct)
         if vendor_id is not None:
@@ -199,8 +257,9 @@ def list_inventory(
             )
         for p in qry.order_by(CatalogProduct.our_product_id.asc()).all():
             bal = db.get(StockBalance, p.id)
-            inv_cnt = _invoice_count_for_product(db, p.id)
-            row = _inventory_row_public(db, p, bal, invoice_count=inv_cnt)
+            inv_cnt = invoice_counts.get(p.id, 0)
+            vo_cnt = vo_counts.get(p.id, 0)
+            row = _inventory_row_public(db, p, bal, invoice_count=inv_cnt, vendor_order_count=vo_cnt)
             if st_f and row.stock_status != st_f:
                 continue
             out.append(row)
@@ -221,12 +280,15 @@ def list_inventory(
                 CatalogProduct.category.ilike(term),
             )
         )
+    # preload all products to avoid N+1 db.get() per row
+    all_products: dict[int, CatalogProduct] = {p.id: p for p in db.query(CatalogProduct).all()}
     for bal in q_bal.order_by(CatalogProduct.our_product_id.asc()).all():
-        p = db.get(CatalogProduct, bal.catalog_product_id)
+        p = all_products.get(bal.catalog_product_id)
         if p is None:
             continue
-        inv_cnt = _invoice_count_for_product(db, p.id)
-        row = _inventory_row_public(db, p, bal, invoice_count=inv_cnt)
+        inv_cnt = invoice_counts.get(p.id, 0)
+        vo_cnt = vo_counts.get(p.id, 0)
+        row = _inventory_row_public(db, p, bal, invoice_count=inv_cnt, vendor_order_count=vo_cnt)
         if st_f and row.stock_status != st_f:
             continue
         out.append(row)
@@ -400,9 +462,8 @@ class AdhocReceiptBody(BaseModel):
 @router.post("/receipts/adhoc", response_model=dict, dependencies=[Depends(require_admin)],
              status_code=status.HTTP_201_CREATED)
 def adhoc_receipt(body: AdhocReceiptBody, db: Session = Depends(get_db)) -> dict:
-    """Create a PO (status=created_manually) + immediately add stock for each item."""
+    """Add stock immediately and record against the vendor's open VendorOrder (or create one)."""
     from app.models.vendor import Vendor
-    from app.models.vendor_purchase_order import VendorPurchaseOrder
     from app.models.stock_receipt import StockReceipt
     from app.services.audit import log_action
 
@@ -422,21 +483,48 @@ def adhoc_receipt(body: AdhocReceiptBody, db: Session = Depends(get_db)) -> dict
         if item.quantity < 1:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="quantity must be >= 1")
 
-    # Build PO lines data
-    po_lines = [
-        {"catalog_product_id": item.catalog_product_id, "quantity": item.quantity,
-         "unit_price": item.unit_price or 0.0}
-        for item in body.items
-    ]
+    # Get or create the vendor's open VendorOrder
+    import uuid as _uuid
+    vo = db.query(VendorOrderModel).filter(
+        VendorOrderModel.vendor_id == body.vendor_id,
+        VendorOrderModel.status == "open",
+    ).first()
 
-    # Create the PO with status created_manually
-    po = VendorPurchaseOrder(
-        vendor_id=body.vendor_id,
-        status="created_manually",
-        notes=(body.notes or "").strip() or "Ad-hoc manual stock entry",
-        items=po_lines,
-    )
-    db.add(po)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    new_lines = []
+    for item in body.items:
+        p = db.get(CatalogProduct, item.catalog_product_id)
+        new_lines.append({
+            "line_id": str(_uuid.uuid4()),
+            "catalog_product_id": item.catalog_product_id,
+            "product_name": p.our_product_id if p else str(item.catalog_product_id),
+            "qty_ordered": item.quantity,
+            "qty_received": item.quantity,
+            "unit_price": float(item.unit_price or 0),
+            "date_ordered": now_iso,
+            "date_received": now_iso,
+            "notes": (body.notes or "").strip() or "Ad-hoc manual stock entry",
+        })
+
+    if vo is None:
+        vo = VendorOrderModel(
+            vendor_id=body.vendor_id,
+            status="closed",
+            notes=(body.notes or "").strip() or "Ad-hoc manual stock entry",
+            items=new_lines,
+        )
+        db.add(vo)
+    else:
+        existing = vo.items if isinstance(vo.items, list) else []
+        existing.extend(new_lines)
+        vo.items = existing
+        from sqlalchemy.orm.attributes import flag_modified as _flag_modified
+        _flag_modified(vo, "items")
+        # Auto-close if all items (including newly appended ones) are fully received
+        from app.routers.vendor_orders import _pending as _vp
+        if all(_vp(it) == 0 for it in vo.items if isinstance(it, dict)):
+            vo.status = "closed"
+
     db.flush()
 
     # Add stock delta for each item + build single receipt
@@ -448,11 +536,11 @@ def adhoc_receipt(body: AdhocReceiptBody, db: Session = Depends(get_db)) -> dict
             "catalog_product_id": item.catalog_product_id,
             "our_product_id": p.our_product_id if p else str(item.catalog_product_id),
             "quantity_received": item.quantity,
-            "unit_price": item.unit_price or 0.0,
+            "unit_price": float(item.unit_price or 0),
         })
 
     sr = StockReceipt(
-        purchase_order_id=po.id,
+        purchase_order_id=None,
         vendor_id=body.vendor_id,
         line_items=line_items_json,
         note=(body.notes or "").strip() or "Ad-hoc manual stock entry",
@@ -461,7 +549,6 @@ def adhoc_receipt(body: AdhocReceiptBody, db: Session = Depends(get_db)) -> dict
     db.add(sr)
     db.commit()
 
-    # Audit log
     try:
         names = []
         for item in body.items:
@@ -471,8 +558,8 @@ def adhoc_receipt(body: AdhocReceiptBody, db: Session = Depends(get_db)) -> dict
             db,
             action="create",
             entity_type="adhoc_receipt",
-            entity_id=po.id,
-            description=f"Ad-hoc stock entry PO#{po.id} for vendor '{vendor.company_name or vendor.person_name}': {', '.join(names)}",
+            entity_id=vo.id,
+            description=f"Ad-hoc stock entry VO#{vo.id} for vendor '{vendor.company_name or vendor.person_name}': {', '.join(names)}",
             performed_by="admin",
         )
         db.commit()
@@ -480,317 +567,7 @@ def adhoc_receipt(body: AdhocReceiptBody, db: Session = Depends(get_db)) -> dict
         db.rollback()
         print(f"Audit log failed: {ex}")
 
-    return {"ok": True, "po_id": po.id, "items_received": len(body.items)}
-
-
-def _parse_bool_form(raw: Optional[str]) -> bool:
-    if raw is None:
-        return False
-    return str(raw).strip().lower() in ("1", "true", "yes", "on")
-
-
-@router.post("/receipts/from-po", response_model=dict, dependencies=[Depends(require_admin)])
-def receipt_from_po(
-    purchase_order_id: int = Form(...),
-    is_partial: str = Form("false"),
-    receipt_number: Optional[str] = Form(None),
-    contact_number: Optional[str] = Form(None),
-    lines: str = Form(...),
-    notes: Optional[str] = Form(None),
-    file: Optional[UploadFile] = File(None),
-    vendor_bill_no: Optional[str] = Form(None),
-    bill_photo: Optional[UploadFile] = File(None),
-    force_close: str = Form("false"),
-    db: Session = Depends(get_db),
-) -> dict:
-    is_partial_f = _parse_bool_form(is_partial)
-    po = db.get(VendorPurchaseOrder, purchase_order_id)
-    if po is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="purchase order not found")
-
-    if not receipt_allowed_status(po.status):
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            detail="can only receive against a PO in booked or in_progress status",
-        )
-
-    try:
-        raw_lines = json.loads(lines)
-    except json.JSONDecodeError as e:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"invalid lines JSON: {e}") from e
-    if not isinstance(raw_lines, list) or not raw_lines:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="lines must be a non-empty array")
-
-    parsed: list[tuple[int, int]] = []
-    for x in raw_lines:
-        if not isinstance(x, dict):
-            continue
-        try:
-            cid = int(x["catalog_product_id"])
-            q = int(x["quantity"])
-        except (KeyError, TypeError, ValueError):
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="each line needs catalog_product_id and quantity") from None
-        if q < 1:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="quantity must be >= 1")
-        parsed.append((cid, q))
-
-    if not parsed:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="no valid lines")
-
-    rn = (receipt_number or "").strip()
-    cn = (contact_number or "").strip() or None
-    if not rn:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            detail="receipt_number is required for each shipment",
-        )
-
-    raw_items = po.items if isinstance(po.items, list) else []
-    pending_map: dict[int, int] = {}
-    item_row_by_cid: dict[int, dict] = {}
-    for row in raw_items:
-        if not isinstance(row, dict):
-            continue
-        try:
-            cid = int(row["catalog_product_id"])
-            ordered = int(row["quantity"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        recv = min(ordered, _int_snap(row, "received_quantity"))
-        pend = max(0, ordered - recv)
-        pending_map[cid] = pend
-        item_row_by_cid[cid] = row
-
-    incoming: dict[int, int] = {}
-    for cid, q in parsed:
-        if cid not in pending_map:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"catalog_product_id {cid} not on this PO")
-        incoming[cid] = incoming.get(cid, 0) + q
-
-    img_key: Optional[str] = None
-    if file is not None and getattr(file, "filename", None):
-        try:
-            img_key = _save_receipt_upload(file)
-        except RuntimeError as e:
-            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)) from e
-
-    bill_photo_key: Optional[str] = None
-    if bill_photo is not None and getattr(bill_photo, "filename", None):
-        try:
-            from pathlib import Path as _Path
-            raw_bp = bill_photo.file.read()
-            if raw_bp:
-                suf_bp = _Path(bill_photo.filename or "upload").suffix.lower()
-                if suf_bp not in (".pdf", ".png", ".jpg", ".jpeg", ".webp", ".gif"):
-                    suf_bp = ".bin"
-                mime_bp = bill_photo.content_type or "application/octet-stream"
-                bill_photo_key = f"po_receipts/{uuid.uuid4().hex}{suf_bp}"
-                upload_bytes(bill_photo_key, raw_bp, mime_bp)
-        except RuntimeError as e:
-            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)) from e
-
-    line_items_store: list[dict] = []
-    for cid, q in incoming.items():
-        row = item_row_by_cid.get(cid)
-        if row is None:
-            continue
-        row["received_quantity"] = _int_snap(row, "received_quantity") + q
-        line_items_store.append({"catalog_product_id": cid, "quantity": q})
-        _apply_stock_delta(db, cid, q)
-
-    sr = StockReceipt(
-        purchase_order_id=po.id,
-        receipt_number=rn if rn else None,
-        contact_number=cn,
-        receipt_image_key=img_key,
-        is_partial=is_partial_f,
-        line_items=line_items_store,
-        note=(notes or "").strip() or None,
-        vendor_bill_no=(vendor_bill_no or "").strip() or None,
-        bill_photo_key=bill_photo_key,
-    )
-    db.add(sr)
-
-    flag_modified(po, "items")
-
-    all_done = True
-    for row in raw_items:
-        if not isinstance(row, dict):
-            continue
-        try:
-            ordered = int(row["quantity"])
-            recv = _int_snap(row, "received_quantity")
-        except (KeyError, TypeError, ValueError):
-            continue
-        if recv < ordered:
-            all_done = False
-            break
-
-    force_close_f = _parse_bool_form(force_close)
-    if force_close_f or all_done:
-        po.status = "closed"
-    elif is_partial_f or po.status == "booked":
-        po.status = "in_progress"
-
-    db.add(po)
-    db.commit()
-    db.refresh(po)
-    return {
-        "ok": True,
-        "fully_received": all_done,
-        "purchase_order": _to_public(db, po),
-    }
-
-
-@router.post("/receipts/from-vendor", response_model=dict, dependencies=[Depends(require_admin)])
-def receipt_from_vendor(
-    vendor_id: int = Form(...),
-    items: str = Form(...),
-    extra_charges: str = Form("0"),
-    notes: Optional[str] = Form(None),
-    bill_photo: Optional[UploadFile] = File(None),
-    db: Session = Depends(get_db),
-) -> dict:
-    """Receive goods from a vendor (not tied to a specific PO). Auto-matches to open POs."""
-    from app.models.vendor import Vendor
-
-    vendor = db.get(Vendor, vendor_id)
-    if vendor is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="vendor not found")
-
-    try:
-        raw_items = json.loads(items)
-    except json.JSONDecodeError as e:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"invalid items JSON: {e}") from e
-    if not isinstance(raw_items, list) or not raw_items:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="items must be a non-empty array")
-
-    try:
-        extra = float(extra_charges or 0)
-    except ValueError:
-        extra = 0.0
-
-    parsed: list[tuple[int, int, float]] = []
-    for x in raw_items:
-        if not isinstance(x, dict):
-            continue
-        try:
-            cid = int(x["catalog_product_id"])
-            q = int(x["quantity"])
-            unit_price = float(x.get("unit_price", 0) or 0)
-        except (KeyError, TypeError, ValueError):
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="each item needs catalog_product_id, quantity") from None
-        if q < 1:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="quantity must be >= 1")
-        parsed.append((cid, q, unit_price))
-
-    if not parsed:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="no valid items")
-
-    # Get all open POs for this vendor (sorted oldest first for FIFO matching)
-    open_pos = (
-        db.query(VendorPurchaseOrder)
-        .filter(
-            VendorPurchaseOrder.vendor_id == vendor_id,
-            VendorPurchaseOrder.status.in_(["booked", "in_progress"]),
-            VendorPurchaseOrder.deleted_at.is_(None),
-        )
-        .order_by(VendorPurchaseOrder.created_at.asc())
-        .all()
-    )
-
-    # Upload bill photo if provided
-    bill_key: Optional[str] = None
-    if bill_photo is not None and getattr(bill_photo, "filename", None):
-        try:
-            raw_bytes = bill_photo.file.read()
-            if raw_bytes and storage_configured():
-                ext = Path(bill_photo.filename or "bill").suffix or ".jpg"
-                key = f"{_PREFIX}/vendor_{vendor_id}/{uuid.uuid4().hex}{ext}"
-                bill_key = upload_bytes(raw_bytes, bill_photo.content_type or "image/jpeg", key)
-        except Exception as ex:
-            print(f"Bill photo upload failed: {ex}")
-
-    total_value = 0.0
-    line_items_store: list[dict] = []
-
-    for cid, qty, unit_price in parsed:
-        # Add stock
-        _apply_stock_delta(db, cid, qty)
-        total_value += unit_price * qty
-        line_items_store.append({"catalog_product_id": cid, "quantity": qty, "unit_price": unit_price})
-
-        # FIFO matching against open POs
-        remaining = qty
-        for po in open_pos:
-            if remaining <= 0:
-                break
-            po_items = po.items if isinstance(po.items, list) else []
-            for po_item in po_items:
-                if not isinstance(po_item, dict):
-                    continue
-                try:
-                    po_cid = int(po_item.get("catalog_product_id", 0))
-                except (TypeError, ValueError):
-                    continue
-                if po_cid != cid:
-                    continue
-                ordered = int(po_item.get("quantity", 0))
-                received = _int_snap(po_item, "received_quantity")
-                pending = max(0, ordered - received)
-                if pending <= 0:
-                    continue
-                can_match = min(pending, remaining)
-                po_item["received_quantity"] = received + can_match
-                remaining -= can_match
-                flag_modified(po, "items")
-                if remaining <= 0:
-                    break
-
-    # Auto-close POs that are fully received; mark others as in_progress
-    for po in open_pos:
-        po_items = po.items if isinstance(po.items, list) else []
-        all_done = all(
-            _int_snap(it, "received_quantity") >= int(it.get("quantity", 0))
-            for it in po_items
-            if isinstance(it, dict) and it.get("quantity")
-        )
-        any_received = any(
-            _int_snap(it, "received_quantity") > 0
-            for it in po_items
-            if isinstance(it, dict)
-        )
-        if all_done:
-            po.status = "closed"
-        elif any_received and po.status == "booked":
-            po.status = "in_progress"
-        db.add(po)
-
-    # Create stock receipt record
-    receipt = StockReceipt(
-        vendor_id=vendor_id,
-        purchase_order_id=None,
-        receipt_number=f"VR-{vendor_id}-{uuid.uuid4().hex[:8].upper()}",
-        contact_number=None,
-        notes=(notes or "").strip() or None,
-        line_items=line_items_store,
-        image_key=bill_key,
-        vendor_bill_no=None,
-        bill_photo_key=bill_key,
-        extra_charges=extra,
-    )
-    db.add(receipt)
-
-    total_with_extra = total_value + extra
-
-    db.commit()
-    return {
-        "ok": True,
-        "vendor_id": vendor_id,
-        "items_received": len(line_items_store),
-        "total_value": round(total_with_extra, 2),
-        "bill_photo_key": bill_key,
-    }
+    return {"ok": True, "vendor_order_id": vo.id, "items_received": len(body.items)}
 
 
 @router.get(
@@ -812,7 +589,7 @@ def get_product_ledger(
     # ── collect all events ───────────────────────────────────────────
     events: list[dict] = []
 
-    # inward — stock receipts
+    # inward — stock receipts (from purchase orders)
     receipts = db.query(StockReceipt).all()
     for sr in receipts:
         line_items = sr.line_items if isinstance(sr.line_items, list) else []
@@ -828,10 +605,34 @@ def get_product_ledger(
                     "party": None,
                 })
 
-    # outward — customer orders (confirmed / billed / shipped)
+    # inward — vendor order receipts (received goods via vendor orders)
+    vendor_orders = db.query(VendorOrderModel).all()
+    for vo in vendor_orders:
+        items = vo.items if isinstance(vo.items, list) else []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if int(item.get("catalog_product_id", 0)) == catalog_product_id:
+                qty_recv = int(item.get("qty_received", 0))
+                if qty_recv > 0:
+                    date_recv = item.get("date_received")
+                    try:
+                        from datetime import datetime as _dt, timezone as _tz
+                        evt_date = _dt.fromisoformat(date_recv.replace("Z", "+00:00")) if date_recv else vo.updated_at
+                    except Exception:
+                        evt_date = vo.updated_at
+                    events.append({
+                        "date": evt_date,
+                        "type": "inward",
+                        "qty": qty_recv,
+                        "reference": f"VO-{vo.id}",
+                        "party": None,
+                    })
+
+    # outward — customer orders (all non-cancelled, non-pending)
     customer_map: dict[int, str] = {}
     orders = db.query(CustomerOrder).filter(
-        CustomerOrder.status.in_(["confirmed", "billed", "shipped"])
+        CustomerOrder.status.notin_(["cancelled", "pending"])
     ).all()
     for co in orders:
         items = co.items if isinstance(co.items, list) else []

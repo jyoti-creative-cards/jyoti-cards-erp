@@ -87,8 +87,8 @@ export interface VendorPublic {
   alias: string | null;
   secondary_phone: string | null;
   address: string | null;
-  billing_percentage: number | null;
   city: string | null;
+  city_id: number | null;
   gst_number: string | null;
   created_at: string;
   updated_at: string;
@@ -146,48 +146,6 @@ export interface CatalogProductPublic {
   updated_at: string;
 }
 
-export interface PurchaseOrderReceiptLinePublic {
-  catalog_product_id: number;
-  quantity: number;
-  name: string;
-}
-
-export interface PurchaseOrderReceiptPublic {
-  id: number;
-  receipt_number: string | null;
-  contact_number: string | null;
-  is_partial: boolean;
-  receipt_image_url: string | null;
-  lines: PurchaseOrderReceiptLinePublic[];
-  created_at: string;
-  notes: string | null;
-}
-
-export interface PurchaseOrderLinePublic {
-  catalog_product_id: number;
-  quantity: number;
-  received_quantity?: number;
-  quantity_pending?: number;
-  name: string;
-  our_product_id: string;
-  vendor_product_id: string;
-  buying_price: number;
-  selling_price: number;
-  line_total_buying: number;
-}
-
-export interface PurchaseOrderPublic {
-  id: number;
-  vendor_id: number;
-  status: string;
-  items: PurchaseOrderLinePublic[];
-  receipts?: PurchaseOrderReceiptPublic[];
-  notes?: string | null;
-  total_buying_value: number;
-  created_at: string;
-  updated_at: string;
-}
-
 export interface ProductAlternativePublic {
   id: number;
   catalog_product_id: number;
@@ -210,6 +168,7 @@ export interface InventoryRowPublic {
   stock_status: string;
   image_urls: string[];
   invoice_count?: number;
+  vendor_order_count?: number;
   selling_price?: number;
 }
 
@@ -243,13 +202,6 @@ export interface CustomerOrderAdminPublic {
   total_amount: string;
   notes: string | null;
   customer_notes: string | null;
-  shipment_receipt: string | null;
-  shipment_contact: string | null;
-  shipment_notes: string | null;
-  customer_confirmed_delivery_at: string | null;
-  invoice_date: string | null;
-  invoice_no: string | null;
-  receipt_note_no: string | null;
   versions?: { version: number; timestamp: string; event: string; items: unknown[]; total_amount: string; bill_id: number | null }[] | null;
   created_at: string;
   updated_at: string;
@@ -257,7 +209,6 @@ export interface CustomerOrderAdminPublic {
 
 export interface VendorBillPublic {
   id: number;
-  purchase_order_id: number;
   document_key: string | null;
   document_url: string | null;
   bill_lines: Record<string, unknown>[];
@@ -347,7 +298,6 @@ export interface APBillPublic {
   id: number;
   vendor_bill_id: number;
   vendor_id: number;
-  purchase_order_id: number;
   amount: string;
   amount_paid: string;
   balance: string;
@@ -445,7 +395,7 @@ export interface CreditNotePublic {
 
 export interface DebitNotePublic {
   id: number;
-  purchase_order_id: number;
+  vendor_order_id: number | null;
   vendor_id: number;
   amount: string;
   reason: string | null;

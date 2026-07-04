@@ -53,7 +53,7 @@ class DebitNote(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     purchase_order_id: Mapped[Optional[int]] = mapped_column(
-        Integer, ForeignKey("portal_vendor_purchase_orders.id", ondelete="RESTRICT"), nullable=True, index=True
+        Integer, nullable=True, index=True
     )
     vendor_order_id: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("portal_vendor_orders.id", ondelete="RESTRICT"), nullable=True, index=True

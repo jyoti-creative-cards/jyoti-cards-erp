@@ -12,7 +12,7 @@ class InventoryRowPublic(BaseModel):
     name: str
     category: str
     vendor_id: int
-    quantity: int = Field(..., ge=0)
+    quantity: int
     low_stock_threshold: int = Field(default=0, ge=0)
     stock_status: str = Field(
         default="out_of_stock",
@@ -20,6 +20,7 @@ class InventoryRowPublic(BaseModel):
     )
     image_urls: List[str] = Field(default_factory=list)
     invoice_count: int = 0
+    vendor_order_count: int = 0
     selling_price: float = 0.0
 
 
@@ -85,11 +86,3 @@ class ManualStockBody(BaseModel):
 class ReceiptLineIn(BaseModel):
     catalog_product_id: int = Field(..., ge=1)
     quantity: int = Field(..., ge=1)
-
-
-class ReceiptFromPoBody(BaseModel):
-    purchase_order_id: int = Field(..., ge=1)
-    is_partial: bool = False
-    receipt_number: Optional[str] = Field(None, max_length=120)
-    lines: List[ReceiptLineIn] = Field(..., min_length=1)
-    note: Optional[str] = Field(None, max_length=2000)

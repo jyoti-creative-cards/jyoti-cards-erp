@@ -17,7 +17,6 @@ class CustomerCreate(BaseModel):
     secondary_phone: Optional[str] = Field(None, max_length=32)
     city: Optional[str] = Field(None, max_length=200)
     city_id: Optional[int] = None
-    route_id: Optional[int] = None
     credit_limit: Optional[Decimal] = None
     credit_override: bool = False
     gst_number: Optional[str] = Field(None, max_length=20)
@@ -33,7 +32,6 @@ class CustomerUpdate(BaseModel):
     secondary_phone: Optional[str] = Field(None, max_length=32)
     city: Optional[str] = Field(None, max_length=200)
     city_id: Optional[int] = None
-    route_id: Optional[int] = None
     credit_limit: Optional[Decimal] = None
     credit_override: Optional[bool] = None
     gst_number: Optional[str] = Field(None, max_length=20)
@@ -53,10 +51,12 @@ class CustomerPublic(BaseModel):
     credit_limit: Optional[str]
     credit_override: bool
     gst_number: Optional[str]
+    invoice_count: Optional[int] = None
+    total_billed: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
-    model_config = {"from_attributes": False}
+    model_config = {"from_attributes": True}
 
 
 class LoginRequest(BaseModel):

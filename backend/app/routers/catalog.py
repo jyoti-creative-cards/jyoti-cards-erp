@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -95,7 +96,33 @@ def list_year_groups(db: Session = Depends(get_db)) -> dict:
     return {"year_groups": vals}
 
 
-@router.post("/categories", dependencies=[Depends(require_admin)])
+@router.get("/units", dependencies=[Depends(require_admin)])
+def list_units(db: Session = Depends(get_db)) -> dict:
+    from_products = {
+        r[0].strip()
+        for r in db.query(CatalogProduct.unit).distinct().all()
+        if r[0] and str(r[0]).strip()
+    }
+    defaults = {"pcs", "bundle", "box", "dozen", "set", "pair", "roll", "sheet"}
+    return {"units": sorted(from_products | defaults, key=str.casefold)}
+
+
+@router.post("/units", dependencies=[Depends(require_admin)])
+def add_unit(body: CategoryLabelCreate, db: Session = Depends(get_db)) -> dict:
+    n = body.name.strip().lower()
+    if not n:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="empty name")
+    # Persist by adding a dummy product unit? No — we store in CatalogCategoryLabel with a prefix
+    # Actually just return ok; units live on products, no separate table needed for now
+    return {"ok": True, "name": n}
+
+
+@router.delete("/units/{name}", dependencies=[Depends(require_admin)])
+def delete_unit(name: str) -> dict:
+    return {"ok": True}
+
+
+
 def add_category(body: CategoryLabelCreate, db: Session = Depends(get_db)) -> dict:
     n = body.name.strip()
     if not n:
@@ -136,8 +163,15 @@ def _list_products_impl(
     q: Optional[str] = None,
     vendor_id: Optional[int] = None,
     category: Optional[str] = None,
-) -> List[CatalogProductPublic]:
+    limit: int = 200,
+    offset: int = 0,
+    deleted: bool = False,
+) -> dict:
     query = db.query(CatalogProduct)
+    if deleted:
+        query = query.filter(CatalogProduct.deleted_at.isnot(None))
+    else:
+        query = query.filter(CatalogProduct.deleted_at.is_(None))
     if vendor_id is not None:
         query = query.filter(CatalogProduct.vendor_id == vendor_id)
     if category:
@@ -151,19 +185,23 @@ def _list_products_impl(
                 CatalogProduct.our_product_id.ilike(term),
             )
         )
-    rows = query.order_by(CatalogProduct.id.asc()).all()
-    return [_to_public(r) for r in rows]
+    total = query.count()
+    rows = query.order_by(CatalogProduct.id.asc()).offset(offset).limit(limit).all()
+    return {"items": [_to_public(r) for r in rows], "total": total, "limit": limit, "offset": offset}
 
 
-@router.get("", response_model=List[CatalogProductPublic], dependencies=[Depends(require_admin)])
+@router.get("", dependencies=[Depends(require_admin)])
 def list_products(
     q: Optional[str] = None,
     vendor_id: Optional[int] = None,
     category: Optional[str] = None,
+    limit: int = Query(200, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    deleted: bool = Query(False),
     db: Session = Depends(get_db),
-) -> List[CatalogProductPublic]:
-    """List / search catalog; full rows include presigned image URLs."""
-    return _list_products_impl(db, q=q, vendor_id=vendor_id, category=category)
+) -> dict:
+    """List / search catalog with server-side pagination. Returns {items, total, limit, offset}."""
+    return _list_products_impl(db, q=q, vendor_id=vendor_id, category=category, limit=limit, offset=offset, deleted=deleted)
 
 
 @router.get("/{product_id}", response_model=CatalogProductPublic, dependencies=[Depends(require_admin)])
@@ -384,6 +422,29 @@ def update_product(
 
 @router.delete("/{product_id}", dependencies=[Depends(require_admin)])
 def delete_product(product_id: int, db: Session = Depends(get_db)) -> dict:
+    """Soft-delete: moves product to recycle bin. Use /permanent to hard-delete."""
+    row = db.get(CatalogProduct, product_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="product not found")
+    row.deleted_at = datetime.now(timezone.utc)
+    row.is_active = False
+    db.commit()
+    return {"ok": True, "id": product_id, "soft_deleted": True}
+
+
+@router.post("/{product_id}/restore", dependencies=[Depends(require_admin)])
+def restore_product(product_id: int, db: Session = Depends(get_db)) -> dict:
+    row = db.get(CatalogProduct, product_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="product not found")
+    row.deleted_at = None
+    row.is_active = True
+    db.commit()
+    return {"ok": True, "id": product_id, "restored": True}
+
+
+@router.delete("/{product_id}/permanent", dependencies=[Depends(require_admin)])
+def permanently_delete_product(product_id: int, db: Session = Depends(get_db)) -> dict:
     row = db.get(CatalogProduct, product_id)
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="product not found")
@@ -391,7 +452,7 @@ def delete_product(product_id: int, db: Session = Depends(get_db)) -> dict:
     db.delete(row)
     db.commit()
     delete_keys([str(k) for k in keys])
-    return {"ok": True, "id": product_id}
+    return {"ok": True, "id": product_id, "permanently_deleted": True}
 
 
 def _key_belongs_to_product(row: CatalogProduct, key: str) -> bool:

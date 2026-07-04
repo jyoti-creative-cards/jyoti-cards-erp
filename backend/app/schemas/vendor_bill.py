@@ -14,7 +14,6 @@ class VendorBillLineIn(BaseModel):
 
 
 class VendorBillCreate(BaseModel):
-    purchase_order_id: int = Field(..., ge=1)
     bill_lines: List[VendorBillLineIn] = Field(..., min_length=1)
     notes: Optional[str] = Field(None, max_length=4000)
 
@@ -26,7 +25,6 @@ class VendorBillPatch(BaseModel):
 
 class VendorBillPublic(BaseModel):
     id: int
-    purchase_order_id: int
     document_key: Optional[str] = None
     document_url: Optional[str] = None
     bill_lines: List[dict[str, Any]] = Field(default_factory=list)

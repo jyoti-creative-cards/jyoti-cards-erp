@@ -17,7 +17,6 @@ from app.models.stock_balance import StockBalance
 from app.models.stock_receipt import StockReceipt
 from app.models.vendor import Vendor
 from app.models.vendor_bill import VendorBill
-from app.models.vendor_purchase_order import VendorPurchaseOrder
 
 __all__ = [
     "APBill",
@@ -43,5 +42,4 @@ __all__ = [
     "StockReceipt",
     "Vendor",
     "VendorBill",
-    "VendorPurchaseOrder",
 ]

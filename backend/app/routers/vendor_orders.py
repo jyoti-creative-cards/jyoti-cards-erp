@@ -12,9 +12,11 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.db.session import get_db
 from app.deps import require_admin
+from app.models.ap_bill import APBill
 from app.models.catalog_product import CatalogProduct
 from app.models.stock_balance import StockBalance
 from app.models.vendor import Vendor
+from app.models.vendor_bill import VendorBill
 from app.models.vendor_order import VendorOrder
 from app.services.catalog_storage import storage_configured, upload_bytes
 
@@ -118,6 +120,8 @@ class AddItemsBody(BaseModel):
 
 class ReceiveItemsBody(BaseModel):
     lines: list[dict]  # [{line_id?, catalog_product_id, qty_received, date_received?}]
+    bill_number: str = ""          # vendor's invoice number (mandatory by law, required in UI)
+    bill_amount: Optional[float] = None  # vendor's billed amount
 
 
 # ─── routes ───────────────────────────────────────────────────────────────────
@@ -257,7 +261,7 @@ def add_items_to_order(vendor_id: int, body: AddItemsBody, db: Session = Depends
 
 @router.post("/{order_id}/receive", dependencies=[Depends(require_admin)])
 def receive_items(order_id: int, body: ReceiveItemsBody, db: Session = Depends(get_db)) -> dict:
-    """Mark items as received: update received qty, add to stock."""
+    """Mark items as received: update received qty, add to stock, create VendorBill + APBill."""
     vo = db.get(VendorOrder, order_id)
     if vo is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="vendor order not found")
@@ -265,17 +269,24 @@ def receive_items(order_id: int, body: ReceiveItemsBody, db: Session = Depends(g
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="can only receive against an open order")
     if not body.lines:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="lines required")
+    if not body.bill_number.strip():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="bill_number is required — vendor bill must accompany goods")
+    if body.bill_amount is None or body.bill_amount <= 0:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="bill_amount is required — enter vendor's billed amount")
 
     vendor = db.get(Vendor, vo.vendor_id)
     items: list = list(vo.items) if isinstance(vo.items, list) else []
     now = _now_iso()
 
-    # Build lookup by line_id and also by catalog_product_id (for convenience)
+    # Build lookup by line_id and by catalog_product_id
     by_line_id = {it["line_id"]: it for it in items if "line_id" in it}
     by_cid: dict[int, list[dict]] = {}
     for it in items:
         cid = int(it.get("catalog_product_id", 0))
         by_cid.setdefault(cid, []).append(it)
+
+    bill_lines = []  # track what was actually received in this batch for VendorBill
+    total_received_value = 0.0
 
     for line in body.lines:
         qty = _int(line.get("qty_received", 0))
@@ -289,19 +300,18 @@ def receive_items(order_id: int, body: ReceiveItemsBody, db: Session = Depends(g
         if lid and lid in by_line_id:
             matched = by_line_id[lid]
         elif cid > 0 and cid in by_cid:
-            # Match to first line with pending qty
+            # Match to first line with pending qty, or first line for over-delivery
             for it in by_cid[cid]:
                 if _pending(it) > 0:
                     matched = it
                     break
+            if matched is None:
+                matched = by_cid[cid][0]  # allow over-delivery on an item
 
         if matched is None:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"no matching pending line for {cid or lid}")
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"no matching order line for product {cid or lid}")
 
-        pending = _pending(matched)
-        if qty > pending:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"receive qty {qty} exceeds pending {pending} for {matched.get('product_name')}")
-
+        # Allow receiving more than ordered (batch size rounding in B2B)
         matched["qty_received"] = _int(matched.get("qty_received")) + qty
         matched["date_received"] = date_recv
         flag_modified(vo, "items")
@@ -309,14 +319,55 @@ def receive_items(order_id: int, body: ReceiveItemsBody, db: Session = Depends(g
         # Add to stock
         _apply_stock_delta(db, int(matched["catalog_product_id"]), qty)
 
+        unit_price = _float(matched.get("unit_price", 0))
+        total_received_value += qty * unit_price
+        bill_lines.append({
+            "catalog_product_id": int(matched["catalog_product_id"]),
+            "product_name": matched.get("product_name", ""),
+            "qty_received": qty,
+            "unit_price": unit_price,
+            "line_total": round(qty * unit_price, 4),
+        })
+
+    if not bill_lines:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="no valid lines to receive")
+
     # Auto-close if all items fully received
     all_received = all(_pending(it) == 0 for it in items)
     if all_received:
         vo.status = "closed"
 
     vo.items = items
+    vo.bill_number = body.bill_number.strip()
+    vo.bill_amount = body.bill_amount
+    vo.bill_uploaded_at = datetime.now(timezone.utc)
     flag_modified(vo, "items")
     db.add(vo)
+    db.flush()  # flush so vo.id is available
+
+    # Create VendorBill (vendor's invoice for this batch)
+    vb = VendorBill(
+        vendor_order_id=vo.id,
+        vendor_id=vo.vendor_id,
+        bill_number=body.bill_number.strip(),
+        bill_amount=body.bill_amount,
+        bill_lines=bill_lines,
+        match_status="matched",
+        notes=f"Received {len(bill_lines)} item(s). Calculated value: {round(total_received_value, 2)}. "
+              f"{'Discrepancy: ' + str(round(abs(body.bill_amount - total_received_value), 2)) if abs(body.bill_amount - total_received_value) > 0.01 else 'No discrepancy.'}",
+    )
+    db.add(vb)
+    db.flush()  # flush to get vb.id
+
+    # Create APBill (accounts payable for vendor's bill amount)
+    ap = APBill(
+        vendor_bill_id=vb.id,
+        vendor_id=vo.vendor_id,
+        amount=body.bill_amount,
+        status="open",
+    )
+    db.add(ap)
+
     db.commit()
     db.refresh(vo)
     return _order_to_public(vo, vendor)
@@ -359,6 +410,110 @@ async def upload_vendor_bill(
     db.commit()
     db.refresh(vo)
     return _order_to_public(vo, vendor)
+
+
+@router.get("/{order_id}/three-way-match", dependencies=[Depends(require_admin)])
+def three_way_match(order_id: int, db: Session = Depends(get_db)) -> dict:
+    """Three-way match view: ordered vs received vs vendor bills vs debit notes."""
+    vo = db.get(VendorOrder, order_id)
+    if vo is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="vendor order not found")
+
+    items: list = list(vo.items) if isinstance(vo.items, list) else []
+    ordered_value = sum(_float(it.get("unit_price", 0)) * _int(it.get("qty_ordered", 0)) for it in items)
+    received_value = sum(_float(it.get("unit_price", 0)) * _int(it.get("qty_received", 0)) for it in items)
+
+    # Vendor bills for this order
+    vendor_bills = (
+        db.query(VendorBill)
+        .filter(VendorBill.vendor_order_id == order_id)
+        .order_by(VendorBill.id.asc())
+        .all()
+    )
+    bill_total = sum(float(vb.bill_amount or 0) for vb in vendor_bills)
+
+    # Debit notes for this order
+    from app.models.credit_debit_note import DebitNote
+    debit_notes = (
+        db.query(DebitNote)
+        .filter(DebitNote.vendor_order_id == order_id)
+        .order_by(DebitNote.id.asc())
+        .all()
+    )
+    debit_total = sum(float(dn.amount or 0) for dn in debit_notes)
+
+    # AP bills
+    from app.models.ap_bill import APBill
+    ap_rows = (
+        db.query(APBill)
+        .join(VendorBill, APBill.vendor_bill_id == VendorBill.id)
+        .filter(VendorBill.vendor_order_id == order_id)
+        .all()
+    )
+    ap_total = sum(float(ap.amount or 0) for ap in ap_rows)
+    ap_open = sum(float(ap.amount or 0) for ap in ap_rows if ap.status == "open")
+
+    # Per-item view
+    line_match = []
+    for it in items:
+        qty_ord = _int(it.get("qty_ordered", 0))
+        qty_recv = _int(it.get("qty_received", 0))
+        pending = max(0, qty_ord - qty_recv)
+        over = max(0, qty_recv - qty_ord)
+        line_match.append({
+            "product_name": it.get("product_name", ""),
+            "catalog_product_id": it.get("catalog_product_id"),
+            "unit_price": _float(it.get("unit_price", 0)),
+            "qty_ordered": qty_ord,
+            "qty_received": qty_recv,
+            "qty_pending": pending,
+            "qty_over_delivered": over,
+            "ordered_value": round(qty_ord * _float(it.get("unit_price", 0)), 2),
+            "received_value": round(qty_recv * _float(it.get("unit_price", 0)), 2),
+        })
+
+    return {
+        "order_id": order_id,
+        "status": vo.status,
+        "ordered_value": round(ordered_value, 2),
+        "received_value": round(received_value, 2),
+        "bill_total": round(bill_total, 2),
+        "debit_total": round(debit_total, 2),
+        "net_payable": round(bill_total - debit_total, 2),
+        "ap_open": round(ap_open, 2),
+        "value_discrepancy": round(bill_total - received_value, 2),
+        "line_items": line_match,
+        "vendor_bills": [
+            {
+                "id": vb.id,
+                "bill_number": vb.bill_number,
+                "bill_amount": float(vb.bill_amount or 0),
+                "created_at": vb.created_at.isoformat() if vb.created_at else None,
+                "lines": vb.bill_lines or [],
+            }
+            for vb in vendor_bills
+        ],
+        "debit_notes": [
+            {
+                "id": dn.id,
+                "amount": float(dn.amount or 0),
+                "note_type": getattr(dn, "note_type", "value"),
+                "reason": dn.reason,
+                "note_date": dn.note_date.isoformat() if dn.note_date else None,
+                "items": getattr(dn, "items", None),
+            }
+            for dn in debit_notes
+        ],
+        "ap_bills": [
+            {
+                "id": ap.id,
+                "amount": float(ap.amount or 0),
+                "status": ap.status,
+                "paid_at": ap.paid_at.isoformat() if ap.paid_at else None,
+            }
+            for ap in ap_rows
+        ],
+    }
 
 
 @router.patch("/{order_id}/close", dependencies=[Depends(require_admin)])

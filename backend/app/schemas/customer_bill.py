@@ -18,7 +18,7 @@ class CustomerBillGenerate(BaseModel):
     packaging_charges: Optional[Decimal] = Field(None, description="Packaging charges in Rs.", ge=0)
     bill_series_id: Optional[int] = None
     item_overrides: Optional[list[dict]] = None  # [{catalog_product_id: int, override_price: float, discount_percent: float}]
-    rate_type: Optional[str] = None  # "order" (default) | "net" (buying_price) | "regular" (selling_price)
+    # rate_type is deprecated — always uses order rate
     # Partial billing: specify which items (and how many) to bill in this run.
     # [{catalog_product_id: int, quantity: int}]  — if omitted, all remaining items are billed.
     bill_items: Optional[list[dict]] = None

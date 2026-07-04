@@ -26,6 +26,7 @@ class CustomerBill(Base):
     gst_rate_percent: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, server_default="0")
     discount_percent: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4), nullable=True)
     totals: Mapped[dict] = mapped_column(JSON, nullable=False)
+    items: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)  # items billed in this specific bill
     document_key: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     bill_no: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     bill_series_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("portal_bill_series.id", ondelete="SET NULL"), nullable=True)

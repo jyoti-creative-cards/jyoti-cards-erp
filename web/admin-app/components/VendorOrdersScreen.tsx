@@ -113,6 +113,10 @@ export function VendorOrdersScreen({ auth }: { auth: AuthState }) {
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState<{ ok: boolean; msg: string } | null>(null);
 
+  // Filters for the orders list
+  const [filterVendor, setFilterVendor] = useState("");
+  const [filterStatus, setFilterStatus] = useState("");
+  const [filterItem, setFilterItem] = useState("");
   const showToast = (msg: string, ok: boolean) => { setToast({ msg, ok }); setTimeout(() => setToast(null), 4000); };
 
   const loadAll = useCallback(async () => {
@@ -186,6 +190,8 @@ export function VendorOrdersScreen({ auth }: { auth: AuthState }) {
   const [billNum, setBillNum] = useState("");
   const [billAmt, setBillAmt] = useState("");
   const [billFile, setBillFile] = useState<File | null>(null);
+  const [matchMode, setMatchMode] = useState(false);
+  const [matchData, setMatchData] = useState<Record<string, unknown> | null>(null);
   const [uploading, setUploading] = useState(false);
 
   // ── Debit note ──
@@ -215,19 +221,24 @@ export function VendorOrdersScreen({ auth }: { auth: AuthState }) {
 
   async function doReceive() {
     if (!activeOrder) return;
+    if (!billNum.trim()) return showToast("Enter vendor's bill number", false);
+    if (!billAmt.trim() || Number(billAmt) <= 0) return showToast("Enter vendor's bill amount", false);
     const lines = activeOrder.items
       .map(it => ({ line_id: it.line_id, catalog_product_id: it.catalog_product_id, qty_received: Number(recvQty[it.line_id] || 0), date_received: new Date(recvDate).toISOString() }))
       .filter(l => l.qty_received > 0);
     if (!lines.length) return showToast("Enter at least one received quantity", false);
     setReceiving(true);
-    const r = await fetchApi(apiUrl(`vendor-orders/${activeOrder.id}/receive`), { method: "POST", headers: jh(), body: JSON.stringify({ lines }) });
+    const r = await fetchApi(apiUrl(`vendor-orders/${activeOrder.id}/receive`), {
+      method: "POST", headers: jh(),
+      body: JSON.stringify({ lines, bill_number: billNum.trim(), bill_amount: Number(billAmt) }),
+    });
     const data = await r.json().catch(() => ({}));
     setReceiving(false);
     if (!r.ok) return showToast(formatApiError(data) || "Failed", false);
-    showToast("Stock updated!", true);
+    showToast("Stock received + AP entry created!", true);
     setActiveOrder(data as VendorOrder);
     setReceiveMode(false);
-    setRecvQty({});
+    setRecvQty({}); setBillNum(""); setBillAmt("");
     await loadAll();
   }
 
@@ -246,6 +257,12 @@ export function VendorOrdersScreen({ auth }: { auth: AuthState }) {
     setActiveOrder(data as VendorOrder);
     setBillMode(false);
     await loadAll();
+  }
+
+  async function loadMatch(orderId: number) {
+    const r = await fetchApi(apiUrl(`vendor-orders/${orderId}/three-way-match`), { headers: h() });
+    if (r.ok) setMatchData(await r.json());
+    else showToast("Failed to load match data", false);
   }
 
   async function doCreateDebitNote() {
@@ -292,6 +309,16 @@ export function VendorOrdersScreen({ auth }: { auth: AuthState }) {
   }
 
   const vName = (id: number) => { const v = vendors.find(vv => vv.id === id); return v?.company_name || v?.person_name || `Vendor #${id}`; };
+
+  const filteredOrders = orders.filter(vo => {
+    if (filterVendor && String(vo.vendor_id) !== filterVendor) return false;
+    if (filterStatus && vo.status !== filterStatus) return false;
+    if (filterItem) {
+      const q = filterItem.toLowerCase();
+      if (!vo.items.some(l => l.product_name.toLowerCase().includes(q))) return false;
+    }
+    return true;
+  });
 
   return (
     <div className="relative space-y-6 p-4 sm:p-6">
@@ -383,11 +410,35 @@ export function VendorOrdersScreen({ auth }: { auth: AuthState }) {
                 <h3 className="text-sm font-bold text-slate-600">All Vendor Orders</h3>
                 <button onClick={loadAll} className="text-xs text-blue-600 hover:underline">{loading ? "…" : "Refresh"}</button>
               </div>
+              {/* Filters */}
+              <div className="flex flex-wrap gap-2 border-b border-slate-100 bg-white px-4 py-2">
+                <select value={filterVendor} onChange={e => setFilterVendor(e.target.value)}
+                  className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs text-slate-700 focus:outline-none focus:border-blue-400">
+                  <option value="">All vendors</option>
+                  {vendors.map(v => <option key={v.id} value={v.id}>{v.company_name || v.person_name}</option>)}
+                </select>
+                <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
+                  className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs text-slate-700 focus:outline-none focus:border-blue-400">
+                  <option value="">All statuses</option>
+                  <option value="open">Open</option>
+                  <option value="closed">Closed</option>
+                </select>
+                <input value={filterItem} onChange={e => setFilterItem(e.target.value)}
+                  placeholder="Filter by item…"
+                  className="flex-1 min-w-[130px] rounded-lg border border-slate-200 px-2 py-1.5 text-xs focus:outline-none focus:border-blue-400" />
+                {(filterVendor || filterStatus || filterItem) && (
+                  <button type="button" onClick={() => { setFilterVendor(""); setFilterStatus(""); setFilterItem(""); }}
+                    className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs text-slate-500 hover:bg-slate-50">✕ Clear</button>
+                )}
+              </div>
               {orders.length === 0 && !loading && (
                 <p className="px-4 py-8 text-center text-sm text-slate-400">No vendor orders yet</p>
               )}
+              {orders.length > 0 && filteredOrders.length === 0 && (
+                <p className="px-4 py-8 text-center text-sm text-slate-400">No orders match the filters</p>
+              )}
               <ul className="divide-y divide-slate-100">
-                {orders.map(vo => (
+                {filteredOrders.map(vo => (
                   <li key={vo.id}
                     onClick={() => openOrder(vo)}
                     className={`cursor-pointer px-4 py-3 transition hover:bg-slate-50 ${activeOrder?.id === vo.id ? "bg-blue-50" : ""}`}>
@@ -439,14 +490,14 @@ export function VendorOrdersScreen({ auth }: { auth: AuthState }) {
                 {/* Action buttons */}
                 {activeOrder.status === "open" && (
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <button type="button" onClick={() => { setReceiveMode(true); setBillMode(false); setDebitMode(false); }} className={BTN_PRIMARY + " text-xs"}>
+                    <button type="button" onClick={() => { setReceiveMode(true); setBillMode(false); setDebitMode(false); setMatchMode(false); }} className={BTN_PRIMARY + " text-xs"}>
                       📦 Receive Goods
                     </button>
-                    <button type="button" onClick={() => { setBillMode(true); setReceiveMode(false); setDebitMode(false); }} className={BTN_SECONDARY + " text-xs"}>
-                      🧾 Upload Bill
-                    </button>
-                    <button type="button" onClick={() => { setDebitMode(true); setReceiveMode(false); setBillMode(false); }} className={BTN_SECONDARY + " text-xs"}>
+                    <button type="button" onClick={() => { setDebitMode(true); setReceiveMode(false); setBillMode(false); setMatchMode(false); }} className={BTN_SECONDARY + " text-xs"}>
                       📋 Debit Note
+                    </button>
+                    <button type="button" onClick={() => { setMatchMode(m => !m); setMatchData(null); if (!matchMode) loadMatch(activeOrder.id); }} className={BTN_SECONDARY + " text-xs"}>
+                      🔍 3-Way Match
                     </button>
                     <button type="button" onClick={() => doClose(activeOrder.id)} className={BTN_SECONDARY + " text-xs"}>
                       ✓ Close Order
@@ -458,10 +509,13 @@ export function VendorOrdersScreen({ auth }: { auth: AuthState }) {
               {/* Receive form */}
               {receiveMode && (
                 <div className="border-b border-slate-100 bg-blue-50/40 px-5 py-4 space-y-3">
-                  <h4 className="text-sm font-semibold text-blue-800">Record received goods</h4>
-                  <div>
-                    <label className={LBL}>Receipt date</label>
-                    <input type="date" value={recvDate} onChange={e => setRecvDate(e.target.value)} className={INPUT + " max-w-xs"} />
+                  <h4 className="text-sm font-semibold text-blue-800">📦 Receive Goods + Record Vendor Bill</h4>
+                  <p className="text-xs text-slate-500">Vendor bill is mandatory with goods (as per GST law). Enter all details in one step.</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className={LBL}>Receipt date</label>
+                      <input type="date" value={recvDate} onChange={e => setRecvDate(e.target.value)} className={INPUT + " max-w-xs"} />
+                    </div>
                   </div>
                   <div className="overflow-hidden rounded-xl border border-slate-200">
                     <table className="w-full text-sm">
@@ -485,55 +539,41 @@ export function VendorOrdersScreen({ auth }: { auth: AuthState }) {
                             <td className="px-3 py-2 text-right tabular-nums text-emerald-700">{it.qty_received}</td>
                             <td className="px-3 py-2 text-right tabular-nums text-amber-700 font-semibold">{pending(it)}</td>
                             <td className="px-3 py-2 text-right">
-                              <input type="number" min="0" max={pending(it)}
+                              <input type="number" min="0"
                                 value={recvQty[it.line_id] ?? ""}
                                 onChange={e => setRecvQty(p => ({ ...p, [it.line_id]: e.target.value }))}
-                                className="w-20 rounded border border-slate-300 px-2 py-1 text-right text-sm" />
+                                className="w-24 rounded border border-slate-300 px-2 py-1 text-right text-sm"
+                                title="Can enter more than pending (over-delivery allowed)" />
                             </td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">
+                    <h5 className="text-xs font-bold text-amber-800 uppercase tracking-wide">Vendor Bill Details (mandatory)</h5>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className={LBL}>Vendor Bill Number *</label>
+                        <input value={billNum} onChange={e => setBillNum(e.target.value)} placeholder="e.g. VB-2024-001" className={INPUT} required />
+                      </div>
+                      <div>
+                        <label className={LBL}>Vendor Bill Amount ₹ *</label>
+                        <input type="number" step="0.01" value={billAmt} onChange={e => setBillAmt(e.target.value)}
+                          placeholder={String(activeOrder.summary.total_received_value || activeOrder.summary.total_ordered_value)} className={INPUT} required />
+                        {billAmt && activeOrder.summary.total_ordered_value > 0 && Math.abs(Number(billAmt) - activeOrder.summary.total_ordered_value) > 0.01 && (
+                          <p className="mt-1 text-xs text-amber-700 font-semibold">
+                            ⚠ Order value: ₹{fmt(activeOrder.summary.total_ordered_value)} · Diff: ₹{fmt(Math.abs(Number(billAmt) - activeOrder.summary.total_ordered_value))}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                   <div className="flex gap-2">
                     <button type="button" onClick={doReceive} disabled={receiving} className={BTN_PRIMARY}>
-                      {receiving ? "Saving…" : "Add Stock"}
+                      {receiving ? "Saving…" : "✓ Add Stock + Create AP"}
                     </button>
-                    <button type="button" onClick={() => { setReceiveMode(false); setRecvQty({}); }} className={BTN_SECONDARY}>Cancel</button>
-                  </div>
-                </div>
-              )}
-
-              {/* Bill upload form */}
-              {billMode && (
-                <div className="border-b border-slate-100 bg-amber-50/40 px-5 py-4 space-y-3">
-                  <h4 className="text-sm font-semibold text-amber-800">Upload vendor bill</h4>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className={LBL}>Bill number</label>
-                      <input value={billNum} onChange={e => setBillNum(e.target.value)} placeholder="e.g. VB-2024-001" className={INPUT} />
-                    </div>
-                    <div>
-                      <label className={LBL}>Bill amount (₹)</label>
-                      <input type="number" step="0.01" value={billAmt} onChange={e => setBillAmt(e.target.value)}
-                        placeholder={String(activeOrder.summary.total_received_value)} className={INPUT} />
-                      {billAmt && Math.abs(Number(billAmt) - activeOrder.summary.total_received_value) > 0.01 && (
-                        <p className="mt-1 text-xs text-red-600 font-semibold">
-                          ⚠ Calculated: {fmt(activeOrder.summary.total_received_value)} · Diff: {fmt(Math.abs(Number(billAmt) - activeOrder.summary.total_received_value))}
-                        </p>
-                      )}
-                    </div>
-                    <div className="col-span-2">
-                      <label className={LBL}>Bill document (PDF / image)</label>
-                      <input type="file" accept="image/*,.pdf" onChange={e => setBillFile(e.target.files?.[0] ?? null)}
-                        className="block w-full text-sm text-slate-500 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm" />
-                    </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <button type="button" onClick={doUploadBill} disabled={uploading} className={BTN_PRIMARY}>
-                      {uploading ? "Saving…" : "Save Bill"}
-                    </button>
-                    <button type="button" onClick={() => setBillMode(false)} className={BTN_SECONDARY}>Cancel</button>
+                    <button type="button" onClick={() => { setReceiveMode(false); setRecvQty({}); setBillNum(""); setBillAmt(""); }} className={BTN_SECONDARY}>Cancel</button>
                   </div>
                 </div>
               )}
@@ -649,6 +689,69 @@ export function VendorOrdersScreen({ auth }: { auth: AuthState }) {
                   {activeOrder.bill_uploaded_at && (
                     <span className="ml-2 text-xs text-slate-400">uploaded {fmtDate(activeOrder.bill_uploaded_at)}</span>
                   )}
+                </div>
+              )}
+
+              {/* Three-way match panel */}
+              {matchMode && (
+                <div className="border-b border-slate-100 bg-slate-50 px-5 py-4 space-y-3">
+                  <h4 className="text-sm font-semibold text-slate-700">🔍 Three-Way Match</h4>
+                  {!matchData ? (
+                    <p className="text-xs text-slate-400">Loading…</p>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                        <div className="rounded-lg bg-blue-50 p-2"><div className="text-slate-500 mb-0.5">Ordered</div><div className="font-bold text-blue-700">₹{fmt((matchData as any).ordered_value)}</div></div>
+                        <div className="rounded-lg bg-emerald-50 p-2"><div className="text-slate-500 mb-0.5">Received</div><div className="font-bold text-emerald-700">₹{fmt((matchData as any).received_value)}</div></div>
+                        <div className="rounded-lg bg-amber-50 p-2"><div className="text-slate-500 mb-0.5">Vendor Billed</div><div className="font-bold text-amber-700">₹{fmt((matchData as any).bill_total)}</div></div>
+                        <div className="rounded-lg bg-red-50 p-2"><div className="text-slate-500 mb-0.5">Net Payable</div><div className="font-bold text-red-700">₹{fmt((matchData as any).net_payable)}</div></div>
+                      </div>
+                      {Math.abs((matchData as any).value_discrepancy) > 0.01 && (
+                        <p className="text-xs text-red-600 font-semibold">
+                          ⚠ Bill vs Received discrepancy: ₹{fmt(Math.abs((matchData as any).value_discrepancy))}
+                          {(matchData as any).value_discrepancy > 0 ? " (over-billed)" : " (under-billed)"}
+                        </p>
+                      )}
+                      <div className="overflow-hidden rounded-xl border border-slate-200">
+                        <table className="w-full text-xs">
+                          <thead><tr className="bg-slate-50 text-slate-500 uppercase">
+                            <th className="px-3 py-1.5 text-left">Item</th>
+                            <th className="px-3 py-1.5 text-right">Ordered</th>
+                            <th className="px-3 py-1.5 text-right">Received</th>
+                            <th className="px-3 py-1.5 text-right">Pending</th>
+                            <th className="px-3 py-1.5 text-right">Over</th>
+                          </tr></thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {((matchData as any).line_items || []).map((li: any, i: number) => (
+                              <tr key={i} className={li.qty_over_delivered > 0 ? "bg-amber-50" : ""}>
+                                <td className="px-3 py-1.5 font-medium">{li.product_name}</td>
+                                <td className="px-3 py-1.5 text-right tabular-nums">{li.qty_ordered}</td>
+                                <td className="px-3 py-1.5 text-right tabular-nums text-emerald-700">{li.qty_received}</td>
+                                <td className="px-3 py-1.5 text-right tabular-nums text-amber-700">{li.qty_pending}</td>
+                                <td className="px-3 py-1.5 text-right tabular-nums text-red-600 font-bold">{li.qty_over_delivered > 0 ? `+${li.qty_over_delivered}` : "—"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      {((matchData as any).debit_notes || []).length > 0 && (
+                        <div>
+                          <p className="text-xs font-semibold text-slate-600 mb-1">Debit Notes</p>
+                          {((matchData as any).debit_notes || []).map((dn: any) => (
+                            <div key={dn.id} className="flex items-center justify-between text-xs py-1 border-b border-slate-100">
+                              <span className="text-slate-600">DN #{dn.id} · {dn.note_type} · {dn.reason || "—"}</span>
+                              <span className="font-bold text-red-700">−₹{fmt(dn.amount)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between text-xs font-semibold border-t border-slate-200 pt-2">
+                        <span>AP Open Balance</span>
+                        <span className="text-red-700">₹{fmt((matchData as any).ap_open)}</span>
+                      </div>
+                    </div>
+                  )}
+                  <button type="button" onClick={() => setMatchMode(false)} className={BTN_SECONDARY + " text-xs"}>Close</button>
                 </div>
               )}
 

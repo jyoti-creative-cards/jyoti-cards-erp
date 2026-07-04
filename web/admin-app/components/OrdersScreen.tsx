@@ -3,7 +3,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { Drawer } from "@/components/Drawer";
 import { apiUrl, fetchApi, formatApiError } from "@/lib/api";
-import type { BillSeries, CatalogProductPublic, CustomerBillPublic, CustomerOrderAdminPublic, CustomerPublic, PurchaseOrderPublic, VendorPublic } from "@/lib/types";
+import { VendorOrdersScreen } from "@/components/VendorOrdersScreen";
+import { ReturnsScreen } from "@/components/ReturnsScreen";
+import type { AuthState } from "@/lib/types";
+import type { BillSeries, CatalogProductPublic, CustomerBillPublic, CustomerOrderAdminPublic, CustomerPublic } from "@/lib/types";
 
 const INPUT = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500";
 const LABEL = "mb-1 block text-xs font-semibold text-slate-500 uppercase tracking-wider";
@@ -12,12 +15,9 @@ const BTN_SECONDARY = "inline-flex items-center gap-1.5 rounded-lg border border
 
 function statusBadge(status: string) {
   const map: Record<string, { label: string; cls: string }> = {
-    open:       { label: "Open",       cls: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
-    confirmed:  { label: "Open",       cls: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
+    received:   { label: "Received",   cls: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
     billed:     { label: "Billed",     cls: "bg-violet-50 text-violet-700 ring-violet-200" },
     closed:     { label: "Closed",     cls: "bg-slate-100 text-slate-600 ring-slate-200" },
-    shipped:    { label: "Shipped",    cls: "bg-blue-50 text-blue-700 ring-blue-200" },
-    cancelled:  { label: "Cancelled",  cls: "bg-red-50 text-red-700 ring-red-200" },
   };
   const s = map[status] ?? { label: status, cls: "bg-slate-100 text-slate-600 ring-slate-200" };
   return (
@@ -29,10 +29,11 @@ function statusBadge(status: string) {
 
 interface Props {
   adminKey: string;
+  auth: AuthState;
 }
 
-export function OrdersScreen({ adminKey }: Props) {
-  const [tab, setTab] = useState<"customer" | "summary">("customer");
+export function OrdersScreen({ adminKey, auth }: Props) {
+  const [tab, setTab] = useState<"customer" | "vendor" | "returns">("customer");
 
   const headers = () => {
     const h: Record<string, string> = { "Content-Type": "application/json" };
@@ -43,29 +44,38 @@ export function OrdersScreen({ adminKey }: Props) {
 
   return (
     <div>
-      <div className="mb-6 flex gap-2">
-        {([
-          { id: "customer", label: "🛒 Customer Orders" },
-          { id: "summary", label: "📊 Summary" },
-        ] as const).map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => setTab(t.id)}
-            className={`rounded-full px-5 py-2 text-sm font-semibold transition ${
-              tab === t.id ? "bg-blue-600 text-white shadow" : "bg-white text-slate-600 shadow-sm hover:bg-slate-50"
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
+      <div className="mb-6 inline-flex rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+        <button
+          type="button"
+          onClick={() => setTab("customer")}
+          className={`rounded-lg px-5 py-2 text-sm font-semibold transition ${tab === "customer" ? "bg-blue-600 text-white shadow" : "text-slate-600 hover:bg-slate-50"}`}
+        >
+          🛒 Customer
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab("vendor")}
+          className={`rounded-lg px-5 py-2 text-sm font-semibold transition ${tab === "vendor" ? "bg-blue-600 text-white shadow" : "text-slate-600 hover:bg-slate-50"}`}
+        >
+          📦 Vendor
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab("returns")}
+          className={`rounded-lg px-5 py-2 text-sm font-semibold transition ${tab === "returns" ? "bg-blue-600 text-white shadow" : "text-slate-600 hover:bg-slate-50"}`}
+        >
+          ↩️ Returns
+        </button>
       </div>
 
       {tab === "customer" && (
         <CustomerOrdersTab headers={headers} headersAdmin={headersAdmin} adminKey={adminKey} />
       )}
-      {tab === "summary" && (
-        <CustomerSummaryTab headersAdmin={headersAdmin} />
+      {tab === "vendor" && (
+        <VendorOrdersScreen auth={auth} />
+      )}
+      {tab === "returns" && (
+        <ReturnsScreen auth={auth} canEdit={true} />
       )}
     </div>
   );
@@ -88,7 +98,7 @@ function CustomerSummaryTab({ headersAdmin }: { headersAdmin: () => Record<strin
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Group open orders by customer
-  const openOrders = orders.filter(o => ["open", "confirmed", "billed"].includes(o.status));
+  const openOrders = orders.filter(o => ["received", "billed"].includes(o.status));
 
   const byCustomer: Record<string, { name: string; orders: CustomerOrderAdminPublic[] }> = {};
   for (const o of openOrders) {
@@ -170,7 +180,7 @@ function CustomerOrdersTab({
   const [catalog, setCatalog] = useState<CatalogProductPublic[]>([]);
   const [customers, setCustomers] = useState<CustomerPublic[]>([]);
   const [loading, setLoading] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<string>("open");
+  const [statusFilter, setStatusFilter] = useState<string>("received");
   const [search, setSearch] = useState("");
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
@@ -179,11 +189,6 @@ function CustomerOrdersTab({
   const [selected, setSelected] = useState<CustomerOrderAdminPublic | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
-  // Cancel PIN dialog
-  const [showCancelPin, setShowCancelPin] = useState(false);
-  const [cancelPinInput, setCancelPinInput] = useState("");
-  const [cancelPinError, setCancelPinError] = useState("");
-  const [cancelPinBusy, setCancelPinBusy] = useState(false);
 
   // Bill form
   const [showBillForm, setShowBillForm] = useState(false);
@@ -192,6 +197,7 @@ function CustomerOrdersTab({
   const [discount, setDiscount] = useState("");
   const [gstEnabled, setGstEnabled] = useState(false);
   const [gstRate, setGstRate] = useState("18");
+  const [billStockMap, setBillStockMap] = useState<Record<number, number>>({});
   const [billMsg, setBillMsg] = useState("");
   const [billBusy, setBillBusy] = useState(false);
   const [billData, setBillData] = useState<CustomerBillPublic | null>(null);
@@ -201,8 +207,8 @@ function CustomerOrdersTab({
   const [billSeriesId, setBillSeriesId] = useState("");
 
   // Per-item overrides
-  const [itemOverrides, setItemOverrides] = useState<Record<number, { enabled: boolean; price: string; discount: string }>>({});
-  const [bulkDiscount, setBulkDiscount] = useState("");
+  const [itemOverrides, setItemOverrides] = useState<Record<number, { enabled: boolean; discount: string }>>({});
+  // rateType removed — always use order rate (selling price)
   const [billNarration, setBillNarration] = useState("");
   const [additionalCharges, setAdditionalCharges] = useState<{ name: string; amount: string }[]>([]);
   const [stockWarning, setStockWarning] = useState<{items: {name: string; need: number; have: number}[]} | null>(null);
@@ -212,7 +218,7 @@ function CustomerOrdersTab({
   const [partialBillQty, setPartialBillQty] = useState<Record<number, string>>({});
 
   // Rate type
-  const [rateType, setRateType] = useState<"order" | "net" | "regular">("order");
+  // rate_type not sent — always defaults to "order" on backend
 
   // Zero-rate confirmation
   const [zeroRateConfirmed, setZeroRateConfirmed] = useState(false);
@@ -263,9 +269,6 @@ function CustomerOrdersTab({
   const [freightVendors, setFreightVendors] = useState<{ id: number; name: string; balance_due: string }[]>([]);
   const [selectedFreightVendorId, setSelectedFreightVendorId] = useState("");
 
-  // Shipment form
-  const [showShipForm, setShowShipForm] = useState(false);
-
   // ── Offline order (1-click order + bill) ──
   const [showOfflineForm, setShowOfflineForm] = useState(false);
   const [offlineCustomerId, setOfflineCustomerId] = useState("");
@@ -314,11 +317,7 @@ function CustomerOrdersTab({
   const [showBillHistory, setShowBillHistory] = useState(false);
 
   // Edit order state
-  const [editStatus, setEditStatus] = useState("open");
-  const [editNotes, setEditNotes] = useState("");
-  const [shipReceipt, setShipReceipt] = useState("");
-  const [shipContact, setShipContact] = useState("");
-  const [shipNotes, setShipNotes] = useState("");
+  const [editStatus, setEditStatus] = useState("received"); // kept for overrideStatus fallback in saveOrder
 
   const showToast = (msg: string, ok: boolean) => { setToast({ msg, ok }); setTimeout(() => setToast(null), 3500); };
 
@@ -333,7 +332,10 @@ function CustomerOrdersTab({
       fetchApi(apiUrl("bill-series"), { headers: headersAdmin() }),
     ]);
     if (or.ok) setOrders(await or.json());
-    if (cr.ok) setCatalog(await cr.json());
+    if (cr.ok) {
+      const crData = await cr.json();
+      setCatalog(Array.isArray(crData) ? crData : (crData?.items ?? []));
+    }
     if (fvr.ok) setFreightVendors(await fvr.json());
     if (custr.ok) setCustomers(await custr.json());
     if (serR.ok) {
@@ -479,15 +481,11 @@ function CustomerOrdersTab({
   async function openOrder(o: CustomerOrderAdminPublic) {
     setSelected(o);
     setEditStatus(o.status);
-    setEditNotes(o.notes ?? "");
-    setShipReceipt(o.shipment_receipt ?? "");
-    setShipContact(o.shipment_contact ?? "");
-    setShipNotes(o.shipment_notes ?? "");
     setSelectedFreightVendorId("");
     setEditItemsMode(false); setShowVersions(false);
-    setBillMsg(""); setSaveMsg(""); setShowBillForm(false); setShowShipForm(false);
+    setBillMsg(""); setSaveMsg(""); setShowBillForm(false);
     setBillData(null); setShowBillModal(false); setCreditSummary(null);
-    setBillSeriesId(""); setItemOverrides({}); setBulkDiscount(""); setRateType("order"); setZeroRateConfirmed(false); setShowZeroRateBanner(false);
+    setBillSeriesId(""); setItemOverrides({}); setZeroRateConfirmed(false); setShowZeroRateBanner(false);
     setBillNarration(o.customer_notes?.trim() || "");
     setAdditionalCharges([]);
     setDrawerOpen(true);
@@ -518,18 +516,9 @@ function CustomerOrdersTab({
   async function saveOrder(overrideStatus?: string) {
     if (!selected) return;
     const targetStatus = overrideStatus ?? editStatus;
-    // Require PIN when cancelling
-    if (targetStatus === "cancelled" && !showCancelPin) {
-      setShowCancelPin(true); setCancelPinInput(""); setCancelPinError("");
-      return;
-    }
     setSaving(true); setSaveMsg("");
     const body: Record<string, unknown> = {
-      status: overrideStatus ?? editStatus,
-      notes: editNotes.trim() || null,
-      shipment_receipt: shipReceipt.trim() || null,
-      shipment_contact: shipContact.trim() || null,
-      shipment_notes: shipNotes.trim() || null,
+      status: overrideStatus ?? selected.status,
     };
     const r = await fetchApi(apiUrl(`customer-orders/${selected.id}`), { method: "PATCH", headers: headers(), body: JSON.stringify(body) });
     const data = await r.json().catch(() => ({}));
@@ -542,7 +531,7 @@ function CustomerOrdersTab({
 
     // If shipping with a selected freight vendor + freight amount, record ledger entry
     const finalStatus = overrideStatus ?? editStatus;
-    if (finalStatus === "shipped" && selectedFreightVendorId && billData) {
+    if (finalStatus === "closed" && selectedFreightVendorId && billData) {
       const freightAmt = billData.totals?.freight_charges;
       if (freightAmt && Number(freightAmt) > 0) {
         await fetchApi(apiUrl("freight-vendors/ledger"), {
@@ -554,7 +543,7 @@ function CustomerOrdersTab({
             entry_type: "charge",
             amount: Number(freightAmt),
             reference: `Order #${selected.id}`,
-            notes: shipNotes.trim() || null,
+            notes: null,
           }),
         });
       }
@@ -563,21 +552,10 @@ function CustomerOrdersTab({
     void load();
   }
 
-  async function confirmCancelWithPin() {
-    if (!cancelPinInput.trim()) { setCancelPinError("Enter PIN"); return; }
-    setCancelPinBusy(true); setCancelPinError("");
-    const r = await fetchApi(apiUrl("app-settings"), { headers: headers() }).catch(() => null);
-    const settings = r?.ok ? await r.json() as { cancel_order_pin: string } : { cancel_order_pin: "1234" };
-    const correct = settings.cancel_order_pin || "1234";
-    setCancelPinBusy(false);
-    if (cancelPinInput.trim() !== correct) { setCancelPinError("Wrong PIN. Try again."); return; }
-    setShowCancelPin(false);
-    void saveOrder("cancelled");
-  }
 
   function saveDraft() {
     if (!selected) return;
-    const draft = { gstEnabled, gstRate, freight, packaging, discount, billSeriesId, rateType, billNarration, itemOverrides, partialBillQty };
+    const draft = { gstEnabled, gstRate, freight, packaging, discount, billSeriesId, billNarration, itemOverrides, partialBillQty };
     localStorage.setItem(`bill_draft_${selected.id}`, JSON.stringify(draft));
     showToast("Draft saved. You can reload it anytime.", true);
   }
@@ -594,7 +572,6 @@ function CustomerOrdersTab({
       if (d.packaging) setPackaging(d.packaging);
       if (d.discount) setDiscount(d.discount);
       if (d.billSeriesId) setBillSeriesId(d.billSeriesId);
-      if (d.rateType) setRateType(d.rateType);
       if (d.billNarration) setBillNarration(d.billNarration);
       if (d.itemOverrides) setItemOverrides(d.itemOverrides);
       if (d.partialBillQty) setPartialBillQty(d.partialBillQty);
@@ -641,12 +618,8 @@ function CustomerOrdersTab({
   async function generateBill() {
     if (!selected) return;
 
-    // Zero-rate check: any item with price 0 and no override
-    const zeroItems = selected.items.filter((it) => {
-      const override = itemOverrides[it.catalog_product_id];
-      const hasOverride = override?.enabled && (override.price.trim() || override.discount.trim());
-      return Number(it.unit_price) === 0 && !hasOverride;
-    });
+    // Zero-rate check: any item with price 0 (no override_price allowed now)
+    const zeroItems = selected.items.filter((it) => Number(it.unit_price) === 0);
     if (zeroItems.length > 0 && !zeroRateConfirmed) {
       setShowZeroRateBanner(true);
       return;
@@ -662,19 +635,19 @@ function CustomerOrdersTab({
     if (packaging.trim()) body.packaging_charges = Number(packaging);
     if (discount.trim()) body.discount_percent = Number(discount);
     if (billSeriesId) body.bill_series_id = Number(billSeriesId);
-    if (rateType !== "order") body.rate_type = rateType;
     if (billNarration.trim()) body.narration = billNarration.trim();
     const validAdditional = additionalCharges.filter(c => c.name.trim() && c.amount.trim() && Number(c.amount) > 0);
     if (validAdditional.length) body.additional_charges = validAdditional.map(c => ({ name: c.name.trim(), amount: Number(c.amount) }));
 
+    // Only discount overrides — no price overrides since rate is fixed
     const overridesList = selected.items
-      .filter((it) => itemOverrides[it.catalog_product_id]?.enabled)
+      .filter((it) => {
+        const ov = itemOverrides[it.catalog_product_id];
+        return ov && ov.discount.trim();
+      })
       .map((it) => {
         const ov = itemOverrides[it.catalog_product_id];
-        const entry: Record<string, unknown> = { catalog_product_id: it.catalog_product_id };
-        if (ov.price.trim()) entry.override_price = Number(ov.price);
-        if (ov.discount.trim()) entry.discount_percent = Number(ov.discount);
-        return entry;
+        return { catalog_product_id: it.catalog_product_id, discount_percent: Number(ov.discount) };
       });
     if (overridesList.length > 0) body.item_overrides = overridesList;
 
@@ -744,8 +717,8 @@ function CustomerOrdersTab({
 
   const filtered = orders.filter((o) => {
     let matchStatus = true;
-    if (statusFilter === "open") matchStatus = o.status === "open" || o.status === "confirmed";
-    else if (statusFilter === "closed") matchStatus = o.status === "closed" || o.status === "shipped" || o.status === "billed";
+    if (statusFilter === "received") matchStatus = o.status === "received";
+    else if (statusFilter === "closed") matchStatus = o.status === "closed";
     else if (statusFilter) matchStatus = o.status === statusFilter;
     const q = search.toLowerCase();
     const matchSearch = !q || o.customer_name.toLowerCase().includes(q) || o.customer_phone.includes(q) || String(o.id).includes(q);
@@ -753,9 +726,9 @@ function CustomerOrdersTab({
   });
 
   const statusCounts = {
-    open: orders.filter((o) => ["open", "confirmed", "billed"].includes(o.status)).length,
-    closed: orders.filter((o) => ["closed", "shipped"].includes(o.status)).length,
-    cancelled: orders.filter((o) => o.status === "cancelled").length,
+    received: orders.filter((o) => o.status === "received").length,
+    billed: orders.filter((o) => o.status === "billed").length,
+    closed: orders.filter((o) => o.status === "closed").length,
   };
 
   return (
@@ -770,9 +743,9 @@ function CustomerOrdersTab({
       <div className="mb-4 flex flex-wrap items-center gap-2">
         {[
           { id: "", label: "All", count: orders.length },
-          { id: "open", label: "Open", count: statusCounts.open },
-          { id: "closed", label: "Closed", count: statusCounts.closed },
-          { id: "cancelled", label: "Cancelled", count: statusCounts.cancelled },
+          { id: "received", label: "Received", count: statusCounts.received },
+          { id: "billed",   label: "Billed",   count: statusCounts.billed },
+          { id: "closed",   label: "Closed",   count: statusCounts.closed },
         ].map((s) => (
           <button
             key={s.id}
@@ -815,7 +788,7 @@ function CustomerOrdersTab({
       {/* Merge mode banner */}
       {mergeMode && (
         <div className="mb-4 flex items-center gap-3 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3">
-          <span className="text-sm text-orange-800 font-medium">Merge mode: select confirmed orders from the same customer</span>
+          <span className="text-sm text-orange-800 font-medium">Merge mode: select received orders from the same customer</span>
           <span className="ml-auto text-sm font-semibold text-orange-700">{selectedForMerge.size} selected</span>
           {selectedForMerge.size >= 2 && (
             <button
@@ -835,31 +808,36 @@ function CustomerOrdersTab({
         <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-5 shadow-sm space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="font-bold text-emerald-800">⚡ Offline / Walk-in Order + Bill (1 step)</h3>
-            <button onClick={() => setShowOfflineForm(false)} className="text-slate-400 hover:text-slate-600 text-lg">✕</button>
+            <button onClick={() => { setShowOfflineForm(false); setOfflineResult(null); }} className="text-slate-400 hover:text-slate-600 text-lg">✕</button>
           </div>
 
-          {offlineResult && (
-            <div className="rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm space-y-2">
-              <p className="font-bold text-emerald-700 text-base">✓ {offlineResult.bill_no ? `Bill ${offlineResult.bill_no} created!` : "Order created!"} {offlineResult.grand_total && `· Grand Total: ₹${offlineResult.grand_total}`}</p>
-              <div className="flex flex-wrap gap-2">
+          {offlineResult ? (
+            <div className="rounded-xl border border-emerald-300 bg-white px-5 py-5 space-y-4 text-center shadow-sm">
+              <div className="text-4xl">✅</div>
+              <p className="font-bold text-emerald-700 text-lg">{offlineResult.bill_no ? `Bill ${offlineResult.bill_no} created!` : "Order + Bill created!"}</p>
+              {offlineResult.grand_total && <p className="text-slate-600 text-sm">Grand Total: <strong>₹{offlineResult.grand_total}</strong></p>}
+              <div className="flex flex-wrap justify-center gap-2 pt-1">
                 {offlineResult.bill_id && (
                   <button
                     type="button"
                     onClick={() => triggerPrint(offlineResult.bill_id!, 1)}
-                    className="inline-flex items-center gap-1 rounded-lg bg-slate-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
+                    className="inline-flex items-center gap-1 rounded-lg bg-slate-700 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
                   >
                     🖨️ Print Bill
                   </button>
                 )}
                 {offlineResult.document_url && (
-                  <a href={offlineResult.document_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">
+                  <a href={offlineResult.document_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
                     ⬇ Download PDF
                   </a>
                 )}
-                <button type="button" onClick={() => setOfflineResult(null)} className="text-xs text-slate-400 hover:text-slate-600 px-2">✕ Dismiss</button>
+                <button type="button" onClick={() => setOfflineResult(null)} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
+                  + New Order
+                </button>
               </div>
             </div>
-          )}
+          ) : (
+            <>
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <div className="col-span-2">
@@ -872,10 +850,6 @@ function CustomerOrdersTab({
             <div>
               <label className={LABEL}>Discount %</label>
               <input type="number" min="0" max="100" value={offlineDiscount} onChange={e => setOfflineDiscount(e.target.value)} placeholder="0" className={INPUT} />
-            </div>
-            <div>
-              <label className={LABEL}>Packaging ₹</label>
-              <input type="number" min="0" value={offlinePkg} onChange={e => setOfflinePkg(e.target.value)} placeholder="0" className={INPUT} />
             </div>
             <div className="flex items-end gap-2">
               <label className="flex items-center gap-1.5 text-sm cursor-pointer">
@@ -1083,6 +1057,8 @@ function CustomerOrdersTab({
               {offlineBusy ? "Creating…" : "⚡ Create Order + Bill"}
             </button>
           )}
+          </>
+          )}
         </div>
       )}
 
@@ -1099,7 +1075,7 @@ function CustomerOrdersTab({
             <div
               key={o.id}
               onClick={() => {
-                if (mergeMode && o.status === "confirmed") {
+                if (mergeMode && o.status === "received") {
                   setSelectedForMerge((prev) => {
                     const next = new Set(prev);
                     if (next.has(o.id)) next.delete(o.id); else next.add(o.id);
@@ -1118,7 +1094,7 @@ function CustomerOrdersTab({
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <div className="flex items-center gap-2">
-                    {mergeMode && o.status === "confirmed" && (
+                    {mergeMode && o.status === "received" && (
                       <input
                         type="checkbox"
                         checked={selectedForMerge.has(o.id)}
@@ -1162,38 +1138,21 @@ function CustomerOrdersTab({
         width="max-w-xl"
         footer={
           <div className="flex flex-wrap items-center gap-3">
-            {showCancelPin ? (
-              <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2">
-                <span className="text-xs font-semibold text-red-700">Cancel PIN:</span>
-                <input
-                  type="password"
-                  inputMode="numeric"
-                  autoFocus
-                  value={cancelPinInput}
-                  onChange={e => setCancelPinInput(e.target.value)}
-                  onKeyDown={e => e.key === "Enter" && void confirmCancelWithPin()}
-                  className="w-24 rounded border border-red-300 px-2 py-1 text-sm"
-                  placeholder="Enter PIN"
-                />
-                <button type="button" onClick={() => void confirmCancelWithPin()} disabled={cancelPinBusy} className="rounded bg-red-600 px-3 py-1 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-50">
-                  {cancelPinBusy ? "…" : "Confirm"}
-                </button>
-                <button type="button" onClick={() => { setShowCancelPin(false); setCancelPinInput(""); setCancelPinError(""); }} className="text-slate-400 hover:text-slate-600 text-xs">Cancel</button>
-                {cancelPinError && <span className="text-xs text-red-600">{cancelPinError}</span>}
-              </div>
-            ) : (
-              <button type="button" onClick={() => void saveOrder()} disabled={saving} className={BTN_PRIMARY}>
-                {saving ? "Saving…" : "Save changes"}
-              </button>
-            )}
-            {selected && ["open", "confirmed", "billed"].includes(selected.status) && !showBillForm && (
-              <button type="button" onClick={() => { setShowBillForm(true); setPartialBillQty({}); }} className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-amber-600">
+            {selected && ["received", "billed"].includes(selected.status) && !showBillForm && (
+              <button type="button" onClick={async () => {
+                  setShowBillForm(true); setPartialBillQty({});
+                  if (selected) {
+                    const ids = selected.items.map(it => it.catalog_product_id);
+                    const sr = await fetchApi(apiUrl("inventory/stock-check"), { method: "POST", headers: headers(), body: JSON.stringify({ catalog_product_ids: ids }) }).catch(() => null);
+                    if (sr?.ok) setBillStockMap(await sr.json());
+                  }
+                }} className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-amber-600">
                 🧾 Generate Bill
               </button>
             )}
-            {selected && selected.status === "billed" && !showShipForm && (
-              <button type="button" onClick={() => setShowShipForm(true)} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700">
-                🚚 Mark Shipped
+            {selected && selected.status === "billed" && (
+              <button type="button" disabled={saving} onClick={() => void saveOrder("closed")} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-50">
+                {saving ? "…" : "✓ Mark Closed (Payment Received)"}
               </button>
             )}
             {saveMsg && <span className="text-sm text-red-600">{saveMsg}</span>}
@@ -1202,28 +1161,10 @@ function CustomerOrdersTab({
       >
         {selected && (
           <div className="space-y-5">
-            {/* Status + notes */}
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className={LABEL}>Status</label>
-                <select value={editStatus} onChange={(e) => setEditStatus(e.target.value)} className={INPUT}>
-                  <option value="open">Open</option>
-                  <option value="billed">Billed</option>
-                  <option value="closed">Closed</option>
-                  <option value="cancelled">Cancelled</option>
-                  <option value="confirmed">Confirmed (legacy)</option>
-                  <option value="shipped">Shipped (legacy)</option>
-                </select>
-              </div>
-              <div>
-                <label className={LABEL}>Current status</label>
-                <div className="mt-2">{statusBadge(selected.status)}</div>
-              </div>
-            </div>
-
-            <div>
-              <label className={LABEL}>Admin notes</label>
-              <textarea value={editNotes} onChange={(e) => setEditNotes(e.target.value)} rows={2} className={INPUT} placeholder="Internal notes…" />
+            {/* Status — read-only, workflow driven */}
+            <div className="flex items-center gap-3">
+              <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">Status</span>
+              {statusBadge(selected.status)}
             </div>
 
             {/* Customer notes */}
@@ -1231,16 +1172,6 @@ function CustomerOrdersTab({
               <div className="rounded-xl bg-amber-50 p-3">
                 <div className="text-xs font-semibold uppercase text-amber-600">Customer note</div>
                 <div className="mt-1 text-sm text-amber-800">{selected.customer_notes}</div>
-              </div>
-            )}
-
-            {/* Manual order fields */}
-            {(selected.invoice_date || selected.invoice_no || selected.receipt_note_no) && (
-              <div className="rounded-xl bg-slate-50 p-3 space-y-1">
-                <div className="text-xs font-semibold uppercase text-slate-500">Walk-in / Manual order details</div>
-                {selected.invoice_date && <div className="text-sm text-slate-700"><span className="font-medium">Invoice date:</span> {new Date(selected.invoice_date).toLocaleDateString("en-IN")}</div>}
-                {selected.invoice_no && <div className="text-sm text-slate-700"><span className="font-medium">Invoice no:</span> {selected.invoice_no}</div>}
-                {selected.receipt_note_no && <div className="text-sm text-slate-700"><span className="font-medium">Receipt note no:</span> {selected.receipt_note_no}</div>}
               </div>
             )}
 
@@ -1330,27 +1261,44 @@ function CustomerOrdersTab({
                   <thead>
                     <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase text-slate-500">
                       <th className="px-3 py-2 text-left">Product</th>
-                      <th className="px-3 py-2 text-right">Qty</th>
+                      <th className="px-3 py-2 text-right">Ordered</th>
+                      <th className="px-3 py-2 text-right">Billed</th>
+                      <th className="px-3 py-2 text-right">Remaining</th>
                       <th className="px-3 py-2 text-right">Price</th>
                       <th className="px-3 py-2 text-right">Total</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {selected.items.map((it) => (
+                    {selected.items.map((it) => {
+                      const billed = it.qty_billed ?? 0;
+                      const remaining = Math.max(0, it.quantity - billed);
+                      return (
                         <tr key={it.catalog_product_id}>
                           <td className="px-3 py-2">
                             <div className="font-medium">{it.name}</div>
                             <div className="text-xs text-slate-400">{it.our_product_id}</div>
                           </td>
                           <td className="px-3 py-2 text-right">{it.quantity}</td>
+                          <td className="px-3 py-2 text-right text-amber-600">{billed > 0 ? billed : "—"}</td>
+                          <td className="px-3 py-2 text-right font-semibold text-emerald-700">{remaining}</td>
                           <td className="px-3 py-2 text-right">₹{it.unit_price}</td>
-                          <td className="px-3 py-2 text-right font-medium">₹{it.line_total}</td>
+                          <td className="px-3 py-2 text-right font-medium">₹{(it.quantity * Number(it.unit_price)).toLocaleString("en-IN")}</td>
                         </tr>
-                    ))}
+                      );
+                    })}
                     <tr className="border-t border-slate-200 bg-slate-50">
-                      <td colSpan={3} className="px-3 py-2 text-right font-semibold">Total</td>
+                      <td colSpan={5} className="px-3 py-2 text-right font-semibold">Order Total</td>
                       <td className="px-3 py-2 text-right font-bold text-slate-900">₹{selected.total_amount}</td>
                     </tr>
+                    {selected.items.some(it => (it.qty_billed ?? 0) > 0) && (() => {
+                      const remVal = selected.items.reduce((s, it) => s + Math.max(0, it.quantity - (it.qty_billed ?? 0)) * Number(it.unit_price), 0);
+                      return (
+                        <tr className="bg-amber-50">
+                          <td colSpan={5} className="px-3 py-2 text-right text-xs font-semibold text-amber-700">Remaining to Bill</td>
+                          <td className="px-3 py-2 text-right text-sm font-bold text-amber-700">₹{remVal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                        </tr>
+                      );
+                    })()}
                   </tbody>
                 </table>
               </div>
@@ -1558,353 +1506,13 @@ function CustomerOrdersTab({
               </div>
             )}
 
-            {showBillForm && (
-              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="text-sm font-semibold text-amber-800">Generate bill</div>
-                    {hasDraft() && (
-                      <button type="button" onClick={loadDraft} className="text-xs text-blue-600 hover:underline">↓ Load Draft</button>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button type="button" onClick={saveDraft} className="text-xs text-slate-500 hover:text-slate-700">Save Draft</button>
-                    <button type="button" onClick={() => { setShowBillForm(false); setBulkDiscount(""); setRateType("order"); setPartialBillQty({}); }} className="text-slate-400 hover:text-slate-600">✕</button>
-                  </div>
-                </div>
-
-                {/* Partial delivery: choose which items / quantities to bill */}
-                <div>
-                  <div className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-slate-500">Delivery quantities (leave blank = full remaining)</div>
-                  <div className="overflow-hidden rounded-lg border border-amber-200 bg-white">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="bg-slate-50 text-xs font-semibold uppercase text-slate-500">
-                          <th className="px-3 py-1.5 text-left">Product</th>
-                          <th className="px-3 py-1.5 text-right">Ordered</th>
-                          <th className="px-3 py-1.5 text-right">Already Billed</th>
-                          <th className="px-3 py-1.5 text-right">Deliver now</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {selected.items.map(it => {
-                          const remaining = Math.max(0, it.quantity - (it.qty_billed ?? 0));
-                          if (remaining <= 0) return null;
-                          return (
-                            <tr key={it.catalog_product_id}>
-                              <td className="px-3 py-1.5 font-medium text-slate-800">{it.our_product_id || it.name || it.catalog_product_id}</td>
-                              <td className="px-3 py-1.5 text-right tabular-nums">{it.quantity}</td>
-                              <td className="px-3 py-1.5 text-right tabular-nums text-amber-600">{it.qty_billed ?? 0}</td>
-                              <td className="px-3 py-1.5 text-right">
-                                <input
-                                  type="number" min="1" max={remaining}
-                                  placeholder={String(remaining)}
-                                  value={partialBillQty[it.catalog_product_id] ?? ""}
-                                  onChange={e => setPartialBillQty(p => ({ ...p, [it.catalog_product_id]: e.target.value }))}
-                                  className="w-20 rounded border border-slate-300 px-2 py-1 text-right text-sm"
-                                />
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                  <p className="mt-1 text-xs text-amber-700">Remaining undelivered items will stay in the open order.</p>
-                </div>
-
-                {/* Bill series */}
-                <div>
-                  <label className={LABEL}>Bill Series</label>
-                  <select value={billSeriesId} onChange={(e) => setBillSeriesId(e.target.value)} className={INPUT}>
-                    <option value="">(none)</option>
-                    {billSeriesList.map((s) => {
-                      const exhausted = s.current_num >= s.end_num;
-                      return (
-                        <option key={s.id} value={s.id} disabled={exhausted}>
-                          {s.name} — {s.prefix}{exhausted ? " (Exhausted)" : ""}
-                        </option>
-                      );
-                    })}
-                  </select>
-                  {billSeriesId && (() => {
-                    const s = billSeriesList.find((s) => String(s.id) === billSeriesId);
-                    if (!s) return null;
-                    const exhausted = s.current_num >= s.end_num;
-                    return exhausted ? (
-                      <p className="mt-1 text-xs font-semibold text-red-600">⚠ This series is full. Select another or create a new one in Admin.</p>
-                    ) : (
-                      <p className="mt-1 text-xs text-amber-700">Next bill ID: <span className="font-bold">{s.prefix}{s.current_num + 1}</span> ({s.end_num - s.current_num} remaining)</p>
-                    );
-                  })()}
-                </div>
-
-                {/* Rate type */}
-                <div>
-                  <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-slate-500">Rate Type</div>
-                  <div className="flex gap-2">
-                    {[
-                      { id: "order", label: "Order Rate" },
-                      { id: "net", label: "Net Rate (cost)" },
-                      { id: "regular", label: "Regular (MRP)" },
-                    ].map((rt) => (
-                      <button
-                        key={rt.id}
-                        type="button"
-                        onClick={() => setRateType(rt.id as "order" | "net" | "regular")}
-                        className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
-                          rateType === rt.id ? "bg-blue-600 text-white" : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
-                        }`}
-                      >
-                        {rt.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className={LABEL}>Freight charges (₹)</label>
-                    <input value={freight} onChange={(e) => setFreight(e.target.value)} type="number" min="0" step="0.01" placeholder="0" className={INPUT} />
-                  </div>
-                  <div>
-                    <label className={LABEL}>Packaging charges (₹)</label>
-                    <input value={packaging} onChange={(e) => setPackaging(e.target.value)} type="number" min="0" step="0.01" placeholder="0" className={INPUT} />
-                  </div>
-                  <div>
-                    <label className={LABEL}>Overall bill discount (%)</label>
-                    <input value={discount} onChange={(e) => setDiscount(e.target.value)} type="number" min="0" max="100" step="0.01" placeholder="0" className={INPUT} />
-                  </div>
-                  <div className="flex items-end gap-2">
-                    <label className="flex items-center gap-2 text-sm text-slate-700">
-                      <input type="checkbox" checked={gstEnabled} onChange={(e) => setGstEnabled(e.target.checked)} className="h-4 w-4 rounded" />
-                      GST
-                    </label>
-                    {gstEnabled && (
-                      <input value={gstRate} onChange={(e) => setGstRate(e.target.value)} type="number" min="0" max="100" className="w-20 rounded-lg border border-slate-300 px-2 py-2 text-sm" />
-                    )}
-                  </div>
-                  <div className="col-span-2">
-                    <label className={LABEL}>Narration (printed on bill)</label>
-                    <input value={billNarration} onChange={e => setBillNarration(e.target.value)} placeholder="Auto-filled from customer notes if blank" className={INPUT} />
-                  </div>
-                </div>
-
-                {/* Additional charges */}
-                <div>
-                  <div className="mb-1.5 flex items-center justify-between">
-                    <label className={LABEL}>Additional Charges</label>
-                    <button type="button" onClick={() => setAdditionalCharges(p => [...p, { name: "", amount: "" }])} className="text-xs text-blue-600 hover:underline">+ Add charge</button>
-                  </div>
-                  {additionalCharges.length === 0 && (
-                    <p className="text-xs text-slate-400 italic">None &mdash; click &quot;+ Add charge&quot; to add VAT, handling fee, etc.</p>
-                  )}
-                  {additionalCharges.map((ac, idx) => (
-                    <div key={idx} className="mb-1.5 flex gap-2 items-center">
-                      <input
-                        type="text"
-                        placeholder="Charge name (e.g. VAT)"
-                        value={ac.name}
-                        onChange={e => setAdditionalCharges(p => p.map((c, i) => i === idx ? { ...c, name: e.target.value } : c))}
-                        className="flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
-                      />
-                      <input
-                        type="number" min="0" step="0.01"
-                        placeholder="Amount ₹"
-                        value={ac.amount}
-                        onChange={e => setAdditionalCharges(p => p.map((c, i) => i === idx ? { ...c, amount: e.target.value } : c))}
-                        className="w-28 rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
-                      />
-                      <button type="button" onClick={() => setAdditionalCharges(p => p.filter((_, i) => i !== idx))} className="text-red-500 hover:text-red-700 text-lg">×</button>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Per-item overrides */}
-                {selected && selected.items.length > 0 && (
-                  <div className="rounded-lg border border-amber-300 bg-white p-3 space-y-2">
-                    <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">Item-level overrides</div>
-                    <div className="flex items-center gap-3 pb-2 border-b border-amber-200">
-                      <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
-                        <input
-                          type="checkbox"
-                          onChange={(e) => {
-                            if (!selected) return;
-                            const newOverrides: Record<number, { enabled: boolean; price: string; discount: string }> = {};
-                            selected.items.forEach((it) => {
-                              newOverrides[it.catalog_product_id] = {
-                                ...(itemOverrides[it.catalog_product_id] ?? { price: "", discount: "" }),
-                                enabled: e.target.checked,
-                              };
-                            });
-                            setItemOverrides(newOverrides);
-                          }}
-                          className="h-4 w-4 rounded"
-                        />
-                        Select All
-                      </label>
-                      <input
-                        type="number"
-                        min="0" max="100" step="0.01"
-                        value={bulkDiscount}
-                        onChange={(e) => setBulkDiscount(e.target.value)}
-                        placeholder="Bulk disc %"
-                        className="w-24 rounded border border-slate-300 px-2 py-1 text-xs"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (!selected || !bulkDiscount.trim()) return;
-                          const newOverrides: Record<number, { enabled: boolean; price: string; discount: string }> = {};
-                          selected.items.forEach((it) => {
-                            newOverrides[it.catalog_product_id] = { enabled: true, price: "", discount: bulkDiscount };
-                          });
-                          setItemOverrides(newOverrides);
-                        }}
-                        className="rounded-lg bg-slate-700 px-3 py-1 text-xs font-semibold text-white hover:bg-slate-800"
-                      >
-                        Apply to all
-                      </button>
-                    </div>
-                    {selected.items.map((it) => {
-                      const ov = itemOverrides[it.catalog_product_id] ?? { enabled: false, price: "", discount: "" };
-                      return (
-                        <div key={it.catalog_product_id} className={`rounded-lg p-2 ${ov.enabled ? "bg-blue-50 border border-blue-200" : "bg-slate-50"}`}>
-                          <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
-                            <input
-                              type="checkbox"
-                              checked={ov.enabled}
-                              onChange={(e) => setItemOverrides((prev) => ({
-                                ...prev,
-                                [it.catalog_product_id]: { ...ov, enabled: e.target.checked },
-                              }))}
-                              className="h-4 w-4 rounded"
-                            />
-                            {it.name} <span className="text-xs text-slate-400">(₹{it.unit_price} × {it.quantity})</span>
-                          </label>
-                          {ov.enabled && (
-                            <div className="mt-2 grid grid-cols-2 gap-2 pl-6">
-                              <div>
-                                <label className="mb-0.5 block text-xs text-slate-500">Override Price (₹)</label>
-                                <input
-                                  type="number" min="0" step="0.01"
-                                  value={ov.price}
-                                  onChange={(e) => setItemOverrides((prev) => ({
-                                    ...prev,
-                                    [it.catalog_product_id]: { ...ov, price: e.target.value },
-                                  }))}
-                                  placeholder={it.unit_price}
-                                  className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                                />
-                              </div>
-                              <div>
-                                <label className="mb-0.5 block text-xs text-slate-500">Discount %</label>
-                                <input
-                                  type="number" min="0" max="100" step="0.01"
-                                  value={ov.discount}
-                                  onChange={(e) => setItemOverrides((prev) => ({
-                                    ...prev,
-                                    [it.catalog_product_id]: { ...ov, discount: e.target.value },
-                                  }))}
-                                  placeholder="0"
-                                  className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                                />
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* Zero-rate confirmation banner */}
-                {showZeroRateBanner && (
-                  <div className="rounded-lg border border-red-200 bg-red-50 p-3">
-                    <p className="text-sm font-medium text-red-800">⚠ Some items have ₹0 rate. Continue?</p>
-                    <div className="mt-2 flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => { setZeroRateConfirmed(true); setShowZeroRateBanner(false); void generateBill(); }}
-                        className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700"
-                      >
-                        Confirm
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setShowZeroRateBanner(false)}
-                        className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {billMsg && <p className="text-sm font-medium text-emerald-700">{billMsg}</p>}
-                <button type="button" onClick={() => void generateBill()} disabled={billBusy} className={BTN_PRIMARY}>
-                  {billBusy ? "Generating…" : "Generate & send to customer"}
-                </button>
-              </div>
+            {showBillForm && selected && (
+              // Full-page bill modal is rendered outside the drawer — see below
+              null
             )}
 
-            {/* Shipment form */}
-            {showShipForm && (
-              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm font-semibold text-emerald-800">Shipment details</div>
-                  <button type="button" onClick={() => setShowShipForm(false)} className="text-slate-400 hover:text-slate-600">✕</button>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className={LABEL}>Receipt / AWB number *</label>
-                    <input value={shipReceipt} onChange={(e) => setShipReceipt(e.target.value)} className={INPUT} placeholder="e.g. DTX12345" />
-                  </div>
-                  <div>
-                    <label className={LABEL}>Contact number (optional)</label>
-                    <input value={shipContact} onChange={(e) => setShipContact(e.target.value)} className={INPUT} placeholder="Courier contact" />
-                  </div>
-                  {freightVendors.length > 0 && (
-                    <div className="col-span-2">
-                      <label className={LABEL}>Freight agent</label>
-                      <select value={selectedFreightVendorId} onChange={(e) => setSelectedFreightVendorId(e.target.value)} className={INPUT}>
-                        <option value="">— none / not applicable —</option>
-                        {freightVendors.map((fv) => (
-                          <option key={fv.id} value={fv.id}>{fv.name}{Number(fv.balance_due) > 0 ? ` (balance: ₹${fv.balance_due})` : ""}</option>
-                        ))}
-                      </select>
-                      {selectedFreightVendorId && billData?.totals?.freight_charges && Number(billData.totals.freight_charges) > 0 && (
-                        <p className="mt-1 text-xs text-emerald-700">₹{billData.totals.freight_charges} will be added to their ledger on save.</p>
-                      )}
-                    </div>
-                  )}
-                  <div className="col-span-2">
-                    <label className={LABEL}>Shipment notes</label>
-                    <input value={shipNotes} onChange={(e) => setShipNotes(e.target.value)} className={INPUT} placeholder="e.g. via Blue Dart" />
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  disabled={saving}
-                  onClick={() => { void saveOrder("shipped"); setShowShipForm(false); }}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-50"
-                >
-                  {saving ? "Saving…" : "Confirm shipment"}
-                </button>
-              </div>
-            )}
+            {/* Shipment info preserved for legacy orders */}
 
-            {/* Shipment info if already shipped */}
-            {selected.shipment_receipt && (
-              <div className="rounded-xl bg-emerald-50 p-3">
-                <div className="text-xs font-semibold uppercase text-emerald-600">Shipment</div>
-                <div className="mt-1 grid grid-cols-2 gap-1 text-sm text-emerald-800">
-                  <span>Receipt: {selected.shipment_receipt}</span>
-                  <span>Contact: {selected.shipment_contact}</span>
-                  {selected.shipment_notes && <span className="col-span-2">Notes: {selected.shipment_notes}</span>}
-                </div>
-              </div>
-            )}
           </div>
         )}
       </Drawer>
@@ -1980,389 +1588,267 @@ function CustomerOrdersTab({
           </div>
         </div>
       )}
+
+      {/* ── Full-screen Generate Bill Modal ── */}
+      {showBillForm && selected && (() => {
+        const billItems = selected.items
+          .filter(it => Math.max(0, it.quantity - (it.qty_billed ?? 0)) > 0);
+        const overallDiscNum = Number(discount) || 0;
+        const useOverallDisc = overallDiscNum > 0;
+
+        const rows = billItems.map(it => {
+          const remaining = Math.max(0, it.quantity - (it.qty_billed ?? 0));
+          const deliverQty = Number(partialBillQty[it.catalog_product_id] ?? remaining) || remaining;
+          const ov = itemOverrides[it.catalog_product_id];
+          const basePrice = Number(it.unit_price); // rate is always fixed from the order
+          const itemDiscPct = useOverallDisc ? 0 : (ov?.discount.trim() ? Number(ov.discount) : 0);
+          const lineTotal = basePrice * deliverQty * (1 - itemDiscPct / 100);
+          return { it, remaining, deliverQty, basePrice, itemDiscPct, lineTotal };
+        });
+
+        const itemsSubtotal = rows.reduce((s, r) => s + r.lineTotal, 0);
+        const afterOverallDisc = useOverallDisc ? itemsSubtotal * (1 - overallDiscNum / 100) : itemsSubtotal;
+        const freightNum = Number(freight) || 0;
+        const packNum = Number(packaging) || 0;
+        const extraNum = additionalCharges.reduce((s, c) => s + (Number(c.amount) || 0), 0);
+        const preGst = afterOverallDisc + freightNum + packNum + extraNum;
+        // GST is tax-inclusive: extracted from price, not added on top
+        const gstRate_ = Number(gstRate) || 0;
+        const gstNum = (gstEnabled && gstRate_ > 0) ? preGst - preGst / (1 + gstRate_ / 100) : 0;
+        const grandTotal = preGst; // total does NOT change when GST enabled
+
+        const fmt = (v: number) => v.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 overflow-y-auto py-6 px-4">
+            <div className="w-full max-w-4xl rounded-2xl bg-white shadow-2xl">
+              {/* Header */}
+              <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
+                <div>
+                  <h2 className="text-lg font-bold text-slate-900">Generate Bill</h2>
+                  <p className="text-sm text-slate-500">Order #{selected.id} — {selected.customer_name}</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  {hasDraft() && <button type="button" onClick={loadDraft} className="text-xs text-blue-600 hover:underline">↓ Load Draft</button>}
+                  <button type="button" onClick={saveDraft} className="text-xs text-slate-500 hover:text-slate-700">Save Draft</button>
+                  <button type="button" onClick={() => { setShowBillForm(false); setPartialBillQty({}); }} className="text-slate-400 hover:text-slate-600 text-xl leading-none">✕</button>
+                </div>
+              </div>
+
+              <div className="p-6 space-y-6">
+                {/* Items table */}
+                <div>
+                  <div className="mb-2 flex items-center justify-between">
+                    <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-500">Items</h3>
+                    <p className="text-xs text-slate-400">Adjust &quot;Deliver Now&quot; for partial shipment · Leave blank = all remaining</p>
+                  </div>
+                  <div className="overflow-hidden rounded-xl border border-slate-200">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-slate-900 text-white">
+                          <th className="px-4 py-2.5 text-left font-semibold">Item</th>
+                          <th className="px-3 py-2.5 text-right font-semibold">Ordered</th>
+                          <th className="px-3 py-2.5 text-right font-semibold">Billed</th>
+                          <th className="px-3 py-2.5 text-right font-semibold">Deliver Now</th>
+                          <th className="px-3 py-2.5 text-right font-semibold">Rate ₹</th>
+                          <th className="px-3 py-2.5 text-right font-semibold">Disc %</th>
+                          <th className="px-3 py-2.5 text-right font-semibold">Amount ₹</th>
+                        </tr>                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {rows.map(({ it, remaining, deliverQty, basePrice, itemDiscPct, lineTotal }, idx) => {
+                          const ov = itemOverrides[it.catalog_product_id] ?? { enabled: false, discount: "" };
+                          const avail = billStockMap[it.catalog_product_id];
+                          const stockOk = avail === undefined || avail >= (Number(partialBillQty[it.catalog_product_id] ?? remaining) || remaining);
+                          return (
+                            <tr key={it.catalog_product_id} className={idx % 2 === 1 ? "bg-slate-50" : ""}>
+                              <td className="px-4 py-2.5">
+                                <div className="font-semibold text-slate-900">{it.our_product_id}</div>
+                                <div className="text-xs text-slate-500">{it.name}</div>
+                                {avail !== undefined && (
+                                  <div className={`mt-0.5 text-xs font-medium ${stockOk ? "text-emerald-600" : "text-red-600"}`}>
+                                    {stockOk ? `✓ ${avail} in stock` : `⚠ only ${avail} in stock`}
+                                  </div>
+                                )}
+                              </td>
+                              <td className="px-3 py-2.5 text-right tabular-nums text-slate-600">{it.quantity}</td>
+                              <td className="px-3 py-2.5 text-right tabular-nums text-amber-600">{it.qty_billed ?? 0}</td>
+                              <td className="px-3 py-2.5 text-right">
+                                <input
+                                  type="number" min="1" max={remaining}
+                                  placeholder={String(remaining)}
+                                  value={partialBillQty[it.catalog_product_id] ?? ""}
+                                  onChange={e => setPartialBillQty(p => ({ ...p, [it.catalog_product_id]: e.target.value }))}
+                                  className="w-20 rounded-lg border border-slate-300 px-2 py-1 text-right text-sm focus:border-blue-500 focus:outline-none"
+                                />
+                              </td>
+                              <td className="px-3 py-2.5 text-right tabular-nums text-slate-700">₹{Number(it.unit_price).toLocaleString("en-IN")}</td>
+                              <td className="px-3 py-2.5 text-right">
+                                <input
+                                  type="number" min="0" max="100" step="0.01"
+                                  value={ov.discount}
+                                  disabled={useOverallDisc}
+                                  onChange={e => setItemOverrides(prev => ({ ...prev, [it.catalog_product_id]: { ...ov, enabled: true, discount: e.target.value } }))}
+                                  placeholder="0"
+                                  className="w-16 rounded-lg border border-slate-300 px-2 py-1 text-right text-sm focus:border-blue-500 focus:outline-none disabled:bg-slate-100 disabled:text-slate-400"
+                                />
+                              </td>
+                              <td className="px-3 py-2.5 text-right font-semibold tabular-nums text-slate-900">₹{fmt(lineTotal)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Charges + discounts */}
+                <div className="grid grid-cols-2 gap-4">
+                  {/* Left: charges */}
+                  <div className="space-y-3">
+                    <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-500">Charges</h3>
+
+                    {/* Freight agent */}
+                    <div>
+                      <label className={LABEL}>Freight Agent</label>
+                      <select value={selectedFreightVendorId} onChange={e => setSelectedFreightVendorId(e.target.value)} className={INPUT}>
+                        <option value="">— None —</option>
+                        {freightVendors.map(fv => (
+                          <option key={fv.id} value={fv.id}>{fv.name}{Number(fv.balance_due) > 0 ? ` (bal: ₹${fv.balance_due})` : ""}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className={LABEL}>Freight ₹</label>
+                        <input value={freight} onChange={e => setFreight(e.target.value)} type="number" min="0" step="0.01" placeholder="0" className={INPUT} />
+                      </div>
+                      <div>
+                        <label className={LABEL}>Packaging ₹</label>
+                        <input value={packaging} onChange={e => setPackaging(e.target.value)} type="number" min="0" step="0.01" placeholder="0" className={INPUT} />
+                      </div>
+                    </div>
+
+                    {/* Additional charges */}
+                    <div>
+                      <div className="mb-1 flex items-center justify-between">
+                        <label className={LABEL}>Additional Charges</label>
+                        <button type="button" onClick={() => setAdditionalCharges(p => [...p, { name: "", amount: "" }])} className="text-xs text-blue-600 hover:underline">+ Add</button>
+                      </div>
+                      {additionalCharges.map((ac, idx) => (
+                        <div key={idx} className="mb-1.5 flex gap-2 items-center">
+                          <input type="text" placeholder="Name (e.g. Handling)" value={ac.name}
+                            onChange={e => setAdditionalCharges(p => p.map((c, i) => i === idx ? { ...c, name: e.target.value } : c))}
+                            className="flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none" />
+                          <input type="number" min="0" step="0.01" placeholder="₹" value={ac.amount}
+                            onChange={e => setAdditionalCharges(p => p.map((c, i) => i === idx ? { ...c, amount: e.target.value } : c))}
+                            className="w-24 rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+                          <button type="button" onClick={() => setAdditionalCharges(p => p.filter((_, i) => i !== idx))} className="text-red-500 hover:text-red-700">×</button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Right: discount + GST + summary */}
+                  <div className="space-y-3">
+                    <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-500">Discount &amp; Tax</h3>
+
+                    <div>
+                      <label className={LABEL}>Overall Bill Discount %</label>
+                      <input value={discount} onChange={e => setDiscount(e.target.value)} type="number" min="0" max="100" step="0.01" placeholder="0 — or use per-item disc above" className={INPUT} />
+                      {useOverallDisc && <p className="mt-0.5 text-xs text-amber-700">Per-item discounts disabled when overall discount is set</p>}
+                    </div>
+
+                    <div>
+                      <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                        <input type="checkbox" checked={gstEnabled} onChange={e => setGstEnabled(e.target.checked)} className="h-4 w-4 rounded" />
+                        GST inclusive (extract from price)
+                      </label>
+                      <p className="mt-0.5 text-xs text-slate-400">If item is ₹118 at 18% GST → taxable ₹100 + GST ₹18. Total stays ₹118.</p>
+                      {gstEnabled && (
+                        <div className="mt-1.5 flex items-center gap-2">
+                          <input value={gstRate} onChange={e => setGstRate(e.target.value)} type="number" min="0" max="100" placeholder="18"
+                            className="w-20 rounded-lg border border-slate-300 px-2 py-2 text-sm" />
+                          <span className="text-sm text-slate-500">%</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Live summary */}
+                    <div className="rounded-xl bg-slate-50 p-3 space-y-1.5 text-sm mt-2">
+                      <div className="flex justify-between text-slate-600"><span>Items subtotal</span><span className="tabular-nums">₹{fmt(itemsSubtotal)}</span></div>
+                      {useOverallDisc && <div className="flex justify-between text-amber-700"><span>Discount ({discount}%)</span><span className="tabular-nums">−₹{fmt(itemsSubtotal - afterOverallDisc)}</span></div>}
+                      {freightNum > 0 && <div className="flex justify-between text-slate-600"><span>Freight</span><span className="tabular-nums">₹{fmt(freightNum)}</span></div>}
+                      {packNum > 0 && <div className="flex justify-between text-slate-600"><span>Packaging</span><span className="tabular-nums">₹{fmt(packNum)}</span></div>}
+                      {additionalCharges.filter(c => Number(c.amount) > 0).map((c, i) => (
+                        <div key={i} className="flex justify-between text-slate-600"><span>{c.name || "Extra"}</span><span className="tabular-nums">₹{fmt(Number(c.amount))}</span></div>
+                      ))}
+                      {gstEnabled && gstNum > 0 && <div className="flex justify-between text-slate-600"><span>GST ({gstRate}%) <span className="text-xs text-slate-400">(included in above)</span></span><span className="tabular-nums">₹{fmt(gstNum)}</span></div>}
+                      <div className="flex justify-between border-t border-slate-200 pt-1.5 font-bold text-slate-900 text-base"><span>Grand Total</span><span className="tabular-nums">₹{fmt(grandTotal)}</span></div>
+                      {gstEnabled && gstNum > 0 && <div className="flex justify-between text-xs text-slate-400"><span>Taxable value (ex-GST)</span><span className="tabular-nums">₹{fmt(grandTotal - gstNum)}</span></div>}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Bill series + narration */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className={LABEL}>Bill Series</label>
+                    <select value={billSeriesId} onChange={e => setBillSeriesId(e.target.value)} className={INPUT}>
+                      <option value="">(none)</option>
+                      {billSeriesList.map(s => {
+                        const exhausted = s.current_num >= s.end_num;
+                        return (
+                          <option key={s.id} value={s.id} disabled={exhausted}>
+                            {s.name} — {s.prefix}{exhausted ? " (Exhausted)" : ""}
+                          </option>
+                        );
+                      })}
+                    </select>
+                    {billSeriesId && (() => {
+                      const s = billSeriesList.find(s => String(s.id) === billSeriesId);
+                      if (!s) return null;
+                      return s.current_num >= s.end_num
+                        ? <p className="mt-0.5 text-xs font-semibold text-red-600">⚠ Series exhausted</p>
+                        : <p className="mt-0.5 text-xs text-amber-700">Next: <strong>{s.prefix}{s.current_num + 1}</strong> ({s.end_num - s.current_num} left)</p>;
+                    })()}
+                  </div>
+                  <div>
+                    <label className={LABEL}>Narration (printed on bill)</label>
+                    <input value={billNarration} onChange={e => setBillNarration(e.target.value)} placeholder="Auto-filled from customer note" className={INPUT} />
+                  </div>
+                </div>
+
+                {/* Zero-rate warning */}
+                {showZeroRateBanner && (
+                  <div className="rounded-lg border border-red-200 bg-red-50 p-3">
+                    <p className="text-sm font-medium text-red-800">⚠ Some items have ₹0 rate. Continue?</p>
+                    <div className="mt-2 flex gap-2">
+                      <button type="button" onClick={() => { setZeroRateConfirmed(true); setShowZeroRateBanner(false); void generateBill(); }} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700">Confirm</button>
+                      <button type="button" onClick={() => setShowZeroRateBanner(false)} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100">Cancel</button>
+                    </div>
+                  </div>
+                )}
+
+                {billMsg && <p className="text-sm font-medium text-emerald-700">{billMsg}</p>}
+
+                {/* Actions */}
+                <div className="flex items-center gap-3 border-t border-slate-200 pt-4">
+                  <button type="button" onClick={() => void generateBill()} disabled={billBusy} className="inline-flex items-center gap-1.5 rounded-xl bg-amber-500 px-6 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-amber-600 disabled:opacity-50">
+                    {billBusy ? "Generating…" : "🧾 Generate Bill & Send to Customer"}
+                  </button>
+                  <button type="button" onClick={() => { setShowBillForm(false); setPartialBillQty({}); }} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
 
 // ─────────────────────────────── PURCHASE ORDERS ───────────────────────────────
 
-function PurchaseOrdersTab({
-  headers,
-  headersAdmin,
-  adminKey,
-}: {
-  headers: () => Record<string, string>;
-  headersAdmin: () => Record<string, string>;
-  adminKey: string;
-}) {
-  const [orders, setOrders] = useState<PurchaseOrderPublic[]>([]);
-  const [vendors, setVendors] = useState<VendorPublic[]>([]);
-  const [catalog, setCatalog] = useState<CatalogProductPublic[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [selected, setSelected] = useState<PurchaseOrderPublic | null>(null);
-  const [showCreate, setShowCreate] = useState(false);
-  const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [poStatusFilter, setPoStatusFilter] = useState<string>("booked");
-  // Create form state
-  const [selectedVendorId, setSelectedVendorId] = useState("");
-  const [lines, setLines] = useState<{ catalog_product_id: string; quantity: string; search: string }[]>([{ catalog_product_id: "", quantity: "1", search: "" }]);
-
-  const showToast = (msg: string, ok: boolean) => { setToast({ msg, ok }); setTimeout(() => setToast(null), 3500); };
-
-  const load = useCallback(async () => {
-    if (!adminKey.trim()) return;
-    setLoading(true);
-    const [pr, vr, cr] = await Promise.all([
-      fetchApi(apiUrl("purchase-orders"), { headers: headersAdmin() }),
-      fetchApi(apiUrl("vendors"), { headers: headersAdmin() }),
-      fetchApi(apiUrl("catalog"), { headers: headersAdmin() }),
-    ]);
-    if (pr.ok) setOrders(await pr.json());
-    if (vr.ok) setVendors(await vr.json());
-    if (cr.ok) setCatalog(await cr.json());
-    setLoading(false);
-  }, [adminKey]);
-
-  useEffect(() => { void load(); }, [load]);
-
-  const vendorName = (id: number) => {
-    const v = vendors.find((v) => v.id === id);
-    return v?.company_name || v?.person_name || `#${id}`;
-  };
-
-  async function createOrder(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setSaving(true);
-    const fd = new FormData(e.currentTarget);
-    const validLines = lines.filter((l) => l.catalog_product_id && Number(l.quantity) >= 1).map((l) => ({ catalog_product_id: Number(l.catalog_product_id), quantity: Math.floor(Number(l.quantity)) }));
-    const body = { vendor_id: Number(fd.get("vendor_id")), notes: fd.get("notes") || null, items: validLines };
-    const r = await fetchApi(apiUrl("purchase-orders"), { method: "POST", headers: headers(), body: JSON.stringify(body) });
-    const data = await r.json().catch(() => ({}));
-    setSaving(false);
-    if (!r.ok) { showToast(formatApiError(data), false); return; }
-    showToast("Order created.", true);
-    setShowCreate(false);
-    setSelectedVendorId("");
-    setLines([{ catalog_product_id: "", quantity: "1", search: "" }]);
-    void load();
-  }
-
-  const poBadge = (status: string) => {
-    const map: Record<string, string> = {
-      booked:      "bg-blue-50 text-blue-700 ring-blue-200",
-      in_progress: "bg-amber-50 text-amber-700 ring-amber-200",
-      closed:      "bg-emerald-50 text-emerald-700 ring-emerald-200",
-      disputed:    "bg-orange-50 text-orange-700 ring-orange-200",
-      cancelled:   "bg-red-50 text-red-700 ring-red-200",
-    };
-    return <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${map[status] ?? "bg-slate-100 text-slate-600 ring-slate-200"}`}>{status}</span>;
-  };
-
-  return (
-    <div>
-      {toast && (
-        <div className={`fixed right-4 top-20 z-50 rounded-lg px-4 py-3 text-sm font-medium shadow-lg ${toast.ok ? "bg-emerald-600 text-white" : "bg-red-600 text-white"}`}>
-          {toast.msg}
-        </div>
-      )}
-
-      <div className="mb-4 flex items-center gap-3">
-        <button type="button" onClick={() => void load()} className={BTN_SECONDARY}>↻ Refresh</button>
-        <button type="button" onClick={() => setShowCreate((v) => !v)} className={BTN_PRIMARY}>
-          {showCreate ? "Cancel" : "+ New purchase order"}
-        </button>
-      </div>
-
-      {/* Status filter tabs */}
-      {!showCreate && (
-        <div className="mb-4 flex gap-2 flex-wrap">
-          {(["all", "booked", "in_progress", "closed", "disputed", "cancelled"] as const).map((s) => {
-            const count = s === "all" ? orders.length : orders.filter((o) => o.status === s).length;
-            return (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setPoStatusFilter(s)}
-                className={`rounded-full px-4 py-1.5 text-xs font-semibold transition ${poStatusFilter === s ? "bg-slate-800 text-white shadow" : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"}`}
-              >
-                {s === "all" ? "All" : s === "in_progress" ? "In Progress" : s.charAt(0).toUpperCase() + s.slice(1)}
-                <span className="ml-1.5 rounded-full bg-white/20 px-1.5 py-0.5 text-xs">{count}</span>
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {showCreate && (
-        <form onSubmit={createOrder} className="mb-6 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="mb-4 grid grid-cols-2 gap-4">
-            <div>
-              <label className={LABEL}>Vendor *</label>
-              <select
-                name="vendor_id"
-                required
-                value={selectedVendorId}
-                onChange={(e) => {
-                  setSelectedVendorId(e.target.value);
-                  // Clear lines when vendor changes
-                  setLines([{ catalog_product_id: "", quantity: "1", search: "" }]);
-                }}
-                className={INPUT}
-              >
-                <option value="">— select vendor —</option>
-                {vendors.map((v) => <option key={v.id} value={v.id}>{v.company_name || v.person_name}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className={LABEL}>Notes</label>
-              <input name="notes" className={INPUT} />
-            </div>
-          </div>
-
-          {selectedVendorId && (() => {
-            const vendorProducts = catalog.filter((p) => String(p.vendor_id) === selectedVendorId);
-            return (
-              <>
-                <div className="mb-3 flex items-center justify-between">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">Items</span>
-                  <span className="text-xs text-slate-400">{vendorProducts.length} product{vendorProducts.length !== 1 ? "s" : ""} from this vendor</span>
-                </div>
-                {lines.map((line, i) => {
-                  const suggestions = line.search.trim()
-                    ? vendorProducts.filter((p) =>
-                        p.our_product_id.toLowerCase().includes(line.search.toLowerCase()) ||
-                        p.category.toLowerCase().includes(line.search.toLowerCase()) ||
-                        p.vendor_product_id.toLowerCase().includes(line.search.toLowerCase())
-                      )
-                    : vendorProducts;
-                  const selected = vendorProducts.find((p) => String(p.id) === line.catalog_product_id);
-                  return (
-                    <div key={i} className="mb-3">
-                      <div className="flex items-start gap-2">
-                        <div className="flex-1 relative">
-                          {selected ? (
-                            // Selected — show chip with clear
-                            <div className="flex items-center gap-2 rounded-lg border border-blue-300 bg-blue-50 px-3 py-2 text-sm">
-                              <span className="font-mono text-blue-700">{selected.our_product_id}</span>
-                              <span className="text-slate-600">— {selected.category}</span>
-                              <span className="ml-auto text-xs text-slate-400">{selected.unit || "pcs"} · ₹{selected.selling_price}</span>
-                              <button
-                                type="button"
-                                onClick={() => setLines((prev) => prev.map((l, j) => j === i ? { ...l, catalog_product_id: "", search: "" } : l))}
-                                className="ml-1 text-slate-400 hover:text-red-500"
-                              >✕</button>
-                            </div>
-                          ) : (
-                            // Search input
-                            <div>
-                              <input
-                                type="text"
-                                value={line.search}
-                                onChange={(e) => setLines((prev) => prev.map((l, j) => j === i ? { ...l, search: e.target.value } : l))}
-                                placeholder="Type to search products…"
-                                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                                autoComplete="off"
-                              />
-                              {/* Dropdown suggestions */}
-                              {suggestions.length > 0 && (
-                                <div className="absolute z-20 mt-1 max-h-52 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
-                                  {suggestions.slice(0, 20).map((p) => (
-                                    <button
-                                      key={p.id}
-                                      type="button"
-                      onClick={() => setLines((prev) => {
-                        const updated = prev.map((l, j) => j === i ? { ...l, catalog_product_id: String(p.id), search: "" } : l);
-                        if (i === prev.length - 1) updated.push({ catalog_product_id: "", quantity: "1", search: "" });
-                        return updated;
-                      })}
-                      className="flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm hover:bg-blue-50"
-                                    >
-                                      <span className="font-mono text-xs text-slate-400 w-20 shrink-0">{p.our_product_id}</span>
-                                      <span className="flex-1 font-medium text-slate-800">{p.category}</span>
-                                      <span className="text-xs text-slate-400">{p.unit || "pcs"}</span>
-                                      <span className="text-sm font-semibold text-slate-700">₹{p.selling_price}</span>
-                                    </button>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                        <input
-                          type="number" min="1"
-                          value={line.quantity}
-                          onChange={(e) => setLines((prev) => prev.map((l, j) => j === i ? { ...l, quantity: e.target.value } : l))}
-                          className="w-20 rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                          placeholder="Qty"
-                        />
-                        {lines.length > 1 && (
-                          <button type="button" onClick={() => setLines((prev) => prev.filter((_, j) => j !== i))} className="mt-2 text-slate-400 hover:text-red-500">✕</button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-                <button
-                  type="button"
-                  onClick={() => setLines((p) => [...p, { catalog_product_id: "", quantity: "1", search: "" }])}
-                  className="mb-4 text-sm text-blue-600 hover:underline"
-                >
-                  + Add item
-                </button>
-              </>
-            );
-          })()}
-
-          {!selectedVendorId && (
-            <div className="mb-4 rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-500">
-              Select a vendor first to see their products.
-            </div>
-          )}
-
-          <div className="flex gap-3">
-            <button type="submit" disabled={saving} className={BTN_PRIMARY}>{saving ? "Creating…" : "Create order"}</button>
-            <button type="button" onClick={() => { setShowCreate(false); setSelectedVendorId(""); setLines([{ catalog_product_id: "", quantity: "1", search: "" }]); }} className={BTN_SECONDARY}>Cancel</button>
-          </div>
-        </form>
-      )}
-
-      {loading ? (
-        <div className="py-12 text-center text-slate-400">Loading…</div>
-      ) : (
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase text-slate-500">
-                <th className="px-4 py-3 text-left">#</th>
-                <th className="px-4 py-3 text-left">Vendor</th>
-                <th className="px-4 py-3 text-left">Status</th>
-                <th className="px-4 py-3 text-right">Value</th>
-                <th className="px-4 py-3 text-left">Date</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {orders.filter((o) => poStatusFilter === "all" || o.status === poStatusFilter).map((o) => (
-                <tr
-                  key={o.id}
-                  className="cursor-pointer transition hover:bg-blue-50/40"
-                  onClick={() => { setSelected(o); setDrawerOpen(true); }}
-                >
-                  <td className="px-4 py-3 font-mono text-slate-400">#{o.id}</td>
-                  <td className="px-4 py-3 font-medium">{vendorName(o.vendor_id)}</td>
-                  <td className="px-4 py-3">{poBadge(o.status)}</td>
-                  <td className="px-4 py-3 text-right font-medium">₹{o.total_buying_value?.toFixed(2) ?? "—"}</td>
-                  <td className="px-4 py-3 text-slate-400 text-xs">{new Date(o.created_at).toLocaleDateString()}</td>
-                </tr>
-              ))}
-              {orders.filter((o) => poStatusFilter === "all" || o.status === poStatusFilter).length === 0 && (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400">No {poStatusFilter === "all" ? "" : poStatusFilter + " "}purchase orders yet.</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      <Drawer
-        open={drawerOpen && !!selected}
-        onClose={() => setDrawerOpen(false)}
-        title={selected ? `PO #${selected.id} — ${vendorName(selected.vendor_id)}` : "Purchase Order"}
-        subtitle={selected ? `Status: ${selected.status} · Created ${new Date(selected.created_at).toLocaleDateString()}` : ""}
-        width="max-w-xl"
-      >
-        {selected && (
-          <div className="space-y-4">
-            <div className="overflow-hidden rounded-xl border border-slate-200">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase text-slate-500">
-                    <th className="px-3 py-2 text-left">Product</th>
-                    <th className="px-3 py-2 text-right">Ordered</th>
-                    <th className="px-3 py-2 text-right">Received</th>
-                    <th className="px-3 py-2 text-right">Value</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {selected.items.map((it) => (
-                    <tr key={it.catalog_product_id}>
-                      <td className="px-3 py-2">
-                        <div className="font-medium">{it.name}</div>
-                        <div className="text-xs text-slate-400">{it.our_product_id}</div>
-                      </td>
-                      <td className="px-3 py-2 text-right">{it.quantity}</td>
-                      <td className="px-3 py-2 text-right text-emerald-600">{it.received_quantity ?? 0}</td>
-                      <td className="px-3 py-2 text-right font-medium">₹{it.line_total_buying?.toFixed(2)}</td>
-                    </tr>
-                  ))}
-                  <tr className="bg-slate-50 border-t">
-                    <td colSpan={3} className="px-3 py-2 text-right font-semibold">Total</td>
-                    <td className="px-3 py-2 text-right font-bold">₹{selected.total_buying_value?.toFixed(2)}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            {selected.notes && (
-              <div className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">
-                <strong>Notes:</strong> {selected.notes}
-              </div>
-            )}
-
-            {/* Actions */}
-            <div className="flex flex-wrap gap-2 pt-2">
-              {(selected.status === "booked" || selected.status === "in_progress") && (
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-violet-700"
-                  onClick={async () => {
-                    if (!selected) return;
-                    // Generate vendor bill using received quantities
-                    const billLines = selected.items.map((it) => ({
-                      catalog_product_id: it.catalog_product_id,
-                      quantity: it.received_quantity ?? it.quantity,
-                      unit_price: it.buying_price ?? 0,
-                    }));
-                    const fd = new FormData();
-                    fd.append("purchase_order_id", String(selected.id));
-                    fd.append("bill_lines", JSON.stringify(billLines));
-                    const r = await fetchApi(apiUrl("vendor-bills"), { method: "POST", headers: headersAdmin(), body: fd });
-                    const data = await r.json().catch(() => ({}));
-                    if (!r.ok) { showToast(formatApiError(data), false); return; }
-                    showToast("Vendor bill created — AP entry recorded.", true);
-                    void load();
-                  }}
-                >
-                  📄 Generate Vendor Bill (→ AP)
-                </button>
-              )}
-              {selected.status === "in_progress" && (
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700"
-                  onClick={async () => {
-                    const r = await fetchApi(apiUrl(`purchase-orders/${selected.id}`), { method: "PATCH", headers: headers(), body: JSON.stringify({ status: "closed" }) });
-                    if (r.ok) { showToast("PO closed.", true); const d = await r.json(); setSelected(d); void load(); }
-                  }}
-                >
-                  ✓ Mark Closed
-                </button>
-              )}
-              {selected.status !== "cancelled" && selected.status !== "closed" && (
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-orange-300 bg-orange-50 px-4 py-2 text-sm font-semibold text-orange-700 shadow-sm transition hover:bg-orange-100"
-                  onClick={async () => {
-                    const r = await fetchApi(apiUrl(`purchase-orders/${selected.id}`), { method: "PATCH", headers: headers(), body: JSON.stringify({ status: "disputed" }) });
-                    if (r.ok) { showToast("PO marked disputed.", true); const d = await r.json(); setSelected(d); void load(); }
-                  }}
-                >
-                  ⚠ Mark Disputed
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-      </Drawer>
-    </div>
-  );
-}

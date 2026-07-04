@@ -105,23 +105,12 @@ function CustomersTab({
   const [saving, setSaving] = useState(false);
   // Statement modal
   const [statementCustomer, setStatementCustomer] = useState<CustomerPublic | null>(null);
-  // Controlled city/route for auto-select
   const [selectedCityId, setSelectedCityId] = useState<string>("");
-  const [selectedRouteId, setSelectedRouteId] = useState<string>("");
 
   function openDrawer(c: CustomerPublic | null) {
     setEditing(c);
     setSelectedCityId(c?.city_id ? String(c.city_id) : "");
-    setSelectedRouteId(c?.route_id ? String(c.route_id) : "");
     setDrawerOpen(true);
-  }
-
-  function onCityChange(cityId: string) {
-    setSelectedCityId(cityId);
-    if (cityId) {
-      const city = cities.find((c) => String(c.id) === cityId);
-      if (city?.route_id) setSelectedRouteId(String(city.route_id));
-    }
   }
 
   const showToast = (msg: string, ok: boolean) => {
@@ -171,7 +160,6 @@ function CustomersTab({
       address: emptyToNull(fd.get("address")),
       secondary_phone: emptyToNull(fd.get("secondary_phone")),
       city_id: selectedCityId ? Number(selectedCityId) : null,
-      route_id: selectedRouteId ? Number(selectedRouteId) : null,
       credit_limit: emptyToNull(fd.get("credit_limit")),
       credit_override: fd.get("credit_override") === "on",
       gst_number: emptyToNull(fd.get("gst_number")),
@@ -275,7 +263,8 @@ function CustomersTab({
                     {c.company_name && c.name !== c.company_name ? c.name : "—"}
                   </td>
                   <td className="px-4 py-3 text-slate-500">
-                    {routeName(c.route_id) || cityName(c.city_id) || c.city || "—"}
+                    <div>{cityName(c.city_id) || c.city || "—"}</div>
+                    {c.route_id && <div className="mt-0.5 text-xs text-slate-400">{routeName(c.route_id)}</div>}
                   </td>
                   <td className="px-4 py-3">
                     {c.credit_limit ? (
@@ -364,19 +353,21 @@ function CustomersTab({
               <label className={LABEL}>Address</label>
               <input name="address" defaultValue={editing?.address ?? ""} className={INPUT} />
             </div>
-            <div>
-              <label className={LABEL}>Route</label>
-              <select name="route_id" value={selectedRouteId} onChange={(e) => setSelectedRouteId(e.target.value)} className={INPUT}>
-                <option value="">— none —</option>
-                {routes.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-              </select>
-            </div>
-            <div>
+            <div className="col-span-2">
               <label className={LABEL}>City</label>
-              <select name="city_id" value={selectedCityId} onChange={(e) => onCityChange(e.target.value)} className={INPUT}>
+              <select name="city_id" value={selectedCityId} onChange={(e) => setSelectedCityId(e.target.value)} className={INPUT}>
                 <option value="">— none —</option>
                 {cities.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
+              {selectedCityId && (() => {
+                const city = cities.find((c) => String(c.id) === selectedCityId);
+                const route = city?.route_id ? routes.find((r) => r.id === city.route_id) : null;
+                return route ? (
+                  <p className="mt-1 text-xs text-slate-500">Route: <span className="font-medium text-slate-700">{route.name}</span></p>
+                ) : (
+                  <p className="mt-1 text-xs text-slate-400">No route assigned to this city</p>
+                );
+              })()}
             </div>
             <div>
               <label className={LABEL}>Credit limit (₹)</label>
@@ -398,12 +389,6 @@ function CustomersTab({
             </div>
           </div>
         </form>
-
-        {/* Routes & Cities quick-add (always accessible from customer context) */}
-        <div className="mt-8 rounded-xl border border-slate-200 bg-slate-50 p-4">
-          <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Manage routes &amp; cities</p>
-          <RouteCityQuickAdd routes={routes} cities={cities} headers={headers} onDone={() => void load()} />
-        </div>
       </Drawer>
     </div>
   );
@@ -786,12 +771,6 @@ function StatementModal({
                     <div style={{ marginTop: 12, textAlign: "right", fontWeight: 700, fontSize: 15, color: "#0f172a" }}>
                       Total: ₹{Number(o.total_amount ?? 0).toLocaleString("en-IN")}
                     </div>
-                    {!!o.shipment_receipt && (
-                      <div style={{ marginTop: 8, fontSize: 12, color: "#64748b" }}>
-                        📦 Shipment: {String(o.shipment_receipt)}{o.shipment_contact ? ` · ${String(o.shipment_contact)}` : ""}
-                        {o.shipment_notes ? ` · ${String(o.shipment_notes)}` : ""}
-                      </div>
-                    )}
                   </div>
                 </>
               );
@@ -914,12 +893,15 @@ function VendorsTab({
   adminKey: string;
 }) {
   const [vendors, setVendors] = useState<VendorPublic[]>([]);
+  const [cities, setCities] = useState<CityPublic[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
+  const [cityFilter, setCityFilter] = useState("");
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editing, setEditing] = useState<VendorPublic | null>(null);
   const [saving, setSaving] = useState(false);
+  const [selectedCityId, setSelectedCityId] = useState("");
 
   const showToast = (msg: string, ok: boolean) => {
     setToast({ msg, ok });
@@ -929,20 +911,33 @@ function VendorsTab({
   const load = useCallback(async () => {
     if (!adminKey.trim()) return;
     setLoading(true);
-    const r = await fetchApi(apiUrl("vendors"), { headers: headersAdmin() });
-    if (r.ok) setVendors(await r.json());
+    const [vr, cr] = await Promise.all([
+      fetchApi(apiUrl("vendors"), { headers: headersAdmin() }),
+      fetchApi(apiUrl("cities"), { headers: headersAdmin() }),
+    ]);
+    if (vr.ok) setVendors(await vr.json());
+    if (cr.ok) setCities(await cr.json());
     setLoading(false);
   }, [adminKey]);
 
   useEffect(() => { void load(); }, [load]);
 
+  // When editing opens, pre-select city
+  useEffect(() => {
+    setSelectedCityId(editing?.city_id ? String(editing.city_id) : "");
+  }, [editing]);
+
+  const cityName = (id: number | null | undefined) => cities.find((c) => c.id === id)?.name ?? "";
+
   const filtered = vendors.filter((v) => {
     const q = search.toLowerCase();
-    return !q
+    const matchSearch = !q
       || (v.company_name ?? "").toLowerCase().includes(q)
       || v.person_name.toLowerCase().includes(q)
       || v.phone.includes(q)
       || (v.alias ?? "").toLowerCase().includes(q);
+    const matchCity = !cityFilter || String(v.city_id) === cityFilter;
+    return matchSearch && matchCity;
   });
 
   async function onSave(e: React.FormEvent<HTMLFormElement>) {
@@ -952,6 +947,8 @@ function VendorsTab({
     const fd = new FormData(e.currentTarget);
     const personName = String(fd.get("person_name") || "").trim();
     const companyName = String(fd.get("company_name") || "").trim();
+    const cityId = selectedCityId ? Number(selectedCityId) : null;
+    const cityObj = cityId ? cities.find((c) => c.id === cityId) : null;
     const body = {
       company_name: companyName,
       person_name: personName || companyName,
@@ -959,8 +956,8 @@ function VendorsTab({
       alias: emptyToNull(fd.get("alias")),
       secondary_phone: emptyToNull(fd.get("secondary_phone")),
       address: emptyToNull(fd.get("address")),
-      billing_percentage: emptyToNull(fd.get("billing_percentage")) ? Number(fd.get("billing_percentage")) : null,
-      city: emptyToNull(fd.get("city")),
+      city: cityObj?.name ?? null,
+      city_id: cityId,
       gst_number: emptyToNull(fd.get("gst_number")),
     };
     const url = editing ? apiUrl(`vendors/${editing.id}`) : apiUrl("vendors");
@@ -996,6 +993,11 @@ function VendorsTab({
           placeholder="Search name, phone, company, alias…"
           className="min-w-[200px] flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none"
         />
+        <select value={cityFilter} onChange={(e) => setCityFilter(e.target.value)}
+          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none">
+          <option value="">All cities</option>
+          {cities.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
         <button type="button" onClick={() => void load()} className={BTN_SECONDARY}>↻ Refresh</button>
         <button type="button" onClick={() => { setEditing(null); setDrawerOpen(true); }} className={BTN_PRIMARY}>
           + New vendor
@@ -1021,7 +1023,6 @@ function VendorsTab({
                 <th className="px-4 py-3 text-left">Phone</th>
                 <th className="px-4 py-3 text-left">Person</th>
                 <th className="px-4 py-3 text-left">City</th>
-                <th className="px-4 py-3 text-left">Bill %</th>
                 <th className="px-4 py-3" />
               </tr>
             </thead>
@@ -1040,8 +1041,7 @@ function VendorsTab({
                   <td className="px-4 py-3 text-slate-500">
                     {v.company_name && v.person_name !== v.company_name ? v.person_name : "—"}
                   </td>
-                  <td className="px-4 py-3 text-slate-500">{v.city ?? "—"}</td>
-                  <td className="px-4 py-3 text-slate-500">{v.billing_percentage != null ? `${v.billing_percentage}%` : "—"}</td>
+                  <td className="px-4 py-3 text-slate-500">{cityName(v.city_id) || v.city || "—"}</td>
                   <td className="px-4 py-3 text-right">
                     <button
                       type="button"
@@ -1101,13 +1101,13 @@ function VendorsTab({
               <label className={LABEL}>Address</label>
               <textarea name="address" rows={2} defaultValue={editing?.address ?? ""} className={INPUT} />
             </div>
-            <div>
+            <div className="col-span-2">
               <label className={LABEL}>City</label>
-              <input name="city" defaultValue={editing?.city ?? ""} className={INPUT} />
-            </div>
-            <div>
-              <label className={LABEL}>Billing %</label>
-              <input name="billing_percentage" type="number" min={0} max={100} defaultValue={editing?.billing_percentage ?? ""} placeholder="e.g. 2" className={INPUT} />
+              <select value={selectedCityId} onChange={(e) => setSelectedCityId(e.target.value)} className={INPUT}>
+                <option value="">— select city —</option>
+                {cities.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              {cities.length === 0 && <p className="mt-1 text-xs text-slate-400">No cities yet — add them in Admin → Cities</p>}
             </div>
             <div className="col-span-2">
               <label className={LABEL}>GST Number</label>

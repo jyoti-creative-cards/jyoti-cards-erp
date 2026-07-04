@@ -33,31 +33,32 @@ export function CatalogScreen({ adminKey }: Props) {
   const [products, setProducts] = useState<CatalogProductPublic[]>([]);
   const [vendors, setVendors] = useState<VendorPublic[]>([]);
   const [categoryList, setCategoryList] = useState<string[]>([]);
-  // Unit management — stored locally, seeded from existing products
+  // Units — fetched from API, managed in Admin > Units
   const [units, setUnits] = useState<string[]>(["pcs", "bundle", "box", "dozen", "set", "pair", "roll", "sheet"]);
   const [seriesList, setSeriesList] = useState<string[]>([]);
   const [yearGroups, setYearGroups] = useState<string[]>([]);
 
   const loadProducts = useCallback(async () => {
     if (!adminKey.trim()) return;
-    const [pr, vr, sr, yr, cr] = await Promise.all([
+    const [pr, vr, sr, yr, cr, ur] = await Promise.all([
       fetchApi(apiUrl("catalog"), { headers: headersAdmin() }),
       fetchApi(apiUrl("vendors"), { headers: headersAdmin() }),
       fetchApi(apiUrl("catalog/series"), { headers: headersAdmin() }),
       fetchApi(apiUrl("catalog/year-groups"), { headers: headersAdmin() }),
       fetchApi(apiUrl("catalog/categories"), { headers: headersAdmin() }),
+      fetchApi(apiUrl("catalog/units"), { headers: headersAdmin() }),
     ]);
     if (pr.ok) {
-      const data: CatalogProductPublic[] = await pr.json();
-      setProducts(data);
-      // Merge any new units found in existing products
-      const existing = data.map((p) => p.unit).filter(Boolean);
-      setUnits((prev) => [...new Set([...prev, ...existing])]);
+      const data = await pr.json() as { items: CatalogProductPublic[]; total: number } | CatalogProductPublic[];
+      // Handle both paginated response and legacy array
+      const items = Array.isArray(data) ? data : (data.items ?? []);
+      setProducts(items);
     }
     if (vr.ok) setVendors(await vr.json());
     if (sr.ok) { const d = await sr.json(); setSeriesList(d.series ?? []); }
     if (yr.ok) { const d = await yr.json(); setYearGroups(d.year_groups ?? []); }
     if (cr.ok) { const d = await cr.json(); setCategoryList((d.categories ?? []).sort()); }
+    if (ur.ok) { const d = await ur.json(); setUnits((d.units ?? []).sort()); }
   }, [adminKey]);
 
   useEffect(() => { void loadProducts(); }, [loadProducts]);
@@ -95,7 +96,6 @@ export function CatalogScreen({ adminKey }: Props) {
           vendorName={vendorName}
           categories={categoryList}
           units={units}
-          setUnits={setUnits}
           seriesList={seriesList}
           setSeriesList={setSeriesList}
           yearGroups={yearGroups}
@@ -139,7 +139,6 @@ function ProductsTab({
   vendorName: (id: number) => string;
   categories: string[];
   units: string[];
-  setUnits: Dispatch<SetStateAction<string[]>>;
   seriesList: string[];
   setSeriesList: Dispatch<SetStateAction<string[]>>;
   yearGroups: string[];
@@ -159,7 +158,7 @@ function ProductsTab({
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
   const [imgMsg, setImgMsg] = useState("");
   // New unit input
-  const [newUnit, setNewUnit] = useState("");
+  const [newUnit, setNewUnit] = useState(""); // kept for type compat, not used
   // Addon state
   const [addonId, setAddonId] = useState<string>("");
   const [addons, setAddons] = useState<{ id: number; name: string }[]>([]);
@@ -542,27 +541,7 @@ function ProductsTab({
               <select name="unit" required defaultValue={editing?.unit ?? "pcs"} className={INPUT}>
                 {units.map((u) => <option key={u} value={u}>{u}</option>)}
               </select>
-            </div>
-            <div className="flex items-end">
-              <div className="flex w-full gap-1">
-                <input
-                  value={newUnit}
-                  onChange={(e) => setNewUnit(e.target.value)}
-                  placeholder="Add new unit…"
-                  className="flex-1 rounded-lg border border-slate-300 px-2.5 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    const u = newUnit.trim().toLowerCase();
-                    if (u && !units.includes(u)) { setUnits((p) => [...p, u]); }
-                    setNewUnit("");
-                  }}
-                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                >
-                  + Add
-                </button>
-              </div>
+              <p className="mt-1 text-xs text-slate-400">To add new units, go to Admin → Units</p>
             </div>
             <div>
               <label className={LABEL}>Buying price (₹) *</label>

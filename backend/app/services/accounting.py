@@ -17,7 +17,6 @@ from app.models.invoice_payment import InvoicePayment
 from app.models.journal_entry import JournalEntry, JournalLine
 from app.models.vendor import Vendor
 from app.models.vendor_bill import VendorBill
-from app.models.vendor_purchase_order import VendorPurchaseOrder
 from app.services.period_control import assert_period_open_for_posting_date
 
 ACC_CASH = "1000"
@@ -149,15 +148,6 @@ def _posting_at_from_bill_and_order(bill: CustomerBill, order: CustomerOrder) ->
     return t
 
 
-def _posting_at_from_vendor_bill(vb: VendorBill, po: VendorPurchaseOrder) -> datetime:
-    t = vb.created_at or po.created_at
-    if t is None:
-        return datetime.now(timezone.utc)
-    if t.tzinfo is None:
-        t = t.replace(tzinfo=timezone.utc)
-    return t
-
-
 def _posting_at_from_payment_date(pay_day: date) -> datetime:
     return datetime.combine(pay_day, time(12, 0, 0), tzinfo=timezone.utc)
 
@@ -227,74 +217,6 @@ def ensure_ar_for_customer_bill(
     ar.journal_entry_id = je.id
     db.add(ar)
     return ar
-
-
-def ensure_ap_for_vendor_bill(db: Session, *, vb: VendorBill, po: VendorPurchaseOrder) -> Optional[APBill]:
-    seed_chart_accounts(db)
-    raw = vb.bill_lines if isinstance(vb.bill_lines, list) else []
-    gross = sum_vendor_bill_lines([x for x in raw if isinstance(x, dict)])
-    if gross <= 0:
-        return None
-    booked, pct, _g = ap_book_amount_from_vendor_bill(db, gross_line_total=gross, vendor_id=po.vendor_id)
-    posted_at = _posting_at_from_vendor_bill(vb, po)
-    memo = f"Vendor bill #{vb.id} — AP (gross {gross}, books {pct}%)"
-
-    row = db.query(APBill).filter(APBill.vendor_bill_id == vb.id).first()
-    if row is not None:
-        if row.status == "paid":
-            return row
-        paid = amount_paid_on_ap(db, row)
-        if paid > 0:
-            if _d(row.amount).quantize(Decimal("0.01")) != booked:
-                raise ValueError("cannot change AP booked amount after payments recorded")
-            row.vendor_id = po.vendor_id
-            row.purchase_order_id = po.id
-            db.add(row)
-            return row
-        row.amount = float(booked)
-        row.vendor_id = po.vendor_id
-        row.purchase_order_id = po.id
-        _delete_journal_safe(db, row.journal_entry_id)
-        row.journal_entry_id = None
-        db.flush()
-        je = create_journal(
-            db,
-            memo=memo,
-            ref_type="ap_bill",
-            ref_id=row.id,
-            lines=[
-                (ACC_PUR, booked, Decimal("0")),
-                (ACC_AP, Decimal("0"), booked),
-            ],
-            posted_at=posted_at,
-        )
-        row.journal_entry_id = je.id
-        db.add(row)
-        return row
-
-    ap = APBill(
-        vendor_bill_id=vb.id,
-        vendor_id=po.vendor_id,
-        purchase_order_id=po.id,
-        amount=float(booked),
-        status="open",
-    )
-    db.add(ap)
-    db.flush()
-    je = create_journal(
-        db,
-        memo=memo,
-        ref_type="ap_bill",
-        ref_id=ap.id,
-        lines=[
-            (ACC_PUR, booked, Decimal("0")),
-            (ACC_AP, Decimal("0"), booked),
-        ],
-        posted_at=posted_at,
-    )
-    ap.journal_entry_id = je.id
-    db.add(ap)
-    return ap
 
 
 def record_ar_payment(

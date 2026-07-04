@@ -13,13 +13,12 @@ function emptyToNull(v: FormDataEntryValue | null) {
   const s = String(v ?? "").trim(); return s === "" ? null : s;
 }
 
-type CreateType = "customer_order" | "customer" | "vendor" | "purchase_order" | "expense";
+type CreateType = "customer_order" | "customer" | "vendor" | "expense";
 
 const CREATE_OPTIONS: { id: CreateType; label: string; icon: string; desc: string }[] = [
   { id: "customer_order", icon: "🛒", label: "Customer order", desc: "Offline / walk-in order" },
   { id: "customer",       icon: "👤", label: "Customer",       desc: "New customer account" },
   { id: "vendor",         icon: "🏭", label: "Vendor",         desc: "New supplier / vendor" },
-  { id: "purchase_order", icon: "📦", label: "Purchase order", desc: "Order from vendor" },
   { id: "expense",        icon: "🧾", label: "Expense",        desc: "Record an expense" },
 ];
 
@@ -115,16 +114,6 @@ export function CreateScreen({ adminKey }: Props) {
         )}
         {selected === "vendor" && (
           <VendorForm
-            headers={headers}
-            saving={saving}
-            setSaving={setSaving}
-            showToast={showToast}
-          />
-        )}
-        {selected === "purchase_order" && (
-          <PurchaseOrderForm
-            vendors={vendors}
-            catalog={catalog}
             headers={headers}
             saving={saving}
             setSaving={setSaving}
@@ -420,7 +409,7 @@ function VendorForm({ headers, saving, setSaving, showToast }: {
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
-    const body = { person_name: fd.get("person_name"), phone: fd.get("phone"), company_name: emptyToNull(fd.get("company_name")), alias: emptyToNull(fd.get("alias")), address: emptyToNull(fd.get("address")), billing_percentage: emptyToNull(fd.get("billing_percentage")) ? Number(fd.get("billing_percentage")) : null, city: emptyToNull(fd.get("city")) };
+    const body = { person_name: fd.get("person_name"), phone: fd.get("phone"), company_name: emptyToNull(fd.get("company_name")), alias: emptyToNull(fd.get("alias")), address: emptyToNull(fd.get("address")), city: emptyToNull(fd.get("city")) };
     setSaving(true);
     const r = await fetchApi(apiUrl("vendors"), { method: "POST", headers: headers(), body: JSON.stringify(body) });
     const data = await r.json().catch(() => ({}));
@@ -438,7 +427,6 @@ function VendorForm({ headers, saving, setSaving, showToast }: {
         <div><label className={LABEL}>Alias</label><input name="alias" className={INPUT} /></div>
         <div className="col-span-2"><label className={LABEL}>Company</label><input name="company_name" className={INPUT} /></div>
         <div><label className={LABEL}>City</label><input name="city" className={INPUT} /></div>
-        <div><label className={LABEL}>Billing %</label><input name="billing_percentage" type="number" min="0" max="100" placeholder="e.g. 2" className={INPUT} /></div>
         <div className="col-span-2"><label className={LABEL}>Address</label><textarea name="address" rows={2} className={INPUT} /></div>
         <div className="col-span-2"><button type="submit" disabled={saving} className={BTN_PRIMARY}>{saving ? "Saving…" : "Create vendor"}</button></div>
       </form>
@@ -448,108 +436,7 @@ function VendorForm({ headers, saving, setSaving, showToast }: {
 
 // ──────────────────── PURCHASE ORDER ────────────────────
 
-function PurchaseOrderForm({ vendors, catalog, headers, saving, setSaving, showToast }: {
-  vendors: VendorPublic[];
-  catalog: CatalogProductPublic[];
-  headers: () => Record<string, string>;
-  saving: boolean;
-  setSaving: (b: boolean) => void;
-  showToast: (msg: string, ok: boolean) => void;
-}) {
-  const [vendorId, setVendorId] = useState("");
-  const [lines, setLines] = useState<{ catalog_product_id: string; quantity: string; search: string }[]>([{ catalog_product_id: "", quantity: "1", search: "" }]);
-  const [key, setKey] = useState(0);
-
-  const vendorProducts = catalog.filter((p) => String(p.vendor_id) === vendorId);
-
-  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    if (!vendorId) { showToast("Select a vendor.", false); return; }
-    const validLines = lines.filter((l) => l.catalog_product_id && Number(l.quantity) >= 1)
-      .map((l) => ({ catalog_product_id: Number(l.catalog_product_id), quantity: Math.floor(Number(l.quantity)) }));
-    if (!validLines.length) { showToast("Add at least one item.", false); return; }
-    setSaving(true);
-    const fd = new FormData(e.currentTarget);
-    const body = { vendor_id: Number(vendorId), notes: fd.get("notes") || null, items: validLines };
-    const r = await fetchApi(apiUrl("purchase-orders"), { method: "POST", headers: headers(), body: JSON.stringify(body) });
-    const data = await r.json().catch(() => ({}));
-    setSaving(false);
-    if (!r.ok) { showToast(formatApiError(data), false); return; }
-    showToast(`PO #${(data as { id: number }).id} created.`, true);
-    setVendorId(""); setLines([{ catalog_product_id: "", quantity: "1", search: "" }]); setKey((k) => k + 1);
-  }
-
-  return (
-    <div key={key}>
-      <h3 className="mb-4 text-base font-semibold text-slate-800">📦 New purchase order</h3>
-      <form onSubmit={onSubmit} className="space-y-4 max-w-2xl">
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className={LABEL}>Vendor *</label>
-            <select value={vendorId} onChange={(e) => { setVendorId(e.target.value); setLines([{ catalog_product_id: "", quantity: "1", search: "" }]); }} className={INPUT}>
-              <option value="">— select vendor —</option>
-              {vendors.map((v) => <option key={v.id} value={v.id}>{v.company_name || v.person_name}</option>)}
-            </select>
-          </div>
-          <div><label className={LABEL}>Notes</label><input name="notes" className={INPUT} /></div>
-        </div>
-
-        {vendorId && (
-          <div>
-            <label className={LABEL}>Items * <span className="text-slate-400 normal-case font-normal">({vendorProducts.length} products from this vendor)</span></label>
-            <div className="space-y-2">
-              {lines.map((line, i) => {
-                const sel = vendorProducts.find((p) => String(p.id) === line.catalog_product_id);
-                const suggestions = line.search.trim()
-                  ? vendorProducts.filter((p) => p.our_product_id.toLowerCase().includes(line.search.toLowerCase()) || p.category.toLowerCase().includes(line.search.toLowerCase())).slice(0, 8)
-                  : vendorProducts.slice(0, 8);
-                return (
-                  <div key={i} className="flex items-start gap-2">
-                    <div className="flex-1 relative">
-                      {sel ? (
-                        <div className="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm">
-                          <span className="font-mono text-xs text-blue-600">{sel.our_product_id}</span>
-                          <span className="font-medium text-slate-700">{sel.category}</span>
-                          <span className="ml-auto text-xs text-slate-500">₹{sel.buying_price}</span>
-                          <button type="button" onClick={() => setLines((p) => p.map((l, j) => j === i ? { ...l, catalog_product_id: "", search: "" } : l))} className="text-slate-300 hover:text-red-500">✕</button>
-                        </div>
-                      ) : (
-                        <div>
-                          <input value={line.search} onChange={(e) => setLines((p) => p.map((l, j) => j === i ? { ...l, search: e.target.value } : l))} placeholder="Type to search…" className={INPUT} autoComplete="off" />
-                          {suggestions.length > 0 && (
-                            <div className="absolute z-20 mt-1 w-full rounded-xl border border-slate-200 bg-white shadow-lg">
-                              {suggestions.map((p) => (
-                                <button key={p.id} type="button" onClick={() => setLines((prev) => prev.map((l, j) => j === i ? { ...l, catalog_product_id: String(p.id), search: "" } : l))}
-                                  className="flex w-full items-center gap-3 px-3 py-2.5 hover:bg-blue-50 text-left text-sm">
-                                  <span className="font-mono text-xs text-slate-400 w-16 shrink-0">{p.our_product_id}</span>
-                                  <span className="flex-1 font-medium">{p.category}</span>
-                                  <span className="text-xs font-semibold">₹{p.buying_price}</span>
-                                </button>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                    <input type="number" min="1" value={line.quantity} onChange={(e) => setLines((p) => p.map((l, j) => j === i ? { ...l, quantity: e.target.value } : l))} className="w-20 rounded-lg border border-slate-300 px-3 py-2 text-sm text-center" />
-                    {lines.length > 1 && <button type="button" onClick={() => setLines((p) => p.filter((_, j) => j !== i))} className="mt-2 text-slate-300 hover:text-red-500">✕</button>}
-                  </div>
-                );
-              })}
-            </div>
-            <button type="button" onClick={() => setLines((p) => [...p, { catalog_product_id: "", quantity: "1", search: "" }])} className="mt-2 text-sm text-blue-600 hover:underline">+ Add item</button>
-          </div>
-        )}
-
-        <button type="submit" disabled={saving || !vendorId} className={BTN_PRIMARY}>{saving ? "Creating…" : "Create purchase order"}</button>
-      </form>
-    </div>
-  );
-}
-
-// ──────────────────── EXPENSE ────────────────────
-
-const EXPENSE_CATEGORIES = ["Rent", "Salary", "Transport", "Packaging", "Utilities", "Marketing", "Miscellaneous"];
+const EXPENSE_CATEGORIES = ["rent", "salary", "utilities", "transport", "supplies", "marketing", "maintenance", "taxes", "other"];
 
 function ExpenseForm({ headers, saving, setSaving, showToast }: {
   headers: () => Record<string, string>;

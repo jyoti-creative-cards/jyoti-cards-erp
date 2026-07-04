@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, func
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -13,11 +13,13 @@ class StockReceipt(Base):
     """Goods receipt — either against a PO or directly from a vendor."""
 
     __tablename__ = "portal_stock_receipts"
+    __table_args__ = (
+        Index("ix_stock_receipt_vendor_created", "vendor_id", "created_at"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     purchase_order_id: Mapped[Optional[int]] = mapped_column(
         Integer,
-        ForeignKey("portal_vendor_purchase_orders.id", ondelete="CASCADE"),
         nullable=True,
         index=True,
     )

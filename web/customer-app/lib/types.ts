@@ -6,6 +6,7 @@ export interface CustomerPublic {
   address: string | null;
   secondary_phone: string | null;
   city: string | null;
+  gst_number: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -34,6 +35,7 @@ export interface CustomerOrderLinePublic {
   catalog_product_id: number;
   our_product_id: string;
   name: string;
+  category: string;
   quantity: number;
   unit_price: string;
   line_total: string;
@@ -47,10 +49,6 @@ export interface CustomerOrderPublic {
   total_amount: string;
   notes: string | null;
   customer_notes: string | null;
-  shipment_receipt: string | null;
-  shipment_contact: string | null;
-  shipment_notes: string | null;
-  customer_confirmed_delivery_at: string | null;
   created_at: string;
   updated_at: string;
 }

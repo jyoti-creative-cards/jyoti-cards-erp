@@ -11,9 +11,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db, legacy_active_value, sql_is_active_true
-from app.deps import require_admin
+from app.deps import get_actor, require_admin
+from app.services.audit import write_audit
 from app.integrations.whatsapp.client import send_account_creation, _e164 as normalize_whatsapp_e164
 from app.models.ar_invoice import ARInvoice
+from app.models.city import City
 from app.models.customer import Customer
 from app.models.customer_order import CustomerOrder
 from app.models.invoice_payment import InvoicePayment
@@ -82,7 +84,43 @@ def list_customers(
             sqlfunc.lower(Customer.company_name).like(s),
         ))
     rows = q.order_by(Customer.id.asc()).all()
-    return [_to_public(r) for r in rows]
+    # Efficiently compute bill stats per customer in one pass
+    from app.models.customer_order import CustomerOrder as _CO
+    from app.models.customer_bill import CustomerBill as _CB
+    customer_ids = [r.id for r in rows]
+    bill_count_by_cust: dict[int, int] = {}
+    billed_total_by_cust: dict[int, float] = {}
+    if customer_ids:
+        # one query: all non-cancelled bills for all these customers' orders
+        co_rows = (
+            db.query(_CO.id, _CO.customer_id)
+            .filter(_CO.customer_id.in_(customer_ids), _CO.deleted_at.is_(None))
+            .all()
+        )
+        oid_to_cid = {co.id: co.customer_id for co in co_rows}
+        if oid_to_cid:
+            bills = (
+                db.query(_CB.customer_order_id, _CB.totals)
+                .filter(_CB.customer_order_id.in_(oid_to_cid.keys()), _CB.bill_status != "cancelled")
+                .all()
+            )
+            for b in bills:
+                cid = oid_to_cid.get(b.customer_order_id)
+                if cid is None:
+                    continue
+                bill_count_by_cust[cid] = bill_count_by_cust.get(cid, 0) + 1
+                totals = b.totals if isinstance(b.totals, dict) else {}
+                billed_total_by_cust[cid] = billed_total_by_cust.get(cid, 0.0) + float(totals.get("grand_total") or 0)
+
+    result = []
+    for r in rows:
+        pub = _to_public(r)
+        cnt = bill_count_by_cust.get(r.id)
+        tot = billed_total_by_cust.get(r.id)
+        pub.invoice_count = cnt
+        pub.total_billed = f"{tot:.2f}" if tot is not None else None
+        result.append(pub)
+    return result
 
 
 @router.get("/{customer_id}", response_model=CustomerPublic, dependencies=[Depends(require_admin)])
@@ -125,6 +163,10 @@ def create_customer(
         existing.address = body.address.strip() if body.address else None
         existing.secondary_phone = sec_norm
         existing.city = body.city.strip() if body.city else None
+        existing.city_id = body.city_id
+        if body.city_id:
+            _c = db.get(City, body.city_id)
+            existing.route_id = _c.route_id if _c else None
         existing.is_active = True
         db.add(existing)
         try:
@@ -145,6 +187,10 @@ def create_customer(
         return existing
 
     display_name = (body.name or "").strip() or body.company_name.strip()
+    city_route_id: Optional[int] = None
+    if body.city_id:
+        _city = db.get(City, body.city_id)
+        city_route_id = _city.route_id if _city else None
     row = Customer(
         name=display_name,
         phone=phone,
@@ -155,7 +201,7 @@ def create_customer(
         secondary_phone=sec_norm,
         city=(body.city.strip() if body.city else None),
         city_id=body.city_id,
-        route_id=body.route_id,
+        route_id=city_route_id,
         credit_limit=body.credit_limit,
         credit_override=body.credit_override or False,
         gst_number=(body.gst_number.strip().upper() if body.gst_number else None),
@@ -247,12 +293,23 @@ def update_customer(
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="invalid secondary phone")
             row.secondary_phone = sec_norm
 
-    for field in ("alias", "city_id", "route_id", "credit_limit", "credit_override", "gst_number"):
+    for field in ("alias", "city_id", "credit_limit", "credit_override", "gst_number"):
         if field in data:
             val = data.pop(field)
             if field == "gst_number" and val:
                 val = str(val).strip().upper()
             setattr(row, field, val)
+
+    # Auto-derive route_id from city whenever city_id changes
+    if "city_id" in body.model_dump(exclude_unset=True):
+        if row.city_id:
+            _c = db.get(City, row.city_id)
+            row.route_id = _c.route_id if _c else None
+        else:
+            row.route_id = None
+
+    # Drop route_id from data if caller accidentally sent it
+    data.pop("route_id", None)
 
     if data:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"unknown fields: {list(data.keys())}")
@@ -407,51 +464,58 @@ def _build_statement(
 
     events: list[dict] = []
 
-    # debit entries — only orders that have a bill (closed/billed orders)
-    orders = (
+    # Debit entries — all non-cancelled bills for this customer's orders
+    # Query ALL orders (any status) so partial-billed "received" orders are included
+    all_orders = (
         db.query(CustomerOrder)
         .filter(
             CustomerOrder.customer_id == customer_id,
-            CustomerOrder.status.in_(["closed", "billed", "shipped"]),
             CustomerOrder.deleted_at.is_(None),
         )
         .all()
     )
-    # Pre-fetch bills for these orders
-    order_ids = [o.id for o in orders]
-    bills_by_order: dict[int, CustomerBill] = {}
+    order_ids = [o.id for o in all_orders]
+    orders_by_id = {o.id: o for o in all_orders}
+
+    # Fetch ALL bills (multiple per order for partial billing)
+    all_bills: list[CustomerBill] = []
     if order_ids:
-        for b in db.query(CustomerBill).filter(
-            CustomerBill.customer_order_id.in_(order_ids),
-            CustomerBill.bill_status != "cancelled",
-        ).all():
-            bills_by_order[b.customer_order_id] = b
+        all_bills = (
+            db.query(CustomerBill)
+            .filter(
+                CustomerBill.customer_order_id.in_(order_ids),
+                CustomerBill.bill_status != "cancelled",
+            )
+            .order_by(CustomerBill.created_at)
+            .all()
+        )
 
     total_billed = Decimal("0")
-    for o in orders:
-        bill = bills_by_order.get(o.id)
-        # Use bill grand_total if available (more accurate with GST/discount); else order total
-        if bill and isinstance(bill.totals, dict):
-            amt = Decimal(str(bill.totals.get("grand_total") or o.total_amount))
+    for bill in all_bills:
+        o = orders_by_id.get(bill.customer_order_id)
+        if o is None:
+            continue
+        if isinstance(bill.totals, dict) and bill.totals.get("grand_total"):
+            amt = Decimal(str(bill.totals["grand_total"]))
         else:
-            amt = Decimal(str(o.total_amount))
+            amt = Decimal("0")
         total_billed += amt
-        item_count = len(o.items) if isinstance(o.items, list) else 0
-        bill_label = f"Bill {bill.bill_no}" if bill and bill.bill_no else (f"Bill #{bill.id}" if bill else f"Order #{o.id}")
-        # Build item detail string: "ProductID – Name ×qty"
+        bill_label = f"Bill {bill.bill_no}" if bill.bill_no else f"Bill #{bill.id}"
+        # Build item detail from bill items (what was actually billed in this bill)
         item_details = ""
-        if isinstance(o.items, list) and o.items:
+        bill_items = bill.items if isinstance(bill.items, list) else []
+        if bill_items:
             parts = []
-            for it in o.items:
+            for it in bill_items:
                 pid = it.get("our_product_id") or it.get("product_code") or ""
-                name = it.get("name") or ""
-                qty = it.get("quantity") or it.get("qty") or ""
+                iname = it.get("name") or ""
+                qty = it.get("quantity") or ""
                 price = it.get("unit_price") or ""
                 part = ""
                 if pid:
                     part += pid
-                if name:
-                    part += (f" – {name}" if pid else name)
+                if iname:
+                    part += (f" – {iname}" if pid else iname)
                 if qty:
                     part += f" ×{qty}"
                 if price:
@@ -460,13 +524,24 @@ def _build_statement(
                     parts.append(part)
             if parts:
                 item_details = " | ".join(parts)
-        description = f"{bill_label}"
+        elif o.items:
+            # fallback to order items if bill has no item list
+            parts = []
+            for it in (o.items if isinstance(o.items, list) else []):
+                pid = it.get("our_product_id") or it.get("product_code") or ""
+                iname = it.get("name") or ""
+                qty = it.get("quantity") or ""
+                part = pid or iname
+                if qty:
+                    part += f" ×{qty}"
+                if part:
+                    parts.append(part)
+            item_details = " | ".join(parts)
+        description = bill_label
         if item_details:
             description += f"\n{item_details}"
-        else:
-            description += f" — {item_count} item{'s' if item_count != 1 else ''}"
         events.append({
-            "date": bill.created_at if bill else o.created_at,
+            "date": bill.created_at,
             "type": "bill",
             "reference": bill_label,
             "description": description,
@@ -474,8 +549,8 @@ def _build_statement(
             "credit": 0.0,
             "order_id": o.id,
             "order_status": o.status,
-            "bill_id": bill.id if bill else None,
-            "bill_no": bill.bill_no if bill else None,
+            "bill_id": bill.id,
+            "bill_no": bill.bill_no,
         })
 
     # credit entries — payments on AR invoices for this customer
@@ -671,23 +746,26 @@ def get_customer_stats(
         db.query(CustomerOrder)
         .filter(
             CustomerOrder.customer_id == customer_id,
-            CustomerOrder.status != "cancelled",
+            CustomerOrder.deleted_at.is_(None),
         )
         .all()
     )
     total_orders = len(orders)
-    total_billed = float(sum(Decimal(str(o.total_amount)) for o in orders))
 
-    # invoice_count = orders that have a customer bill (billed/shipped)
     from app.models.customer_bill import CustomerBill
     order_ids = [o.id for o in orders]
     invoice_count = 0
+    total_billed = 0.0
     if order_ids:
-        invoice_count = (
+        bills = (
             db.query(CustomerBill)
             .filter(CustomerBill.customer_order_id.in_(order_ids), CustomerBill.bill_status != "cancelled")
-            .count()
+            .all()
         )
+        invoice_count = len(bills)
+        for b in bills:
+            if isinstance(b.totals, dict) and b.totals.get("grand_total"):
+                total_billed += float(b.totals["grand_total"])
 
     hot_score = round(invoice_count / max(1, total_orders) * 100, 2)
 

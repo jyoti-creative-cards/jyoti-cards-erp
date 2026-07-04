@@ -4,8 +4,12 @@ import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from app.db.session import init_db
+from app.middleware.audit_middleware import AuditMiddleware
 from app.routers import (
     accounting,
     addons,
@@ -20,18 +24,17 @@ from app.routers import (
     customer_bills,
     customer_orders,
     customers,
+    dashboard,
     expenses,
     fiscal_years,
     freight_vendors,
     inventory,
     notes,
     product_prices,
-    purchase_orders,
     reports,
     routes,
     shop,
     staff,
-    vendor_bills,
     vendor_orders,
     vendors,
 )
@@ -45,8 +48,13 @@ else:
     _allow_origins = [x.strip() for x in _cors.split(",") if x.strip()]
     _allow_cred = True
 
-app = FastAPI(title="Customer backend", version="0.1.0")
+limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
 
+app = FastAPI(title="Customer backend", version="0.1.0")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
+
+app.add_middleware(AuditMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allow_origins,
@@ -56,16 +64,15 @@ app.add_middleware(
 )
 
 app.include_router(auth.router, prefix="/api/v1")
+app.include_router(dashboard.router, prefix="/api/v1")
 app.include_router(customers.router, prefix="/api/v1")
 app.include_router(vendors.router, prefix="/api/v1")
 app.include_router(catalog.router, prefix="/api/v1")
 app.include_router(catalog_alternatives.router, prefix="/api/v1")
-app.include_router(purchase_orders.router, prefix="/api/v1")
 app.include_router(inventory.router, prefix="/api/v1")
 app.include_router(shop.router, prefix="/api/v1")
 app.include_router(customer_orders.shop_order_router, prefix="/api/v1")
 app.include_router(customer_orders.admin_customer_order_router, prefix="/api/v1")
-app.include_router(vendor_bills.router, prefix="/api/v1")
 app.include_router(customer_bills.router, prefix="/api/v1")
 app.include_router(accounting.router, prefix="/api/v1")
 app.include_router(notes.router, prefix="/api/v1")

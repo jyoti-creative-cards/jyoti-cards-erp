@@ -4,7 +4,6 @@ import uuid
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -14,9 +13,9 @@ from app.models.customer import Customer
 from app.models.customer_bill import CustomerBill
 from app.models.customer_order import CustomerOrder
 from app.schemas.customer_bill import CustomerBillGenerate, CustomerBillPublic
-from app.services.catalog_storage import delete_keys, presigned_url, storage_configured, upload_bytes
+from app.services.catalog_storage import presigned_url, storage_configured, upload_bytes
 from app.integrations.whatsapp.client import send_order_billed, upload_media
-from app.services.accounting import ensure_ar_for_customer_bill, order_line_summary
+from app.services.accounting import ensure_ar_for_customer_bill
 from app.services.customer_bill_math import compute_bill_totals
 from app.services.customer_bill_pdf import render_customer_bill_pdf, render_copies_pdf
 from app.models.bill_series import BillSeries
@@ -88,11 +87,11 @@ def generate_customer_bill(body: CustomerBillGenerate, db: Session = Depends(get
     order = db.get(CustomerOrder, body.customer_order_id)
     if order is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="order not found")
-    allowed_statuses = {"open", "confirmed", "billed"}
+    allowed_statuses = {"received", "billed"}
     if (order.status or "").strip().lower() not in allowed_statuses:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            detail=f"customer bill can be generated when order status is open/confirmed/billed (got: {order.status})",
+            detail=f"customer bill can be generated when order status is received/billed (got: {order.status})",
         )
 
     # Duplicate bill check: same customer, same day, same item set
@@ -163,12 +162,7 @@ def generate_customer_bill(body: CustomerBillGenerate, db: Session = Depends(get
             updated_order_items.append(new_it)
         order.items = updated_order_items
         flag_modified(order, "items")
-
-        # Recalculate order total (remaining unbilled)
-        order.total_amount = Decimal(str(sum(
-            float(it.get("unit_price", 0)) * max(0, int(it.get("quantity", 0)) - int(it.get("qty_billed", 0)))
-            for it in updated_order_items
-        )))
+        # NOTE: order.total_amount intentionally NOT updated — it holds the original full order value
     else:
         # Bill all remaining (unbilled) items
         items = []
@@ -196,23 +190,7 @@ def generate_customer_bill(body: CustomerBillGenerate, db: Session = Depends(get
     freight = body.freight_charges
     packaging = body.packaging_charges
 
-    # Apply rate_type override
-    rate_type = (body.rate_type or "order").strip().lower()
-    if rate_type in ("net", "regular"):
-        overridden_items = []
-        for it in items:
-            cid = it.get("catalog_product_id")
-            prod = db.get(CatalogProduct, int(cid)) if cid else None
-            new_price = None
-            if prod and rate_type == "net":
-                new_price = float(prod.buying_price or 0)
-            elif prod and rate_type == "regular":
-                new_price = float(prod.selling_price or 0)
-            if new_price is not None:
-                it = dict(it)
-                it["unit_price"] = str(new_price)
-            overridden_items.append(it)
-        items = overridden_items
+    # rate_type is always "order" — use the price stored on the order line
 
     totals = compute_bill_totals(
         items,
@@ -239,12 +217,6 @@ def generate_customer_bill(body: CustomerBillGenerate, db: Session = Depends(get
     # Gather product image URLs for PDF
     item_image_urls = _get_item_image_urls(db, items)
 
-    existing = db.query(CustomerBill).filter(
-        CustomerBill.customer_order_id == order.id,
-        CustomerBill.bill_status != "cancelled",
-    ).first()
-    old_keys: list[str] = []
-
     # Resolve bill_no from series if requested
     new_bill_no: str | None = None
     if body.bill_series_id is not None:
@@ -260,39 +232,24 @@ def generate_customer_bill(body: CustomerBillGenerate, db: Session = Depends(get
 
     narration_val = (body.narration or "").strip() or None
 
-    if existing is not None:
-        if existing.document_key:
-            old_keys.append(existing.document_key)
-        existing.gst_enabled = body.gst_enabled
-        existing.gst_rate_percent = gst_rate
-        existing.discount_percent = disc
-        existing.totals = totals
-        existing.document_key = None
-        if narration_val is not None:
-            existing.narration = narration_val
-        if new_bill_no is not None:
-            existing.bill_no = new_bill_no
-            existing.bill_series_id = body.bill_series_id
-        db.add(existing)
-        row = existing
-    else:
-        row = CustomerBill(
-            customer_order_id=order.id,
-            gst_enabled=body.gst_enabled,
-            gst_rate_percent=gst_rate,
-            discount_percent=disc,
-            totals=totals,
-            document_key=None,
-            bill_no=new_bill_no,
-            bill_series_id=body.bill_series_id,
-            narration=narration_val,
-        )
-        db.add(row)
+    # Always create a NEW bill row per generation — partial billing creates multiple bills
+    row = CustomerBill(
+        customer_order_id=order.id,
+        gst_enabled=body.gst_enabled,
+        gst_rate_percent=gst_rate,
+        discount_percent=disc,
+        totals=totals,
+        items=items,  # store which items/qtys were billed in this bill
+        document_key=None,
+        bill_no=new_bill_no,
+        bill_series_id=body.bill_series_id,
+        narration=narration_val,
+        bill_status="active",
+    )
+    db.add(row)
 
     db.commit()
     db.refresh(row)
-
-    delete_keys(old_keys)
 
     # Compute credit limit info for PDF footer
     credit_limit_val: float | None = float(cust.credit_limit) if (cust and cust.credit_limit is not None) else None
@@ -328,7 +285,7 @@ def generate_customer_bill(body: CustomerBillGenerate, db: Session = Depends(get
         for it in (order.items if isinstance(order.items, list) else [])
         if isinstance(it, dict)
     )
-    order.status = "billed" if all_billed else "open"
+    order.status = "billed" if all_billed else "received"
     db.add(order)
     db.commit()
     db.refresh(row)

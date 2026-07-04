@@ -2,16 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { ErpAppShell, type ErpMainTab } from "@/components/ErpAppShell";
+import { DashboardScreen } from "@/components/DashboardScreen";
 import { PeopleScreen } from "@/components/PeopleScreen";
-import { CatalogScreen } from "@/components/CatalogScreen";
 import { StockScreen } from "@/components/StockScreen";
 import { OrdersScreen } from "@/components/OrdersScreen";
-import { VendorOrdersScreen } from "@/components/VendorOrdersScreen";
 import { FinanceScreen } from "@/components/FinanceScreen";
 import { CreateScreen } from "@/components/CreateScreen";
 import { AdminScreen } from "@/components/AdminScreen";
 import { RecycleBinScreen } from "@/components/RecycleBinScreen";
-import { ReturnsScreen } from "@/components/ReturnsScreen";
 import { StaffScreen } from "@/components/StaffScreen";
 import { FindScreen } from "@/components/FindScreen";
 import { ReportsScreen } from "@/components/ReportsScreen";
@@ -188,7 +186,7 @@ function LoginPage({ onAuth }: { onAuth: (a: AuthState) => void }) {
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
 export default function OperationsAdminPage() {
-  const [mainTab, setMainTab] = useState<ErpMainTab>("orders");
+  const [mainTab, setMainTab] = useState<ErpMainTab>("dashboard");
   const [auth, setAuth] = useState<AuthState>({ type: "none" });
 
   useEffect(() => {
@@ -203,8 +201,8 @@ export default function OperationsAdminPage() {
     if (a.type === "staff" && a.staff.role !== "admin") {
       const firstPerm = a.staff.permissions[0] || "";
       const tabMap: Record<string, ErpMainTab> = {
-        "orders.view": "orders", "people.view": "people", "catalog.view": "catalog",
-        "stock.view": "stock", "finance.view": "finance", "returns.view": "returns",
+        "orders.view": "orders", "people.view": "people", "catalog.view": "stock",
+        "stock.view": "stock", "finance.view": "finance", "returns.view": "orders",
       };
       const firstTab = tabMap[firstPerm] || "orders";
       setMainTab(firstTab);
@@ -254,13 +252,11 @@ export default function OperationsAdminPage() {
       onLogout={onLogout}
       apiBase={getApiBase()}
     >
+      {mainTab === "dashboard"  && <DashboardScreen adminKey={adminKey} auth={auth} onNavigate={setMainTab} />}
       {mainTab === "people"     && can("people.view")     && <PeopleScreen adminKey={adminKey} auth={auth} />}
-      {mainTab === "catalog"    && can("catalog.view")    && <CatalogScreen adminKey={adminKey} />}
       {mainTab === "stock"      && can("stock.view")      && <StockScreen adminKey={adminKey} />}
-      {mainTab === "orders"          && can("orders.view") && <OrdersScreen adminKey={adminKey} />}
-      {mainTab === "vendor-orders"   && can("orders.view") && <VendorOrdersScreen auth={auth} />}
+      {mainTab === "orders"     && can("orders.view") && <OrdersScreen adminKey={adminKey} auth={auth} />}
       {mainTab === "finance"    && can("finance.view")    && <FinanceScreen adminKey={adminKey} />}
-      {mainTab === "returns"    && can("returns.view")    && <ReturnsScreen auth={auth} canEdit={can("returns.edit")} />}
       {mainTab === "create"     && can("create.use")      && <CreateScreen adminKey={adminKey} />}
       {mainTab === "admin"      && (can("admin.setup") || can("admin.audit")) && <AdminScreen adminKey={adminKey} auth={auth} />}
       {mainTab === "staff"      && can("admin.manage")    && <StaffScreen auth={auth} />}

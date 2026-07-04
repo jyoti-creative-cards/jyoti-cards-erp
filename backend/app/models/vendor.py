@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text, func, true as sql_true
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func, true as sql_true
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -22,6 +22,9 @@ class Vendor(Base):
     address: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     billing_percentage: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     city: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    city_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("portal_cities.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     gst_number: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=sql_true()

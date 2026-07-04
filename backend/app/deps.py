@@ -57,6 +57,20 @@ def require_admin(
     raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
 
 
+def get_actor(
+    x_admin_key_header: Optional[str] = Header(None, alias="X-Admin-Key"),
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+) -> str:
+    """Return a human-readable actor string for audit logs."""
+    if _is_valid_admin_key(x_admin_key_header):
+        return "admin"
+    staff = _staff_from_bearer(authorization, db)
+    if staff:
+        return f"staff:{getattr(staff, 'name', None) or getattr(staff, 'email', None) or staff.id}"
+    return "unknown"
+
+
 def require_admin_only(
     x_admin_key: Optional[str] = Header(None, alias="X-Admin-Key"),
 ) -> None:

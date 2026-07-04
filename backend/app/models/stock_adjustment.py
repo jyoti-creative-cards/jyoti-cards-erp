@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, ForeignKey, Integer, Text, func
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -13,6 +13,9 @@ class StockAdjustment(Base):
     """Manual quantity correction (delta applied to portal_stock_balances)."""
 
     __tablename__ = "portal_stock_adjustments"
+    __table_args__ = (
+        Index("ix_stock_adj_product_created", "catalog_product_id", "created_at"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     catalog_product_id: Mapped[int] = mapped_column(

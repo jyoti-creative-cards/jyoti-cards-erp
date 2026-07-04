@@ -7,13 +7,13 @@ from pydantic import BaseModel, Field
 
 
 class VendorCreate(BaseModel):
-    company_name: str = Field(..., min_length=1, max_length=500, description="Shop / business name (required)")
-    person_name: Optional[str] = Field(None, max_length=500, description="Person / contact name (optional; defaults to company_name)")
+    company_name: str = Field(..., min_length=1, max_length=500)
+    person_name: Optional[str] = Field(None, max_length=500)
     phone: str = Field(..., min_length=8, max_length=32)
     secondary_phone: Optional[str] = Field(None, max_length=32)
     address: Optional[str] = None
-    billing_percentage: Optional[int] = Field(None, ge=0, le=100)
     city: Optional[str] = Field(None, max_length=200)
+    city_id: Optional[int] = None
     gst_number: Optional[str] = Field(None, max_length=20)
     alias: Optional[str] = Field(None, max_length=200)
 
@@ -24,8 +24,8 @@ class VendorUpdate(BaseModel):
     company_name: Optional[str] = Field(None, max_length=500)
     secondary_phone: Optional[str] = Field(None, max_length=32)
     address: Optional[str] = None
-    billing_percentage: Optional[int] = Field(None, ge=0, le=100)
     city: Optional[str] = Field(None, max_length=200)
+    city_id: Optional[int] = None
     gst_number: Optional[str] = Field(None, max_length=20)
     alias: Optional[str] = Field(None, max_length=200)
 
@@ -38,8 +38,8 @@ class VendorPublic(BaseModel):
     alias: Optional[str]
     secondary_phone: Optional[str]
     address: Optional[str]
-    billing_percentage: Optional[int]
     city: Optional[str]
+    city_id: Optional[int] = None
     gst_number: Optional[str]
     created_at: datetime
     updated_at: datetime

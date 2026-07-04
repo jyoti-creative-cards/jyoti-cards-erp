@@ -6,12 +6,12 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 
 from app.db.session import get_db
 from app.deps import get_current_customer, require_admin
 from app.integrations.whatsapp.client import (
     send_order_confirmation,
-    send_shipment_confirmation,
     upload_media,
 )
 from app.services.order_items_pdf import build_order_items_pdf
@@ -35,7 +35,7 @@ from app.services.stock_levels import stock_status_label
 shop_order_router = APIRouter(prefix="/shop", tags=["shop"])
 admin_customer_order_router = APIRouter(prefix="/customer-orders", tags=["customer-orders"])
 
-CO_STATUSES = frozenset({"open", "closed", "confirmed", "billed", "shipped", "cancelled"})
+CO_STATUSES = frozenset({"received", "billed", "closed"})
 
 
 def _avail(db: Session, catalog_product_id: int) -> tuple[int, int]:
@@ -82,6 +82,7 @@ def _build_items_customer(db: Session, quantities: dict[int, int]) -> tuple[list
                 "catalog_product_id": cid,
                 "our_product_id": p.our_product_id,
                 "name": p.name,
+                "category": p.category,
                 "quantity": qty,
                 "unit_price": float(up),
                 "line_total": float(lt),
@@ -145,6 +146,7 @@ def _items_to_public(raw: object) -> List[CustomerOrderLinePublic]:
                 catalog_product_id=cid,
                 our_product_id=str(x.get("our_product_id") or ""),
                 name=str(x.get("name") or ""),
+                category=str(x.get("category") or ""),
                 quantity=max(1, q),
                 unit_price=str(x.get("unit_price", "0")),
                 line_total=str(x.get("line_total", "0")),
@@ -262,7 +264,7 @@ def create_customer_order(
         .filter(
             and_(
                 CustomerOrder.customer_id == customer.id,
-                CustomerOrder.status.in_(["open", "confirmed"]),
+                CustomerOrder.status.in_(["received"]),
                 CustomerOrder.deleted_at.is_(None),
             )
         )
@@ -300,7 +302,7 @@ def create_customer_order(
     else:
         row = CustomerOrder(
             customer_id=customer.id,
-            status="open",
+            status="received",
             items=items,
             total_amount=total,
             notes=None,
@@ -313,7 +315,7 @@ def create_customer_order(
     try:
         qty_total = sum(int(x.get("quantity") or 0) for x in items if isinstance(x, dict))
         amount_str = format(row.total_amount, "f")
-        note_str = (body.customer_notes or "").strip() or "—"
+        note_str = (body.customer_notes or "").strip() or ""
 
         # Build image URLs for all items
         image_urls: dict = {}
@@ -327,8 +329,24 @@ def create_customer_order(
                 if keys:
                     image_urls[cid] = presigned_url(keys[0], expires=3600)
 
-        # Build PDF with all item images
-        pdf_bytes = build_order_items_pdf(items, image_urls, row.id, customer.name or "Customer")
+        from datetime import datetime
+        order_date_str = row.created_at.strftime("%d %b %Y · %I:%M %p") if row.created_at else ""
+
+        # Build professional PDF receipt
+        pdf_bytes = build_order_items_pdf(
+            items=items,
+            image_urls=image_urls,
+            order_id=row.id,
+            customer_name=customer.company_name or customer.name or "Customer",
+            customer_phone=customer.phone or "",
+            customer_address=getattr(customer, "address", "") or "",
+            customer_city=getattr(customer, "city", "") or "",
+            customer_gst=getattr(customer, "gst_number", "") or "",
+            order_date=order_date_str,
+            order_status="received",
+            total_amount=amount_str,
+            customer_note=note_str,
+        )
         pdf_media_id = upload_media(pdf_bytes, "application/pdf", f"Order_{row.id}.pdf")
 
         if pdf_media_id:
@@ -383,27 +401,6 @@ def get_my_order(
     return _order_to_public(row)
 
 
-@shop_order_router.post("/orders/{order_id}/confirm-delivery", response_model=CustomerOrderPublic)
-def confirm_delivery_received(
-    order_id: int,
-    db: Session = Depends(get_db),
-    customer: Customer = Depends(get_current_customer),
-) -> CustomerOrderPublic:
-    row = db.get(CustomerOrder, order_id)
-    if row is None or row.customer_id != customer.id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="order not found")
-    st = (row.status or "").strip().lower()
-    if st not in ("shipped", "delivered"):
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            detail="You can confirm receipt only after the order is shipped.",
-        )
-    row.customer_confirmed_delivery_at = datetime.now(timezone.utc)
-    db.add(row)
-    db.commit()
-    db.refresh(row)
-    return _order_to_public(row)
-
 
 @admin_customer_order_router.post("", response_model=CustomerOrderAdminPublic, status_code=201, dependencies=[Depends(require_admin)])
 def admin_create_customer_order(
@@ -443,7 +440,7 @@ def admin_create_customer_order(
 
     row = CustomerOrder(
         customer_id=body.customer_id,
-        status="open",
+        status="received",
         items=items,
         total_amount=total,
         notes=(body.notes or "").strip() or None,
@@ -463,16 +460,34 @@ def admin_list_customer_orders(
     db: Session = Depends(get_db),
     status_filter: Optional[str] = Query(None, alias="status"),
     customer_id: Optional[int] = Query(None, ge=1),
+    q: Optional[str] = Query(None, description="Search customer name or phone"),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    deleted: Optional[bool] = Query(None),
 ) -> List[CustomerOrderAdminPublic]:
-    q = db.query(CustomerOrder).order_by(CustomerOrder.id.desc())
+    query = db.query(CustomerOrder).order_by(CustomerOrder.id.desc())
+    if deleted is True:
+        query = query.filter(CustomerOrder.deleted_at.isnot(None))
+    else:
+        query = query.filter(CustomerOrder.deleted_at.is_(None))
     sf = (status_filter or "").strip().lower()
     if sf:
         if sf not in CO_STATUSES:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="invalid status filter")
-        q = q.filter(CustomerOrder.status == sf)
+        query = query.filter(CustomerOrder.status == sf)
     if customer_id is not None:
-        q = q.filter(CustomerOrder.customer_id == customer_id)
-    rows = q.limit(400).all()
+        query = query.filter(CustomerOrder.customer_id == customer_id)
+    if q and q.strip():
+        term = f"%{q.strip()}%"
+        matching_customer_ids = db.query(Customer.id).filter(
+            or_(Customer.name.ilike(term), Customer.phone.ilike(term), Customer.company_name.ilike(term))
+        ).all()
+        ids = [c.id for c in matching_customer_ids]
+        if ids:
+            query = query.filter(CustomerOrder.customer_id.in_(ids))
+        else:
+            return []
+    rows = query.offset(offset).limit(limit).all()
     return [_admin_public(db, r) for r in rows]
 
 
@@ -506,7 +521,7 @@ def admin_patch_customer_order(
     if body.status is not None:
         st = body.status.strip().lower()
         if st not in CO_STATUSES:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"invalid status; allowed: {', '.join(sorted(CO_STATUSES))}")
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="invalid status; allowed: received, billed, closed")
         row.status = st
 
     if body.notes is not None:
@@ -528,30 +543,9 @@ def admin_patch_customer_order(
     if body.receipt_note_no is not None:
         row.receipt_note_no = (body.receipt_note_no or "").strip() or None
 
-    # Shipped is now optional — no longer enforced as a required step
-
     db.add(row)
     db.commit()
     db.refresh(row)
-
-    cust = db.get(Customer, row.customer_id)
-    raw_items = row.items if isinstance(row.items, list) else []
-    item_dicts = [x for x in raw_items if isinstance(x, dict)]
-
-    if cust:
-        try:
-            if row.status == "shipped" and prev_status != "shipped":
-                send_shipment_confirmation(
-                    phone=cust.phone,
-                    customer_name=cust.name or "Customer",
-                    receipt=row.shipment_receipt or "—",
-                    contact=row.shipment_contact or "—",
-                    service=row.shipment_notes or "—",
-                    notes=row.shipment_notes or "—",
-                    tracking_url_suffix=str(order_id),
-                )
-        except Exception as ex:
-            print("WhatsApp shipment_confirmation send failed:", ex)
 
     return _admin_public(db, row)
 
@@ -648,7 +642,7 @@ def admin_offline_order(body: OfflineOrderCreate, db: Session = Depends(get_db))
     # Create order
     order = CustomerOrder(
         customer_id=body.customer_id,
-        status="open",
+        status="received",
         items=items,
         total_amount=total,
         notes=(body.notes or "").strip() or None,
@@ -992,13 +986,30 @@ def soft_delete_customer_order(order_id: int, db: Session = Depends(get_db)) -> 
     row = db.get(CustomerOrder, order_id)
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="order not found")
+
+    # Restore full ordered stock back when cancelling (regardless of billing stage)
+    items = row.items if isinstance(row.items, list) else []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        cid = int(it.get("catalog_product_id", 0))
+        qty = int(it.get("quantity", 0))
+        if cid <= 0 or qty <= 0:
+            continue
+        bal = db.get(StockBalance, cid)
+        if bal:
+            bal.quantity = (bal.quantity or 0) + qty  # return stock
+        else:
+            bal = StockBalance(catalog_product_id=cid, quantity=qty, low_stock_threshold=0)
+        db.add(bal)
+
     row.deleted_at = datetime.now(timezone.utc)
-    row.status = "cancelled"
+    row.status = "closed"
     db.add(row)
     db.commit()
     try:
         from app.services.audit import log_action as _log
-        _log(db, "DELETE", "customer_order", order_id, f"Order #{order_id} cancelled/soft-deleted")
+        _log(db, "DELETE", "customer_order", order_id, f"Order #{order_id} cancelled — stock restored for {len(items)} item(s)")
         db.commit()
     except Exception as _audit_ex:
         print(f"Audit log failed (non-fatal): {_audit_ex}")
@@ -1042,8 +1053,8 @@ def merge_customer_orders(body: MergeOrdersBody, db: Session = Depends(get_db)) 
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"order {oid} not found")
         if o.customer_id != body.customer_id:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"order {oid} does not belong to customer {body.customer_id}")
-        if (o.status or "").strip().lower() != "confirmed":
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"order {oid} must be in 'confirmed' status to merge (got '{o.status}')")
+        if (o.status or "").strip().lower() != "received":
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"order {oid} must be in 'received' status to merge (got '{o.status}')")
         orders.append(o)
 
     merged_quantities: dict[int, dict] = {}
@@ -1069,7 +1080,7 @@ def merge_customer_orders(body: MergeOrdersBody, db: Session = Depends(get_db)) 
 
     new_order = CustomerOrder(
         customer_id=body.customer_id,
-        status="confirmed",
+        status="received",
         items=merged_items,
         total_amount=total,
         notes=(body.notes or "").strip() or None,
@@ -1077,7 +1088,7 @@ def merge_customer_orders(body: MergeOrdersBody, db: Session = Depends(get_db)) 
     db.add(new_order)
 
     for o in orders:
-        o.status = "cancelled"
+        o.status = "closed"
         db.add(o)
 
     db.commit()

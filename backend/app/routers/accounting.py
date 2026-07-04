@@ -32,7 +32,6 @@ from app.services.accounting import (
     amount_paid_on_ar,
     count_open_ap,
     count_open_ar,
-    ensure_ap_for_vendor_bill,
     gl_activity,
     monthly_pnl_series,
     pnl_for_range,
@@ -119,7 +118,6 @@ def _ap_pub(db: Session, row: APBill) -> APBillPublic:
         id=row.id,
         vendor_bill_id=row.vendor_bill_id,
         vendor_id=row.vendor_id,
-        purchase_order_id=row.purchase_order_id,
         amount=str(total),
         amount_paid=str(paid.quantize(q)),
         balance=str(bal),
@@ -259,36 +257,6 @@ def list_ap(db: Session = Depends(get_db)) -> list[APBillPublic]:
     return [_ap_pub(db, r) for r in rows]
 
 
-@router.post("/ap/from-vendor-bill/{vendor_bill_id}", response_model=APBillPublic, dependencies=[Depends(require_admin)])
-def create_ap_from_vendor_bill(vendor_bill_id: int, db: Session = Depends(get_db)) -> APBillPublic:
-    from app.models.vendor_bill import VendorBill
-    from app.models.vendor_purchase_order import VendorPurchaseOrder
-
-    vb = db.get(VendorBill, vendor_bill_id)
-    if vb is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="vendor bill not found")
-    po = db.get(VendorPurchaseOrder, vb.purchase_order_id)
-    if po is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="purchase order missing")
-    st = (po.status or "").strip().lower()
-    if st not in ("closed", "disputed"):
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            detail="AP only when PO is closed or disputed",
-        )
-    try:
-        seed_chart_accounts(db)
-        row = ensure_ap_for_vendor_bill(db, vb=vb, po=po)
-        if row is None:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="could not create AP (amount zero?)")
-        db.commit()
-    except ValueError as e:
-        db.rollback()
-        raise _accounting_http(e) from e
-    db.refresh(row)
-    return _ap_pub(db, row)
-
-
 @router.post("/ar/{ar_id}/pay", response_model=ARInvoicePublic, dependencies=[Depends(require_admin)])
 def pay_ar(
     ar_id: int,
@@ -377,60 +345,50 @@ def pay_ap(
 
 @router.get("/ap/{ap_id}/receipt-details", response_model=dict, dependencies=[Depends(require_admin)])
 def ap_receipt_details(ap_id: int, db: Session = Depends(get_db)) -> dict:
-    """Return the PO and all stock receipts for an AP bill, including vendor bill numbers."""
+    """Return stock receipts for an AP bill."""
     from app.models.stock_receipt import StockReceipt
-    from app.models.vendor_purchase_order import VendorPurchaseOrder
 
     ap = db.get(APBill, ap_id)
     if ap is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="AP not found")
 
-    po = db.get(VendorPurchaseOrder, ap.purchase_order_id) if ap.purchase_order_id else None
-
     receipts = []
-    if po:
-        raw_receipts = db.query(StockReceipt).filter(StockReceipt.purchase_order_id == po.id).order_by(StockReceipt.id.asc()).all()
-        for r in raw_receipts:
-            receipts.append({
-                "id": r.id,
-                "vendor_bill_no": r.vendor_bill_no,
-                "receipt_number": r.receipt_number,
-                "is_partial": r.is_partial,
-                "line_items": r.line_items or [],
-                "note": r.note,
-                "created_at": r.created_at.isoformat() if r.created_at else None,
-                "bill_photo_key": r.bill_photo_key,
-            })
+    raw_receipts = db.query(StockReceipt).filter(StockReceipt.vendor_id == ap.vendor_id).order_by(StockReceipt.id.asc()).all()
+    for r in raw_receipts:
+        receipts.append({
+            "id": r.id,
+            "vendor_bill_no": r.vendor_bill_no,
+            "receipt_number": r.receipt_number,
+            "is_partial": r.is_partial,
+            "line_items": r.line_items or [],
+            "note": r.note,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "bill_photo_key": r.bill_photo_key,
+        })
 
     return {
         "ap_id": ap_id,
-        "purchase_order_id": ap.purchase_order_id,
-        "po_items": (po.items if po else []) or [],
         "receipts": receipts,
     }
 
 
 @router.get("/ap/vendor/{vendor_id}/receipts", response_model=list[dict], dependencies=[Depends(require_admin)])
 def vendor_receipts(vendor_id: int, db: Session = Depends(get_db)) -> list[dict]:
-    """List all stock receipts from a vendor's POs, for AP tracking by bill number."""
+    """List all stock receipts from a vendor, for AP tracking by bill number."""
     from app.models.stock_receipt import StockReceipt
-    from app.models.vendor_purchase_order import VendorPurchaseOrder
 
-    pos = db.query(VendorPurchaseOrder).filter(VendorPurchaseOrder.vendor_id == vendor_id).all()
-    result = []
-    for po in pos:
-        receipts = db.query(StockReceipt).filter(StockReceipt.purchase_order_id == po.id).all()
-        for r in receipts:
-            result.append({
-                "receipt_id": r.id,
-                "po_id": po.id,
-                "vendor_bill_no": r.vendor_bill_no,
-                "receipt_number": r.receipt_number,
-                "line_items": r.line_items or [],
-                "note": r.note,
-                "created_at": r.created_at.isoformat() if r.created_at else None,
-            })
-    result.sort(key=lambda x: x["receipt_id"], reverse=True)
+    receipts = db.query(StockReceipt).filter(StockReceipt.vendor_id == vendor_id).order_by(StockReceipt.id.desc()).all()
+    result = [
+        {
+            "receipt_id": r.id,
+            "vendor_bill_no": r.vendor_bill_no,
+            "receipt_number": r.receipt_number,
+            "line_items": r.line_items or [],
+            "note": r.note,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in receipts
+    ]
     return result
 
 

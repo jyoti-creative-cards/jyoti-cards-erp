@@ -49,7 +49,6 @@ class APBillPublic(BaseModel):
     id: int
     vendor_bill_id: int
     vendor_id: int
-    purchase_order_id: int
     amount: str
     amount_paid: str = "0"
     balance: str = "0"

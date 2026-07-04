@@ -345,6 +345,8 @@ def _migrate_v12_vendor_bill_columns_postgres() -> None:
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_vendor_bills_vendor ON portal_vendor_bills(vendor_id)"))
         # Also add items column to customer bills for per-bill line tracking
         conn.execute(text("ALTER TABLE portal_customer_bills ADD COLUMN IF NOT EXISTS items JSONB"))
+        # Drop NOT NULL on purchase_order_id since PO system was removed
+        conn.execute(text("ALTER TABLE portal_vendor_bills ALTER COLUMN purchase_order_id DROP NOT NULL"))
 
 
 def _migrate_v9_vendor_order_debit_note_postgres() -> None:

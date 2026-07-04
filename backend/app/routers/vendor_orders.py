@@ -324,7 +324,6 @@ def _receive_items_impl(order_id: int, body: ReceiveItemsBody, db: Session) -> d
         # Allow receiving more than ordered (batch size rounding in B2B)
         matched["qty_received"] = _int(matched.get("qty_received")) + qty
         matched["date_received"] = date_recv
-        flag_modified(vo, "items")
 
         # Add to stock
         _apply_stock_delta(db, int(matched["catalog_product_id"]), qty)
@@ -380,8 +379,29 @@ def _receive_items_impl(order_id: int, body: ReceiveItemsBody, db: Session) -> d
         db.add(ap)
     except Exception as ap_exc:
         db.rollback()
-        db.add(vo)  # re-add vo after rollback
+        # Re-fetch vo after rollback since it's now detached
+        vo = db.get(VendorOrder, order_id)
+        if vo is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="vendor order not found after rollback")
+        # Re-apply the stock and status changes
+        items = list(vo.items) if isinstance(vo.items, list) else []
+        for bl in bill_lines:
+            cid = bl["catalog_product_id"]
+            qty = bl["qty_received"]
+            for it in items:
+                if int(it.get("catalog_product_id", 0)) == cid:
+                    it["qty_received"] = _int(it.get("qty_received", 0)) + qty
+                    break
+            _apply_stock_delta(db, cid, qty)
+        all_recv = all(_pending(it) == 0 for it in items)
+        if all_recv:
+            vo.status = "closed"
+        vo.items = list(items)
+        vo.bill_number = body.bill_number.strip()
+        vo.bill_amount = body.bill_amount
+        vo.bill_uploaded_at = datetime.now(timezone.utc)
         flag_modified(vo, "items")
+        db.add(vo)
         ap_error = str(ap_exc)
         print(f"[WARN] AP/VendorBill creation failed (stock still saved): {ap_error}")
 

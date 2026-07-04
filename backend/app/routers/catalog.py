@@ -195,7 +195,7 @@ def list_products(
     q: Optional[str] = None,
     vendor_id: Optional[int] = None,
     category: Optional[str] = None,
-    limit: int = Query(200, ge=1, le=1000),
+    limit: int = Query(200, ge=1, le=10000),
     offset: int = Query(0, ge=0),
     deleted: bool = Query(False),
     db: Session = Depends(get_db),

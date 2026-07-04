@@ -616,7 +616,7 @@ def _build_statement(
         customer_name=cust.name,
         phone=cust.phone,
         company_name=cust.company_name,
-        total_orders=len(orders),
+        total_orders=len(all_orders),
         total_billed=float(total_billed),
         total_paid=float(total_paid),
         outstanding=float(outstanding),

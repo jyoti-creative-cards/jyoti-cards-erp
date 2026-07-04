@@ -345,32 +345,42 @@ def receive_items(order_id: int, body: ReceiveItemsBody, db: Session = Depends(g
     db.add(vo)
     db.flush()  # flush so vo.id is available
 
-    # Create VendorBill (vendor's invoice for this batch)
-    vb = VendorBill(
-        vendor_order_id=vo.id,
-        vendor_id=vo.vendor_id,
-        bill_number=body.bill_number.strip(),
-        bill_amount=body.bill_amount,
-        bill_lines=bill_lines,
-        match_status="matched",
-        notes=f"Received {len(bill_lines)} item(s). Calculated value: {round(total_received_value, 2)}. "
-              f"{'Discrepancy: ' + str(round(abs(body.bill_amount - total_received_value), 2)) if abs(body.bill_amount - total_received_value) > 0.01 else 'No discrepancy.'}",
-    )
-    db.add(vb)
-    db.flush()  # flush to get vb.id
+    # Create VendorBill + APBill (vendor bill always comes with goods in India)
+    ap_error: str | None = None
+    try:
+        vb = VendorBill(
+            vendor_order_id=vo.id,
+            vendor_id=vo.vendor_id,
+            bill_number=body.bill_number.strip(),
+            bill_amount=body.bill_amount,
+            bill_lines=bill_lines,
+            match_status="matched",
+            notes=f"Received {len(bill_lines)} item(s). Calculated value: {round(total_received_value, 2)}. "
+                  f"{'Discrepancy: ' + str(round(abs(body.bill_amount - total_received_value), 2)) if abs(body.bill_amount - total_received_value) > 0.01 else 'No discrepancy.'}",
+        )
+        db.add(vb)
+        db.flush()  # flush to get vb.id
 
-    # Create APBill (accounts payable for vendor's bill amount)
-    ap = APBill(
-        vendor_bill_id=vb.id,
-        vendor_id=vo.vendor_id,
-        amount=body.bill_amount,
-        status="open",
-    )
-    db.add(ap)
+        ap = APBill(
+            vendor_bill_id=vb.id,
+            vendor_id=vo.vendor_id,
+            amount=body.bill_amount,
+            status="open",
+        )
+        db.add(ap)
+    except Exception as ap_exc:
+        db.rollback()
+        db.add(vo)  # re-add vo after rollback
+        flag_modified(vo, "items")
+        ap_error = str(ap_exc)
+        print(f"[WARN] AP/VendorBill creation failed (stock still saved): {ap_error}")
 
     db.commit()
     db.refresh(vo)
-    return _order_to_public(vo, vendor)
+    result = _order_to_public(vo, vendor)
+    if ap_error:
+        result["_ap_warning"] = f"Stock saved but AP entry failed: {ap_error}"
+    return result
 
 
 @router.post("/{order_id}/upload-bill", dependencies=[Depends(require_admin)])

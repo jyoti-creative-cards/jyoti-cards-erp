@@ -890,7 +890,7 @@ function DetailPanel({ ref_, data }: { ref_: string; data: Record<string, unknow
         <div style={{ marginBottom: 4 }}><strong>Date:</strong> {fmtLedgerDate(String(o.created_at ?? ""))}</div>
         {!!o.invoice_no && <div style={{ marginBottom: 4 }}><strong>Invoice:</strong> {String(o.invoice_no as string)}</div>}
         {!!o.notes && <div style={{ marginBottom: 4 }}><strong>Notes:</strong> {String(o.notes as string)}</div>}
-        {o.customer_notes && <div style={{ marginBottom: 4 }}><strong>Customer notes:</strong> {String(o.customer_notes)}</div>}
+        {!!o.customer_notes && <div style={{ marginBottom: 4 }}><strong>Customer notes:</strong> {String(o.customer_notes as string)}</div>}
         <div style={{ marginTop: 12, marginBottom: 6, fontWeight: 700, fontSize: 11, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>Items</div>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
           <thead>
@@ -914,9 +914,9 @@ function DetailPanel({ ref_, data }: { ref_: string; data: Record<string, unknow
             ))}
           </tbody>
         </table>
-        {total && (
+        {!!total && (
           <div style={{ marginTop: 8, textAlign: "right", fontWeight: 700, fontSize: 13, color: "#0f172a", borderTop: "2px solid #e2e8f0", paddingTop: 6 }}>
-            Total: ₹{String(total)}
+            Total: ₹{String(total as string)}
           </div>
         )}
       </div>
@@ -934,9 +934,9 @@ function DetailPanel({ ref_, data }: { ref_: string; data: Record<string, unknow
         </div>
         <div style={{ marginBottom: 4 }}><strong>Vendor:</strong> {String(o.vendor_name ?? o.vendor_id ?? "—")}</div>
         <div style={{ marginBottom: 4 }}><strong>Date:</strong> {fmtLedgerDate(String(o.created_at ?? ""))}</div>
-        {o.bill_number && <div style={{ marginBottom: 4 }}><strong>Bill:</strong> {String(o.bill_number)}</div>}
-        {o.bill_amount && <div style={{ marginBottom: 4 }}><strong>Bill amount:</strong> ₹{String(o.bill_amount)}</div>}
-        {o.notes && <div style={{ marginBottom: 4 }}><strong>Notes:</strong> {String(o.notes)}</div>}
+        {!!o.bill_number && <div style={{ marginBottom: 4 }}><strong>Bill:</strong> {String(o.bill_number as string)}</div>}
+        {!!o.bill_amount && <div style={{ marginBottom: 4 }}><strong>Bill amount:</strong> ₹{String(o.bill_amount as string)}</div>}
+        {!!o.notes && <div style={{ marginBottom: 4 }}><strong>Notes:</strong> {String(o.notes as string)}</div>}
         <div style={{ marginTop: 12, marginBottom: 6, fontWeight: 700, fontSize: 11, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>Items</div>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
           <thead>

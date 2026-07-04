@@ -262,6 +262,16 @@ def add_items_to_order(vendor_id: int, body: AddItemsBody, db: Session = Depends
 @router.post("/{order_id}/receive", dependencies=[Depends(require_admin)])
 def receive_items(order_id: int, body: ReceiveItemsBody, db: Session = Depends(get_db)) -> dict:
     """Mark items as received: update received qty, add to stock, create VendorBill + APBill."""
+    try:
+        return _receive_items_impl(order_id, body, db)
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Receive failed: {type(e).__name__}: {e}") from e
+
+
+def _receive_items_impl(order_id: int, body: ReceiveItemsBody, db: Session) -> dict:
     vo = db.get(VendorOrder, order_id)
     if vo is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="vendor order not found")

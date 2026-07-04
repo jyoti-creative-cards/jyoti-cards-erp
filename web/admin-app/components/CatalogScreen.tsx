@@ -96,6 +96,7 @@ export function CatalogScreen({ adminKey }: Props) {
           vendorName={vendorName}
           categories={categoryList}
           units={units}
+          setUnits={setUnits}
           seriesList={seriesList}
           setSeriesList={setSeriesList}
           yearGroups={yearGroups}

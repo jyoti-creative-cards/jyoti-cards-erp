@@ -432,7 +432,7 @@ export default function CustomerPortalPage() {
           <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl">
             <h3 className="text-base font-bold text-jc-ink">Add a note (optional)</h3>
             <p className="mt-1 text-sm text-jc-muted">
-              Booking <strong>{pendingBook.product.name}</strong> × {pendingBook.qty}
+              Booking <strong>{pendingBook.product.our_product_id}</strong> × {pendingBook.qty}
             </p>
             <textarea
               autoFocus

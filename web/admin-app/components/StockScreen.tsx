@@ -886,10 +886,10 @@ function DetailPanel({ ref_, data }: { ref_: string; data: Record<string, unknow
           <span style={{ padding: "2px 10px", borderRadius: 10, background: "#f1f5f9", fontSize: 11, fontWeight: 600, color: "#475569" }}>{String(o.status ?? "")}</span>
         </div>
         <div style={{ marginBottom: 4 }}><strong>Customer:</strong> {String(o.customer_name ?? o.customer_id ?? "—")}</div>
-        {o.customer_phone && <div style={{ marginBottom: 4 }}><strong>Phone:</strong> {String(o.customer_phone as string)}</div>}
+        {!!o.customer_phone && <div style={{ marginBottom: 4 }}><strong>Phone:</strong> {String(o.customer_phone as string)}</div>}
         <div style={{ marginBottom: 4 }}><strong>Date:</strong> {fmtLedgerDate(String(o.created_at ?? ""))}</div>
-        {o.invoice_no && <div style={{ marginBottom: 4 }}><strong>Invoice:</strong> {String(o.invoice_no as string)}</div>}
-        {o.notes && <div style={{ marginBottom: 4 }}><strong>Notes:</strong> {String(o.notes as string)}</div>}
+        {!!o.invoice_no && <div style={{ marginBottom: 4 }}><strong>Invoice:</strong> {String(o.invoice_no as string)}</div>}
+        {!!o.notes && <div style={{ marginBottom: 4 }}><strong>Notes:</strong> {String(o.notes as string)}</div>}
         {o.customer_notes && <div style={{ marginBottom: 4 }}><strong>Customer notes:</strong> {String(o.customer_notes)}</div>}
         <div style={{ marginTop: 12, marginBottom: 6, fontWeight: 700, fontSize: 11, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>Items</div>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>

@@ -139,6 +139,7 @@ function ProductsTab({
   vendorName: (id: number) => string;
   categories: string[];
   units: string[];
+  setUnits: Dispatch<SetStateAction<string[]>>;
   seriesList: string[];
   setSeriesList: Dispatch<SetStateAction<string[]>>;
   yearGroups: string[];

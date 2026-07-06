@@ -323,7 +323,7 @@ export function VendorOrdersScreen({ auth }: { auth: AuthState }) {
   return (
     <div className="relative space-y-6 p-4 sm:p-6">
       {toast && (
-        <div className={`fixed right-4 top-16 z-50 rounded-xl px-4 py-3 text-sm font-semibold shadow-xl ${toast.ok ? "bg-emerald-600 text-white" : "bg-red-600 text-white"}`}>
+        <div className={`fixed right-4 top-16 z-[200] rounded-xl px-4 py-3 text-sm font-semibold shadow-xl ${toast.ok ? "bg-emerald-600 text-white" : "bg-red-600 text-white"}`}>
           {toast.msg}
         </div>
       )}

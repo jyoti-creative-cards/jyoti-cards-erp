@@ -63,7 +63,7 @@ export function CreateScreen({ adminKey }: Props) {
   return (
     <div>
       {toast && (
-        <div className={`fixed right-4 top-20 z-50 rounded-lg px-4 py-3 text-sm font-medium shadow-lg ${toast.ok ? "bg-emerald-600 text-white" : "bg-red-600 text-white"}`}>
+        <div className={`fixed right-4 top-20 z-[200] rounded-lg px-4 py-3 text-sm font-medium shadow-lg ${toast.ok ? "bg-emerald-600 text-white" : "bg-red-600 text-white"}`}>
           {toast.msg}
         </div>
       )}

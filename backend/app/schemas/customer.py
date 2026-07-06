@@ -15,7 +15,6 @@ class CustomerCreate(BaseModel):
     alias: Optional[str] = Field(None, max_length=200)
     address: Optional[str] = None
     secondary_phone: Optional[str] = Field(None, max_length=32)
-    city: Optional[str] = Field(None, max_length=200)
     city_id: Optional[int] = None
     credit_limit: Optional[Decimal] = None
     credit_override: bool = False
@@ -30,7 +29,6 @@ class CustomerUpdate(BaseModel):
     alias: Optional[str] = Field(None, max_length=200)
     address: Optional[str] = None
     secondary_phone: Optional[str] = Field(None, max_length=32)
-    city: Optional[str] = Field(None, max_length=200)
     city_id: Optional[int] = None
     credit_limit: Optional[Decimal] = None
     credit_override: Optional[bool] = None
@@ -53,6 +51,7 @@ class CustomerPublic(BaseModel):
     gst_number: Optional[str]
     invoice_count: Optional[int] = None
     total_billed: Optional[str] = None
+    deleted_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 

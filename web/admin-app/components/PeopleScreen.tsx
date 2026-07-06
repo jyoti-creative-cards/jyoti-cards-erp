@@ -103,12 +103,14 @@ function CustomersTab({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editing, setEditing] = useState<CustomerPublic | null>(null); // null = create mode
   const [saving, setSaving] = useState(false);
+  const [createdCustomer, setCreatedCustomer] = useState<CustomerPublic | null>(null); // success state
   // Statement modal
   const [statementCustomer, setStatementCustomer] = useState<CustomerPublic | null>(null);
   const [selectedCityId, setSelectedCityId] = useState<string>("");
 
   function openDrawer(c: CustomerPublic | null) {
     setEditing(c);
+    setCreatedCustomer(null);
     setSelectedCityId(c?.city_id ? String(c.city_id) : "");
     setDrawerOpen(true);
   }
@@ -154,7 +156,7 @@ function CustomersTab({
     const companyName = String(fd.get("company_name") || "").trim();
     const body: Record<string, unknown> = {
       company_name: companyName,
-      name: personName || companyName, // display name = person name if given, else shop name
+      name: personName || companyName,
       phone: fd.get("phone"),
       alias: emptyToNull(fd.get("alias")),
       address: emptyToNull(fd.get("address")),
@@ -173,9 +175,13 @@ function CustomersTab({
     const data = await r.json().catch(() => ({}));
     setSaving(false);
     if (!r.ok) { showToast(formatApiError(data), false); return; }
-    showToast(editing ? "Saved." : "Customer created.", true);
-    setDrawerOpen(false);
     void load();
+    if (editing) {
+      showToast("Saved.", true);
+      setDrawerOpen(false);
+    } else {
+      setCreatedCustomer(data as CustomerPublic);
+    }
   }
 
   async function delCustomer(id: number) {
@@ -315,18 +321,58 @@ function CustomersTab({
       {/* Drawer */}
       <Drawer
         open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-        title={editing ? (editing.company_name || editing.name) : "New customer"}
-        subtitle={editing ? `ID #${editing.id} · ${editing.phone}${editing.company_name && editing.name !== editing.company_name ? ` · ${editing.name}` : ""}` : "Fill in the details below"}
+        onClose={() => { setDrawerOpen(false); setCreatedCustomer(null); }}
+        title={createdCustomer ? "Customer Created" : editing ? (editing.company_name || editing.name) : "New customer"}
+        subtitle={
+          createdCustomer ? `ID #${createdCustomer.id} · ${createdCustomer.phone}` :
+          editing ? `ID #${editing.id} · ${editing.phone}${editing.company_name && editing.name !== editing.company_name ? ` · ${editing.name}` : ""}` :
+          "Fill in the details below"
+        }
         footer={
-          <div className="flex items-center gap-3">
-            <button type="submit" form="customer-form" disabled={saving} className={BTN_PRIMARY}>
-              {saving ? "Saving…" : editing ? "Save changes" : "Create customer"}
-            </button>
-            <button type="button" onClick={() => setDrawerOpen(false)} className={BTN_SECONDARY}>Cancel</button>
-          </div>
+          createdCustomer ? (
+            <div className="flex items-center gap-3">
+              <button type="button" onClick={() => { setCreatedCustomer(null); setEditing(null); setSelectedCityId(""); }} className={BTN_PRIMARY}>
+                + Create another
+              </button>
+              <button type="button" onClick={() => { setDrawerOpen(false); setCreatedCustomer(null); }} className={BTN_SECONDARY}>Close</button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-3">
+              <button type="submit" form="customer-form" disabled={saving} className={BTN_PRIMARY}>
+                {saving ? "Saving…" : editing ? "Save changes" : "Create customer"}
+              </button>
+              <button type="button" onClick={() => setDrawerOpen(false)} className={BTN_SECONDARY}>Cancel</button>
+            </div>
+          )
         }
       >
+        {createdCustomer ? (
+          <div className="space-y-4">
+            <div className="flex items-center gap-3 rounded-xl bg-emerald-50 border border-emerald-200 px-5 py-4">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 text-xl">✓</div>
+              <div>
+                <p className="font-semibold text-emerald-800">Customer created successfully</p>
+                <p className="text-sm text-emerald-600">Login credentials sent via WhatsApp</p>
+              </div>
+            </div>
+            <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white overflow-hidden">
+              {[
+                ["Shop name", createdCustomer.company_name || createdCustomer.name],
+                ["Person", createdCustomer.name !== createdCustomer.company_name ? createdCustomer.name : "—"],
+                ["Phone", createdCustomer.phone],
+                ["Alias", createdCustomer.alias || "—"],
+                ["City", cityName(createdCustomer.city_id) || "—"],
+                ["GST", createdCustomer.gst_number || "—"],
+                ["Credit limit", createdCustomer.credit_limit ? `₹${createdCustomer.credit_limit}` : "No limit"],
+              ].map(([label, value]) => (
+                <div key={label} className="flex items-center justify-between px-4 py-2.5">
+                  <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{label}</span>
+                  <span className="text-sm text-slate-800 font-medium">{value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
         <form id="customer-form" onSubmit={onSave} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">
@@ -389,6 +435,7 @@ function CustomersTab({
             </div>
           </div>
         </form>
+        )}
       </Drawer>
     </div>
   );

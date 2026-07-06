@@ -40,6 +40,7 @@ def _to_public(row: Customer) -> CustomerPublic:
         credit_limit=format(row.credit_limit, "f") if row.credit_limit is not None else None,
         credit_override=row.credit_override or False,
         gst_number=getattr(row, "gst_number", None),
+        deleted_at=row.deleted_at,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -126,7 +127,7 @@ def list_customers(
 @router.get("/{customer_id}", response_model=CustomerPublic, dependencies=[Depends(require_admin)])
 def get_customer(customer_id: int, db: Session = Depends(get_db)) -> CustomerPublic:
     row = db.get(Customer, customer_id)
-    if row is None:
+    if row is None or row.deleted_at is not None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="customer not found")
     return _to_public(row)
 
@@ -156,18 +157,25 @@ def create_customer(
         )
 
     if existing is not None:
-        # Same phone on a soft-deleted row: recycle it so UNIQUE(phone) is not violated.
-        existing.name = body.name.strip()
-        existing.password_hash = hash_password(plain)
-        existing.company_name = body.company_name.strip() if body.company_name else None
-        existing.address = body.address.strip() if body.address else None
-        existing.secondary_phone = sec_norm
-        existing.city = body.city.strip() if body.city else None
-        existing.city_id = body.city_id
+        # Same phone on a soft-deleted row: recycle it (restore + update all fields).
+        display_name = (body.name or "").strip() or body.company_name.strip()
+        city_route_id: Optional[int] = None
         if body.city_id:
             _c = db.get(City, body.city_id)
-            existing.route_id = _c.route_id if _c else None
+            city_route_id = _c.route_id if _c else None
+        existing.name = display_name
+        existing.password_hash = hash_password(plain)
+        existing.company_name = body.company_name.strip()
+        existing.alias = body.alias.strip() if body.alias else None
+        existing.address = body.address.strip() if body.address else None
+        existing.secondary_phone = sec_norm
+        existing.city_id = body.city_id
+        existing.route_id = city_route_id
+        existing.credit_limit = body.credit_limit
+        existing.credit_override = body.credit_override or False
+        existing.gst_number = body.gst_number.strip().upper() if body.gst_number else None
         existing.is_active = True
+        existing.deleted_at = None
         db.add(existing)
         try:
             db.commit()
@@ -184,7 +192,7 @@ def create_customer(
             existing.phone,
             plain,
         )
-        return existing
+        return _to_public(existing)
 
     display_name = (body.name or "").strip() or body.company_name.strip()
     city_route_id: Optional[int] = None
@@ -199,7 +207,6 @@ def create_customer(
         alias=(body.alias.strip() if body.alias else None),
         address=(body.address.strip() if body.address else None),
         secondary_phone=sec_norm,
-        city=(body.city.strip() if body.city else None),
         city_id=body.city_id,
         route_id=city_route_id,
         credit_limit=body.credit_limit,
@@ -280,8 +287,7 @@ def update_customer(
         row.address = v.strip() if isinstance(v, str) and v.strip() else None
 
     if "city" in data:
-        v = data.pop("city")
-        row.city = v.strip() if isinstance(v, str) and v.strip() else None
+        data.pop("city")  # ignored — city is set via city_id only
 
     if "secondary_phone" in data:
         sec = data.pop("secondary_phone")
@@ -323,12 +329,8 @@ def update_customer(
             detail="phone already registered",
         ) from None
     db.refresh(row)
-    pw_msg = (
-        plain_password_for_wa
-        if plain_password_for_wa is not None
-        else "unchanged — use your existing password"
-    )
-    background_tasks.add_task(_send_wa_safe, row.name, row.phone, pw_msg)
+    if plain_password_for_wa is not None:
+        background_tasks.add_task(_send_wa_safe, row.name, row.phone, plain_password_for_wa)
     return _to_public(row)
 
 
@@ -366,10 +368,12 @@ def get_credit_summary(customer_id: int, db: Session = Depends(get_db)) -> dict:
 
 @router.post("/{customer_id}/reactivate", dependencies=[Depends(require_admin)])
 def reactivate_customer(customer_id: int, db: Session = Depends(get_db)) -> dict:
+    """Alias for restore — kept for backwards compatibility."""
     row = db.get(Customer, customer_id)
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="customer not found")
     row.is_active = True
+    row.deleted_at = None
     db.add(row)
     db.commit()
     return {"ok": True, "id": customer_id, "reactivated": True}

@@ -150,10 +150,11 @@ def create_customer(
     plain = (body.password or "").strip() or phone[-4:] or "".join(random.choices(_str.digits, k=4))
 
     existing = db.query(Customer).filter(Customer.phone == phone).one_or_none()
-    if existing is not None and legacy_active_value(existing.is_active):
+    # Block only if active (not soft-deleted)
+    if existing is not None and existing.deleted_at is None and legacy_active_value(existing.is_active):
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            detail="phone already registered",
+            detail="phone already registered with an active customer",
         )
 
     if existing is not None:

@@ -949,6 +949,7 @@ function VendorsTab({
   const [editing, setEditing] = useState<VendorPublic | null>(null);
   const [saving, setSaving] = useState(false);
   const [selectedCityId, setSelectedCityId] = useState("");
+  const [createdVendor, setCreatedVendor] = useState<VendorPublic | null>(null);
 
   const showToast = (msg: string, ok: boolean) => {
     setToast({ msg, ok });
@@ -992,19 +993,14 @@ function VendorsTab({
     if (!adminKey.trim()) return;
     setSaving(true);
     const fd = new FormData(e.currentTarget);
-    const personName = String(fd.get("person_name") || "").trim();
-    const companyName = String(fd.get("company_name") || "").trim();
-    const cityId = selectedCityId ? Number(selectedCityId) : null;
-    const cityObj = cityId ? cities.find((c) => c.id === cityId) : null;
     const body = {
-      company_name: companyName,
-      person_name: personName || companyName,
+      company_name: String(fd.get("company_name") || "").trim(),
+      person_name: String(fd.get("person_name") || "").trim() || undefined,
       phone: fd.get("phone"),
       alias: emptyToNull(fd.get("alias")),
       secondary_phone: emptyToNull(fd.get("secondary_phone")),
       address: emptyToNull(fd.get("address")),
-      city: cityObj?.name ?? null,
-      city_id: cityId,
+      city_id: selectedCityId ? Number(selectedCityId) : null,
       gst_number: emptyToNull(fd.get("gst_number")),
     };
     const url = editing ? apiUrl(`vendors/${editing.id}`) : apiUrl("vendors");
@@ -1013,9 +1009,13 @@ function VendorsTab({
     const data = await r.json().catch(() => ({}));
     setSaving(false);
     if (!r.ok) { showToast(formatApiError(data), false); return; }
-    showToast(editing ? "Saved." : "Vendor created.", true);
-    setDrawerOpen(false);
     void load();
+    if (editing) {
+      showToast("Saved.", true);
+      setDrawerOpen(false);
+    } else {
+      setCreatedVendor(data as VendorPublic);
+    }
   }
 
   async function delVendor(id: number) {
@@ -1088,7 +1088,7 @@ function VendorsTab({
                   <td className="px-4 py-3 text-slate-500">
                     {v.company_name && v.person_name !== v.company_name ? v.person_name : "—"}
                   </td>
-                  <td className="px-4 py-3 text-slate-500">{cityName(v.city_id) || v.city || "—"}</td>
+                  <td className="px-4 py-3 text-slate-500">{cityName(v.city_id) || "—"}</td>
                   <td className="px-4 py-3 text-right">
                     <button
                       type="button"
@@ -1110,18 +1110,56 @@ function VendorsTab({
 
       <Drawer
         open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-        title={editing ? (editing.company_name || editing.person_name) : "New vendor"}
-        subtitle={editing ? `ID #${editing.id} · ${editing.phone}${editing.company_name && editing.person_name !== editing.company_name ? ` · ${editing.person_name}` : ""}` : "Fill in the details below"}
+        onClose={() => { setDrawerOpen(false); setCreatedVendor(null); }}
+        title={createdVendor ? "Vendor Created" : editing ? (editing.company_name || editing.person_name) : "New vendor"}
+        subtitle={
+          createdVendor ? `ID #${createdVendor.id} · ${createdVendor.phone}` :
+          editing ? `ID #${editing.id} · ${editing.phone}${editing.company_name && editing.person_name !== editing.company_name ? ` · ${editing.person_name}` : ""}` :
+          "Fill in the details below"
+        }
         footer={
-          <div className="flex gap-3">
-            <button type="submit" form="vendor-form" disabled={saving} className={BTN_PRIMARY}>
-              {saving ? "Saving…" : editing ? "Save changes" : "Create vendor"}
-            </button>
-            <button type="button" onClick={() => setDrawerOpen(false)} className={BTN_SECONDARY}>Cancel</button>
-          </div>
+          createdVendor ? (
+            <div className="flex items-center gap-3">
+              <button type="button" onClick={() => { setCreatedVendor(null); setEditing(null); setSelectedCityId(""); }} className={BTN_PRIMARY}>
+                + Create another
+              </button>
+              <button type="button" onClick={() => { setDrawerOpen(false); setCreatedVendor(null); }} className={BTN_SECONDARY}>Close</button>
+            </div>
+          ) : (
+            <div className="flex gap-3">
+              <button type="submit" form="vendor-form" disabled={saving} className={BTN_PRIMARY}>
+                {saving ? "Saving…" : editing ? "Save changes" : "Create vendor"}
+              </button>
+              <button type="button" onClick={() => setDrawerOpen(false)} className={BTN_SECONDARY}>Cancel</button>
+            </div>
+          )
         }
       >
+        {createdVendor ? (
+          <div className="space-y-4">
+            <div className="flex items-center gap-3 rounded-xl bg-emerald-50 border border-emerald-200 px-5 py-4">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 text-xl">✓</div>
+              <div>
+                <p className="font-semibold text-emerald-800">Vendor created successfully</p>
+              </div>
+            </div>
+            <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white overflow-hidden">
+              {[
+                ["Shop name", createdVendor.company_name || createdVendor.person_name],
+                ["Person", createdVendor.person_name !== createdVendor.company_name ? createdVendor.person_name : "—"],
+                ["Phone", createdVendor.phone],
+                ["Alias", createdVendor.alias || "—"],
+                ["City", cityName(createdVendor.city_id) || "—"],
+                ["GST", createdVendor.gst_number || "—"],
+              ].map(([label, value]) => (
+                <div key={label} className="flex items-center justify-between px-4 py-2.5">
+                  <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{label}</span>
+                  <span className="text-sm text-slate-800 font-medium">{value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
         <form id="vendor-form" onSubmit={onSave} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">
@@ -1162,6 +1200,7 @@ function VendorsTab({
             </div>
           </div>
         </form>
+        )}
       </Drawer>
     </div>
   );

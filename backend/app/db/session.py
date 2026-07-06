@@ -350,6 +350,20 @@ def _migrate_v12_vendor_bill_columns_postgres() -> None:
         conn.execute(text("ALTER TABLE portal_ap_bills ALTER COLUMN purchase_order_id DROP NOT NULL"))
 
 
+def _migrate_v13_vendor_company_name_notnull_postgres() -> None:
+    """Make portal_vendors.company_name NOT NULL (backfill from person_name)."""
+    if engine.dialect.name != "postgresql":
+        return
+    with engine.begin() as conn:
+        # Backfill NULL company_name from person_name before adding NOT NULL
+        conn.execute(text(
+            "UPDATE portal_vendors SET company_name = person_name WHERE company_name IS NULL OR company_name = ''"
+        ))
+        conn.execute(text(
+            "ALTER TABLE portal_vendors ALTER COLUMN company_name SET NOT NULL"
+        ))
+
+
 def _migrate_v9_vendor_order_debit_note_postgres() -> None:
     if engine.dialect.name != "postgresql":
         return
@@ -417,6 +431,7 @@ def init_db() -> None:
     _migrate_v10_vendor_city_id_postgres()
     _migrate_v11_normalize_open_status_postgres()
     _migrate_v12_vendor_bill_columns_postgres()
+    _migrate_v13_vendor_company_name_notnull_postgres()
     from app.services.accounting import seed_chart_accounts
 
     s = SessionLocal()

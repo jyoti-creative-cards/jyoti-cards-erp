@@ -82,15 +82,15 @@ export interface CustomerPublic {
 
 export interface VendorPublic {
   id: number;
+  company_name: string | null;
   person_name: string;
   phone: string;
-  company_name: string | null;
   alias: string | null;
   secondary_phone: string | null;
   address: string | null;
-  city: string | null;
   city_id: number | null;
   gst_number: string | null;
+  deleted_at: string | null;
   created_at: string;
   updated_at: string;
 }

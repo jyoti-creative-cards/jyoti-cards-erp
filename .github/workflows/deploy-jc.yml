@@ -1,0 +1,61 @@
+# Sync JC/ → GitHub deploy repos. Each repo's own Actions deploy to Railway/Vercel.
+name: JC → Deploy Repos
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "JC/backend/**"
+      - "JC/web/admin/**"
+      - "JC/web/portal/**"
+      - ".github/workflows/deploy-jc.yml"
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: jc-api
+            src: JC/backend/
+            excludes: >-
+              --exclude=.env
+              --exclude=.venv
+              --exclude=__pycache__
+              --exclude=*.pyc
+              --exclude=jc.db
+              --exclude=*.db
+          - name: jc-admin
+            src: JC/web/admin/
+            excludes: ""
+          - name: jc-portal
+            src: JC/web/portal/
+            excludes: ""
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync ${{ matrix.name }}
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          set -euo pipefail
+          git clone "https://oauth2:${GH_PAT}@github.com/jyoti-creative-cards/${{ matrix.name }}.git" /tmp/target
+          # Preserve target .github workflows
+          rsync -a --delete ${{ matrix.excludes }} \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='.vercel' \
+            --exclude='.DS_Store' \
+            "${{ matrix.src }}" /tmp/target/
+          cd /tmp/target
+          git config user.email "ci@jyoticreativecards.com"
+          git config user.name "JC CI"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes for ${{ matrix.name }}"
+          else
+            git commit -m "Deploy sync from monorepo ${{ github.sha }}"
+            git push "https://oauth2:${GH_PAT}@github.com/jyoti-creative-cards/${{ matrix.name }}.git" HEAD:main
+          fi

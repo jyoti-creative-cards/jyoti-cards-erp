@@ -1,0 +1,964 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JC Admin — Jyoti Creative</title>
+  <link rel="stylesheet" href="styles.css?v=prod1" />
+</head>
+<body>
+  <div id="toasts"></div>
+  <div id="loading" class="loading-overlay hidden"><div class="loading-spinner"></div></div>
+
+  <!-- Login -->
+  <div id="login-screen" style="display:flex;min-height:100vh;align-items:center;justify-content:center;padding:16px;">
+    <div class="card" style="width:100%;max-width:420px;padding:32px;border:2px solid #bfdbfe;">
+      <div class="badge badge-blue" style="width:100%;text-align:center;padding:8px;margin-bottom:16px;">JC Admin Portal</div>
+      <h1 style="margin:0 0 4px;font-size:24px;">Sign In</h1>
+      <p style="margin:0 0 20px;font-size:14px;color:var(--muted);">Admin uses API key. Staff uses mobile + password.</p>
+      <div style="display:flex;gap:8px;margin-bottom:20px;">
+        <button type="button" class="btn btn-secondary" style="flex:1;" id="login-tab-admin" onclick="App.setLoginTab('admin')">Admin</button>
+        <button type="button" class="btn btn-secondary" style="flex:1;" id="login-tab-staff" onclick="App.setLoginTab('staff')">Staff</button>
+      </div>
+      <div id="login-admin-panel">
+        <label class="label">Admin API Key</label>
+        <input id="admin-key-input" type="password" class="input" placeholder="Paste ADMIN_API_KEY" style="margin-bottom:16px;" />
+        <button class="btn btn-primary" style="width:100%;" onclick="App.login()">Enter as Admin</button>
+      </div>
+      <div id="login-staff-panel" class="hidden">
+        <label class="label">Mobile Number</label>
+        <input id="staff-phone-input" type="tel" maxlength="10" class="input" placeholder="10-digit mobile" style="margin-bottom:12px;" />
+        <label class="label">Password</label>
+        <input id="staff-password-input" type="password" class="input" placeholder="Last 4 digits of mobile" style="margin-bottom:16px;" />
+        <button class="btn btn-primary" style="width:100%;" onclick="App.staffLogin()">Enter as Staff</button>
+      </div>
+      <p style="margin-top:16px;font-size:12px;color:var(--muted);text-align:center;">Customer portal: <a href="http://127.0.0.1:3012" style="color:var(--brand);">:3012</a></p>
+      <p id="login-error" class="hidden" style="margin-top:12px;font-size:14px;color:var(--danger);"></p>
+    </div>
+  </div>
+
+  <!-- App shell -->
+  <div id="app" class="hidden">
+    <aside id="sidebar" class="expanded">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:16px;border-bottom:1px solid var(--border);">
+        <div id="brand-block">
+          <div style="font-weight:700;font-size:16px;">JC Admin</div>
+          <div style="font-size:11px;color:var(--muted);">Jyoti Creative</div>
+        </div>
+        <button class="btn-ghost btn-sm" onclick="App.toggleSidebar()" title="Collapse">◀</button>
+      </div>
+      <nav style="flex:1;padding:8px;">
+        <button class="nav-item" id="nav-people" onclick="App.showView('people')"><span class="nav-letter">P</span><span class="nav-text">People</span></button>
+        <button class="nav-item" id="nav-products" onclick="App.showView('products')"><span class="nav-letter">R</span><span class="nav-text">Products</span></button>
+        <button class="nav-item" id="nav-orders" onclick="App.showView('orders')"><span class="nav-letter">O</span><span class="nav-text">Orders</span></button>
+        <button class="nav-item" id="nav-finance" onclick="App.showView('finance')"><span class="nav-letter">F</span><span class="nav-text">Finance</span></button>
+        <button class="nav-item" id="nav-setup" onclick="App.showView('setup')"><span class="nav-letter">S</span><span class="nav-text">Setup</span></button>
+        <button class="nav-item" id="nav-recycle" onclick="App.showView('recycle')"><span class="nav-letter">B</span><span class="nav-text">Recycle Bin</span></button>
+        <button class="nav-item hidden" id="nav-activity" onclick="App.showView('activity')"><span class="nav-letter">A</span><span class="nav-text">Activity</span></button>
+      </nav>
+      <div style="padding:12px;border-top:1px solid var(--border);">
+        <div id="user-badge" style="font-size:11px;color:var(--muted);margin-bottom:8px;text-align:center;"></div>
+        <button class="btn btn-secondary btn-sm" style="width:100%;" onclick="App.logout()">Logout</button>
+      </div>
+    </aside>
+
+    <main id="main" class="shift-expanded">
+      <!-- Setup -->
+      <div id="view-setup" class="view hidden">
+        <div id="setup-hub" class="setup-hub">
+          <div class="setup-hero">
+            <div>
+              <h2 class="setup-hero-title">Setup</h2>
+              <p class="setup-hero-sub">One-time settings for your business. Tap a card to open.</p>
+            </div>
+            <div class="setup-stats" id="setup-stats-slot" aria-hidden="true"></div>
+          </div>
+
+          <div class="setup-grid" id="setup-grid" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;width:100%;">
+            <button type="button" class="big-tile big-tile-addons setup-tile" onclick="App.showSetupTab('routes')">
+              <span class="setup-tile-tag">Delivery</span>
+              <span class="big-tile-letter">R</span>
+              <span class="big-tile-title">Routes &amp; Cities</span>
+              <span class="big-tile-desc">Add routes, then link each city</span>
+              <span class="big-tile-count" id="hub-routes-cities-count">0 routes</span>
+            </button>
+            <button type="button" class="big-tile big-tile-catalog setup-tile" onclick="App.showSetupTab('products')">
+              <span class="setup-tile-tag">Products</span>
+              <span class="big-tile-letter">P</span>
+              <span class="big-tile-title">Product Options</span>
+              <span class="big-tile-desc">Category, series, unit, year group</span>
+              <span class="big-tile-count" id="hub-lookups-count">0 options</span>
+            </button>
+            <button type="button" class="big-tile big-tile-vendors setup-tile" id="setup-tile-billseries" onclick="App.showSetupTab('billseries')">
+              <span class="setup-tile-tag">Billing</span>
+              <span class="big-tile-letter">B</span>
+              <span class="big-tile-title">Bill Series</span>
+              <span class="big-tile-desc">Number ranges for customer bills</span>
+              <span class="big-tile-count" id="hub-billseries-count">0 series</span>
+            </button>
+            <button type="button" class="big-tile big-tile-addons setup-tile" id="setup-tile-staff" onclick="App.showSetupTab('staff')">
+              <span class="setup-tile-tag">Team</span>
+              <span class="big-tile-letter">S</span>
+              <span class="big-tile-title">Staff</span>
+              <span class="big-tile-desc">Logins and permissions</span>
+              <span class="big-tile-count" id="hub-staff-count">0 staff</span>
+            </button>
+            <button type="button" class="big-tile big-tile-vendors setup-tile" id="setup-tile-documents" onclick="App.showSetupTab('documents')">
+              <span class="setup-tile-tag">Records</span>
+              <span class="big-tile-letter">D</span>
+              <span class="big-tile-title">Documents</span>
+              <span class="big-tile-desc">Orders, bills, uploads</span>
+              <span class="big-tile-count">Browse files</span>
+            </button>
+            <button type="button" class="big-tile big-tile-catalog setup-tile" id="setup-tile-activity" onclick="App.showSetupTab('activity')">
+              <span class="setup-tile-tag">Records</span>
+              <span class="big-tile-letter">A</span>
+              <span class="big-tile-title">Activity</span>
+              <span class="big-tile-desc">Who changed what</span>
+              <span class="big-tile-count">Full log</span>
+            </button>
+            <button type="button" class="big-tile big-tile-vendors setup-tile" id="setup-tile-freight" onclick="App.showSetupTab('freight')">
+              <span class="setup-tile-tag">Delivery</span>
+              <span class="big-tile-letter">F</span>
+              <span class="big-tile-title">Freight Agents</span>
+              <span class="big-tile-desc">Create agents for order shipping</span>
+              <span class="big-tile-count" id="hub-freight-count">0 agents</span>
+            </button>
+          </div>
+        </div>
+        <div id="setup-freight" class="hidden">
+          <button type="button" class="btn btn-secondary back-btn" onclick="App.showSetupHub()">← Back</button>
+          <div style="margin-bottom:24px;">
+            <h2 style="margin:0;font-size:24px;">Freight Agents</h2>
+            <p style="margin:4px 0 0;color:var(--muted);font-size:14px;">Create agents here. Pick them when processing customer orders. Settle balances under Finance → Freight.</p>
+          </div>
+          <div id="freight-agents-root"></div>
+        </div>
+        <div id="setup-documents" class="hidden">
+          <button type="button" class="btn btn-secondary back-btn" onclick="App.showSetupHub()">← Back</button>
+          <div style="margin-bottom:24px;">
+            <h2 style="margin:0;font-size:24px;">Documents</h2>
+            <p style="margin:4px 0 0;color:var(--muted);font-size:14px;">All PDFs and files stored in your S3 bucket</p>
+          </div>
+          <div id="documents-browser"></div>
+        </div>
+        <div id="setup-billseries" class="hidden">
+          <button type="button" class="btn btn-secondary back-btn" onclick="App.showSetupHub()">← Back</button>
+          <div style="margin-bottom:24px;">
+            <h2 style="margin:0;font-size:24px;">Bill Series</h2>
+            <p style="margin:4px 0 0;color:var(--muted);font-size:14px;">Create number ranges and track which bills went to which customers</p>
+          </div>
+          <div id="bill-series-root"></div>
+        </div>
+        <div id="setup-activity" class="hidden">
+          <button type="button" class="btn btn-secondary back-btn" onclick="App.showSetupHub()">← Back</button>
+          <div style="margin-bottom:24px;">
+            <h2 style="margin:0;font-size:24px;">Activity Log</h2>
+            <p style="margin:4px 0 0;color:var(--muted);font-size:14px;">Who did what, when, where — easy to read</p>
+          </div>
+          <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
+            <select id="setup-activity-person-filter" class="input" style="max-width:180px;" onchange="App.loadActivity({tableId:'setup-activity-table',personId:'setup-activity-person-filter',actionId:'setup-activity-action-filter',whatId:'setup-activity-what-filter',whereId:'setup-activity-where-filter',dateId:'setup-activity-date-filter'})">
+              <option value="">All people</option>
+            </select>
+            <select id="setup-activity-action-filter" class="input" style="max-width:160px;" onchange="App.loadActivity({tableId:'setup-activity-table',personId:'setup-activity-person-filter',actionId:'setup-activity-action-filter',whatId:'setup-activity-what-filter',whereId:'setup-activity-where-filter',dateId:'setup-activity-date-filter'})">
+              <option value="">All actions</option>
+              <option value="create">Created</option>
+              <option value="update">Updated</option>
+              <option value="delete">Deleted</option>
+              <option value="place">Placed order</option>
+              <option value="receive">Received stock</option>
+              <option value="update_line">Updated order line</option>
+              <option value="delete_line">Removed order line</option>
+            <option value="cancel">Cancelled placement</option>
+              <option value="debit_note">Debit note</option>
+              <option value="ap_payment">AP payment</option>
+            </select>
+            <input id="setup-activity-what-filter" class="input" style="max-width:140px;" placeholder="Filter what…" oninput="App.loadActivity({tableId:'setup-activity-table',personId:'setup-activity-person-filter',actionId:'setup-activity-action-filter',whatId:'setup-activity-what-filter',whereId:'setup-activity-where-filter',dateId:'setup-activity-date-filter'})" />
+            <input id="setup-activity-where-filter" class="input" style="max-width:140px;" placeholder="Filter where…" oninput="App.loadActivity({tableId:'setup-activity-table',personId:'setup-activity-person-filter',actionId:'setup-activity-action-filter',whatId:'setup-activity-what-filter',whereId:'setup-activity-where-filter',dateId:'setup-activity-date-filter'})" />
+            <input id="setup-activity-date-filter" class="input" type="date" style="max-width:150px;" onchange="App.loadActivity({tableId:'setup-activity-table',personId:'setup-activity-person-filter',actionId:'setup-activity-action-filter',whatId:'setup-activity-what-filter',whereId:'setup-activity-where-filter',dateId:'setup-activity-date-filter'})" />
+            <button class="btn btn-secondary btn-sm" onclick="App.loadActivity({tableId:'setup-activity-table',personId:'setup-activity-person-filter',actionId:'setup-activity-action-filter',whatId:'setup-activity-what-filter',whereId:'setup-activity-where-filter',dateId:'setup-activity-date-filter',initPerson:true})">↻ Refresh</button>
+          </div>
+          <div class="card table-wrap" id="setup-activity-table"></div>
+        </div>
+        <div id="setup-staff" class="hidden">
+          <button type="button" class="btn btn-secondary back-btn" onclick="App.showSetupHub()">← Back</button>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;flex-wrap:wrap;gap:12px;">
+            <div>
+              <h2 style="margin:0;font-size:24px;">Staff Management</h2>
+              <p style="margin:4px 0 0;color:var(--muted);font-size:14px;">Login ID = mobile. Password = last 4 digits (sent via WhatsApp).</p>
+            </div>
+            <button class="btn btn-primary btn-lg hidden" id="staff-new-btn" onclick="StaffMgmt.openWizard()">+ New Staff</button>
+          </div>
+          <div class="card table-wrap" id="staff-table"></div>
+        </div>
+        <div id="setup-products" class="hidden">
+          <button type="button" class="btn btn-secondary back-btn" onclick="App.showSetupHub()">← Back to Setup</button>
+          <div class="lookup-page-hero">
+            <div>
+              <h2 class="lookup-page-title">Product Options</h2>
+              <p class="lookup-page-sub">These names appear when you create products. Keep them short and clear.</p>
+            </div>
+          </div>
+          <div class="lookup-grid" id="lookup-sections"></div>
+        </div>
+        <div id="setup-routes-cities" class="hidden">
+          <button type="button" class="btn btn-secondary back-btn" onclick="App.showSetupHub()">← Back</button>
+          <div style="margin-bottom:24px;">
+            <h2 style="margin:0;font-size:24px;">Routes & Cities</h2>
+            <p style="margin:4px 0 0;color:var(--muted);font-size:14px;">Each city maps to one delivery route</p>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(400px,1fr));gap:24px;">
+            <div class="card" style="padding:24px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+                <h3 style="margin:0;font-size:18px;">Routes</h3>
+                <button class="btn btn-primary btn-sm" data-require-write="setup" onclick="App.openRouteModal()">+ Add Route</button>
+              </div>
+              <div id="routes-table" class="table-wrap"></div>
+            </div>
+            <div class="card" style="padding:24px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+                <h3 style="margin:0;font-size:18px;">Cities</h3>
+                <button class="btn btn-primary btn-sm" data-require-write="setup" onclick="App.openCityModal()">+ Add City</button>
+              </div>
+              <div id="cities-table" class="table-wrap"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Products -->
+      <div id="view-products" class="view hidden">
+        <div class="prod-page">
+          <div class="prod-tabs" role="tablist">
+            <button type="button" class="prod-tab active" id="ptab-stock" onclick="Products.setMainTab('stock')">Stock</button>
+            <button type="button" class="prod-tab" id="ptab-catalog" onclick="Products.setMainTab('catalog')">Catalog</button>
+          </div>
+
+          <div id="products-unified" class="prod-panel">
+            <div class="prod-hero">
+              <div>
+                <h2 id="products-panel-title" class="prod-hero-title">Stock</h2>
+                <p id="products-panel-sub" class="prod-hero-sub">Inventory with products and add-ons</p>
+              </div>
+              <button class="btn btn-primary btn-lg" id="products-action-btn" onclick="Stock.openAddWizard()">+ Add Stock</button>
+            </div>
+
+            <div class="prod-toolbar">
+              <div class="prod-search-wrap">
+                <span class="prod-search-icon" aria-hidden="true">⌕</span>
+                <input id="products-search-input" class="input prod-search" type="search" placeholder="Search by product ID, vendor, or category…" oninput="Products.onSearch(this.value)" autocomplete="off" />
+                <button type="button" class="prod-search-clear hidden" id="products-search-clear" onclick="Products.clearSearch()" title="Clear search">×</button>
+              </div>
+              <div class="prod-toolbar-right">
+                <div class="prod-seg" role="group" aria-label="Item type">
+                  <button type="button" class="prod-seg-btn active" id="ptype-all" onclick="Products.setTypeFilter('all')">All</button>
+                  <button type="button" class="prod-seg-btn" id="ptype-products" onclick="Products.setTypeFilter('products')">Products</button>
+                  <button type="button" class="prod-seg-btn" id="ptype-addons" onclick="Products.setTypeFilter('addons')">Add-ons</button>
+                </div>
+                <div class="prod-view-toggle" role="group" aria-label="View mode">
+                  <button type="button" class="prod-view-btn active" id="products-view-grid" onclick="Products.setViewMode('grid')" title="Grid view">▦</button>
+                  <button type="button" class="prod-view-btn" id="products-view-list" onclick="Products.setViewMode('list')" title="List view">☰</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="prod-filters-bar">
+              <div id="products-filters" class="products-filters"></div>
+              <button type="button" class="btn btn-ghost btn-sm prod-clear-filters hidden" id="products-clear-filters" onclick="Products.clearFilters()">Clear filters</button>
+            </div>
+
+            <div class="prod-meta-row">
+              <span id="products-result-count" class="prod-result-count"></span>
+            </div>
+
+            <div id="products-content" class="prod-content"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Orders -->
+      <div id="view-orders" class="view hidden">
+        <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;">
+          <button type="button" class="btn btn-primary" id="orders-type-vendor" onclick="App.setOrdersType('vendor')">Vendor Orders</button>
+          <button type="button" class="btn btn-secondary" id="orders-type-customer" onclick="App.setOrdersType('customer')">Customer Orders</button>
+        </div>
+        <div id="orders-vendor-panel">
+        <div id="orders-hub" class="vo-page">
+          <div class="prod-hero">
+            <div>
+              <h2 class="prod-hero-title">Vendor Orders</h2>
+              <p class="prod-hero-sub">Open to bill · Placed is the record · Billed then close after payment</p>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn btn-primary btn-lg hidden" data-require-write="vendor_orders" id="vo-hub-action-btn" onclick="VendorOrders.runHubAction()">Action</button>
+              <button class="btn btn-primary btn-lg" data-require-write="vendor_orders" id="vo-create-order-btn" onclick="VendorOrders.showCreateMenu()">+ Create Order</button>
+            </div>
+          </div>
+          <div class="vo-bucket-bar prod-tabs" id="vo-hub-buckets" role="tablist">
+            <button type="button" class="prod-tab active" data-bucket="summary" onclick="VendorOrders.setBucket('summary')">Summary</button>
+            <button type="button" class="prod-tab" data-bucket="open" onclick="VendorOrders.setBucket('open')">Open</button>
+            <button type="button" class="prod-tab" data-bucket="placed" onclick="VendorOrders.setBucket('placed')">Placed</button>
+            <button type="button" class="prod-tab" data-bucket="billed" onclick="VendorOrders.setBucket('billed')">Billed</button>
+            <button type="button" class="prod-tab" data-bucket="cancelled" onclick="VendorOrders.setBucket('cancelled')">Cancelled</button>
+            <button type="button" class="prod-tab" data-bucket="closed" onclick="VendorOrders.setBucket('closed')">Closed</button>
+          </div>
+          <div class="vo-list-head">
+            <h3 id="orders-list-title" class="vo-list-title">Order Summary</h3>
+          </div>
+          <div class="card table-wrap vo-list-card" id="orders-list"></div>
+        </div>
+        <div id="orders-detail" class="hidden vo-page">
+          <button type="button" class="btn btn-secondary back-btn vo-back-btn" onclick="VendorOrders.showHub()">← All vendors</button>
+          <div class="prod-hero vo-detail-hero">
+            <div>
+              <div class="vo-detail-kicker" id="orders-detail-kicker">Vendor</div>
+              <h2 class="prod-hero-title" id="orders-detail-title">Vendor Order</h2>
+              <p class="prod-hero-sub" id="orders-detail-sub">Order summary — tap a product for history</p>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn btn-primary btn-lg hidden" data-require-write="vendor_orders" id="vo-detail-action-btn" onclick="VendorOrders.runDetailAction()">Action</button>
+              <button class="btn btn-primary btn-lg" data-require-write="vendor_orders" id="vo-detail-create-btn" onclick="VendorOrders.showCreateMenu()">+ Create Order</button>
+            </div>
+          </div>
+          <div class="vo-bucket-bar prod-tabs" id="vo-detail-buckets" role="tablist">
+            <button type="button" class="prod-tab active" data-bucket="summary" onclick="VendorOrders.switchDetailBucket('summary')">Summary</button>
+            <button type="button" class="prod-tab" data-bucket="open" onclick="VendorOrders.switchDetailBucket('open')">Open</button>
+            <button type="button" class="prod-tab" data-bucket="placed" onclick="VendorOrders.switchDetailBucket('placed')">Placed</button>
+            <button type="button" class="prod-tab" data-bucket="billed" onclick="VendorOrders.switchDetailBucket('billed')">Billed</button>
+            <button type="button" class="prod-tab" data-bucket="cancelled" onclick="VendorOrders.switchDetailBucket('cancelled')">Cancelled</button>
+            <button type="button" class="prod-tab" data-bucket="closed" onclick="VendorOrders.switchDetailBucket('closed')">Closed</button>
+          </div>
+          <div id="orders-detail-body" class="vo-detail-body"></div>
+        </div>
+        </div>
+        <div id="orders-customer-panel" class="hidden">
+          <div id="co-hub">
+            <h2 style="margin:0;font-size:28px;">Customer Orders</h2>
+            <p style="margin:8px 0 24px;color:var(--muted);font-size:16px;">Received → Open → Billed → Closed</p>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:12px;">
+              <select class="input" id="co-bucket-select" onchange="CustomerOrders.setBucket(this.value)" style="min-width:220px;font-size:15px;">
+                <option value="summary">Order Summary</option>
+                <option value="received">Received</option>
+                <option value="open">Open</option>
+                <option value="billed">Billed</option>
+                <option value="cancelled">Cancelled</option>
+                <option value="closed">Closed</option>
+              </select>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <button class="btn btn-primary btn-lg hidden" data-require-write="vendor_orders" id="co-hub-action-btn" onclick="CustomerOrders.runHubAction()">Action</button>
+                <button class="btn btn-primary btn-lg" data-require-write="vendor_orders" id="co-create-order-btn" onclick="CustomerOrders.openOfflineWizard()">+ Create Order</button>
+              </div>
+            </div>
+            <h3 id="co-list-title" style="margin:0 0 16px;font-size:20px;">Order Summary</h3>
+            <div class="card table-wrap" id="customer-orders-list"></div>
+          </div>
+          <div id="co-detail" class="hidden">
+            <button type="button" class="btn btn-secondary back-btn" onclick="CustomerOrders.showHub()">← Back</button>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin:16px 0 24px;flex-wrap:wrap;gap:12px;">
+              <select class="input" id="co-detail-bucket-select" onchange="CustomerOrders.switchBucket(this.value)" style="min-width:220px;font-size:15px;">
+                <option value="summary">Order Summary</option>
+                <option value="received">Received</option>
+                <option value="open">Open</option>
+                <option value="billed">Billed</option>
+                <option value="cancelled">Cancelled</option>
+                <option value="closed">Closed</option>
+              </select>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <button class="btn btn-primary btn-lg hidden" data-require-write="vendor_orders" id="co-detail-action-btn" onclick="CustomerOrders.runDetailAction()">Action</button>
+                <button class="btn btn-primary btn-lg" data-require-write="vendor_orders" id="co-detail-create-btn" onclick="CustomerOrders.openOfflineWizard()">+ Create Order</button>
+              </div>
+            </div>
+            <div style="margin-bottom:24px;">
+              <h2 id="co-detail-title" style="margin:0;font-size:24px;">Customer</h2>
+              <p id="co-detail-sub" style="margin:4px 0 0;color:var(--muted);font-size:14px;"></p>
+            </div>
+            <div id="co-detail-body"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Finance -->
+      <div id="view-finance" class="view hidden">
+        <div id="finance-hub">
+          <h2 style="margin:0;font-size:28px;">Finance</h2>
+          <p style="margin:8px 0 16px;color:var(--muted);font-size:16px;">Payables, receivables, cash &amp; profit</p>
+          <div id="finance-hub-strip" class="fin-hub-strip"></div>
+          <div class="big-tiles finance-tiles" id="finance-tiles" style="margin-bottom:24px;">
+            <button type="button" class="big-tile" data-finance="ap" style="border-color:#bfdbfe;background:#eff6ff;" onclick="Finance.showAp()">
+              <span class="big-tile-letter">AP</span>
+              <span class="big-tile-title">Accounts Payable</span>
+              <span class="big-tile-desc">Bills, debit notes, payments</span>
+            </button>
+            <button type="button" class="big-tile" data-finance="ar" style="border-color:#bbf7d0;background:#f0fdf4;" onclick="Finance.showAr()">
+              <span class="big-tile-letter">AR</span>
+              <span class="big-tile-title">Accounts Receivable</span>
+              <span class="big-tile-desc">Customer bills &amp; payments</span>
+            </button>
+            <button type="button" class="big-tile" data-finance="expenses" style="border-color:#fde68a;background:#fffbeb;" onclick="Finance.showExpenses()">
+              <span class="big-tile-letter">EX</span>
+              <span class="big-tile-title">Expenses</span>
+              <span class="big-tile-desc">Rent, salary, freight settle</span>
+            </button>
+            <button type="button" class="big-tile" data-finance="revenue" style="border-color:#a5b4fc;background:#eef2ff;" onclick="Finance.showRevenue()">
+              <span class="big-tile-letter">RV</span>
+              <span class="big-tile-title">Revenue</span>
+              <span class="big-tile-desc">Cash collected from customers</span>
+            </button>
+            <button type="button" class="big-tile" data-finance="cost" style="border-color:#fdba74;background:#fff7ed;" onclick="Finance.showCost()">
+              <span class="big-tile-letter">CO</span>
+              <span class="big-tile-title">Cost</span>
+              <span class="big-tile-desc">Expenses + vendor payments</span>
+            </button>
+            <button type="button" class="big-tile" data-finance="pnl" style="border-color:#86efac;background:#f0fdf4;" onclick="Finance.showPnl()">
+              <span class="big-tile-letter">PL</span>
+              <span class="big-tile-title">P&amp;L</span>
+              <span class="big-tile-desc">Profit, losses, monthly view</span>
+            </button>
+            <button type="button" class="big-tile" data-finance="freight" style="border-color:#fda4af;background:#fff1f2;" onclick="Finance.showFreight()">
+              <span class="big-tile-letter">FR</span>
+              <span class="big-tile-title">Freight Agents</span>
+              <span class="big-tile-desc">Balances, ledger &amp; settle</span>
+            </button>
+          </div>
+          <div id="finance-pick" class="fin-pick">
+            <p>Pick a section above — AP, AR, Expenses, Revenue, Cost, P&amp;L, or Freight.</p>
+          </div>
+          <div id="finance-panel-ap" class="hidden">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+              <h3 style="margin:0;font-size:20px;">Accounts Payable</h3>
+              <button class="btn btn-secondary" onclick="Finance.showHub()">← Finance hub</button>
+            </div>
+            <div id="finance-ap-summary" style="margin-bottom:16px;"></div>
+            <div class="card table-wrap" id="finance-ap-list"></div>
+          </div>
+          <div id="finance-panel-ar" class="hidden">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+              <h3 style="margin:0;font-size:20px;">Accounts Receivable</h3>
+              <button class="btn btn-secondary" onclick="Finance.showHub()">← Finance hub</button>
+            </div>
+            <div id="finance-ar-summary" style="margin-bottom:16px;"></div>
+            <div class="card table-wrap" id="finance-ar-list"></div>
+          </div>
+          <div id="finance-panel-expenses" class="hidden">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px;">
+              <h3 style="margin:0;font-size:20px;">Expenses</h3>
+              <div style="display:flex;gap:8px;">
+                <button class="btn btn-secondary" onclick="Finance.showHub()">← Finance hub</button>
+                <button class="btn btn-primary" onclick="Finance.openExpenseForm()">+ Add Expense</button>
+              </div>
+            </div>
+            <div class="card table-wrap" id="finance-expenses-list"></div>
+          </div>
+          <div id="finance-panel-revenue" class="hidden">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+              <h3 style="margin:0;font-size:20px;">Revenue</h3>
+              <button class="btn btn-secondary" onclick="Finance.showHub()">← Finance hub</button>
+            </div>
+            <div id="finance-revenue-body"></div>
+          </div>
+          <div id="finance-panel-cost" class="hidden">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+              <h3 style="margin:0;font-size:20px;">Cost</h3>
+              <button class="btn btn-secondary" onclick="Finance.showHub()">← Finance hub</button>
+            </div>
+            <div id="finance-cost-body"></div>
+          </div>
+          <div id="finance-panel-pnl" class="hidden">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+              <h3 style="margin:0;font-size:20px;">Profit &amp; Loss</h3>
+              <button class="btn btn-secondary" onclick="Finance.showHub()">← Finance hub</button>
+            </div>
+            <div id="finance-pnl-body"></div>
+          </div>
+          <div id="finance-panel-freight" class="hidden">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+              <h3 style="margin:0;font-size:20px;">Freight Agents</h3>
+              <button class="btn btn-secondary" onclick="Finance.showHub()">← Finance hub</button>
+            </div>
+            <div id="finance-freight-summary" style="margin-bottom:16px;"></div>
+            <div class="card table-wrap" id="finance-freight-list"></div>
+          </div>
+        </div>
+        <div id="finance-ap-detail" class="hidden">
+          <button type="button" class="btn btn-secondary back-btn" onclick="Finance.showAp()">← Back</button>
+          <h2 id="finance-ap-title" style="margin:16px 0 24px;font-size:24px;">Vendor AP</h2>
+          <div id="finance-ap-body"></div>
+        </div>
+        <div id="finance-ar-detail" class="hidden">
+          <button type="button" class="btn btn-secondary back-btn" onclick="Finance.showAr()">← Back</button>
+          <h2 id="finance-ar-title" style="margin:16px 0 24px;font-size:24px;">Customer AR</h2>
+          <div id="finance-ar-body"></div>
+        </div>
+        <div id="finance-freight-detail" class="hidden">
+          <button type="button" class="btn btn-secondary back-btn" onclick="Finance.showFreight()">← Back</button>
+          <h2 id="finance-freight-title" style="margin:16px 0 24px;font-size:24px;">Freight agent</h2>
+          <div id="finance-freight-body"></div>
+        </div>
+      </div>
+
+      <!-- People -->
+      <div id="view-people" class="view hidden">
+        <div id="people-hub">
+          <h2 style="margin:0;font-size:28px;">People</h2>
+          <p style="margin:8px 0 32px;color:var(--muted);font-size:16px;">Tap what you want to manage</p>
+          <div class="big-tiles">
+            <button type="button" class="big-tile big-tile-customers" onclick="App.showPeopleTab('customers')">
+              <span class="big-tile-letter">C</span>
+              <span class="big-tile-title">Customers</span>
+              <span class="big-tile-desc">Dealers who buy from you</span>
+              <span class="big-tile-count" id="hub-customers-count">0</span>
+            </button>
+            <button type="button" class="big-tile big-tile-vendors" onclick="App.showPeopleTab('vendors')">
+              <span class="big-tile-letter">V</span>
+              <span class="big-tile-title">Vendors</span>
+              <span class="big-tile-desc">Suppliers you buy from</span>
+              <span class="big-tile-count" id="hub-vendors-count">0</span>
+            </button>
+          </div>
+        </div>
+        <div id="people-customers" class="hidden">
+          <button type="button" class="btn btn-secondary back-btn" onclick="App.showPeopleHub()">← Back</button>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;flex-wrap:wrap;gap:12px;">
+            <div>
+              <h2 style="margin:0;font-size:24px;">Customers</h2>
+              <p style="margin:4px 0 0;color:var(--muted);font-size:14px;">Your dealers — tap a row to open</p>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn btn-secondary btn-lg" onclick="App.reloadCustomers()" title="Reload list">↻ Reload</button>
+              <button class="btn btn-primary btn-lg" data-require-write="customers" onclick="App.openCustomerWizard()">+ New Customer</button>
+            </div>
+          </div>
+          <div style="margin-bottom:16px;">
+            <input id="search-input" class="input search-big" placeholder="Quick search — name, phone, alias…" oninput="App.debouncedLoadCustomers()" />
+          </div>
+          <div class="card table-wrap" id="customers-table"></div>
+        </div>
+        <div id="people-vendors" class="hidden">
+          <button type="button" class="btn btn-secondary back-btn" onclick="App.showPeopleHub()">← Back</button>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;flex-wrap:wrap;gap:12px;">
+            <div>
+              <h2 style="margin:0;font-size:24px;">Vendors</h2>
+              <p style="margin:4px 0 0;color:var(--muted);font-size:14px;">Your suppliers — tap a row to open</p>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn btn-secondary btn-lg" onclick="Vendors.reload()" title="Reload list">↻ Reload</button>
+              <button class="btn btn-primary btn-lg" data-require-write="vendors" onclick="Vendors.openWizard()">+ New Vendor</button>
+            </div>
+          </div>
+          <div style="margin-bottom:16px;">
+            <input id="vendor-search-input" class="input search-big" placeholder="Quick search — name, phone, alias…" oninput="App.debouncedVendorSearch()" />
+          </div>
+          <div class="card table-wrap" id="vendors-table"></div>
+        </div>
+      </div>
+
+      <!-- Activity (admin) -->
+      <div id="view-activity" class="view hidden">
+        <div style="margin-bottom:24px;">
+          <h2 style="margin:0;font-size:24px;">Activity Log</h2>
+          <p style="margin:4px 0 0;color:var(--muted);font-size:14px;">Who did what — creates, updates, deletes across the portal</p>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
+          <select id="activity-person-filter" class="input" style="max-width:180px;" onchange="App.loadActivity()">
+            <option value="">All people</option>
+          </select>
+          <select id="activity-action-filter" class="input" style="max-width:160px;" onchange="App.loadActivity()">
+            <option value="">All actions</option>
+            <option value="create">Created</option>
+            <option value="update">Updated</option>
+            <option value="delete">Deleted</option>
+            <option value="place">Placed order</option>
+            <option value="receive">Received stock</option>
+            <option value="update_line">Updated order line</option>
+            <option value="delete_line">Removed order line</option>
+            <option value="cancel">Cancelled placement</option>
+            <option value="debit_note">Debit note</option>
+            <option value="ap_payment">AP payment</option>
+          </select>
+          <input id="activity-what-filter" class="input" style="max-width:140px;" placeholder="Filter what…" oninput="App.loadActivity()" />
+          <input id="activity-where-filter" class="input" style="max-width:140px;" placeholder="Filter where…" oninput="App.loadActivity()" />
+          <input id="activity-date-filter" class="input" type="date" style="max-width:150px;" onchange="App.loadActivity()" />
+          <button class="btn btn-secondary btn-sm" onclick="App.loadActivity({initPerson:true})">↻ Refresh</button>
+        </div>
+        <div class="card table-wrap" id="activity-table"></div>
+      </div>
+
+      <!-- Recycle Bin -->
+      <div id="view-recycle" class="view hidden">
+        <div style="margin-bottom:24px;">
+          <h2 style="margin:0;font-size:24px;">Recycle Bin</h2>
+          <p style="margin:4px 0 0;color:var(--muted);font-size:14px;">Soft-deleted items. Click to view details and restore.</p>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:16px;" id="recycle-tabs"></div>
+        <div class="card table-wrap" id="recycle-table"></div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Generic modal -->
+  <div id="modal" class="modal-overlay hidden" onclick="if(event.target===this)App.closeModal()">
+    <div class="modal" id="modal-box" style="max-width:480px;">
+      <div class="modal-header">
+        <h3 id="modal-title" style="margin:0;font-size:16px;"></h3>
+        <button class="btn-ghost" onclick="App.closeModal()">✕</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+      <div class="modal-footer" id="modal-footer"></div>
+    </div>
+  </div>
+
+  <!-- Customer wizard -->
+  <div id="wizard" class="modal-overlay hidden" onclick="if(event.target===this)App.closeWizard()">
+    <div class="modal" style="max-width:640px;" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div>
+          <h3 style="margin:0;font-size:16px;">New Customer</h3>
+          <p style="margin:2px 0 0;font-size:12px;color:var(--muted);">Create dealer account with WhatsApp credentials</p>
+        </div>
+        <button class="btn-ghost" onclick="App.closeWizard()">✕</button>
+      </div>
+      <div class="steps" id="wizard-steps"></div>
+      <div class="modal-body" id="wizard-body"></div>
+      <div class="modal-footer" id="wizard-footer"></div>
+    </div>
+  </div>
+
+  <!-- Detail panel (centered) -->
+  <div id="detail" class="detail-overlay hidden" onclick="if(event.target===this)App.closeDetail()">
+    <div class="detail-panel md" id="detail-panel" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h3 id="detail-title" style="margin:0;font-size:16px;">Details</h3>
+        <div style="display:flex;gap:4px;align-items:center;">
+          <button id="detail-back-btn" class="btn btn-secondary btn-sm hidden" onclick="App.detailBack()">← Back</button>
+          <button class="btn-ghost" onclick="App.closeDetail()">✕</button>
+        </div>
+      </div>
+      <div class="modal-body" id="detail-body"></div>
+      <div class="modal-footer" id="detail-footer"></div>
+    </div>
+  </div>
+
+  <!-- Customer edit modal -->
+  <div id="edit-modal" class="modal-overlay hidden" onclick="if(event.target===this)App.closeEditModal()">
+    <div class="modal" style="max-width:640px;" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div>
+          <h3 style="margin:0;font-size:16px;">Edit Customer</h3>
+          <p style="margin:2px 0 0;font-size:12px;color:var(--muted);">Update customer details</p>
+        </div>
+        <button class="btn-ghost" onclick="App.closeEditModal()">✕</button>
+      </div>
+      <div class="modal-body" id="edit-body"></div>
+      <div class="modal-footer" id="edit-footer"></div>
+    </div>
+  </div>
+
+  <!-- Vendor wizard -->
+  <div id="vendor-wizard" class="modal-overlay hidden" onclick="if(event.target===this)Vendors.closeWizard()">
+    <div class="modal" style="max-width:640px;" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div>
+          <h3 style="margin:0;font-size:16px;">New Vendor</h3>
+          <p style="margin:2px 0 0;font-size:12px;color:var(--muted);">Add a supplier or partner</p>
+        </div>
+        <button class="btn-ghost" onclick="Vendors.closeWizard()">✕</button>
+      </div>
+      <div class="steps" id="vendor-wizard-steps"></div>
+      <div class="modal-body" id="vendor-wizard-body"></div>
+      <div class="modal-footer" id="vendor-wizard-footer"></div>
+    </div>
+  </div>
+
+  <!-- Vendor edit modal -->
+  <div id="vendor-edit-modal" class="modal-overlay hidden" onclick="if(event.target===this)Vendors.closeEdit()">
+    <div class="modal" style="max-width:640px;" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div>
+          <h3 style="margin:0;font-size:16px;">Edit Vendor</h3>
+          <p style="margin:2px 0 0;font-size:12px;color:var(--muted);">Update vendor details</p>
+        </div>
+        <button class="btn-ghost" onclick="Vendors.closeEdit()">✕</button>
+      </div>
+      <div class="modal-body" id="vendor-edit-body"></div>
+      <div class="modal-footer" id="vendor-edit-footer"></div>
+    </div>
+  </div>
+
+  <!-- Catalog wizard -->
+  <div id="catalog-wizard" class="modal-overlay hidden" onclick="if(event.target===this)Catalog.closeWizard()">
+    <div class="modal" style="max-width:900px;" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div><h3 style="margin:0;font-size:16px;">New Catalog Products</h3></div>
+        <button class="btn-ghost" onclick="Catalog.closeWizard()">✕</button>
+      </div>
+      <div class="steps" id="catalog-wizard-steps"></div>
+      <div class="modal-body" id="catalog-wizard-body"></div>
+      <div class="modal-footer" id="catalog-wizard-footer"></div>
+    </div>
+  </div>
+
+  <!-- Catalog edit -->
+  <div id="catalog-edit-modal" class="modal-overlay hidden" onclick="if(event.target===this)Catalog.closeEdit()">
+    <div class="modal" style="max-width:720px;" onclick="event.stopPropagation()">
+      <div class="modal-header"><h3 style="margin:0;">Edit Product</h3><button class="btn-ghost" onclick="Catalog.closeEdit()">✕</button></div>
+      <div class="modal-body" id="catalog-edit-body"></div>
+      <div class="modal-footer" id="catalog-edit-footer"></div>
+    </div>
+  </div>
+
+  <!-- Addon wizard -->
+  <div id="addon-wizard" class="modal-overlay hidden" onclick="if(event.target===this)AddonProducts.closeWizard()">
+    <div class="modal" style="max-width:640px;" onclick="event.stopPropagation()">
+      <div class="modal-header"><h3 style="margin:0;">New Add-on</h3><button class="btn-ghost" onclick="AddonProducts.closeWizard()">✕</button></div>
+      <div class="steps" id="addon-wizard-steps"></div>
+      <div class="modal-body" id="addon-wizard-body"></div>
+      <div class="modal-footer" id="addon-wizard-footer"></div>
+    </div>
+  </div>
+
+  <!-- Addon edit -->
+  <div id="addon-edit-modal" class="modal-overlay hidden" onclick="if(event.target===this)AddonProducts.closeEdit()">
+    <div class="modal" style="max-width:640px;" onclick="event.stopPropagation()">
+      <div class="modal-header"><h3 style="margin:0;">Edit Add-on</h3><button class="btn-ghost" onclick="AddonProducts.closeEdit()">✕</button></div>
+      <div class="modal-body" id="addon-edit-body"></div>
+      <div class="modal-footer" id="addon-edit-footer"></div>
+    </div>
+  </div>
+
+  <!-- Staff modal -->
+  <div id="staff-modal" class="modal-overlay hidden" onclick="if(event.target===this)StaffMgmt.closeModal()">
+    <div class="modal" style="max-width:560px;" onclick="event.stopPropagation()">
+      <div class="modal-header"><h3 id="staff-modal-title" style="margin:0;">Staff</h3><button class="btn-ghost" onclick="StaffMgmt.closeModal()">✕</button></div>
+      <div class="modal-body" id="staff-modal-body"></div>
+      <div class="modal-footer" id="staff-modal-footer"></div>
+    </div>
+  </div>
+
+  <!-- Vendor order wizard -->
+  <div id="vo-wizard" class="modal-overlay hidden" onclick="if(event.target===this)VendorOrders.closeWizard()">
+    <div class="modal vo-wiz-modal" onclick="event.stopPropagation()">
+      <div class="modal-header vo-wiz-header">
+        <div>
+          <h3 id="vo-wizard-title" style="margin:0;">New Vendor Order</h3>
+          <p id="vo-wizard-sub" class="vo-wiz-sub">Place an order with a vendor</p>
+        </div>
+        <button class="btn-ghost" onclick="VendorOrders.closeWizard()">✕</button>
+      </div>
+      <div class="steps vo-wiz-steps" id="vo-wizard-steps"></div>
+      <div class="modal-body vo-wiz-body" id="vo-wizard-body"></div>
+      <div class="modal-footer vo-wiz-footer" id="vo-wizard-footer"></div>
+    </div>
+  </div>
+
+  <!-- Vendor order line edit -->
+  <div id="vo-edit-modal" class="modal-overlay hidden" onclick="if(event.target===this)VendorOrders.closeEdit()">
+    <div class="modal" style="max-width:480px;" onclick="event.stopPropagation()">
+      <div class="modal-header"><h3 style="margin:0;">Edit Line</h3><button class="btn-ghost" onclick="VendorOrders.closeEdit()">✕</button></div>
+      <div class="modal-body" id="vo-edit-body"></div>
+      <div class="modal-footer" id="vo-edit-footer"></div>
+    </div>
+  </div>
+
+  <!-- Stock receipt wizard -->
+  <div id="stock-wizard" class="modal-overlay hidden" onclick="if(event.target===this)Stock.closeWizard()">
+    <div class="modal stock-wiz-modal" onclick="event.stopPropagation()">
+      <div class="modal-header vo-wiz-header">
+        <div>
+          <h3 id="stock-wizard-title" style="margin:0;">Add Stock</h3>
+          <p id="stock-wizard-sub" class="vo-wiz-sub">Receive goods and update inventory</p>
+        </div>
+        <button class="btn-ghost" onclick="Stock.closeWizard()">✕</button>
+      </div>
+      <div class="steps vo-wiz-steps" id="stock-wizard-steps"></div>
+      <div class="modal-body vo-wiz-body" id="stock-wizard-body"></div>
+      <div class="modal-footer vo-wiz-footer" id="stock-wizard-footer"></div>
+    </div>
+  </div>
+
+  <!-- Debit note modal -->
+  <div id="debit-note-modal" class="modal-overlay hidden" onclick="if(event.target===this)DebitNotes.close()">
+    <div class="modal dn-modal" onclick="event.stopPropagation()">
+      <div class="modal-header vo-wiz-header">
+        <div>
+          <h3 id="dn-modal-title" style="margin:0;">Debit Note</h3>
+          <p class="vo-wiz-sub">Adjust payable when bill and goods differ</p>
+        </div>
+        <button class="btn-ghost" onclick="DebitNotes.close()">✕</button>
+      </div>
+      <div class="modal-body" id="debit-note-body"></div>
+      <div class="modal-footer" id="debit-note-footer"></div>
+    </div>
+  </div>
+
+  <!-- AP settle modal -->
+  <div id="settle-modal" class="modal-overlay hidden" onclick="if(event.target===this)Finance.closeSettle()">
+    <div class="modal" style="max-width:480px;" onclick="event.stopPropagation()">
+      <div class="modal-header"><h3 style="margin:0;">Settle Payment</h3><button class="btn-ghost" onclick="Finance.closeSettle()">✕</button></div>
+      <div class="modal-body" id="settle-body"></div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Finance.closeSettle()">Cancel</button>
+        <button class="btn btn-primary" onclick="Finance.submitSettle()">Submit Payment</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Customer process wizard -->
+  <div id="co-wizard" class="modal-overlay hidden" onclick="if(event.target===this)CustomerOrders.closeProcessWizard()">
+    <div class="modal" style="max-width:900px;" onclick="event.stopPropagation()">
+      <div class="modal-header"><h3 style="margin:0;">Process Order</h3><button class="btn-ghost" onclick="CustomerOrders.closeProcessWizard()">✕</button></div>
+      <div class="steps" id="co-wizard-steps"></div>
+      <div class="modal-body" id="co-wizard-body" style="max-height:60vh;overflow-y:auto;"></div>
+      <div class="modal-footer" id="co-wizard-footer"></div>
+    </div>
+  </div>
+
+  <!-- Create order menu -->
+  <div id="order-create-menu" class="modal-overlay hidden" onclick="if(event.target===this)OrderMenus.closeCreate()">
+    <div class="modal create-order-modal" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div>
+          <h3 style="margin:0;">Create Order</h3>
+          <p class="create-order-sub">Choose how this order starts</p>
+        </div>
+        <button class="btn-ghost" onclick="OrderMenus.closeCreate()">✕</button>
+      </div>
+      <div class="modal-body create-order-choices">
+        <button type="button" class="create-order-card" id="order-create-new-btn" onclick="OrderMenus.pickNew()">
+          <span class="create-order-letter">N</span>
+          <span class="create-order-card-body">
+            <strong>New Order</strong>
+            <span>Pick vendor, add products, place order</span>
+          </span>
+          <span class="create-order-arrow">→</span>
+        </button>
+        <button type="button" class="create-order-card create-order-card-alt" id="order-create-offline-btn" onclick="OrderMenus.pickOffline()">
+          <span class="create-order-letter alt">O</span>
+          <span class="create-order-card-body">
+            <strong>Offline Order</strong>
+            <span>Already bought — bill and add stock now</span>
+          </span>
+          <span class="create-order-arrow">→</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Close order batch modal -->
+  <div id="close-order-modal" class="modal-overlay hidden" onclick="if(event.target===this)OrderMenus.closeBatch()">
+    <div class="modal" style="max-width:720px;" onclick="event.stopPropagation()">
+      <div class="modal-header"><h3 id="close-order-title" style="margin:0;">Close Order</h3><button class="btn-ghost" onclick="OrderMenus.closeBatch()">✕</button></div>
+      <div class="modal-body" id="close-order-body" style="max-height:55vh;overflow-y:auto;"></div>
+      <div class="modal-footer" id="close-order-footer"></div>
+    </div>
+  </div>
+
+  <!-- Vendor order confirm modal -->
+  <div id="vo-confirm-modal" class="modal-overlay hidden" onclick="if(event.target===this)OrderMenus.closeConfirm()">
+    <div class="modal" style="max-width:520px;" onclick="event.stopPropagation()">
+      <div class="modal-header"><h3 id="vo-confirm-title" style="margin:0;">Confirm</h3><button class="btn-ghost" onclick="OrderMenus.closeConfirm()">✕</button></div>
+      <div class="modal-body" id="vo-confirm-body"></div>
+      <div class="modal-footer" id="vo-confirm-footer"></div>
+    </div>
+  </div>
+
+  <!-- Customer offline wizard -->
+  <div id="co-offline-wizard" class="modal-overlay hidden" onclick="if(event.target===this)CustomerOrders.closeOfflineWizard()">
+    <div class="modal" style="max-width:900px;" onclick="event.stopPropagation()">
+      <div class="modal-header"><h3 style="margin:0;">Offline Customer Order</h3><button class="btn-ghost" onclick="CustomerOrders.closeOfflineWizard()">✕</button></div>
+      <div class="steps" id="co-offline-steps"></div>
+      <div class="modal-body" id="co-offline-body" style="max-height:60vh;overflow-y:auto;"></div>
+      <div class="modal-footer" id="co-offline-footer"></div>
+    </div>
+  </div>
+
+  <!-- AR settle modal -->
+  <div id="ar-settle-modal" class="modal-overlay hidden" onclick="if(event.target===this)Finance.closeArSettle()">
+    <div class="modal" style="max-width:480px;" onclick="event.stopPropagation()">
+      <div class="modal-header"><h3 style="margin:0;">Record Payment</h3><button class="btn-ghost" onclick="Finance.closeArSettle()">✕</button></div>
+      <div class="modal-body" id="ar-settle-body"></div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Finance.closeArSettle()">Cancel</button>
+        <button class="btn btn-primary" onclick="Finance.submitArSettle()">Submit</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Freight settle modal -->
+  <div id="freight-settle-modal" class="modal-overlay hidden" onclick="if(event.target===this)Finance.closeFreightSettle()">
+    <div class="modal" style="max-width:480px;" onclick="event.stopPropagation()">
+      <div class="modal-header"><h3 style="margin:0;">Settle Freight</h3><button class="btn-ghost" onclick="Finance.closeFreightSettle()">✕</button></div>
+      <div class="modal-body" id="freight-settle-body"></div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Finance.closeFreightSettle()">Cancel</button>
+        <button class="btn btn-primary" onclick="Finance.submitFreightSettle()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Expense modal -->
+  <div id="expense-modal" class="modal-overlay hidden" onclick="if(event.target===this)Finance.closeExpenseForm()">
+    <div class="modal" style="max-width:480px;" onclick="event.stopPropagation()">
+      <div class="modal-header"><h3 style="margin:0;">Add Expense</h3><button class="btn-ghost" onclick="Finance.closeExpenseForm()">✕</button></div>
+      <div class="modal-body" id="expense-body"></div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Finance.closeExpenseForm()">Cancel</button>
+        <button class="btn btn-primary" onclick="Finance.submitExpense()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Manual loss modal -->
+  <div id="loss-modal" class="modal-overlay hidden" onclick="if(event.target===this)Finance.closeLossForm()">
+    <div class="modal" style="max-width:480px;" onclick="event.stopPropagation()">
+      <div class="modal-header"><h3 style="margin:0;">Add Manual Loss</h3><button class="btn-ghost" onclick="Finance.closeLossForm()">✕</button></div>
+      <div class="modal-body" id="loss-body"></div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Finance.closeLossForm()">Cancel</button>
+        <button class="btn btn-primary" onclick="Finance.submitLoss()">Save</button>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- Alternatives board -->
+  <div id="alts-board-modal" class="modal-overlay hidden" onclick="if(event.target===this)Products.closeAlternativesManager()">
+    <div class="modal alts-board-modal" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div>
+          <h3 style="margin:0;">Manage alternatives</h3>
+          <p class="vo-wiz-sub">Products with linked alternatives — image, ID, vendor, place, price</p>
+        </div>
+        <button class="btn-ghost" onclick="Products.closeAlternativesManager()">✕</button>
+      </div>
+      <div class="modal-body" id="alts-board-body" style="max-height:70vh;overflow:auto;"></div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="Products.closeAlternativesManager()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Image lightbox -->
+  <div id="img-lightbox" class="img-lightbox hidden" onclick="Products.closeLightbox()">
+    <button type="button" class="img-lightbox-close" onclick="Products.closeLightbox()">✕</button>
+    <img id="img-lightbox-img" alt="" onclick="event.stopPropagation()" />
+  </div>
+
+  <script src="js/order-menus.js?v=voorders2"></script>
+  <script src="js/cache.js"></script>
+  <script src="js/table-utils.js"></script>
+  <script src="js/vendors.js?v=fin3"></script>
+  <script src="js/catalog.js?v=prod1"></script>
+  <script src="js/addon-products.js"></script>
+  <script src="js/products.js?v=prod1"></script>
+  <script src="js/staff.js"></script>
+  <script src="js/vendor-orders.js?v=fin3"></script>
+  <script src="js/customer-orders.js?v=bill1"></script>
+  <script src="js/debit-notes.js?v=dn4"></script>
+  <script src="js/stock.js?v=prod1"></script>
+  <script src="js/finance.js?v=fr1"></script>
+  <script src="js/documents.js"></script>
+  <script src="js/bill-series.js"></script>
+  <script src="js/freight-agents.js?v=fr1"></script>
+  <script src="app.js?v=city1"></script>
+</body>
+</html>

@@ -43,6 +43,10 @@ invoice_*.html
 
 # Local split-repo exports (not part of monorepo source)
 _publish/
+JC/_publish/
+JC/.logs/
+JC/.pids/
+JC/**/.vercel/
 
 # Node
 node_modules/

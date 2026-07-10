@@ -50,8 +50,9 @@ jobs:
             --exclude='.DS_Store' \
             "${{ matrix.src }}" /tmp/target/
           cd /tmp/target
-          git config user.email "ci@jyoticreativecards.com"
-          git config user.name "JC CI"
+          # Must match Vercel team owner email or deploy emails/fails membership check
+          git config user.email "sourabh18agrawal@gmail.com"
+          git config user.name "JC Deploy"
           git add -A
           if git diff --cached --quiet; then
             echo "No changes for ${{ matrix.name }}"

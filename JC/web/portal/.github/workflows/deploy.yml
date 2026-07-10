@@ -5,20 +5,26 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: vercel-prod-${{ github.repository }}
+  cancel-in-progress: true
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
       - name: Install Vercel CLI
-        run: npm install -g vercel@latest
+        run: npm install -g vercel@41.7.8
       - name: Deploy production
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-        run: vercel deploy --prod --yes --token="$VERCEL_TOKEN"
+          CI: "1"
+        # --no-wait: upload + create deployment; avoid CLI hang on build poll
+        run: vercel deploy --prod --yes --no-wait --token="$VERCEL_TOKEN"

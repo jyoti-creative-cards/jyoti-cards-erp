@@ -896,10 +896,14 @@ const Catalog = (() => {
   }
 
   async function openEdit(id, returnTo) {
-    const p = await ctx.api(`/catalog/products/${id}`);
     editingId = id;
     editReturnTo = returnTo || null;
-    await loadAddons();
+    const [p, optRes] = await Promise.all([
+      ctx.api(`/catalog/products/${id}`),
+      ctx.api("/catalog/product-options", {}, 120000).catch(() => []),
+      loadAddons(),
+    ]);
+    const altOptions = (Array.isArray(optRes) ? optRes : []).filter(x => x.id !== p.id);
 
     document.getElementById("catalog-edit-body").innerHTML = `
       <div style="display:grid;gap:16px;">
@@ -929,7 +933,7 @@ const Catalog = (() => {
           <label class="label">Alternatives (max ${MAX_ALTERNATIVES})</label>
           ${[0, 1, 2].map(i => {
             const val = (p.alternatives || []).map(a => a.alternative_our_product_id)[i] || "";
-            const opts = products.filter(x => x.id !== p.id).map(x => `<option value="${ctx.esc(x.our_product_id)}" ${val === x.our_product_id ? "selected" : ""}>${ctx.esc(x.our_product_id)}</option>`).join("");
+            const opts = altOptions.map(x => `<option value="${ctx.esc(x.our_product_id)}" ${val === x.our_product_id ? "selected" : ""}>${ctx.esc(x.our_product_id)}</option>`).join("");
             return `<select id="ce-alt-${i}" class="input" style="margin-bottom:8px;"><option value="">— none —</option>${opts}</select>`;
           }).join("")}
         </div>

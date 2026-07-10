@@ -58,15 +58,40 @@ def _vendor_info(db: Session, vendor_id: int) -> tuple[Optional[str], Optional[s
     return v.business_name, city_name
 
 
+def _vendor_info_map(db: Session, vendor_ids: list[int]) -> dict[int, tuple[Optional[str], Optional[str]]]:
+    """Batch vendor + city names (avoids N+1 on list endpoints)."""
+    ids = sorted({int(v) for v in vendor_ids if v})
+    if not ids:
+        return {}
+    vendors = db.query(Vendor).filter(Vendor.id.in_(ids)).all()
+    city_ids = sorted({v.city_id for v in vendors if v.city_id})
+    cities = {
+        c.id: c.name
+        for c in (db.query(City).filter(City.id.in_(city_ids)).all() if city_ids else [])
+    }
+    return {
+        v.id: (v.business_name, cities.get(v.city_id) if v.city_id else None)
+        for v in vendors
+    }
+
+
 def _to_public(
     row: CatalogProduct,
     db: Session,
     *,
     addon_count: Optional[int] = None,
     alt_count: Optional[int] = None,
+    vendor_name: Optional[str] = None,
+    vendor_city: Optional[str] = None,
+    max_images: Optional[int] = None,
 ) -> CatalogProductPublic:
-    vn, vc = _vendor_info(db, row.vendor_id)
-    keys = row.image_keys or []
+    if vendor_name is None and vendor_city is None:
+        vn, vc = _vendor_info(db, row.vendor_id)
+    else:
+        vn, vc = vendor_name, vendor_city
+    keys = list(row.image_keys or [])
+    if max_images is not None:
+        keys = keys[: max(0, max_images)]
     if addon_count is None:
         addon_count = db.query(CatalogAddonLink).filter(CatalogAddonLink.catalog_product_id == row.id).count()
     if alt_count is None:
@@ -84,7 +109,7 @@ def _to_public(
         year_group=row.year_group,
         buying_price=format(row.buying_price, "f"),
         selling_price=format(row.selling_price, "f") if row.selling_price is not None else None,
-        image_keys=keys,
+        image_keys=list(row.image_keys or []),
         image_urls=presigned_urls(keys),
         is_active=row.is_active,
         created_at=row.created_at,
@@ -193,6 +218,19 @@ def check_duplicates(body: CheckDuplicatesRequest, db: Session = Depends(get_db)
     return CheckDuplicatesResponse(duplicates=sorted({r[0] for r in rows}))
 
 
+@router.get("/product-options", dependencies=[Depends(require_permission("catalog.read"))])
+def product_options(db: Session = Depends(get_db)) -> list[dict]:
+    """Lightweight id + SKU list for alternative dropdowns (no images)."""
+    rows = (
+        db.query(CatalogProduct.id, CatalogProduct.our_product_id)
+        .filter(CatalogProduct.is_active.is_(True), CatalogProduct.deleted_at.is_(None))
+        .order_by(CatalogProduct.our_product_id.asc())
+        .limit(2000)
+        .all()
+    )
+    return [{"id": int(r.id), "our_product_id": r.our_product_id} for r in rows]
+
+
 @router.get("/alternatives-board", dependencies=[Depends(require_permission("catalog.read"))])
 def alternatives_board(db: Session = Depends(get_db)) -> list[dict]:
     """Products with enriched alternatives for the manage-alternatives UI."""
@@ -210,15 +248,27 @@ def alternatives_board(db: Session = Depends(get_db)) -> list[dict]:
     for a in alt_rows:
         by_product.setdefault(a.product_id, []).append(a)
 
+    alt_ids = sorted({a.alternative_product_id for a in alt_rows})
+    alt_products = {
+        p.id: p
+        for p in (
+            db.query(CatalogProduct).filter(CatalogProduct.id.in_(alt_ids)).all() if alt_ids else []
+        )
+    }
+    vendor_map = _vendor_info_map(
+        db,
+        [p.vendor_id for p in products] + [p.vendor_id for p in alt_products.values()],
+    )
+
     out = []
     for p in products:
-        vn, vc = _vendor_info(db, p.vendor_id)
+        vn, vc = vendor_map.get(p.vendor_id, (None, None))
         alts = []
         for a in by_product.get(p.id, []):
-            alt = db.get(CatalogProduct, a.alternative_product_id)
+            alt = alt_products.get(a.alternative_product_id)
             if not alt or not alt.is_active or alt.deleted_at:
                 continue
-            avn, avc = _vendor_info(db, alt.vendor_id)
+            avn, avc = vendor_map.get(alt.vendor_id, (None, None))
             alts.append({
                 "id": a.id,
                 "alternative_product_id": alt.id,
@@ -227,7 +277,7 @@ def alternatives_board(db: Session = Depends(get_db)) -> list[dict]:
                 "vendor_city": avc,
                 "buying_price": format(alt.buying_price, "f"),
                 "selling_price": format(alt.selling_price, "f") if alt.selling_price is not None else None,
-                "image_urls": presigned_urls(alt.image_keys or []),
+                "image_urls": presigned_urls((alt.image_keys or [])[:1]),
             })
         out.append({
             "id": p.id,
@@ -236,7 +286,7 @@ def alternatives_board(db: Session = Depends(get_db)) -> list[dict]:
             "vendor_city": vc,
             "buying_price": format(p.buying_price, "f"),
             "selling_price": format(p.selling_price, "f") if p.selling_price is not None else None,
-            "image_urls": presigned_urls(p.image_keys or []),
+            "image_urls": presigned_urls((p.image_keys or [])[:1]),
             "alt_count": len(alts),
             "alternatives": alts,
         })
@@ -266,6 +316,7 @@ def list_products(
     ids = [r.id for r in rows]
     addon_counts: dict[int, int] = {}
     alt_counts: dict[int, int] = {}
+    vendor_map = _vendor_info_map(db, [r.vendor_id for r in rows])
     if ids:
         for pid, cnt in (
             db.query(CatalogAddonLink.catalog_product_id, func.count(CatalogAddonLink.id))
@@ -283,7 +334,15 @@ def list_products(
             alt_counts[pid] = int(cnt)
     return CatalogListResponse(
         items=[
-            _to_public(r, db, addon_count=addon_counts.get(r.id, 0), alt_count=alt_counts.get(r.id, 0))
+            _to_public(
+                r,
+                db,
+                addon_count=addon_counts.get(r.id, 0),
+                alt_count=alt_counts.get(r.id, 0),
+                vendor_name=vendor_map.get(r.vendor_id, (None, None))[0],
+                vendor_city=vendor_map.get(r.vendor_id, (None, None))[1],
+                max_images=1,
+            )
             for r in rows
         ],
         total=total,

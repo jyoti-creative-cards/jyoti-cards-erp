@@ -63,18 +63,34 @@ def image_key(vendor_folder: str, our_product_id: str, index: int, ext: str = "j
     return f"{_CATALOG_ROOT}/{vendor_folder}/{safe_id}_{index}.{ext.lstrip('.')}"
 
 
+_s3_client = None
+_s3_client_key: tuple | None = None
+
+
 def _client():
+    """Reuse one boto3 client — creating per URL made list APIs multi-second slow."""
+    global _s3_client, _s3_client_key
     s = get_settings()
     if not (s.s3_endpoint_url and s.s3_bucket and s.s3_access_key_id and s.s3_secret_access_key):
         return None
-    return boto3.client(
+    key = (
+        s.s3_endpoint_url.strip(),
+        s.s3_access_key_id.strip(),
+        s.s3_secret_access_key.strip(),
+        (s.s3_region or "ap-southeast-1").strip(),
+    )
+    if _s3_client is not None and _s3_client_key == key:
+        return _s3_client
+    _s3_client = boto3.client(
         "s3",
-        endpoint_url=s.s3_endpoint_url.strip(),
-        aws_access_key_id=s.s3_access_key_id.strip(),
-        aws_secret_access_key=s.s3_secret_access_key.strip(),
-        region_name=(s.s3_region or "ap-southeast-1").strip(),
+        endpoint_url=key[0],
+        aws_access_key_id=key[1],
+        aws_secret_access_key=key[2],
+        region_name=key[3],
         config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
     )
+    _s3_client_key = key
+    return _s3_client
 
 
 def storage_configured() -> bool:

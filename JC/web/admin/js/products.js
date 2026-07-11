@@ -521,45 +521,20 @@ const Products = (() => {
   }
 
 
+  let altsBoardRows = [];
+  let altsBoardSearch = "";
+  let altsPickerForId = null;
+  let altsPickerQuery = "";
+  let altsPickerStock = [];
+  let altsPickerTimer = null;
+
   async function openAlternativesManager() {
     ctx.showLoading?.();
     try {
-      const rows = await ctx.api("/catalog/alternatives-board", {}, 0);
-      const body = document.getElementById("alts-board-body");
-      if (!body) return;
-      if (!rows.length) {
-        body.innerHTML = `<div class="empty-state"><p>No products yet.</p></div>`;
-      } else {
-        body.innerHTML = rows.map(p => {
-          const img = (p.image_urls && p.image_urls[0]) || "";
-          const alts = p.alternatives || [];
-          return `<div class="alt-board-card">
-            <div class="alt-board-main">
-              ${img ? `<img src="${ctx.esc(img)}" class="alt-board-thumb" onclick="Products.enlargeImage(decodeURIComponent('${encodeURIComponent(img)}'))" alt="" />` : `<div class="alt-board-thumb alt-board-thumb-empty"></div>`}
-              <div class="alt-board-info">
-                <strong>${ctx.esc(p.our_product_id)}</strong>
-                <div class="alt-board-meta">${ctx.esc(p.vendor_name || "—")}${p.vendor_city ? ` · ${ctx.esc(p.vendor_city)}` : ""}</div>
-                <div class="alt-board-price">Buy ${fmtPrice(p.buying_price)}${p.selling_price ? ` · Sell ${fmtPrice(p.selling_price)}` : " · No sell"}</div>
-              </div>
-              <div class="alt-board-actions">
-                <span class="badge ${alts.length ? "badge-green" : "badge-amber"}">${alts.length} alt${alts.length === 1 ? "" : "s"}</span>
-                ${ctx.canWrite?.("catalog") ? `<button class="btn btn-secondary btn-sm" onclick="Catalog.openEdit(${p.id});Products.closeAlternativesManager();">Edit</button>` : ""}
-              </div>
-            </div>
-            <div class="alt-board-alts">
-              ${alts.length ? alts.map(a => {
-                const aimg = (a.image_urls && a.image_urls[0]) || "";
-                return `<button type="button" class="alt-board-alt" onclick="Products.enlargeImage(decodeURIComponent('${encodeURIComponent(aimg || "")}'))">
-                  ${aimg ? `<img src="${ctx.esc(aimg)}" alt="" />` : `<div class="alt-board-thumb-empty sm"></div>`}
-                  <span class="alt-board-alt-id">${ctx.esc(a.our_product_id)}</span>
-                  <span class="alt-board-alt-meta">${ctx.esc(a.vendor_name || "—")}${a.vendor_city ? ` · ${ctx.esc(a.vendor_city)}` : ""}</span>
-                  <span class="alt-board-alt-price">${fmtPrice(a.buying_price)}${a.selling_price ? ` / ${fmtPrice(a.selling_price)}` : ""}</span>
-                </button>`;
-              }).join("") : `<p class="alt-board-empty">No alternatives linked</p>`}
-            </div>
-          </div>`;
-        }).join("");
-      }
+      altsBoardRows = await ctx.api("/catalog/alternatives-board", {}, 0);
+      altsBoardSearch = "";
+      altsPickerForId = null;
+      renderAlternativesBoard();
       document.getElementById("alts-board-modal")?.classList.remove("hidden");
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
@@ -567,6 +542,181 @@ const Products = (() => {
 
   function closeAlternativesManager() {
     document.getElementById("alts-board-modal")?.classList.add("hidden");
+    altsPickerForId = null;
+  }
+
+  function onAltsBoardSearch(val) {
+    altsBoardSearch = val || "";
+    renderAlternativesBoard();
+  }
+
+  function filteredAltsBoard() {
+    const q = altsBoardSearch.trim().toLowerCase();
+    if (!q) return altsBoardRows;
+    return altsBoardRows.filter(p => {
+      const hay = [
+        p.our_product_id, p.vendor_name, p.vendor_city,
+        ...(p.alternatives || []).map(a => a.our_product_id),
+      ].join(" ").toLowerCase();
+      return hay.includes(q);
+    });
+  }
+
+  function renderAlternativesBoard() {
+    const body = document.getElementById("alts-board-body");
+    if (!body) return;
+    const rows = filteredAltsBoard();
+    const canWrite = !!ctx.canWrite?.("catalog");
+
+    body.innerHTML = `
+      <div class="alts-toolbar">
+        <input class="input search-big" id="alts-board-search" placeholder="Search product ID, vendor…"
+          value="${ctx.esc(altsBoardSearch)}" oninput="Products.onAltsBoardSearch(this.value)" autocomplete="off" />
+        <span class="alts-toolbar-count">${rows.length} product${rows.length === 1 ? "" : "s"}</span>
+      </div>
+      <div class="alts-col-head">
+        <div>Main product</div>
+        <div>Alternative 1</div>
+        <div>Alternative 2</div>
+        <div>Alternative 3</div>
+      </div>
+      <div class="alts-grid-wrap">
+        ${rows.length ? rows.map(p => renderAltBoardRow(p, canWrite)).join("") : `<div class="empty-state"><p>No products match.</p></div>`}
+      </div>
+      ${altsPickerForId ? renderAltPicker(canWrite) : ""}`;
+
+    if (altsPickerForId) {
+      setTimeout(() => document.getElementById("alts-picker-search")?.focus(), 0);
+    }
+  }
+
+  function renderAltBoardRow(p, canWrite) {
+    const alts = [...(p.alternatives || [])];
+    while (alts.length < 3) alts.push(null);
+    const slots = alts.slice(0, 3).map((a, i) => {
+      if (a) {
+        const img = (a.image_urls && a.image_urls[0]) || "";
+        return `<div class="alts-slot filled">
+          ${img ? `<img src="${ctx.esc(img)}" alt="" onclick="Products.enlargeImage(decodeURIComponent('${encodeURIComponent(img)}'))" />` : `<div class="alts-slot-ph"></div>`}
+          <strong>${ctx.esc(a.our_product_id)}</strong>
+          <span>${ctx.esc(a.vendor_name || "—")}${a.vendor_city ? ` · ${ctx.esc(a.vendor_city)}` : ""}</span>
+          <span class="alts-slot-price">${fmtPrice(a.buying_price)}${a.selling_price ? ` / ${fmtPrice(a.selling_price)}` : ""}</span>
+          ${canWrite ? `<button type="button" class="btn btn-ghost btn-sm" onclick="Products.removeAlternative(${p.id}, '${ctx.esc(a.our_product_id).replace(/'/g, "\\'")}')">Remove</button>` : ""}
+        </div>`;
+      }
+      return `<div class="alts-slot empty">
+        <p>No alternative</p>
+        ${canWrite ? `<button type="button" class="btn btn-secondary btn-sm" onclick="Products.openAltPicker(${p.id})">+ Add</button>` : ""}
+      </div>`;
+    }).join("");
+
+    const img = (p.image_urls && p.image_urls[0]) || "";
+    return `<div class="alts-row" data-product-id="${p.id}">
+      <div class="alts-slot main">
+        ${img ? `<img src="${ctx.esc(img)}" alt="" onclick="Products.enlargeImage(decodeURIComponent('${encodeURIComponent(img)}'))" />` : `<div class="alts-slot-ph"></div>`}
+        <strong>${ctx.esc(p.our_product_id)}</strong>
+        <span>${ctx.esc(p.vendor_name || "—")}${p.vendor_city ? ` · ${ctx.esc(p.vendor_city)}` : ""}</span>
+        <span class="alts-slot-price">Buy ${fmtPrice(p.buying_price)}${p.selling_price ? ` · Sell ${fmtPrice(p.selling_price)}` : ""}</span>
+      </div>
+      ${slots}
+    </div>`;
+  }
+
+  function renderAltPicker(canWrite) {
+    const main = altsBoardRows.find(p => p.id === altsPickerForId);
+    const linked = new Set((main?.alternatives || []).map(a => a.our_product_id));
+    linked.add(main?.our_product_id);
+    const q = altsPickerQuery.trim().toLowerCase();
+    const hits = (altsPickerStock || []).filter(s => {
+      if (linked.has(s.our_product_id)) return false;
+      if (!q) return true;
+      return String(s.our_product_id || "").toLowerCase().includes(q)
+        || String(s.vendor_name || "").toLowerCase().includes(q);
+    }).slice(0, 40);
+
+    return `<div class="alts-picker-overlay" onclick="if(event.target===this)Products.closeAltPicker()">
+      <div class="alts-picker" onclick="event.stopPropagation()">
+        <div class="alts-picker-head">
+          <div>
+            <strong>Add alternative</strong>
+            <p>for ${ctx.esc(main?.our_product_id || "")} — tap a product to link</p>
+          </div>
+          <button type="button" class="btn-ghost" onclick="Products.closeAltPicker()">✕</button>
+        </div>
+        <input class="input" id="alts-picker-search" placeholder="Filter by product ID…"
+          value="${ctx.esc(altsPickerQuery)}" oninput="Products.onAltPickerSearch(this.value)" autocomplete="off" />
+        <div class="alts-picker-list">
+          ${hits.length ? hits.map(s => {
+            const img = (s.image_urls && s.image_urls[0]) || "";
+            return `<button type="button" class="alts-picker-item" onclick="Products.addAlternative(${altsPickerForId}, '${ctx.esc(s.our_product_id).replace(/'/g, "\\'")}')">
+              ${img ? `<img src="${ctx.esc(img)}" alt="" />` : `<div class="alts-slot-ph sm"></div>`}
+              <div class="alts-picker-meta">
+                <strong>${ctx.esc(s.our_product_id)}</strong>
+                <span>${ctx.esc(s.vendor_name || "—")} · Stock ${s.quantity_on_hand ?? 0}</span>
+                <span>${s.selling_price ? `Sell ${fmtPrice(s.selling_price)}` : `Buy ${fmtPrice(s.buying_price)}`}</span>
+              </div>
+              <span class="btn btn-primary btn-sm">Add</span>
+            </button>`;
+          }).join("") : `<p class="alts-picker-empty">${q ? "No matches" : "Loading products…"}</p>`}
+        </div>
+      </div>
+    </div>`;
+  }
+
+  async function openAltPicker(productId) {
+    const main = altsBoardRows.find(p => p.id === productId);
+    if ((main?.alternatives || []).length >= 3) {
+      ctx.toast("Max 3 alternatives", "error");
+      return;
+    }
+    altsPickerForId = productId;
+    altsPickerQuery = "";
+    renderAlternativesBoard();
+    try {
+      altsPickerStock = await ctx.api("/stock/products", {}, 60000);
+      renderAlternativesBoard();
+    } catch (e) { ctx.toast(e.message, "error"); }
+  }
+
+  function closeAltPicker() {
+    altsPickerForId = null;
+    renderAlternativesBoard();
+  }
+
+  function onAltPickerSearch(val) {
+    altsPickerQuery = val || "";
+    if (altsPickerTimer) clearTimeout(altsPickerTimer);
+    altsPickerTimer = setTimeout(() => renderAlternativesBoard(), 120);
+  }
+
+  async function addAlternative(productId, altOurId) {
+    ctx.showLoading?.();
+    try {
+      await ctx.api(`/catalog/products/${productId}/alternatives`, {
+        method: "POST",
+        body: JSON.stringify({ alternative_our_product_id: altOurId }),
+      });
+      ctx.toast("Alternative added", "success");
+      altsBoardRows = await ctx.api("/catalog/alternatives-board", {}, 0);
+      altsPickerForId = null;
+      ctx.invalidateCache?.("/catalog");
+      ctx.invalidateCache?.("/stock");
+      renderAlternativesBoard();
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  async function removeAlternative(productId, altOurId) {
+    if (!confirm(`Remove alternative ${altOurId}?`)) return;
+    ctx.showLoading?.();
+    try {
+      await ctx.api(`/catalog/products/${productId}/alternatives/${encodeURIComponent(altOurId)}`, { method: "DELETE" });
+      ctx.toast("Alternative removed", "success");
+      altsBoardRows = await ctx.api("/catalog/alternatives-board", {}, 0);
+      ctx.invalidateCache?.("/catalog");
+      renderAlternativesBoard();
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
   }
 
   function enlargeImage(url) {
@@ -587,7 +737,9 @@ const Products = (() => {
   return {
     init, showHub, setMainTab, setTypeFilter, setViewMode, onSearch, clearSearch,
     onFilterChange, clearFilters, setStockChip, load, openItem,
-    openAlternativesManager, closeAlternativesManager, enlargeImage, closeLightbox,
+    openAlternativesManager, closeAlternativesManager, onAltsBoardSearch,
+    openAltPicker, closeAltPicker, onAltPickerSearch, addAlternative, removeAlternative,
+    enlargeImage, closeLightbox,
     getTab: () => mainTab,
   };
 })();

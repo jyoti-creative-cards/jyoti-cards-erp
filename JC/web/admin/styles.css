@@ -2156,25 +2156,58 @@ table.data tr.filter-row th { padding: 6px 8px; background: #fff; border-bottom:
 .alt-chip-body span { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* Alternatives board */
-.alts-board-modal { max-width: 920px; width: 96vw; }
-.alt-board-card { border: 1px solid var(--border); border-radius: 14px; background: #fff; margin-bottom: 12px; overflow: hidden; }
-.alt-board-main { display: flex; gap: 12px; align-items: center; padding: 12px 14px; }
-.alt-board-thumb { width: 56px; height: 56px; border-radius: 10px; object-fit: cover; cursor: zoom-in; flex-shrink: 0; }
-.alt-board-thumb-empty { width: 56px; height: 56px; border-radius: 10px; background: #e2e8f0; flex-shrink: 0; }
-.alt-board-thumb-empty.sm { width: 40px; height: 40px; }
-.alt-board-info { flex: 1; min-width: 0; }
-.alt-board-meta, .alt-board-price { font-size: 12px; color: var(--muted); }
-.alt-board-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
-.alt-board-alts { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 14px 14px; border-top: 1px solid #f1f5f9; padding-top: 12px; }
-.alt-board-alt {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
-  width: 140px; border: 1px solid var(--border); border-radius: 10px; background: #f8fafc;
-  padding: 8px; cursor: zoom-in; text-align: left;
+.alts-board-modal { max-width: 1100px; width: 96vw; }
+.alts-toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 14px; }
+.alts-toolbar .search-big { flex: 1; }
+.alts-toolbar-count { font-size: 13px; color: var(--muted); white-space: nowrap; }
+.alts-col-head {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+  padding: 0 4px 8px; font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .04em; color: var(--muted);
 }
-.alt-board-alt img { width: 100%; height: 72px; object-fit: cover; border-radius: 8px; }
-.alt-board-alt-id { font-weight: 700; font-size: 12px; }
-.alt-board-alt-meta, .alt-board-alt-price { font-size: 11px; color: var(--muted); }
-.alt-board-empty { margin: 0; font-size: 13px; color: var(--muted); }
+.alts-grid-wrap { display: flex; flex-direction: column; gap: 10px; max-height: 58vh; overflow: auto; }
+.alts-row {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+  padding: 10px; border: 1px solid var(--border); border-radius: 14px; background: #fff;
+}
+.alts-slot {
+  border: 1px solid #e2e8f0; border-radius: 12px; background: #f8fafc;
+  padding: 10px; display: flex; flex-direction: column; gap: 4px; min-height: 140px;
+}
+.alts-slot.main { background: #eff6ff; border-color: #bfdbfe; }
+.alts-slot.empty { align-items: center; justify-content: center; text-align: center; color: var(--muted); }
+.alts-slot.empty p { margin: 0 0 8px; font-size: 13px; }
+.alts-slot img, .alts-slot-ph { width: 100%; height: 64px; object-fit: cover; border-radius: 8px; background: #e2e8f0; cursor: zoom-in; }
+.alts-slot-ph.sm { width: 48px; height: 48px; flex-shrink: 0; }
+.alts-slot strong { font-size: 13px; }
+.alts-slot span { font-size: 11px; color: var(--muted); }
+.alts-slot-price { font-weight: 600; color: var(--text) !important; font-size: 12px !important; }
+.alts-picker-overlay {
+  position: absolute; inset: 0; background: rgba(15,23,42,.45); z-index: 5;
+  display: flex; align-items: flex-end; justify-content: center; border-radius: 16px;
+}
+.alts-board-modal { position: relative; }
+.alts-picker {
+  width: 100%; max-height: 70%; background: #fff; border-radius: 16px 16px 0 0;
+  padding: 16px; box-shadow: 0 -8px 32px rgba(0,0,0,.18); display: flex; flex-direction: column; gap: 10px;
+}
+.alts-picker-head { display: flex; justify-content: space-between; align-items: flex-start; }
+.alts-picker-head p { margin: 4px 0 0; font-size: 13px; color: var(--muted); }
+.alts-picker-list { overflow: auto; max-height: 42vh; display: flex; flex-direction: column; gap: 6px; }
+.alts-picker-item {
+  display: flex; gap: 10px; align-items: center; width: 100%; text-align: left;
+  border: 1px solid var(--border); border-radius: 12px; background: #fff; padding: 8px 10px; cursor: pointer;
+}
+.alts-picker-item:hover { border-color: #93c5fd; background: #f8fafc; }
+.alts-picker-item img { width: 48px; height: 48px; object-fit: cover; border-radius: 8px; }
+.alts-picker-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.alts-picker-meta strong { font-size: 14px; }
+.alts-picker-meta span { font-size: 12px; color: var(--muted); }
+.alts-picker-empty { text-align: center; color: var(--muted); padding: 24px; margin: 0; }
+@media (max-width: 800px) {
+  .alts-col-head { display: none; }
+  .alts-row { grid-template-columns: 1fr 1fr; }
+}
 
 /* Lightbox */
 .img-lightbox {
@@ -2187,3 +2220,29 @@ table.data tr.filter-row th { padding: 6px 8px; background: #fff; border-bottom:
   position: absolute; top: 16px; right: 16px; border: 0; background: #fff; color: #0f172a;
   width: 40px; height: 40px; border-radius: 999px; font-size: 18px; cursor: pointer; font-weight: 700;
 }
+
+/* Route collection */
+.rc-card {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  padding: 14px 16px; border: 1px solid var(--border); border-radius: 14px; background: #fff;
+  cursor: pointer; margin-bottom: 10px; transition: border-color .15s, box-shadow .15s;
+}
+.rc-card:hover { border-color: #93c5fd; box-shadow: 0 4px 14px rgba(37,99,235,.08); }
+.rc-card strong { font-size: 16px; }
+.rc-card .rc-meta { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.rc-amt { font-size: 18px; font-weight: 800; color: #1d4ed8; }
+
+/* Customer orders polish */
+.co-page .prod-hero { margin-bottom: 8px; }
+.co-hub-card {
+  border: 1px solid var(--border); border-radius: 14px; background: #fff; margin-bottom: 10px; overflow: hidden;
+}
+.co-hub-row {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  padding: 14px 16px; cursor: pointer;
+}
+.co-hub-row:hover { background: #f8fafc; }
+.co-hub-title { font-weight: 700; font-size: 15px; }
+.co-hub-meta { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.co-offline-products { max-height: 220px; overflow: auto; border: 1px solid var(--border); border-radius: 12px; margin: 8px 0 16px; }
+

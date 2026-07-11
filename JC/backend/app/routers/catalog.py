@@ -5,6 +5,7 @@ from decimal import Decimal
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from pydantic import BaseModel
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -535,6 +536,87 @@ def update_product(
     db.commit()
     db.refresh(row)
     return _to_public(row, db)
+
+
+class AlternativeLinkIn(BaseModel):
+    alternative_our_product_id: str
+
+
+@router.post("/products/{product_id}/alternatives", dependencies=[Depends(require_permission("catalog.write"))])
+def add_product_alternative(
+    product_id: int,
+    body: AlternativeLinkIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("catalog.write")),
+) -> dict:
+    row = db.get(CatalogProduct, product_id)
+    if not row or not row.is_active or row.deleted_at:
+        raise HTTPException(404, "product not found")
+    alt_oid = (body.alternative_our_product_id or "").strip()
+    alt = (
+        db.query(CatalogProduct)
+        .filter(
+            CatalogProduct.our_product_id == alt_oid,
+            CatalogProduct.is_active.is_(True),
+            CatalogProduct.deleted_at.is_(None),
+        )
+        .first()
+    )
+    if not alt:
+        raise HTTPException(404, "alternative product not found")
+    if alt.id == product_id:
+        raise HTTPException(400, "cannot link product to itself")
+    existing = (
+        db.query(CatalogAlternative)
+        .filter(CatalogAlternative.product_id == product_id)
+        .all()
+    )
+    if any(a.alternative_product_id == alt.id for a in existing):
+        return {"ok": True, "already_linked": True}
+    if len(existing) >= MAX_ALTERNATIVES:
+        raise HTTPException(400, f"max {MAX_ALTERNATIVES} alternatives")
+    _link_alternative(db, product_id, alt.id)
+    _link_alternative(db, alt.id, product_id)
+    log_from_auth(
+        db, auth, action="update", entity_type="catalog",
+        entity_id=row.id, entity_label=row.our_product_id,
+        detail=f"Linked alternative {alt.our_product_id}",
+    )
+    db.commit()
+    return {"ok": True, "alternative_our_product_id": alt.our_product_id}
+
+
+@router.delete(
+    "/products/{product_id}/alternatives/{alt_our_product_id}",
+    dependencies=[Depends(require_permission("catalog.write"))],
+)
+def remove_product_alternative(
+    product_id: int,
+    alt_our_product_id: str,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("catalog.write")),
+) -> dict:
+    row = db.get(CatalogProduct, product_id)
+    if not row or not row.is_active:
+        raise HTTPException(404, "product not found")
+    alt = (
+        db.query(CatalogProduct)
+        .filter(CatalogProduct.our_product_id == alt_our_product_id)
+        .first()
+    )
+    if not alt:
+        raise HTTPException(404, "alternative product not found")
+    db.query(CatalogAlternative).filter(
+        ((CatalogAlternative.product_id == product_id) & (CatalogAlternative.alternative_product_id == alt.id))
+        | ((CatalogAlternative.product_id == alt.id) & (CatalogAlternative.alternative_product_id == product_id))
+    ).delete(synchronize_session=False)
+    log_from_auth(
+        db, auth, action="update", entity_type="catalog",
+        entity_id=row.id, entity_label=row.our_product_id,
+        detail=f"Unlinked alternative {alt.our_product_id}",
+    )
+    db.commit()
+    return {"ok": True}
 
 
 @router.delete("/products/{product_id}", status_code=204, dependencies=[Depends(require_permission("catalog.write"))])

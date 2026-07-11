@@ -16,6 +16,9 @@ const Finance = (() => {
   let freightAgents = [];
   let freightAgentId = null;
   let freightLedger = [];
+  let routeCollections = [];
+  let routeDetail = null;
+  let routeCustomerDetail = null;
 
   function init(context) { ctx = context; }
 
@@ -41,10 +44,11 @@ const Finance = (() => {
   }
 
   function hideAllPanels() {
-    ["ap", "ar", "expenses", "revenue", "cost", "pnl", "freight"].forEach(k => {
+    ["ap", "ar", "expenses", "revenue", "cost", "pnl", "freight", "routes"].forEach(k => {
       document.getElementById(`finance-panel-${k}`)?.classList.add("hidden");
     });
     document.getElementById("finance-freight-detail")?.classList.add("hidden");
+    document.getElementById("finance-routes-detail")?.classList.add("hidden");
     document.getElementById("finance-pick")?.classList.add("hidden");
   }
 
@@ -59,6 +63,7 @@ const Finance = (() => {
     document.getElementById("finance-ap-detail")?.classList.add("hidden");
     document.getElementById("finance-ar-detail")?.classList.add("hidden");
     document.getElementById("finance-freight-detail")?.classList.add("hidden");
+    document.getElementById("finance-routes-detail")?.classList.add("hidden");
     hideAllPanels();
     document.getElementById("finance-pick")?.classList.remove("hidden");
     setHubFocus("hub");
@@ -67,6 +72,8 @@ const Finance = (() => {
     apDetail = null;
     arDetail = null;
     freightAgentId = null;
+    routeDetail = null;
+    routeCustomerDetail = null;
     loadOverviewSilent();
   }
 
@@ -75,13 +82,13 @@ const Finance = (() => {
     document.getElementById("finance-ap-detail")?.classList.add("hidden");
     document.getElementById("finance-ar-detail")?.classList.add("hidden");
     document.getElementById("finance-freight-detail")?.classList.add("hidden");
+    document.getElementById("finance-routes-detail")?.classList.add("hidden");
     document.getElementById("finance-hub")?.classList.remove("hidden");
     hideAllPanels();
     const panel = document.getElementById(`finance-panel-${name}`);
     panel?.classList.remove("hidden");
     setHubFocus(name);
     loader?.();
-    // Content was below big tiles — jump to panel
     requestAnimationFrame(() => {
       panel?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
@@ -94,6 +101,7 @@ const Finance = (() => {
   function showCost() { showPanel("cost", () => loadOverview().then(renderCost)); }
   function showPnl() { showPanel("pnl", () => loadOverview().then(renderPnl)); }
   function showFreight() { showPanel("freight", loadFreightList); }
+  function showRouteCollections() { showPanel("routes", loadRouteCollections); }
 
   async function loadOverviewSilent() {
     try {
@@ -924,8 +932,128 @@ const Finance = (() => {
     finally { ctx.hideLoading?.(); }
   }
 
+  async function loadRouteCollections() {
+    const el = document.getElementById("finance-routes-list");
+    if (!el) return;
+    ctx.showLoading?.();
+    try {
+      routeCollections = await ctx.api("/finance/route-collections", {}, 0);
+      if (!routeCollections.length) {
+        el.innerHTML = `<div class="empty-state"><p>No routes yet. Add routes under Setup.</p></div>`;
+        return;
+      }
+      el.innerHTML = routeCollections.map(r => `
+        <div class="rc-card" onclick="Finance.openRouteCollection(${r.route_id})">
+          <div>
+            <strong>${ctx.esc(r.route_name)}</strong>
+            <div class="rc-meta">${r.city_count} cities · ${r.customer_count} customers · ${r.customers_with_outstanding} with dues</div>
+          </div>
+          <div class="rc-amt">${fmtPrice(r.total_outstanding)}</div>
+        </div>`).join("");
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  async function openRouteCollection(routeId) {
+    ctx.showLoading?.();
+    try {
+      routeDetail = await ctx.api(`/finance/route-collections/${routeId}`, {}, 0);
+      routeCustomerDetail = null;
+      document.getElementById("finance-hub")?.classList.add("hidden");
+      document.getElementById("finance-routes-detail")?.classList.remove("hidden");
+      document.getElementById("finance-routes-title").textContent = routeDetail.route_name;
+      document.getElementById("finance-routes-sub").textContent =
+        `Total outstanding ${fmtPrice(routeDetail.total_outstanding)} · ${(routeDetail.cities || []).map(c => c.name).join(", ") || "No cities"}`;
+      renderRouteDetail();
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  function renderRouteDetail() {
+    const el = document.getElementById("finance-routes-body");
+    if (!el || !routeDetail) return;
+    if (routeCustomerDetail) {
+      const c = routeCustomerDetail;
+      el.innerHTML = `
+        <button class="btn btn-secondary btn-sm" style="margin-bottom:14px;" onclick="Finance.backRouteCustomers()">← Customers</button>
+        <div class="fin-card" style="margin-bottom:16px;">
+          <strong style="font-size:18px;">${ctx.esc(c.business_name)}</strong>
+          <div style="font-size:13px;color:var(--muted);margin-top:4px;">
+            ${ctx.esc(c.person_name || "")}${c.person_name ? " · " : ""}${ctx.esc(c.city_name || "—")} · ${ctx.esc(c.phone || "")}
+          </div>
+          <div style="display:flex;gap:16px;margin-top:12px;flex-wrap:wrap;">
+            <div><div style="font-size:12px;color:var(--muted);">Outstanding</div><strong style="font-size:20px;color:#1d4ed8;">${fmtPrice(c.outstanding)}</strong></div>
+            <div><div style="font-size:12px;color:var(--muted);">Billed</div><strong>${fmtPrice(c.bill_total)}</strong></div>
+            <div><div style="font-size:12px;color:var(--muted);">Paid</div><strong>${fmtPrice(c.payment_total)}</strong></div>
+          </div>
+        </div>
+        <div class="card table-wrap">
+          <table class="data"><thead><tr>
+            <th>When</th><th>Type</th><th>Detail</th><th>Amount</th><th>Balance</th>
+          </tr></thead><tbody>
+            ${(c.ledger || []).map(e => `<tr>
+              <td style="font-size:12px;">${e.created_at ? new Date(e.created_at).toLocaleString() : "—"}</td>
+              <td><span class="badge ${e.entry_type === "bill" ? "badge-amber" : "badge-green"}">${ctx.esc(e.entry_type)}</span></td>
+              <td>${ctx.esc(e.description || "—")}</td>
+              <td>${fmtPrice(e.signed_amount || e.amount)}</td>
+              <td><strong>${fmtPrice(e.running_balance)}</strong></td>
+            </tr>`).join("")}
+            ${!(c.ledger || []).length ? `<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--muted);">No ledger entries</td></tr>` : ""}
+          </tbody></table>
+        </div>`;
+      return;
+    }
+
+    const rows = routeDetail.customers || [];
+    el.innerHTML = rows.length ? rows.map(c => `
+      <div class="rc-card" onclick="Finance.openRouteCustomer(${routeDetail.route_id}, ${c.customer_id})">
+        <div>
+          <strong>${ctx.esc(c.business_name)}</strong>
+          <div class="rc-meta">${ctx.esc(c.city_name || "—")} · ${ctx.esc(c.phone || "")}${c.person_name ? ` · ${ctx.esc(c.person_name)}` : ""}</div>
+        </div>
+        <div class="rc-amt">${fmtPrice(c.outstanding)}</div>
+      </div>`).join("") : `<div class="empty-state"><p>No outstanding on this route.</p></div>`;
+  }
+
+  function backRouteCustomers() {
+    routeCustomerDetail = null;
+    renderRouteDetail();
+  }
+
+  async function openRouteCustomer(routeId, customerId) {
+    ctx.showLoading?.();
+    try {
+      routeCustomerDetail = await ctx.api(`/finance/route-collections/${routeId}/customer/${customerId}`, {}, 0);
+      renderRouteDetail();
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  async function printRouteCollection() {
+    if (!routeDetail?.route_id) return;
+    ctx.showLoading?.();
+    try {
+      const key = sessionStorage.getItem("jc_admin_key") || "";
+      const saved = localStorage.getItem("jc_api");
+      const base = saved || `${location.origin}/api/v1`;
+      const res = await fetch(`${base}/finance/route-collections/${routeDetail.route_id}/pdf`, {
+        headers: { "X-Admin-Key": key },
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "PDF failed");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank");
+      ctx.toast("PDF ready — print or share", "success");
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
   return {
     init, showHub, showAp, showAr, showExpenses, showRevenue, showCost, showPnl, showFreight,
+    showRouteCollections, openRouteCollection, openRouteCustomer, backRouteCustomers, printRouteCollection,
     showApFromVendor, openVendorAp, openEntry, openSettle, closeSettle, submitSettle, setSettleFile,
     setApTab, toggleBill,
     openCustomerAr, openArSettle, closeArSettle, submitArSettle,

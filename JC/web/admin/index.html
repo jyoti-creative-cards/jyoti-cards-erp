@@ -332,45 +332,46 @@
         </div>
         </div>
         <div id="orders-customer-panel" class="hidden">
-          <div id="co-hub">
-            <h2 style="margin:0;font-size:28px;">Customer Orders</h2>
-            <p style="margin:8px 0 24px;color:var(--muted);font-size:16px;">Received → Open → Billed → Closed</p>
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:12px;">
-              <select class="input" id="co-bucket-select" onchange="CustomerOrders.setBucket(this.value)" style="min-width:220px;font-size:15px;">
-                <option value="summary">Order Summary</option>
-                <option value="received">Received</option>
-                <option value="open">Open</option>
-                <option value="billed">Billed</option>
-                <option value="cancelled">Cancelled</option>
-                <option value="closed">Closed</option>
-              </select>
-              <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                <button class="btn btn-primary btn-lg hidden" data-require-write="vendor_orders" id="co-hub-action-btn" onclick="CustomerOrders.runHubAction()">Action</button>
-                <button class="btn btn-primary btn-lg" data-require-write="vendor_orders" id="co-create-order-btn" onclick="CustomerOrders.openOfflineWizard()">+ Create Order</button>
-              </div>
+          <div id="co-hub" class="co-page">
+            <div class="prod-hero">
+              <h2 style="margin:0;font-size:28px;">Customer Orders</h2>
+              <p class="prod-hero-sub">Received → Open → Process → Billed · Create offline orders anytime</p>
             </div>
-            <h3 id="co-list-title" style="margin:0 0 16px;font-size:20px;">Order Summary</h3>
-            <div class="card table-wrap" id="customer-orders-list"></div>
+            <div class="prod-tabs vo-bucket-bar" id="co-bucket-bar" style="margin:16px 0;">
+              <button type="button" class="prod-tab active" data-bucket="summary" onclick="CustomerOrders.setBucket('summary')">Summary</button>
+              <button type="button" class="prod-tab" data-bucket="received" onclick="CustomerOrders.setBucket('received')">Received</button>
+              <button type="button" class="prod-tab" data-bucket="open" onclick="CustomerOrders.setBucket('open')">Open</button>
+              <button type="button" class="prod-tab" data-bucket="billed" onclick="CustomerOrders.setBucket('billed')">Billed</button>
+              <button type="button" class="prod-tab" data-bucket="cancelled" onclick="CustomerOrders.setBucket('cancelled')">Cancelled</button>
+              <button type="button" class="prod-tab" data-bucket="closed" onclick="CustomerOrders.setBucket('closed')">Closed</button>
+            </div>
+            <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:16px;flex-wrap:wrap;">
+              <button class="btn btn-primary btn-lg hidden" data-require-write="vendor_orders" id="co-hub-action-btn" onclick="CustomerOrders.runHubAction()">Action</button>
+              <button class="btn btn-primary btn-lg" data-require-write="vendor_orders" id="co-create-order-btn" onclick="CustomerOrders.openOfflineWizard()">+ Offline Order</button>
+            </div>
+            <div id="customer-orders-list"></div>
           </div>
           <div id="co-detail" class="hidden">
             <button type="button" class="btn btn-secondary back-btn" onclick="CustomerOrders.showHub()">← Back</button>
-            <div style="display:flex;justify-content:space-between;align-items:center;margin:16px 0 24px;flex-wrap:wrap;gap:12px;">
-              <select class="input" id="co-detail-bucket-select" onchange="CustomerOrders.switchBucket(this.value)" style="min-width:220px;font-size:15px;">
-                <option value="summary">Order Summary</option>
-                <option value="received">Received</option>
-                <option value="open">Open</option>
-                <option value="billed">Billed</option>
-                <option value="cancelled">Cancelled</option>
-                <option value="closed">Closed</option>
-              </select>
-              <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                <button class="btn btn-primary btn-lg hidden" data-require-write="vendor_orders" id="co-detail-action-btn" onclick="CustomerOrders.runDetailAction()">Action</button>
-                <button class="btn btn-primary btn-lg" data-require-write="vendor_orders" id="co-detail-create-btn" onclick="CustomerOrders.openOfflineWizard()">+ Create Order</button>
+            <div class="vo-detail-hero" style="margin:16px 0 20px;">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+                <div>
+                  <div class="vo-detail-kicker" id="co-detail-sub">Customer</div>
+                  <h2 id="co-detail-title" style="margin:4px 0 0;font-size:26px;">Customer</h2>
+                </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                  <button class="btn btn-primary btn-lg hidden" data-require-write="vendor_orders" id="co-detail-action-btn" onclick="CustomerOrders.runDetailAction()">Action</button>
+                  <button class="btn btn-primary btn-lg" data-require-write="vendor_orders" id="co-detail-create-btn" onclick="CustomerOrders.openOfflineWizard()">+ Offline Order</button>
+                </div>
               </div>
-            </div>
-            <div style="margin-bottom:24px;">
-              <h2 id="co-detail-title" style="margin:0;font-size:24px;">Customer</h2>
-              <p id="co-detail-sub" style="margin:4px 0 0;color:var(--muted);font-size:14px;"></p>
+              <div class="prod-tabs vo-bucket-bar" id="co-detail-bucket-bar" style="margin-top:16px;">
+                <button type="button" class="prod-tab" data-bucket="summary" onclick="CustomerOrders.switchBucket('summary')">Summary</button>
+                <button type="button" class="prod-tab" data-bucket="received" onclick="CustomerOrders.switchBucket('received')">Received</button>
+                <button type="button" class="prod-tab" data-bucket="open" onclick="CustomerOrders.switchBucket('open')">Open</button>
+                <button type="button" class="prod-tab" data-bucket="billed" onclick="CustomerOrders.switchBucket('billed')">Billed</button>
+                <button type="button" class="prod-tab" data-bucket="cancelled" onclick="CustomerOrders.switchBucket('cancelled')">Cancelled</button>
+                <button type="button" class="prod-tab" data-bucket="closed" onclick="CustomerOrders.switchBucket('closed')">Closed</button>
+              </div>
             </div>
             <div id="co-detail-body"></div>
           </div>
@@ -419,9 +420,14 @@
               <span class="big-tile-title">Freight Agents</span>
               <span class="big-tile-desc">Balances, ledger &amp; settle</span>
             </button>
+            <button type="button" class="big-tile" data-finance="routes" style="border-color:#7dd3fc;background:#f0f9ff;" onclick="Finance.showRouteCollections()">
+              <span class="big-tile-letter">RC</span>
+              <span class="big-tile-title">Route Collection</span>
+              <span class="big-tile-desc">AR by route · PDF for agents</span>
+            </button>
           </div>
           <div id="finance-pick" class="fin-pick">
-            <p>Pick a section above — AP, AR, Expenses, Revenue, Cost, P&amp;L, or Freight.</p>
+            <p>Pick a section above — AP, AR, Expenses, Revenue, Cost, P&amp;L, Freight, or Route Collection.</p>
           </div>
           <div id="finance-panel-ap" class="hidden">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
@@ -478,6 +484,14 @@
             <div id="finance-freight-summary" style="margin-bottom:16px;"></div>
             <div class="card table-wrap" id="finance-freight-list"></div>
           </div>
+          <div id="finance-panel-routes" class="hidden">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px;">
+              <h3 style="margin:0;font-size:20px;">Route Collection</h3>
+              <button class="btn btn-secondary" onclick="Finance.showHub()">← Finance hub</button>
+            </div>
+            <p style="margin:0 0 14px;color:var(--muted);font-size:14px;">Outstanding AR by route — open a route, drill into customers, print PDF for agents.</p>
+            <div id="finance-routes-list"></div>
+          </div>
         </div>
         <div id="finance-ap-detail" class="hidden">
           <button type="button" class="btn btn-secondary back-btn" onclick="Finance.showAp()">← Back</button>
@@ -493,6 +507,19 @@
           <button type="button" class="btn btn-secondary back-btn" onclick="Finance.showFreight()">← Back</button>
           <h2 id="finance-freight-title" style="margin:16px 0 24px;font-size:24px;">Freight agent</h2>
           <div id="finance-freight-body"></div>
+        </div>
+        <div id="finance-routes-detail" class="hidden">
+          <button type="button" class="btn btn-secondary back-btn" onclick="Finance.showRouteCollections()">← Routes</button>
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin:16px 0 20px;flex-wrap:wrap;">
+            <div>
+              <h2 id="finance-routes-title" style="margin:0;font-size:24px;">Route</h2>
+              <p id="finance-routes-sub" style="margin:4px 0 0;color:var(--muted);font-size:14px;"></p>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn btn-secondary" onclick="Finance.printRouteCollection()">Print / PDF</button>
+            </div>
+          </div>
+          <div id="finance-routes-body"></div>
         </div>
       </div>
 
@@ -926,13 +953,13 @@
       <div class="modal-header">
         <div>
           <h3 style="margin:0;">Manage alternatives</h3>
-          <p class="vo-wiz-sub">Products with linked alternatives — image, ID, vendor, place, price</p>
+          <p class="vo-wiz-sub">Main product + up to 3 alternatives — search, add, remove</p>
         </div>
         <button class="btn-ghost" onclick="Products.closeAlternativesManager()">✕</button>
       </div>
-      <div class="modal-body" id="alts-board-body" style="max-height:70vh;overflow:auto;"></div>
+      <div class="modal-body" id="alts-board-body" style="max-height:78vh;overflow:auto;position:relative;"></div>
       <div class="modal-footer">
-        <button class="btn btn-primary" onclick="Products.closeAlternativesManager()">Close</button>
+        <button class="btn btn-primary" onclick="Products.closeAlternativesManager()">Done</button>
       </div>
     </div>
   </div>
@@ -949,13 +976,13 @@
   <script src="js/vendors.js?v=fin3"></script>
   <script src="js/catalog.js?v=alt2"></script>
   <script src="js/addon-products.js"></script>
-  <script src="js/products.js?v=prod1"></script>
+  <script src="js/products.js?v=alt3"></script>
   <script src="js/staff.js"></script>
   <script src="js/vendor-orders.js?v=fin3"></script>
-  <script src="js/customer-orders.js?v=bill1"></script>
+  <script src="js/customer-orders.js?v=co2"></script>
   <script src="js/debit-notes.js?v=dn4"></script>
   <script src="js/stock.js?v=prod1"></script>
-  <script src="js/finance.js?v=fr1"></script>
+  <script src="js/finance.js?v=rc1"></script>
   <script src="js/documents.js"></script>
   <script src="js/bill-series.js"></script>
   <script src="js/freight-agents.js?v=fr1"></script>

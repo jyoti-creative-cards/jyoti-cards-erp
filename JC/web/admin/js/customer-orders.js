@@ -55,8 +55,7 @@ const CustomerOrders = (() => {
   function init(context) { ctx = context; }
 
   function syncBucketSelect(bucket, prefix) {
-    const sel = document.getElementById(`${prefix}-bucket-select`);
-    if (sel && sel.value !== bucket) sel.value = bucket;
+    // legacy no-op — tabs replaced selects
   }
 
   function updateActionButtons(view) {
@@ -86,15 +85,16 @@ const CustomerOrders = (() => {
     return `<div class="vo-thumb vo-thumb-empty">—</div>`;
   }
 
-  function updateTabs(active, prefix = "co-bucket") {
-    syncBucketSelect(active, prefix === "co-detail-bucket" ? "co-detail" : "co");
+  function updateTabs(active, barId) {
+    const bar = document.getElementById(barId || "co-bucket-bar");
+    bar?.querySelectorAll(".prod-tab").forEach(btn => {
+      btn.classList.toggle("active", btn.getAttribute("data-bucket") === active);
+    });
   }
 
   function setBucket(bucket) {
     currentBucket = bucket;
-    syncBucketSelect(bucket, "co");
-    const title = document.getElementById("co-list-title");
-    if (title) title.textContent = BUCKET_LABELS[bucket] || "Customer Orders";
+    updateTabs(bucket, "co-bucket-bar");
     updateActionButtons("hub");
     loadList();
   }
@@ -123,18 +123,20 @@ const CustomerOrders = (() => {
       el.innerHTML = `<div class="empty-state"><p>No ${BUCKET_LABELS[currentBucket] || currentBucket} customer orders.</p></div>`;
       return;
     }
-    const qtyCol = currentBucket === "open" ? "Open Qty" : currentBucket === "summary" ? "Open Qty" : "Qty";
-    el.innerHTML = `<table class="data"><thead><tr>
-      <th>Customer</th><th>Placements</th><th>Lines</th><th>${qtyCol}</th><th>Updated</th>
-    </tr></thead><tbody>
-      ${orders.map(o => `<tr class="clickable" onclick="CustomerOrders.openDetail(${o.customer_id}, '${currentBucket === "summary" ? "received" : currentBucket}')">
-        <td><strong>${ctx.esc(o.customer_name)}</strong></td>
-        <td>${o.placement_count}</td>
-        <td>${o.line_count}</td>
-        <td>${o.total_quantity}</td>
-        <td style="font-size:12px;color:var(--muted);">${new Date(o.updated_at).toLocaleString()}</td>
-      </tr>`).join("")}
-    </tbody></table>`;
+    const qtyLabel = currentBucket === "open" || currentBucket === "summary" ? "Open qty" : "Qty";
+    el.innerHTML = orders.map(o => `
+      <div class="co-hub-card">
+        <div class="co-hub-row" onclick="CustomerOrders.openDetail(${o.customer_id}, '${currentBucket === "summary" ? "received" : currentBucket}')">
+          <div>
+            <div class="co-hub-title">${ctx.esc(o.customer_name)}</div>
+            <div class="co-hub-meta">${o.placement_count} placements · ${o.line_count} lines · <strong>${o.total_quantity}</strong> ${qtyLabel.toLowerCase()}</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:12px;color:var(--muted);">${new Date(o.updated_at).toLocaleString()}</div>
+            <button class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="event.stopPropagation();CustomerOrders.openDetail(${o.customer_id}, '${currentBucket === "summary" ? "received" : currentBucket}')">Open</button>
+          </div>
+        </div>
+      </div>`).join("");
   }
 
   async function openDetail(customerId, bucket) {
@@ -145,7 +147,7 @@ const CustomerOrders = (() => {
       currentOrder = await ctx.api(`/customer-orders/customer/${customerId}?bucket=${bucket}`, {}, 0);
       document.getElementById("co-hub")?.classList.add("hidden");
       document.getElementById("co-detail")?.classList.remove("hidden");
-      syncBucketSelect(bucket, "co-detail");
+      updateTabs(bucket === "received" ? "received" : bucket, "co-detail-bucket-bar");
       updateActionButtons("detail");
       renderDetail();
     } catch (e) { ctx.toast(e.message, "error"); }
@@ -154,9 +156,10 @@ const CustomerOrders = (() => {
 
   async function switchBucket(bucket) {
     if (!detailCustomerId) return;
+    updateTabs(bucket, "co-detail-bucket-bar");
     const effective = bucket === "summary" ? "received" : bucket;
     await openDetail(detailCustomerId, effective);
-    if (bucket === "summary") syncBucketSelect("summary", "co-detail");
+    if (bucket === "summary") updateTabs("summary", "co-detail-bucket-bar");
   }
 
   function renderDetail() {
@@ -761,16 +764,23 @@ const CustomerOrders = (() => {
           <td><input type="number" min="1" class="input" style="width:72px;" value="${line.quantity}" onchange="CustomerOrders.setOfflineQty(${line.catalog_product_id}, this.value)" /></td>
           ${!offlineUseOverallDiscount ? `<td><input type="number" min="0" max="100" step="0.1" class="input" style="width:64px;" value="${ctx.esc(line.discount_percent || "")}" oninput="CustomerOrders.setOfflineLineDisc(${line.catalog_product_id}, this.value)" /></td>` : ""}
           <td><button class="btn btn-ghost btn-sm" onclick="CustomerOrders.removeOfflineLine(${line.catalog_product_id})">✕</button></td>
-        </tr>`).join("") : `<tr><td colspan="${offlineUseOverallDiscount ? 5 : 6}" style="text-align:center;padding:20px;color:var(--muted);">Search and add products above</td></tr>`;
+        </tr>`).join("") : `<tr><td colspan="${offlineUseOverallDiscount ? 5 : 6}" style="text-align:center;padding:20px;color:var(--muted);">Add products from the list below</td></tr>`;
 
-      const searchRows = offlineSearchResults.map(p => {
+      const q = offlineSearchQuery.trim().toLowerCase();
+      const filtered = (offlineSearchResults || []).filter(p => {
+        if (!q) return true;
+        return String(p.our_product_id || "").toLowerCase().includes(q)
+          || String(p.vendor_name || "").toLowerCase().includes(q);
+      }).slice(0, 50);
+
+      const searchRows = filtered.map(p => {
         const inCart = offlineLines.some(l => l.catalog_product_id === p.catalog_product_id);
         const img = (p.image_urls && p.image_urls[0]) || "";
         return `<button type="button" class="co-search-hit ${inCart ? "in-cart" : ""}" onclick="CustomerOrders.addOfflineProduct(${p.catalog_product_id})" ${inCart ? "disabled" : ""}>
           ${thumb(img)}
           <div class="co-search-hit-body">
             <strong>${ctx.esc(p.our_product_id)}</strong>
-            <span>${fmtPrice(p.selling_price)} · Stock ${p.quantity_on_hand}</span>
+            <span>${fmtPrice(p.selling_price)} · Stock ${p.quantity_on_hand ?? 0}${p.vendor_name ? ` · ${ctx.esc(p.vendor_name)}` : ""}</span>
           </div>
           <span class="co-search-hit-add">${inCart ? "Added" : "+ Add"}</span>
         </button>`;
@@ -778,11 +788,10 @@ const CustomerOrders = (() => {
 
       bodyEl.innerHTML = `
         <div style="margin-bottom:12px;font-size:14px;color:var(--muted);">Customer: <strong style="color:var(--text);">${ctx.esc(offlineCustomerName)}</strong></div>
-        <label class="label">Search product</label>
-        <input class="input search-big" id="co-offline-search" placeholder="Type product ID…" value="${ctx.esc(offlineSearchQuery)}" oninput="CustomerOrders.onOfflineSearchInput(this.value)" autocomplete="off" />
-        <div class="co-search-results" style="margin:8px 0 16px;max-height:180px;overflow-y:auto;">
-          ${offlineSearchQuery.trim().length < 2 ? `<p style="padding:16px;text-align:center;color:var(--muted);font-size:13px;margin:0;">Type at least 2 characters to search</p>`
-            : searchRows || `<p style="padding:16px;text-align:center;color:var(--muted);font-size:13px;margin:0;">No products found</p>`}
+        <label class="label">Find product</label>
+        <input class="input search-big" id="co-offline-search" placeholder="Filter by product ID or vendor…" value="${ctx.esc(offlineSearchQuery)}" oninput="CustomerOrders.onOfflineSearchInput(this.value)" autocomplete="off" />
+        <div class="co-offline-products co-search-results">
+          ${searchRows || `<p style="padding:16px;text-align:center;color:var(--muted);font-size:13px;margin:0;">${offlineSearchResults.length ? "No match" : "Loading products…"}</p>`}
         </div>
         <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
           <span style="font-size:13px;font-weight:600;">Discount</span>
@@ -871,29 +880,22 @@ const CustomerOrders = (() => {
 
   function onOfflineSearchInput(val) {
     offlineSearchQuery = val;
-    if (offlineSearchTimer) clearTimeout(offlineSearchTimer);
-    if (val.trim().length < 2) {
+    renderOfflineWizard();
+  }
+
+  async function ensureOfflineProductsLoaded() {
+    if (offlineSearchResults.length) return;
+    try {
+      offlineSearchResults = await ctx.api("/stock/products", {}, 60000) || [];
+    } catch (e) {
       offlineSearchResults = [];
-      renderOfflineWizard();
-      return;
+      ctx.toast(e.message, "error");
     }
-    offlineSearchTimer = setTimeout(() => searchOfflineProducts(val.trim()), 300);
   }
 
   async function searchOfflineProducts(q) {
-    try {
-      const rows = await ctx.api(`/stock/products?search=${encodeURIComponent(q)}`, {}, 0);
-      offlineSearchResults = (rows || []).slice(0, 25);
-      renderOfflineWizard();
-      setTimeout(() => {
-        const inp = document.getElementById("co-offline-search");
-        if (inp) {
-          inp.focus();
-          const len = inp.value.length;
-          inp.setSelectionRange(len, len);
-        }
-      }, 0);
-    } catch (e) { ctx.toast(e.message, "error"); }
+    await ensureOfflineProductsLoaded();
+    renderOfflineWizard();
   }
 
   function addOfflineProduct(catalogProductId) {
@@ -937,6 +939,8 @@ const CustomerOrders = (() => {
     if (offlineStep === 1) {
       if (!offlineCustomerId) return ctx.toast("Select a customer", "error");
       offlineStep = 2;
+      renderOfflineWizard();
+      await ensureOfflineProductsLoaded();
       renderOfflineWizard();
       return;
     }

@@ -1,19 +1,12 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import func
+from pydantic import BaseModel
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.deps import get_auth_context
-from app.models.addon_product import AddonProduct
-from app.models.catalog_product import CatalogProduct
-from app.models.city import City
-from app.models.customer import Customer
-from app.models.route import Route
-from app.models.stock import StockBalance
-from app.models.vendor import Vendor
-from pydantic import BaseModel
 
 
 class StatsResponse(BaseModel):
@@ -31,12 +24,27 @@ router = APIRouter(prefix="/stats", tags=["stats"])
 
 @router.get("", response_model=StatsResponse, dependencies=[Depends(get_auth_context)])
 def get_stats(db: Session = Depends(get_db)) -> StatsResponse:
+    # One round-trip instead of 7 sequential COUNT queries (each ~200–400ms to Supabase).
+    row = db.execute(
+        text(
+            """
+            SELECT
+              (SELECT COUNT(*) FROM jc_routes WHERE is_active IS TRUE AND deleted_at IS NULL) AS routes,
+              (SELECT COUNT(*) FROM jc_cities WHERE is_active IS TRUE AND deleted_at IS NULL) AS cities,
+              (SELECT COUNT(*) FROM jc_customers WHERE is_active IS TRUE AND deleted_at IS NULL) AS customers,
+              (SELECT COUNT(*) FROM jc_vendors WHERE is_active IS TRUE AND deleted_at IS NULL) AS vendors,
+              (SELECT COUNT(*) FROM jc_catalog_products WHERE is_active IS TRUE AND deleted_at IS NULL) AS catalog_products,
+              (SELECT COUNT(*) FROM jc_addon_products WHERE is_active IS TRUE AND deleted_at IS NULL) AS addons,
+              (SELECT COALESCE(SUM(quantity_on_hand), 0) FROM jc_stock_balances) AS stock_on_hand
+            """
+        )
+    ).one()
     return StatsResponse(
-        routes=db.query(func.count(Route.id)).filter(Route.is_active.is_(True)).scalar() or 0,
-        cities=db.query(func.count(City.id)).filter(City.is_active.is_(True)).scalar() or 0,
-        customers=db.query(func.count(Customer.id)).filter(Customer.is_active.is_(True)).scalar() or 0,
-        vendors=db.query(func.count(Vendor.id)).filter(Vendor.is_active.is_(True)).scalar() or 0,
-        catalog_products=db.query(func.count(CatalogProduct.id)).filter(CatalogProduct.is_active.is_(True)).scalar() or 0,
-        addons=db.query(func.count(AddonProduct.id)).filter(AddonProduct.is_active.is_(True)).scalar() or 0,
-        stock_on_hand=db.query(func.count(StockBalance.id)).filter(StockBalance.quantity_on_hand > 0).scalar() or 0,
+        routes=int(row.routes or 0),
+        cities=int(row.cities or 0),
+        customers=int(row.customers or 0),
+        vendors=int(row.vendors or 0),
+        catalog_products=int(row.catalog_products or 0),
+        addons=int(row.addons or 0),
+        stock_on_hand=int(row.stock_on_hand or 0),
     )

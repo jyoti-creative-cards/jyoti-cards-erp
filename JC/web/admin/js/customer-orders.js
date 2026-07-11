@@ -886,7 +886,7 @@ const CustomerOrders = (() => {
   async function ensureOfflineProductsLoaded() {
     if (offlineSearchResults.length) return;
     try {
-      offlineSearchResults = await ctx.api("/stock/products", {}, 60000) || [];
+      offlineSearchResults = await ctx.api("/stock/products?lite=1", {}, 120000) || [];
     } catch (e) {
       offlineSearchResults = [];
       ctx.toast(e.message, "error");

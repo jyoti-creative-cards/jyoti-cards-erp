@@ -176,15 +176,15 @@ const Products = (() => {
       const q = searchQuery.trim();
       const searchParam = q ? `?search=${encodeURIComponent(q)}` : "";
       if (mainTab === "stock") {
-        stockProducts = await ctx.api(`/stock/products${searchParam}`, {}, 0);
+        stockProducts = await ctx.api(`/stock/products${searchParam}`, {}, q ? 0 : 60000);
         if (ctx.canRead?.("addons")) {
-          addons = await ctx.api(`/addons${searchParam}`, {}, 0);
+          addons = await ctx.api(`/addons${searchParam}`, {}, q ? 0 : 60000);
         } else addons = [];
       } else {
-        const catR = await ctx.api(`/catalog/products?limit=200${q ? "&search=" + encodeURIComponent(q) : ""}`, {}, 0);
+        const catR = await ctx.api(`/catalog/products?limit=200${q ? "&search=" + encodeURIComponent(q) : ""}`, {}, q ? 0 : 60000);
         catalogProducts = catR.items || catR || [];
         if (ctx.canRead?.("addons")) {
-          addons = await ctx.api(`/addons${searchParam}`, {}, 0);
+          addons = await ctx.api(`/addons${searchParam}`, {}, q ? 0 : 60000);
         } else addons = [];
       }
       renderFilters();
@@ -673,7 +673,7 @@ const Products = (() => {
     altsPickerQuery = "";
     renderAlternativesBoard();
     try {
-      altsPickerStock = await ctx.api("/stock/products", {}, 60000);
+      altsPickerStock = await ctx.api("/stock/products?lite=1", {}, 120000);
       renderAlternativesBoard();
     } catch (e) { ctx.toast(e.message, "error"); }
   }

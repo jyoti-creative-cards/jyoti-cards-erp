@@ -418,15 +418,16 @@ def submit_process_bill(
         actor_name=auth.actor_name,
     )
     log_from_auth(db, auth, action="bill", entity_type="customer_order", entity_id=bill.id, entity_label=customer.business_name, detail=f"Bill {bill.bill_number}")
-    doc_url = None
-    if storage_configured():
-        try:
-            key = generate_customer_bill_document(db, bill.id)
-            doc_url = presigned_url(key) if key else None
-        except Exception:
-            pass
+    # Defer PDF — generate on first document download so bill submit stays fast
     db.commit()
-    return {"ok": True, "bill_id": bill.id, "bill_number": bill.bill_number, "grand_total": format(bill.grand_total, "f"), "document_url": doc_url, "document_key": bill.document_key}
+    return {
+        "ok": True,
+        "bill_id": bill.id,
+        "bill_number": bill.bill_number,
+        "grand_total": format(bill.grand_total, "f"),
+        "document_url": None,
+        "document_key": bill.document_key,
+    }
 
 
 @router.post("/open-lines/{line_id}/cancel")
@@ -609,16 +610,7 @@ def create_offline_customer_order(
         actor_name=auth.actor_name,
     )
     log_from_auth(db, auth, action="offline_order", entity_type="customer_order", entity_id=placement.id, entity_label=customer.business_name, detail=f"Bill {bill.bill_number}")
-    bill_doc_url = None
-    order_doc_url = None
-    if storage_configured():
-        try:
-            bkey = generate_customer_bill_document(db, bill.id)
-            bill_doc_url = presigned_url(bkey) if bkey else None
-            okey = generate_customer_order_document(db, placement.id)
-            order_doc_url = presigned_url(okey) if okey else None
-        except Exception:
-            pass
+    # Defer PDF generation — keep submit snappy; docs build on first open
     db.commit()
     return {
         "ok": True,
@@ -626,6 +618,6 @@ def create_offline_customer_order(
         "bill_number": bill.bill_number,
         "placement_id": placement.id,
         "grand_total": format(bill.grand_total, "f"),
-        "bill_document_url": bill_doc_url,
-        "order_document_url": order_doc_url,
+        "bill_document_url": None,
+        "order_document_url": None,
     }

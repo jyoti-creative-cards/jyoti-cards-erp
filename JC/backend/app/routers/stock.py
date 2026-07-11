@@ -62,12 +62,20 @@ def _product_public(
     *,
     addon_count: Optional[int] = None,
     alt_count: Optional[int] = None,
+    vendor_name: Optional[str] = None,
+    vendor_city: Optional[str] = None,
+    max_images: Optional[int] = None,
 ) -> dict:
-    vendor = db.get(Vendor, row.vendor_id)
-    city_name = _vendor_city(db, vendor) if vendor else None
-    vn = vendor.business_name if vendor else None
-    label = _vendor_label(vendor, city_name) if vendor else ""
-    keys = row.image_keys or []
+    if vendor_name is None and vendor_city is None:
+        vendor = db.get(Vendor, row.vendor_id)
+        city_name = _vendor_city(db, vendor) if vendor else None
+        vn = vendor.business_name if vendor else None
+    else:
+        vn, city_name = vendor_name, vendor_city
+    label = f"{vn} — {city_name}" if vn and city_name else (vn or "")
+    keys = list(row.image_keys or [])
+    if max_images is not None:
+        keys = keys[: max(0, max_images)]
     if addon_count is None:
         addon_count = db.query(CatalogAddonLink).filter(CatalogAddonLink.catalog_product_id == row.id).count()
     if alt_count is None:
@@ -93,10 +101,27 @@ def _product_public(
     }
 
 
+def _vendor_map(db: Session, vendor_ids: list[int]) -> dict[int, tuple[Optional[str], Optional[str]]]:
+    ids = sorted({int(v) for v in vendor_ids if v})
+    if not ids:
+        return {}
+    vendors = db.query(Vendor).filter(Vendor.id.in_(ids)).all()
+    city_ids = sorted({v.city_id for v in vendors if v.city_id})
+    cities = {
+        c.id: c.name
+        for c in (db.query(City).filter(City.id.in_(city_ids)).all() if city_ids else [])
+    }
+    return {
+        v.id: (v.business_name, cities.get(v.city_id) if v.city_id else None)
+        for v in vendors
+    }
+
+
 @router.get("/products", response_model=List[StockProductSummary])
 def list_stock(
     db: Session = Depends(get_db),
     search: Optional[str] = Query(None),
+    lite: bool = Query(False, description="Skip images for faster pickers"),
     auth: AuthContext = Depends(get_auth_context),
 ):
     q = (
@@ -116,6 +141,7 @@ def list_stock(
     ids = [prod.id for prod, _, _ in rows]
     addon_counts: dict[int, int] = {}
     alt_counts: dict[int, int] = {}
+    vendor_map = _vendor_map(db, [prod.vendor_id for prod, _, _ in rows])
     if ids:
         for pid, cnt in (
             db.query(CatalogAddonLink.catalog_product_id, func.count(CatalogAddonLink.id))
@@ -133,7 +159,18 @@ def list_stock(
             alt_counts[int(pid)] = int(cnt)
     out = []
     for prod, qty, th in rows:
-        d = _product_public(prod, db, qty or 0, th or 5, addon_count=addon_counts.get(prod.id, 0), alt_count=alt_counts.get(prod.id, 0))
+        vn, vc = vendor_map.get(prod.vendor_id, (None, None))
+        d = _product_public(
+            prod,
+            db,
+            qty or 0,
+            th or 5,
+            addon_count=addon_counts.get(prod.id, 0),
+            alt_count=alt_counts.get(prod.id, 0),
+            vendor_name=vn,
+            vendor_city=vc,
+            max_images=0 if lite else 1,
+        )
         out.append(StockProductSummary(**d))
     return out
 

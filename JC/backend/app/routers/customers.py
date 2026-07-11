@@ -153,12 +153,40 @@ def create_customer(body: CustomerCreate, db: Session = Depends(get_db), auth: A
     sec_norm = _normalize_phone(sec) if sec else None
 
     existing = db.query(Customer).filter(Customer.phone == phone).one_or_none()
-    if existing is not None and existing.is_active:
+    if existing is not None and existing.is_active and existing.deleted_at is None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="phone already registered")
 
     plain = phone[-4:]
     route_id = _route_from_city(db, body.city_id)
     display_name = (body.person_name or "").strip() or body.business_name.strip()
+
+    # Soft-deleted / inactive row still holds unique phone — recycle it.
+    if existing is not None:
+        existing.business_name = body.business_name.strip()
+        existing.person_name = (body.person_name.strip() if body.person_name else None)
+        existing.password_hash = hash_password(plain)
+        existing.secondary_phone = sec_norm
+        existing.alias = (body.alias.strip() if body.alias else None)
+        existing.address = (body.address.strip() if body.address else None)
+        existing.city_id = body.city_id
+        existing.route_id = route_id
+        existing.credit_limit = Decimal(str(body.credit_limit)) if body.credit_limit is not None else None
+        existing.credit_override = body.credit_override
+        existing.gst_number = (body.gst_number.strip().upper() if body.gst_number else None)
+        existing.is_active = True
+        existing.deleted_at = None
+        db.add(existing)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(status.HTTP_409_CONFLICT, detail="phone already registered") from None
+        db.refresh(existing)
+        wa_ok, wa_err = _send_whatsapp(display_name, existing.phone, plain)
+        log_from_auth(db, auth, action="create", entity_type="customer", entity_id=existing.id, entity_label=existing.business_name)
+        db.commit()
+        pub = _to_public(existing, db)
+        return CustomerCreateResponse(**pub.model_dump(), whatsapp_sent=wa_ok, whatsapp_error=wa_err)
 
     row = Customer(
         business_name=body.business_name.strip(),

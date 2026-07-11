@@ -54,15 +54,20 @@ def _vendor_label(vendor: Vendor, city_name: Optional[str]) -> str:
     return f"{vendor.business_name} — {city}" if city else vendor.business_name
 
 
-def _vendor_context(db: Session, vendor_id: int) -> tuple[Vendor, Optional[str], str]:
+def _vendor_context(db: Session, vendor_id: int, *, require_active: bool = True) -> tuple[Vendor, Optional[str], str]:
     vendor = db.get(Vendor, vendor_id)
-    if not vendor or vendor.deleted_at:
+    if not vendor:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="vendor not found")
+    if require_active and vendor.deleted_at:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="vendor not found")
     city_name = None
     if vendor.city_id:
         city = db.get(City, vendor.city_id)
         city_name = city.name if city else None
-    return vendor, city_name, _vendor_label(vendor, city_name)
+    label = _vendor_label(vendor, city_name)
+    if vendor.deleted_at:
+        label = f"{label} (deleted)"
+    return vendor, city_name, label
 
 
 def _placement_color_map(placements: list[VendorOrderPlacement]) -> dict[int, int]:
@@ -71,7 +76,7 @@ def _placement_color_map(placements: list[VendorOrderPlacement]) -> dict[int, in
 
 
 def _build_detail(db: Session, order: VendorOrder, *, open_only: bool = False) -> VendorOrderDetail:
-    vendor, city_name, label = _vendor_context(db, order.vendor_id)
+    vendor, city_name, label = _vendor_context(db, order.vendor_id, require_active=False)
     placements = (
         db.query(VendorOrderPlacement)
         .filter(VendorOrderPlacement.vendor_order_id == order.id)
@@ -204,7 +209,7 @@ def _build_detail(db: Session, order: VendorOrder, *, open_only: bool = False) -
 
 
 def _summary_from_order(db: Session, order: VendorOrder) -> VendorOrderSummary:
-    vendor, city_name, label = _vendor_context(db, order.vendor_id)
+    vendor, city_name, label = _vendor_context(db, order.vendor_id, require_active=False)
     placement_count = (
         db.query(VendorOrderPlacement).filter(VendorOrderPlacement.vendor_order_id == order.id).count()
     )
@@ -252,7 +257,10 @@ def list_vendor_orders(
         )
         out: list[VendorOrderSummary] = []
         for vendor_id, total_qty, line_count in rows:
-            vendor, city_name, label = _vendor_context(db, int(vendor_id))
+            try:
+                vendor, city_name, label = _vendor_context(db, int(vendor_id), require_active=False)
+            except HTTPException:
+                continue
             placed_order = (
                 db.query(VendorOrder)
                 .filter(VendorOrder.vendor_id == vendor_id, VendorOrder.bucket == "placed", VendorOrder.is_open.is_(True))
@@ -295,7 +303,10 @@ def list_vendor_orders(
         for ln in closed_lines:
             by_vendor[ln.vendor_id].append(ln)
         for vendor_id, lines in by_vendor.items():
-            vendor, city_name, label = _vendor_context(db, vendor_id)
+            try:
+                vendor, city_name, label = _vendor_context(db, vendor_id, require_active=False)
+            except HTTPException:
+                continue
             seen.add(vendor_id)
             summaries.append(
                 VendorOrderSummary(
@@ -341,7 +352,10 @@ def list_vendor_orders(
                             s.updated_at = latest
                         break
                 continue
-            vendor, city_name, label = _vendor_context(db, order.vendor_id)
+            try:
+                vendor, city_name, label = _vendor_context(db, order.vendor_id, require_active=False)
+            except HTTPException:
+                continue
             summaries.append(
                 VendorOrderSummary(
                     id=order.id,

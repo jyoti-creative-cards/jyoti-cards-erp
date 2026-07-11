@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -238,9 +239,36 @@ def purge_customer(customer_id: int, db: Session = Depends(get_db)) -> dict:
     row = db.get(Customer, customer_id)
     if not row or row.is_active:
         raise HTTPException(404, "deleted customer not found")
-    db.delete(row)
-    db.commit()
-    return {"ok": True, "message": "customer permanently deleted"}
+    original_phone = row.phone
+    try:
+        db.delete(row)
+        db.commit()
+        return {"ok": True, "message": "customer permanently deleted"}
+    except IntegrityError:
+        db.rollback()
+        # Orders / AR still reference this customer — free the phone so it can be reused.
+        row = db.get(Customer, customer_id)
+        if not row or row.is_active:
+            raise HTTPException(404, "deleted customer not found")
+        freed = f"x{customer_id}_{original_phone}"[-32:]
+        row.phone = freed
+        row.is_active = False
+        if not row.deleted_at:
+            row.deleted_at = datetime.now(timezone.utc)
+        db.add(row)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(
+                400,
+                "cannot permanently delete — linked orders/bills remain and phone could not be freed",
+            ) from None
+        return {
+            "ok": True,
+            "message": "customer removed from recycle; phone freed for reuse (history kept)",
+            "phone_freed": original_phone,
+        }
 
 
 @router.delete("/vendors/{vendor_id}", dependencies=[Depends(require_permission("recycle.write"))])

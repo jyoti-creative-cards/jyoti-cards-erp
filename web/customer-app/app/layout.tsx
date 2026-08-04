@@ -15,8 +15,8 @@ const sans = DM_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "Jyoti Creative Cards — Shop",
-  description: "Browse our catalogue, build your order, and track deliveries.",
+  title: "Jyoti Creative Cards — Dealer Order",
+  description: "Search products by name, add to your order, and track deliveries.",
 };
 
 export default function RootLayout({
@@ -44,8 +44,8 @@ export default function RootLayout({
                 <p className="truncate text-xs text-jc-muted sm:text-sm">Cards, stationery & creative supplies</p>
               </div>
             </div>
-            <p className="hidden max-w-[11rem] text-right text-[11px] leading-snug text-jc-muted sm:block sm:text-xs">
-              Quality you can feel · Orders on WhatsApp
+            <p className="hidden max-w-[12rem] text-right text-[11px] leading-snug text-jc-muted sm:block sm:text-xs">
+              Dealer order portal · Confirmed on WhatsApp
             </p>
           </div>
         </header>

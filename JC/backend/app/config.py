@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     whatsapp_phone_number_id: str = ""
     whatsapp_api_version: str = "v22.0"
     whatsapp_disable: bool = False
+    # Comma-separated staff phones for new customer-order alerts (10-digit or E.164).
+    whatsapp_staff_notify_phones: str = ""
     customer_portal_url: str = ""
     customer_portal_url_button_suffix: str = ""
 

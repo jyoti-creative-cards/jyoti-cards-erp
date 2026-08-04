@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -18,25 +18,39 @@ from app.models.stock import StockBalance, StockLedger, StockReceipt, StockRecei
 from app.models.vendor import Vendor
 from app.models.vendor_order import VendorOrder, VendorOrderLine, VendorOrderPlacement
 from app.schemas.stock import (
+    BulkSellingPriceIn,
     PlacedLineForReceipt,
+    ReceivedLineForBill,
     SellingPriceUpdate,
     StockThresholdUpdate,
     StockLedgerEntry,
     StockProductDetail,
     StockProductSummary,
     VendorPlacedOrderForReceipt,
+    VendorReceivedForBill,
     VendorReceiptCreate,
+    VendorReceiveCreate,
     OfflineVendorReceiptCreate,
 )
+from app.services.pricing import coerce_selling_price, effective_selling_price
 from app.services.stock_levels import stock_status_label
 from app.schemas.ledger import StockLedgerDetail
-from app.services.ap_ledger import post_bill_entry, receipt_bill_amount, receipt_debit_note_total
+from app.models.debit_note import DebitNote
+from app.services.ap_ledger import debit_note_payable_effect, post_bill_entry, receipt_bill_amount, receipt_debit_note_total
 from app.services.debit_notes import create_debit_note
 from app.services.activity import log_from_auth
 from app.services.open_lines import reduce_from_open
 from app.services.order_summary import pending_qty_by_product, placed_qty_by_product, received_qty_by_product
 from app.services.stock_receipt import add_stock, get_open_order, get_or_create_open_order
 from app.services.doc_gen import generate_vendor_receipt_document
+from app.services import response_cache
+from app.services.history import list_entity_history
+from app.services.receipt_edit import update_vendor_receipt
+from app.services.vendor_receive_bill import (
+    bill_from_received,
+    receive_vendor_goods,
+    unbilled_received_qty_by_product,
+)
 from app.services.storage import bill_key, presigned_url, presigned_urls, storage_configured, upload_bytes, vendor_folder_slug
 
 router = APIRouter(prefix="/stock", tags=["stock"])
@@ -83,17 +97,23 @@ def _product_public(
     return {
         "catalog_product_id": row.id,
         "our_product_id": row.our_product_id,
+        "vendor_product_id": row.vendor_product_id,
         "vendor_id": row.vendor_id,
         "vendor_name": vn,
         "vendor_city": city_name,
         "vendor_label": label,
         "category": row.category,
         "series": row.series,
+        "year_group": row.year_group,
         "quantity_on_hand": balance,
         "low_stock_threshold": threshold,
         "stock_status": stock_status_label(balance, threshold),
-        "selling_price": format(row.selling_price, "f") if row.selling_price is not None else None,
-        "buying_price": format(row.buying_price, "f"),
+        "selling_price": (
+            format(eff, "f")
+            if (eff := effective_selling_price(row.buying_price, row.selling_price)) is not None
+            else None
+        ),
+        "buying_price": format(row.buying_price, "f") if row.buying_price is not None else None,
         "unit": row.unit,
         "image_urls": presigned_urls(keys),
         "addon_count": int(addon_count or 0),
@@ -121,57 +141,120 @@ def _vendor_map(db: Session, vendor_ids: list[int]) -> dict[int, tuple[Optional[
 def list_stock(
     db: Session = Depends(get_db),
     search: Optional[str] = Query(None),
+    year_group: Optional[str] = Query(None),
     lite: bool = Query(False, description="Skip images for faster pickers"),
     auth: AuthContext = Depends(get_auth_context),
 ):
-    q = (
-        db.query(CatalogProduct, StockBalance.quantity_on_hand, StockBalance.low_stock_threshold)
-        .outerjoin(StockBalance, StockBalance.catalog_product_id == CatalogProduct.id)
-        .filter(CatalogProduct.is_active.is_(True), CatalogProduct.deleted_at.is_(None))
-    )
-    if search:
-        s = f"%{search.lower()}%"
-        q = q.filter(
-            or_(
-                func.lower(CatalogProduct.our_product_id).like(s),
-                func.lower(CatalogProduct.vendor_product_id).like(s),
+    yg = (year_group or "").replace("\x00", "").strip()
+    cache_key = f"stock:products:v2:{(search or '').replace(chr(0), '')}:{yg}:{int(lite)}"
+    cached = response_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    params: dict = {}
+    search_sql = ""
+    year_sql = ""
+    # Postgres rejects NUL bytes in text params (client search paste / bad URL)
+    search_clean = (search or "").replace("\x00", "").strip()
+    if search_clean:
+        search_sql = """
+          AND (
+            lower(p.our_product_id) LIKE :search
+            OR lower(COALESCE(p.vendor_product_id, '')) LIKE :search
+            OR lower(COALESCE(p.category, '')) LIKE :search
+            OR lower(COALESCE(p.series, '')) LIKE :search
+            OR lower(COALESCE(p.year_group, '')) LIKE :search
+            OR lower(COALESCE(v.business_name, '')) LIKE :search
+            OR lower(COALESCE(c.name, '')) LIKE :search
+          )
+        """
+        params["search"] = f"%{search_clean.lower()}%"
+    if yg:
+        year_sql = " AND p.year_group = :year_group "
+        params["year_group"] = yg
+
+    rows = db.execute(
+        text(
+            f"""
+            SELECT
+              p.id AS catalog_product_id,
+              p.our_product_id,
+              p.vendor_product_id,
+              p.vendor_id,
+              p.category,
+              p.series,
+              p.year_group,
+              p.selling_price,
+              p.buying_price,
+              p.unit,
+              p.image_keys,
+              COALESCE(sb.quantity_on_hand, 0) AS quantity_on_hand,
+              COALESCE(sb.low_stock_threshold, 5) AS low_stock_threshold,
+              v.business_name AS vendor_name,
+              c.name AS vendor_city,
+              COALESCE(ac.cnt, 0) AS addon_count,
+              COALESCE(alt.cnt, 0) AS alt_count
+            FROM jc_catalog_products p
+            LEFT JOIN jc_stock_balances sb ON sb.catalog_product_id = p.id
+            LEFT JOIN jc_vendors v ON v.id = p.vendor_id
+            LEFT JOIN jc_cities c ON c.id = v.city_id
+            LEFT JOIN (
+              SELECT catalog_product_id, COUNT(*)::int AS cnt
+              FROM jc_catalog_addon_links
+              GROUP BY catalog_product_id
+            ) ac ON ac.catalog_product_id = p.id
+            LEFT JOIN (
+              SELECT product_id, COUNT(*)::int AS cnt
+              FROM jc_catalog_alternatives
+              GROUP BY product_id
+            ) alt ON alt.product_id = p.id
+            WHERE p.is_active IS TRUE
+              AND p.deleted_at IS NULL
+              {search_sql}
+              {year_sql}
+            ORDER BY p.our_product_id ASC, COALESCE(p.year_group, '') ASC, p.id ASC
+            """
+        ),
+        params,
+    ).mappings().all()
+
+    out: list[StockProductSummary] = []
+    for r in rows:
+        qty = int(r["quantity_on_hand"] or 0)
+        th = int(r["low_stock_threshold"] or 5)
+        vn = r["vendor_name"]
+        city_name = r["vendor_city"]
+        label = f"{vn} — {city_name}" if vn and city_name else (vn or "")
+        keys = list(r["image_keys"] or [])
+        keys = [] if lite else keys[:1]
+        out.append(
+            StockProductSummary(
+                catalog_product_id=int(r["catalog_product_id"]),
+                our_product_id=r["our_product_id"],
+                vendor_product_id=r["vendor_product_id"],
+                vendor_id=int(r["vendor_id"]),
+                vendor_name=vn,
+                vendor_city=city_name,
+                vendor_label=label,
+                category=r["category"],
+                series=r["series"],
+                year_group=r["year_group"],
+                quantity_on_hand=qty,
+                low_stock_threshold=th,
+                stock_status=stock_status_label(qty, th),
+                selling_price=(
+                    format(eff, "f")
+                    if (eff := effective_selling_price(r["buying_price"], r["selling_price"])) is not None
+                    else None
+                ),
+                buying_price=format(r["buying_price"], "f") if r["buying_price"] is not None else None,
+                unit=r["unit"],
+                image_urls=presigned_urls(keys),
+                addon_count=int(r["addon_count"] or 0),
+                alt_count=int(r["alt_count"] or 0),
             )
         )
-    rows = q.order_by(CatalogProduct.our_product_id.asc()).all()
-    ids = [prod.id for prod, _, _ in rows]
-    addon_counts: dict[int, int] = {}
-    alt_counts: dict[int, int] = {}
-    vendor_map = _vendor_map(db, [prod.vendor_id for prod, _, _ in rows])
-    if ids:
-        for pid, cnt in (
-            db.query(CatalogAddonLink.catalog_product_id, func.count(CatalogAddonLink.id))
-            .filter(CatalogAddonLink.catalog_product_id.in_(ids))
-            .group_by(CatalogAddonLink.catalog_product_id)
-            .all()
-        ):
-            addon_counts[int(pid)] = int(cnt)
-        for pid, cnt in (
-            db.query(CatalogAlternative.product_id, func.count(CatalogAlternative.id))
-            .filter(CatalogAlternative.product_id.in_(ids))
-            .group_by(CatalogAlternative.product_id)
-            .all()
-        ):
-            alt_counts[int(pid)] = int(cnt)
-    out = []
-    for prod, qty, th in rows:
-        vn, vc = vendor_map.get(prod.vendor_id, (None, None))
-        d = _product_public(
-            prod,
-            db,
-            qty or 0,
-            th or 5,
-            addon_count=addon_counts.get(prod.id, 0),
-            alt_count=alt_counts.get(prod.id, 0),
-            vendor_name=vn,
-            vendor_city=vc,
-            max_images=0 if lite else 1,
-        )
-        out.append(StockProductSummary(**d))
+    response_cache.set(cache_key, out, 25.0)
     return out
 
 
@@ -236,7 +319,6 @@ def get_stock_detail(
     base = _product_public(row, db, qty, threshold)
     return StockProductDetail(
         **base,
-        vendor_product_id=row.vendor_product_id,
         alternatives=alt_pub,
         quantity_pending=int(pending),
         quantity_sold=0,
@@ -303,14 +385,58 @@ def update_selling_price(
     row = db.get(CatalogProduct, catalog_product_id)
     if not row or not row.is_active:
         raise HTTPException(404, "product not found")
-    row.selling_price = body.selling_price.quantize(Decimal("0.01")) if body.selling_price is not None else None
+    row.selling_price = coerce_selling_price(row.buying_price, body.selling_price)
+    log_from_auth(
+        db,
+        auth,
+        action="update",
+        entity_type="catalog",
+        entity_id=row.id,
+        entity_label=row.our_product_id,
+        detail=f"selling price → {row.selling_price}",
+    )
     db.commit()
+    response_cache.invalidate("stock:")
+    response_cache.invalidate("catalog:")
+    response_cache.invalidate("shop:")
     db.refresh(row)
     balance_row = db.query(StockBalance).filter(StockBalance.catalog_product_id == catalog_product_id).first()
     th = balance_row.low_stock_threshold if balance_row else 5
     qty = balance_row.quantity_on_hand if balance_row else 0
     d = _product_public(row, db, qty, th)
     return StockProductSummary(**d)
+
+
+@router.post("/products/selling-price/bulk")
+def bulk_update_selling_price(
+    body: BulkSellingPriceIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(get_auth_context),
+):
+    updated = 0
+    for item in body.items:
+        row = db.get(CatalogProduct, item.catalog_product_id)
+        if not row or not row.is_active or row.deleted_at:
+            raise HTTPException(400, f"product {item.catalog_product_id} not found")
+        coerced = coerce_selling_price(row.buying_price, item.selling_price)
+        if coerced is None:
+            raise HTTPException(400, f"sell price for {row.our_product_id} must differ from buy price")
+        row.selling_price = coerced
+        updated += 1
+    log_from_auth(
+        db,
+        auth,
+        action="update",
+        entity_type="catalog",
+        entity_id=None,
+        entity_label=None,
+        detail=f"bulk selling price — {updated} products",
+    )
+    db.commit()
+    response_cache.invalidate("stock:")
+    response_cache.invalidate("catalog:")
+    response_cache.invalidate("shop:")
+    return {"ok": True, "updated": updated}
 
 
 @router.patch("/products/{catalog_product_id}/threshold", response_model=StockProductSummary)
@@ -330,7 +456,18 @@ def update_stock_threshold(
         db.add(balance_row)
     else:
         balance_row.low_stock_threshold = body.low_stock_threshold
+    log_from_auth(
+        db,
+        auth,
+        action="update",
+        entity_type="catalog",
+        entity_id=row.id,
+        entity_label=row.our_product_id,
+        detail=f"low stock threshold → {body.low_stock_threshold}",
+    )
     db.commit()
+    response_cache.invalidate("stock:")
+    response_cache.invalidate("shop:")
     db.refresh(balance_row)
     d = _product_public(row, db, balance_row.quantity_on_hand, balance_row.low_stock_threshold)
     return StockProductSummary(**d)
@@ -367,6 +504,8 @@ def get_placed_order_for_receipt(
             PlacedLineForReceipt(
                 catalog_product_id=cat_id,
                 our_product_id=prod.our_product_id,
+                vendor_product_id=prod.vendor_product_id,
+                category=prod.category,
                 quantity_ordered=int(placed_map.get(cat_id, 0)),
                 quantity_remaining=int(pending),
                 buying_price=format(prod.buying_price, "f"),
@@ -380,10 +519,50 @@ def get_placed_order_for_receipt(
     )
 
 
+@router.get("/vendor-order/{vendor_id}/received", response_model=VendorReceivedForBill)
+def get_received_for_bill(
+    vendor_id: int,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(get_auth_context),
+):
+    vendor = db.get(Vendor, vendor_id)
+    if not vendor or vendor.deleted_at:
+        raise HTTPException(404, "vendor not found")
+    city_name = _vendor_city(db, vendor)
+    label = _vendor_label(vendor, city_name)
+    received = get_open_order(db, vendor_id, "received")
+    unbilled = unbilled_received_qty_by_product(db, vendor_id)
+    lines: list[ReceivedLineForBill] = []
+    for cat_id, qty in unbilled.items():
+        prod = db.get(CatalogProduct, cat_id)
+        if not prod:
+            continue
+        lines.append(
+            ReceivedLineForBill(
+                catalog_product_id=cat_id,
+                our_product_id=prod.our_product_id,
+                vendor_product_id=prod.vendor_product_id,
+                category=prod.category,
+                quantity_received=int(qty),
+                quantity_unbilled=int(qty),
+                buying_price=format(prod.buying_price, "f"),
+                unit=prod.unit,
+                image_urls=presigned_urls(prod.image_keys or []),
+            )
+        )
+    lines.sort(key=lambda x: x.our_product_id.lower())
+    return VendorReceivedForBill(
+        vendor_id=vendor_id,
+        vendor_label=label,
+        order_id=received.id if received else None,
+        lines=lines,
+    )
+
+
 @router.post("/upload-bill")
 async def upload_bill(
     vendor_id: int = Form(...),
-    bill_number: str = Form(...),
+    bill_number: str = Form(""),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(get_auth_context),
@@ -402,10 +581,42 @@ async def upload_bill(
     if file.filename and "." in file.filename:
         ext = file.filename.rsplit(".", 1)[-1].lower()[:8]
     slug = vendor_folder_slug(vendor.business_name)
-    key = bill_key(slug, bill_number, ext)
+    key = bill_key(slug, (bill_number or "").strip() or "receive", ext)
     upload_bytes(key, data, file.content_type or "application/pdf")
     url = presigned_url(key)
     return {"key": key, "url": url}
+
+
+@router.post("/receipts/vendor-receive", status_code=status.HTTP_201_CREATED)
+def create_vendor_receive(
+    body: VendorReceiveCreate,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(get_auth_context),
+):
+    payload = VendorReceiptCreate(
+        vendor_id=body.vendor_id,
+        lines=body.lines,
+        order_receipt_number=body.order_receipt_number,
+        bill_file_key=body.bill_file_key,
+        notes=body.notes,
+        debit_notes=[],
+    )
+    result = receive_vendor_goods(db, auth, payload)
+    response_cache.invalidate("stock:")
+    response_cache.invalidate("shop:")
+    return result
+
+
+@router.post("/receipts/vendor-bill", status_code=status.HTTP_201_CREATED)
+def create_vendor_bill_from_received(
+    body: VendorReceiptCreate,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(get_auth_context),
+):
+    result = bill_from_received(db, auth, body)
+    response_cache.invalidate("stock:")
+    response_cache.invalidate("shop:")
+    return result
 
 
 @router.post("/receipts/vendor-order", status_code=status.HTTP_201_CREATED)
@@ -414,7 +625,11 @@ def create_vendor_receipt(
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(get_auth_context),
 ):
-    return _finalize_vendor_receipt(db, auth, body, offline=False)
+    """Bill against unbilled received goods (split flow)."""
+    result = bill_from_received(db, auth, body)
+    response_cache.invalidate("stock:")
+    response_cache.invalidate("shop:")
+    return result
 
 
 def _finalize_vendor_receipt(
@@ -469,6 +684,7 @@ def _finalize_vendor_receipt(
         total_billed_amount=body.total_billed_amount.quantize(Decimal("0.01")) if body.total_billed_amount is not None else None,
         bill_number=(body.bill_number or "").strip() or None,
         bill_file_key=body.bill_file_key,
+        notes=(body.notes or "").strip() or None,
         received_by_type=auth.actor_type,
         received_by_id=auth.actor_id,
         received_by_name=auth.actor_name,
@@ -574,13 +790,10 @@ def _finalize_vendor_receipt(
         detail=", ".join(line_summary[:10]),
     )
     doc_url = None
-    if storage_configured():
-        try:
-            key = generate_vendor_receipt_document(db, receipt.id)
-            doc_url = presigned_url(key) if key else None
-        except Exception:
-            pass
+    # Defer PDF — generate on first document download so submit stays fast
     db.commit()
+    response_cache.invalidate("stock:")
+    response_cache.invalidate("shop:")
     return {
         "ok": True,
         "receipt_id": receipt.id,
@@ -593,11 +806,23 @@ def _finalize_vendor_receipt(
 
 @router.post("/receipts/offline-vendor", status_code=status.HTTP_201_CREATED)
 def create_offline_vendor_receipt(
-    body: OfflineVendorReceiptCreate,
+    body: VendorReceiveCreate,
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(get_auth_context),
 ):
-    return _finalize_vendor_receipt(db, auth, body, offline=True)
+    """Offline receive only — stock up + Received bucket. Bill later via vendor-bill."""
+    payload = VendorReceiptCreate(
+        vendor_id=body.vendor_id,
+        lines=body.lines,
+        order_receipt_number=body.order_receipt_number,
+        bill_file_key=body.bill_file_key,
+        notes=body.notes,
+        debit_notes=[],
+    )
+    result = receive_vendor_goods(db, auth, payload, offline=True)
+    response_cache.invalidate("stock:")
+    response_cache.invalidate("shop:")
+    return result
 
 
 @router.get("/receipts/{receipt_id}")
@@ -612,10 +837,16 @@ def get_receipt_detail(
     rlines = db.query(StockReceiptLine).filter(StockReceiptLine.receipt_id == receipt.id).all()
     bill_amt = receipt_bill_amount(db, receipt.id)
     dn_total = receipt_debit_note_total(db, receipt.id)
+    notes = db.query(DebitNote).filter(DebitNote.receipt_id == receipt.id).order_by(DebitNote.id.asc()).all()
+    history = list_entity_history(db, "stock_receipt", receipt.id)
     data = {
         "id": receipt.id,
         "vendor_id": receipt.vendor_id,
+        "receipt_type": receipt.receipt_type,
         "bill_number": receipt.bill_number,
+        "order_receipt_number": receipt.order_receipt_number,
+        "notes": receipt.notes,
+        "bill_file_key": receipt.bill_file_key,
         "additional_charges": format(receipt.additional_charges, "f") if receipt.additional_charges is not None else None,
         "total_billed_amount": format(receipt.total_billed_amount, "f") if receipt.total_billed_amount is not None else None,
         "bill_amount": format(bill_amt, "f"),
@@ -626,6 +857,7 @@ def get_receipt_detail(
         "received_at": receipt.received_at.isoformat(),
         "lines": [
             {
+                "catalog_product_id": ln.catalog_product_id,
                 "our_product_id": ln.our_product_id,
                 "quantity_received": ln.quantity_received,
                 "quantity_billed": ln.quantity_billed,
@@ -634,10 +866,45 @@ def get_receipt_detail(
             }
             for ln in rlines
         ],
+        "debit_notes": [
+            {
+                "id": n.id,
+                "note_type": n.note_type,
+                "direction": n.direction,
+                "catalog_product_id": n.catalog_product_id,
+                "our_product_id": n.our_product_id,
+                "quantity": n.quantity,
+                "amount": format(n.amount, "f"),
+                "payable_effect": format(debit_note_payable_effect(n.amount, n.note_type), "f"),
+                "notes": n.notes,
+            }
+            for n in notes
+        ],
+        "change_history": [
+            {
+                "change_summary": h.change_summary,
+                "valid_from": h.valid_from.isoformat() if h.valid_from else None,
+                "snapshot_json": h.snapshot_json,
+            }
+            for h in history
+        ],
     }
     if auth.is_admin:
         data["received_by_name"] = receipt.received_by_name
     return data
+
+
+@router.patch("/receipts/{receipt_id}")
+def patch_receipt(
+    receipt_id: int,
+    body: VendorReceiptCreate,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(get_auth_context),
+):
+    result = update_vendor_receipt(db, auth, receipt_id, body)
+    response_cache.invalidate("stock:")
+    response_cache.invalidate("shop:")
+    return result
 
 
 @router.get("/receipts/{receipt_id}/document")

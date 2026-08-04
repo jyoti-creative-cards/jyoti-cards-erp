@@ -7,7 +7,6 @@ on:
     paths:
       - "JC/backend/**"
       - "JC/web/admin/**"
-      - "JC/web/portal/**"
       - ".github/workflows/deploy-jc.yml"
   workflow_dispatch:
 
@@ -29,9 +28,6 @@ jobs:
               --exclude=*.db
           - name: jc-admin
             src: JC/web/admin/
-            excludes: ""
-          - name: jc-portal
-            src: JC/web/portal/
             excludes: ""
     steps:
       - uses: actions/checkout@v4

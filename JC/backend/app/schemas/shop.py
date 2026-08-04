@@ -8,6 +8,10 @@ from pydantic import BaseModel, Field
 class ShopSuggestionPublic(BaseModel):
     catalog_product_id: int
     our_product_id: str
+    image_url: str = ""
+    selling_price: str = "0"
+    stock_status: str = "in_stock"
+    category: Optional[str] = None
 
 
 class ShopAlternativePublic(BaseModel):
@@ -16,6 +20,7 @@ class ShopAlternativePublic(BaseModel):
     image_url: str = ""
     stock_status: str
     selling_price: str = "0"
+    category: Optional[str] = None
 
 
 class ShopAddonPublic(BaseModel):
@@ -30,8 +35,12 @@ class ShopProductPublic(BaseModel):
     catalog_product_id: int
     our_product_id: str
     image_url: str = ""
-    selling_price: str = Field(default="0", description="Sell price per unit (Rs.)")
+    selling_price: str = Field(default="0", description="Your buying price / our sell price (Rs.)")
     stock_status: str = Field(..., description="in_stock | low_stock | out_of_stock")
+    category: Optional[str] = None
+    series: Optional[str] = None
+    unit: Optional[str] = None
+    year_group: Optional[str] = None
     addons: List[ShopAddonPublic] = []
     alternatives: List[ShopAlternativePublic] = []
 
@@ -59,3 +68,6 @@ class PortalPlacementPublic(BaseModel):
     bill_number: Optional[str] = None
     has_bill_document: bool = False
     has_order_document: bool = False
+    category: Optional[str] = None
+    series: Optional[str] = None
+    unit: Optional[str] = None

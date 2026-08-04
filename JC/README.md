@@ -5,9 +5,11 @@ Fresh customer management for Jyoti Creative Cards.
 ## Stack
 - **Backend**: FastAPI + SQLAlchemy + **PostgreSQL** (Supabase)
 - **Tables**: `jc_routes`, `jc_cities`, `jc_customers` (isolated from legacy `portal_*`)
-- **Admin UI**: http://127.0.0.1:3011 (API key auth)
-- **Customer Portal**: http://127.0.0.1:3012 (mobile + password)
-- **API**: http://127.0.0.1:8003
+- **Admin UI (local)**: http://127.0.0.1:3011
+- **Customer app (local)**: customer-app on its local port
+- **API (local)**: http://127.0.0.1:8003
+- **Production admin**: https://jc-admin-two.vercel.app
+- **Production customer**: https://jyoticards.vercel.app
 
 ## Quick Start
 ```bash
@@ -39,7 +41,8 @@ cd JC && chmod +x run-local.sh && ./run-local.sh
 | GET | `/health` | Health check |
 
 ## WhatsApp Notes
-- Template: `account_creation_confirmation_3` (Hindi, named params)
+- Account create: template `account_creation_confirmation_3` (Hindi, named params)
+- Customer order: session text (+ PDF when possible) to dealer; staff alert via `WHATSAPP_STAFF_NOTIFY_PHONES`
 - Button URL is **static** in Meta — do NOT pass full portal URL as button param
 - Set `CUSTOMER_PORTAL_URL_BUTTON_SUFFIX` only if template has dynamic `{{1}}` suffix
-- Create response includes `whatsapp_sent` and `whatsapp_error` fields
+- Sole customer UI: `web/customer-app` (https://jyoticards.vercel.app)

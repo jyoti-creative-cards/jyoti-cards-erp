@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import re
 import unicodedata
 from decimal import Decimal
 from typing import List, Optional
@@ -9,8 +11,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.db.session import get_db
 from app.deps import get_current_customer
+from app.integrations.whatsapp.client import send_document, send_text, upload_media
 from app.models.catalog_alternative import CatalogAlternative
 from app.models.catalog_product import CatalogProduct
 from app.models.customer import Customer
@@ -25,14 +29,16 @@ from app.schemas.shop import (
     ShopProductPublic,
     ShopSuggestionPublic,
 )
-from app.services.catalog_addons import addon_snapshots_for_product
-from app.services.customer_order_flow import create_portal_placement
+from app.services import response_cache
+from app.services.activity import log_activity
+from app.services.catalog_addons import addon_snapshots_for_product, addon_snapshots_map
+from app.services.customer_order_flow import append_or_create_portal_placement
 from app.services.doc_gen import generate_customer_bill_document, generate_customer_order_document
-from app.services.storage import presigned_url, storage_configured
+from app.services.storage import download_bytes, presigned_url, storage_configured
 from app.services.stock_levels import stock_status_label
-from app.services.storage import presigned_urls
 
 router = APIRouter(prefix="/shop", tags=["shop"])
+logger = logging.getLogger("jc.shop")
 
 
 def _norm_q(q: str) -> str:
@@ -50,53 +56,167 @@ def _match(raw: str):
     )
 
 
-def _qty_threshold(db: Session, catalog_product_id: int) -> tuple[int, int]:
-    bal = db.query(StockBalance).filter(StockBalance.catalog_product_id == catalog_product_id).first()
-    if not bal:
-        return 0, 5
-    return int(bal.quantity_on_hand), int(bal.low_stock_threshold or 5)
+def _rank_products(rows: list[CatalogProduct], raw: str) -> list[CatalogProduct]:
+    """Exact → prefix → contains. Avoids '4' ranking '1045' first."""
+    q = (raw or "").strip().lower()
+
+    def score(p: CatalogProduct) -> tuple:
+        oid = (p.our_product_id or "").lower()
+        vid = (p.vendor_product_id or "").lower()
+        if oid == q or vid == q:
+            s = 100
+        elif oid.startswith(q) or vid.startswith(q):
+            s = 80
+        elif q in oid or q in vid:
+            s = 40
+        else:
+            s = 10
+        return (-s, oid)
+
+    return sorted(rows, key=score)
 
 
-def _image_url(prod: CatalogProduct) -> str:
-    urls = presigned_urls(prod.image_keys or [])
-    return urls[0] if urls else ""
-
-
-def _customer_status_label(qty: int, threshold: int) -> str:
-    label = stock_status_label(qty, threshold)
-    return label
+def _image_url(prod: CatalogProduct | None) -> str:
+    if not prod:
+        return ""
+    for key in prod.image_keys or []:
+        if not key or not isinstance(key, str):
+            continue
+        key = key.strip()
+        if not key:
+            continue
+        url = presigned_url(key)
+        if url:
+            return url
+    return ""
 
 
 def _fmt_price(val) -> str:
     if val is None:
         return "0"
     try:
-        return format(Decimal(str(val)), "f")
+        d = Decimal(str(val))
+        if d <= 0:
+            return "0"
+        return format(d, "f")
     except Exception:
         return "0"
 
 
-def _alternatives_in_stock(db: Session, parent_id: int) -> List[ShopAlternativePublic]:
-    rows = db.query(CatalogAlternative).filter(CatalogAlternative.product_id == parent_id).all()
-    out: List[ShopAlternativePublic] = []
-    for alt in rows:
-        alt_prod = db.get(CatalogProduct, alt.alternative_product_id)
-        if not alt_prod or not alt_prod.is_active or alt_prod.deleted_at:
+def _sell_price(prod: CatalogProduct) -> str:
+    from app.services.pricing import effective_selling_price
+
+    eff = effective_selling_price(prod.buying_price, prod.selling_price)
+    if eff is not None and eff > 0:
+        return _fmt_price(eff)
+    return "0"
+
+
+def _stock_map(db: Session, product_ids: list[int]) -> dict[int, tuple[int, int]]:
+    if not product_ids:
+        return {}
+    rows = db.query(StockBalance).filter(StockBalance.catalog_product_id.in_(product_ids)).all()
+    out = {int(r.catalog_product_id): (int(r.quantity_on_hand), int(r.low_stock_threshold or 5)) for r in rows}
+    for pid in product_ids:
+        out.setdefault(pid, (0, 5))
+    return out
+
+
+def _alternatives_batch(db: Session, parent_ids: list[int], stock: dict[int, tuple[int, int]]) -> dict[int, List[ShopAlternativePublic]]:
+    if not parent_ids:
+        return {}
+    rows = db.query(CatalogAlternative).filter(CatalogAlternative.product_id.in_(parent_ids)).all()
+    alt_ids = {r.alternative_product_id for r in rows}
+    alts = {
+        a.id: a
+        for a in db.query(CatalogProduct).filter(
+            CatalogProduct.id.in_(alt_ids),
+            CatalogProduct.is_active.is_(True),
+            CatalogProduct.deleted_at.is_(None),
+        ).all()
+    } if alt_ids else {}
+    missing_stock = [aid for aid in alt_ids if aid not in stock]
+    if missing_stock:
+        stock.update(_stock_map(db, missing_stock))
+    grouped: dict[int, List[ShopAlternativePublic]] = {pid: [] for pid in parent_ids}
+    for row in rows:
+        alt_prod = alts.get(row.alternative_product_id)
+        if not alt_prod:
             continue
-        qty, th = _qty_threshold(db, alt_prod.id)
-        lbl = _customer_status_label(qty, th)
+        qty, th = stock.get(alt_prod.id, (0, 5))
+        lbl = stock_status_label(qty, th)
         if lbl == "out_of_stock":
             continue
-        out.append(
+        grouped.setdefault(row.product_id, []).append(
             ShopAlternativePublic(
                 catalog_product_id=alt_prod.id,
                 our_product_id=alt_prod.our_product_id,
                 image_url=_image_url(alt_prod),
                 stock_status=lbl,
-                selling_price=_fmt_price(alt_prod.selling_price),
+                selling_price=_sell_price(alt_prod),
+                category=alt_prod.category,
             )
         )
-    return out
+    return grouped
+
+
+def _to_shop_product(
+    p: CatalogProduct,
+    *,
+    qty: int,
+    th: int,
+    addons: list[dict],
+    alts: List[ShopAlternativePublic],
+) -> ShopProductPublic:
+    lbl = stock_status_label(qty, th)
+    return ShopProductPublic(
+        catalog_product_id=p.id,
+        our_product_id=p.our_product_id,
+        image_url=_image_url(p),
+        selling_price=_sell_price(p),
+        stock_status=lbl,
+        category=p.category,
+        series=p.series,
+        unit=p.unit,
+        year_group=p.year_group,
+        addons=[
+            ShopAddonPublic(
+                our_product_id=a["our_product_id"],
+                name=a["name"],
+                quantity=a["quantity"],
+                unit=a.get("unit") or "pc",
+                image_url=a.get("image_url") or "",
+            )
+            for a in addons
+        ],
+        alternatives=alts if lbl in ("out_of_stock", "low_stock") else [],
+    )
+
+
+def _query_products(db: Session, raw: str, limit: int) -> list[CatalogProduct]:
+    # Exact-code fast path (dealer types full product name/code like 9500).
+    exact = (
+        db.query(CatalogProduct)
+        .filter(
+            CatalogProduct.is_active.is_(True),
+            CatalogProduct.deleted_at.is_(None),
+            or_(
+                CatalogProduct.our_product_id == raw,
+                CatalogProduct.vendor_product_id == raw,
+            ),
+        )
+        .limit(limit)
+        .all()
+    )
+    if exact and len(raw) >= 2:
+        return _rank_products(exact, raw)[:limit]
+    rows = (
+        db.query(CatalogProduct)
+        .filter(CatalogProduct.is_active.is_(True), CatalogProduct.deleted_at.is_(None), _match(raw))
+        .limit(80)
+        .all()
+    )
+    return _rank_products(rows, raw)[:limit]
 
 
 @router.get("/products/suggestions", response_model=List[ShopSuggestionPublic])
@@ -108,14 +228,27 @@ def product_suggestions(
     raw = _norm_q(q)
     if not raw:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="search text empty")
-    rows = (
-        db.query(CatalogProduct)
-        .filter(CatalogProduct.is_active.is_(True), CatalogProduct.deleted_at.is_(None), _match(raw))
-        .order_by(CatalogProduct.our_product_id.asc())
-        .limit(25)
-        .all()
-    )
-    return [ShopSuggestionPublic(catalog_product_id=r.id, our_product_id=r.our_product_id) for r in rows]
+    cache_key = f"shop:suggest:{raw.lower()}"
+    cached = response_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    rows = _query_products(db, raw, 25)
+    stock = _stock_map(db, [r.id for r in rows])
+    out = [
+        ShopSuggestionPublic(
+            catalog_product_id=r.id,
+            our_product_id=r.our_product_id,
+            image_url=_image_url(r),
+            selling_price=_sell_price(r),
+            stock_status=stock_status_label(*stock.get(r.id, (0, 5))),
+            category=r.category,
+        )
+        for r in rows
+    ]
+    payload = [x.model_dump() for x in out]
+    response_cache.set(cache_key, payload, 15.0)
+    return out
 
 
 @router.get("/products/search", response_model=List[ShopProductPublic])
@@ -127,41 +260,89 @@ def product_search(
     raw = _norm_q(q)
     if not raw:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="search text empty")
-    rows = (
-        db.query(CatalogProduct)
-        .filter(CatalogProduct.is_active.is_(True), CatalogProduct.deleted_at.is_(None), _match(raw))
-        .order_by(CatalogProduct.our_product_id.asc())
-        .limit(20)
-        .all()
-    )
-    out: List[ShopProductPublic] = []
-    for p in rows:
-        qty, th = _qty_threshold(db, p.id)
-        lbl = _customer_status_label(qty, th)
-        alts: List[ShopAlternativePublic] = []
-        if lbl in ("out_of_stock", "low_stock"):
-            alts = _alternatives_in_stock(db, p.id)
-        out.append(
-            ShopProductPublic(
-                catalog_product_id=p.id,
-                our_product_id=p.our_product_id,
-                image_url=_image_url(p),
-                selling_price=_fmt_price(p.selling_price),
-                stock_status=lbl,
-                addons=[
-                    ShopAddonPublic(
-                        our_product_id=a["our_product_id"],
-                        name=a["name"],
-                        quantity=a["quantity"],
-                        unit=a.get("unit") or "pc",
-                        image_url=a.get("image_url") or "",
-                    )
-                    for a in addon_snapshots_for_product(db, p.id)
-                ],
-                alternatives=alts,
-            )
+    cache_key = f"shop:search:{raw.lower()}"
+    cached = response_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    rows = _query_products(db, raw, 20)
+    ids = [p.id for p in rows]
+    stock = _stock_map(db, ids)
+    addon_map = addon_snapshots_map(db, ids)
+    need_alts = [
+        p.id for p in rows
+        if stock_status_label(*stock.get(p.id, (0, 5))) in ("out_of_stock", "low_stock")
+    ]
+    alt_map = _alternatives_batch(db, need_alts, stock)
+    out = [
+        _to_shop_product(
+            p,
+            qty=stock.get(p.id, (0, 5))[0],
+            th=stock.get(p.id, (0, 5))[1],
+            addons=addon_map.get(p.id) or [],
+            alts=alt_map.get(p.id) or [],
         )
+        for p in rows
+    ]
+    payload = [x.model_dump() for x in out]
+    response_cache.set(cache_key, payload, 12.0)
     return out
+
+
+def _staff_notify_phones() -> list[str]:
+    raw = (get_settings().whatsapp_staff_notify_phones or "").strip()
+    if not raw:
+        return []
+    return [p.strip() for p in re.split(r"[,;\s]+", raw) if p.strip()]
+
+
+def _notify_order_whatsapp(
+    *,
+    customer: Customer,
+    prod: CatalogProduct,
+    quantity: int,
+    unit_price: Decimal,
+    placement_id: int,
+    merged: bool,
+    document_key: str | None,
+) -> None:
+    """Best-effort WhatsApp to customer + staff. Never raises."""
+    try:
+        total = (unit_price * quantity).quantize(Decimal("0.01"))
+        verb = "updated" if merged else "placed"
+        portal = (get_settings().customer_portal_url or "https://jyoticards.vercel.app").rstrip("/")
+        cust_body = (
+            f"Jyoti Creative Cards\n"
+            f"Order {verb}: {prod.our_product_id} × {quantity}\n"
+            f"Amount: ₹{format(total, 'f')}\n"
+            f"Order #{placement_id}\n"
+            f"Open: {portal}"
+        )
+        send_text(customer.phone, cust_body)
+
+        if document_key and storage_configured():
+            data = download_bytes(document_key)
+            if data:
+                up = upload_media(data, f"order-{placement_id}.pdf")
+                if up.get("ok") and up.get("media_id"):
+                    send_document(
+                        customer.phone,
+                        media_id=up["media_id"],
+                        filename=f"order-{placement_id}.pdf",
+                        caption=f"Order #{placement_id} — {prod.our_product_id} × {quantity}",
+                    )
+
+        staff_msg = (
+            f"New dealer order\n"
+            f"{customer.business_name} ({customer.phone})\n"
+            f"{prod.our_product_id} × {quantity} = ₹{format(total, 'f')}\n"
+            f"Order #{placement_id}"
+            + (" (added to open order)" if merged else "")
+        )
+        for phone in _staff_notify_phones():
+            send_text(phone, staff_msg)
+    except Exception:
+        logger.exception("WhatsApp order notify failed placement=%s", placement_id)
 
 
 @router.post("/orders", status_code=status.HTTP_201_CREATED)
@@ -174,8 +355,10 @@ def create_customer_order(
     if not prod or not prod.is_active or prod.deleted_at:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="product not found")
 
-    qty, th = _qty_threshold(db, prod.id)
-    status_lbl = _customer_status_label(qty, th)
+    bal = db.query(StockBalance).filter(StockBalance.catalog_product_id == prod.id).first()
+    qty = int(bal.quantity_on_hand) if bal else 0
+    th = int(bal.low_stock_threshold or 5) if bal else 5
+    status_lbl = stock_status_label(qty, th)
     if status_lbl == "out_of_stock":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="product is out of stock")
     if body.quantity > qty:
@@ -184,12 +367,15 @@ def create_customer_order(
             detail="Insufficient inventory. Please call godown to book order.",
         )
 
-    unit_price = prod.selling_price if prod.selling_price is not None else Decimal("0")
+    from app.services.pricing import effective_selling_price
+
+    unit_price = effective_selling_price(prod.buying_price, prod.selling_price) or Decimal("0")
     if unit_price <= 0:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Price not set for this product. Please contact godown.")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Sell price not set for this product. Please contact godown.")
     addons = addon_snapshots_for_product(db, prod.id)
+    merged = False
     try:
-        placement = create_portal_placement(
+        placement, merged = append_or_create_portal_placement(
             db,
             customer_id=customer.id,
             customer_name=customer.business_name,
@@ -206,8 +392,21 @@ def create_customer_order(
                 doc_key = generate_customer_order_document(db, placement.id)
                 doc_url = presigned_url(doc_key) if doc_key else None
             except Exception:
-                pass
+                logger.exception("order PDF failed placement=%s", placement.id)
+        log_activity(
+            db,
+            actor_type="customer",
+            actor_id=customer.id,
+            actor_name=customer.business_name,
+            action="create" if not merged else "update",
+            entity_type="customer_order",
+            entity_id=placement.id,
+            entity_label=customer.business_name,
+            detail=f"{prod.our_product_id} × {body.quantity}",
+        )
         db.commit()
+        response_cache.invalidate("shop:")
+        response_cache.invalidate("stock:")
     except ValueError as e:
         db.rollback()
         if "insufficient" in str(e).lower():
@@ -220,16 +419,33 @@ def create_customer_order(
         db.rollback()
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Order could not be saved. Please try again.") from e
 
+    _notify_order_whatsapp(
+        customer=customer,
+        prod=prod,
+        quantity=body.quantity,
+        unit_price=unit_price,
+        placement_id=placement.id,
+        merged=merged,
+        document_key=doc_key,
+    )
+
+    msg = (
+        "Added to your order. Keep searching to add more items."
+        if merged
+        else "Your order has been submitted. Keep searching to add more items."
+    )
     return {
         "ok": True,
         "placement_id": placement.id,
+        "merged": merged,
         "our_product_id": prod.our_product_id,
         "quantity": body.quantity,
         "unit_price": format(unit_price, "f"),
         "line_total": format(unit_price * body.quantity, "f"),
-        "message": "Your order has been submitted successfully.",
+        "message": msg,
         "document_key": doc_key,
         "document_url": doc_url,
+        "whatsapp_sent": True,
     }
 
 
@@ -328,11 +544,11 @@ def list_my_orders(
             shipped = int(ln.quantity_billed or 0)
             qty = int(ln.quantity or 0)
             if shipped <= 0:
-                status = "submitted"
+                st = "submitted"
             elif shipped >= qty:
-                status = "shipped"
+                st = "shipped"
             else:
-                status = "partial"
+                st = "partial"
             prod = db.get(CatalogProduct, ln.catalog_product_id)
             image_url = _image_url(prod) if prod else ""
             bill = None
@@ -350,13 +566,16 @@ def list_my_orders(
                     quantity_shipped=shipped,
                     unit_price=format(ln.unit_price, "f"),
                     line_total=format(line_total, "f"),
-                    status=status,
+                    status=st,
                     customer_notes=p.customer_notes,
                     placed_at=p.placed_at.isoformat(),
                     bill_id=bill.id if bill else None,
                     bill_number=bill.bill_number if bill else None,
                     has_bill_document=bool(bill and bill.document_key) or bool(bill),
                     has_order_document=bool(p.document_key),
+                    category=prod.category if prod else None,
+                    series=prod.series if prod else None,
+                    unit=prod.unit if prod else None,
                 )
             )
     return out

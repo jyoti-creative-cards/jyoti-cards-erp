@@ -125,3 +125,71 @@ export interface ShopOrderCreateResponse {
   customer_notes?: string | null;
   whatsapp_sent?: boolean;
 }
+
+/** GET /shop/account */
+export interface ShopAccountProfile {
+  id: number;
+  business_name: string;
+  person_name: string | null;
+  phone: string;
+  secondary_phone: string | null;
+  address: string | null;
+  city_name: string | null;
+  route_name: string | null;
+  gst_number: string | null;
+}
+
+export interface ShopAccountMoney {
+  pending: string;
+  paid: string;
+  billed: string;
+  credit_notes: string;
+  opening: string;
+  credit_limit: string | null;
+  remaining_limit: string | null;
+  unlimited: boolean;
+}
+
+export interface ShopLedgerEntryPublic {
+  id: number;
+  entry_type: string;
+  label: string;
+  amount: string;
+  signed_amount: string;
+  running_balance: string;
+  description: string | null;
+  bill_id: number | null;
+  payment_ref: string | null;
+  date: string;
+}
+
+export interface ShopAccountPublic {
+  profile: ShopAccountProfile;
+  money: ShopAccountMoney;
+  ledger: ShopLedgerEntryPublic[];
+}
+
+/** GET /shop/orders/history */
+export interface ShopOrderHistoryLine {
+  catalog_product_id: number;
+  our_product_id: string;
+  image_url: string;
+  quantity: number;
+  quantity_shipped: number;
+  unit_price: string;
+  line_total: string;
+  category?: string | null;
+  bill_id: number | null;
+  bill_number: string | null;
+  has_bill_document: boolean;
+}
+
+export interface ShopOrderHistoryPublic {
+  id: number;
+  placed_at: string;
+  status: string; // ordered | partly_sent | completed
+  customer_notes: string | null;
+  total_amount: string;
+  has_order_document: boolean;
+  lines: ShopOrderHistoryLine[];
+}

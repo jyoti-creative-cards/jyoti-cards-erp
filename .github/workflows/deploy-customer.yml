@@ -22,12 +22,20 @@ jobs:
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 
-      - name: Deploy to Vercel (production)
+      - name: Deploy to Vercel (production) + pin jyoticards alias
         working-directory: web/customer-app
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_CUSTOMER_PROJECT_ID }}
-        run: >
-          vercel --prod --yes --token "$VERCEL_TOKEN"
-          --build-env BACKEND_URL=https://jc-api-production.up.railway.app
+        run: |
+          set -euo pipefail
+          URL=$(vercel --prod --yes --token "$VERCEL_TOKEN" \
+            --build-env BACKEND_URL=https://jc-api-production.up.railway.app \
+            | tee /tmp/vercel-deploy.log | tail -n 1)
+          echo "Deployed: $URL"
+          # Pin production domain (prevents alias drift to stale deployment).
+          vercel alias set "$URL" jyoticards.vercel.app \
+            --scope sourabh18agrawal-8975s-projects \
+            --token "$VERCEL_TOKEN"
+          vercel alias ls --scope sourabh18agrawal-8975s-projects --token "$VERCEL_TOKEN" | grep -i jyoticards || true

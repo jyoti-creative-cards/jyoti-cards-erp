@@ -4,7 +4,9 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, Numeric, String, Text, func
+from datetime import date
+
+from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -25,12 +27,17 @@ class ArLedgerEntry(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     customer_id: Mapped[int] = mapped_column(Integer, ForeignKey("jc_customers.id", ondelete="RESTRICT"), nullable=False, index=True)
-    entry_type: Mapped[str] = mapped_column(String(20), nullable=False)  # bill | payment
+    # opening_balance (+) | bill (+) | payment (−) | credit_note (−) — signed convention
+    entry_type: Mapped[str] = mapped_column(String(20), nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     bill_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("jc_customer_bills.id", ondelete="SET NULL"), nullable=True, index=True)
+    return_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("jc_customer_returns.id", ondelete="SET NULL"), nullable=True, index=True)
     payment_ref: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    payment_mode: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
     payment_comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     description: Mapped[str] = mapped_column(String(500), nullable=False)
+    value_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)  # as-on for opening; else created_at date
+    reverses_entry_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     created_by_type: Mapped[str] = mapped_column(String(20), nullable=False)
     created_by_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_by_name: Mapped[str] = mapped_column(String(200), nullable=False)

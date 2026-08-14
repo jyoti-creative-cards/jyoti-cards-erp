@@ -600,6 +600,7 @@ def create_vendor_receive(
         bill_file_key=body.bill_file_key,
         notes=body.notes,
         debit_notes=[],
+        received_on=body.received_on,
     )
     result = receive_vendor_goods(db, auth, payload)
     response_cache.invalidate("stock:")
@@ -818,6 +819,7 @@ def create_offline_vendor_receipt(
         bill_file_key=body.bill_file_key,
         notes=body.notes,
         debit_notes=[],
+        received_on=body.received_on,
     )
     result = receive_vendor_goods(db, auth, payload, offline=True)
     response_cache.invalidate("stock:")

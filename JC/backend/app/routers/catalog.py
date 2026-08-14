@@ -32,6 +32,7 @@ from app.schemas.catalog import (
     VendorOption,
 )
 from app.services.activity import log_from_auth
+from app.services.pricing import coerce_selling_price, effective_selling_price
 from app.services.history import (
     TRACKED_FIELDS,
     diff_summary,
@@ -41,6 +42,8 @@ from app.services.history import (
     record_price_change,
     row_snapshot,
 )
+from app.services import response_cache
+from app.services.catalog_identity import find_active_sku_year, sku_year_label, year_key
 from app.services.storage import image_key, presigned_urls, storage_configured, upload_bytes, vendor_folder_slug
 
 router = APIRouter(prefix="/catalog", tags=["catalog"])
@@ -108,8 +111,12 @@ def _to_public(
         series=row.series,
         unit=row.unit,
         year_group=row.year_group,
-        buying_price=format(row.buying_price, "f"),
-        selling_price=format(row.selling_price, "f") if row.selling_price is not None else None,
+        buying_price=format(row.buying_price, "f") if row.buying_price is not None else None,
+        selling_price=(
+            format(eff, "f")
+            if (eff := effective_selling_price(row.buying_price, row.selling_price)) is not None
+            else None
+        ),
         image_keys=list(row.image_keys or []),
         image_urls=presigned_urls(keys),
         is_active=row.is_active,
@@ -204,19 +211,24 @@ def list_vendors_for_catalog(db: Session = Depends(get_db)) -> List[VendorOption
 
 @router.post("/products/check-duplicates", response_model=CheckDuplicatesResponse, dependencies=[Depends(require_permission("catalog.read"))])
 def check_duplicates(body: CheckDuplicatesRequest, db: Session = Depends(get_db)) -> CheckDuplicatesResponse:
-    ids = [i.strip().lower() for i in body.our_product_ids if i.strip()]
-    if not ids:
+    pairs: list[tuple[str, str]] = []
+    for item in body.items or []:
+        sku = (item.our_product_id or "").strip()
+        if sku:
+            pairs.append((sku, year_key(item.year_group)))
+    if not pairs:
+        for raw in body.our_product_ids or []:
+            sku = (raw or "").strip()
+            if sku:
+                pairs.append((sku, ""))
+    if not pairs:
         return CheckDuplicatesResponse(duplicates=[])
-    rows = (
-        db.query(CatalogProduct.our_product_id)
-        .filter(
-            func.lower(CatalogProduct.our_product_id).in_(ids),
-            CatalogProduct.is_active.is_(True),
-            CatalogProduct.deleted_at.is_(None),
-        )
-        .all()
-    )
-    return CheckDuplicatesResponse(duplicates=sorted({r[0] for r in rows}))
+    found: set[str] = set()
+    for sku, yg in pairs:
+        clash = find_active_sku_year(db, sku, yg or None)
+        if clash:
+            found.add(sku_year_label(clash.our_product_id, clash.year_group))
+    return CheckDuplicatesResponse(duplicates=sorted(found))
 
 
 @router.get("/product-options", dependencies=[Depends(require_permission("catalog.read"))])
@@ -276,7 +288,7 @@ def alternatives_board(db: Session = Depends(get_db)) -> list[dict]:
                 "our_product_id": alt.our_product_id,
                 "vendor_name": avn,
                 "vendor_city": avc,
-                "buying_price": format(alt.buying_price, "f"),
+                "buying_price": format(alt.buying_price, "f") if alt.buying_price is not None else None,
                 "selling_price": format(alt.selling_price, "f") if alt.selling_price is not None else None,
                 "image_urls": presigned_urls((alt.image_keys or [])[:1]),
             })
@@ -285,7 +297,7 @@ def alternatives_board(db: Session = Depends(get_db)) -> list[dict]:
             "our_product_id": p.our_product_id,
             "vendor_name": vn,
             "vendor_city": vc,
-            "buying_price": format(p.buying_price, "f"),
+            "buying_price": format(p.buying_price, "f") if p.buying_price is not None else None,
             "selling_price": format(p.selling_price, "f") if p.selling_price is not None else None,
             "image_urls": presigned_urls((p.image_keys or [])[:1]),
             "alt_count": len(alts),
@@ -299,21 +311,67 @@ def list_products(
     db: Session = Depends(get_db),
     search: Optional[str] = Query(None),
     vendor_id: Optional[int] = Query(None),
+    category: Optional[str] = Query(None),
+    series: Optional[str] = Query(None),
+    price_min: Optional[Decimal] = Query(None, ge=0),
+    price_max: Optional[Decimal] = Query(None, ge=0),
+    no_sell_price: bool = Query(False),
+    no_addons: bool = Query(False),
+    year_group: Optional[str] = Query(None),
     limit: int = Query(60, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> CatalogListResponse:
+    cache_key = (
+        f"catalog:products:v3:{search or ''}:{vendor_id or ''}:{category or ''}:"
+        f"{series or ''}:{year_group or ''}:{price_min}:{price_max}:{int(no_sell_price)}:{int(no_addons)}:{limit}:{offset}"
+    )
+    cached = response_cache.get(cache_key)
+    if cached is not None:
+        return CatalogListResponse(**cached) if isinstance(cached, dict) else cached
+
     q = db.query(CatalogProduct).filter(CatalogProduct.is_active.is_(True), CatalogProduct.deleted_at.is_(None))
     if vendor_id:
         q = q.filter(CatalogProduct.vendor_id == vendor_id)
+    if category:
+        q = q.filter(CatalogProduct.category == category)
+    if series:
+        q = q.filter(CatalogProduct.series == series)
+    if year_group:
+        q = q.filter(CatalogProduct.year_group == year_group)
+    if no_sell_price:
+        # Null sell, or sell copied equal to buy (common seed / import mistake)
+        q = q.filter(
+            or_(
+                CatalogProduct.selling_price.is_(None),
+                CatalogProduct.selling_price == CatalogProduct.buying_price,
+            )
+        )
+    if no_addons:
+        linked_ids = db.query(CatalogAddonLink.catalog_product_id).distinct()
+        q = q.filter(~CatalogProduct.id.in_(linked_ids))
+    if price_min is not None:
+        q = q.filter(func.coalesce(CatalogProduct.selling_price, CatalogProduct.buying_price) >= price_min)
+    if price_max is not None:
+        q = q.filter(func.coalesce(CatalogProduct.selling_price, CatalogProduct.buying_price) <= price_max)
     if search:
         s = f"%{search.lower()}%"
+        q = q.outerjoin(Vendor, Vendor.id == CatalogProduct.vendor_id).outerjoin(City, City.id == Vendor.city_id)
         q = q.filter(or_(
             func.lower(CatalogProduct.our_product_id).like(s),
             func.lower(CatalogProduct.vendor_product_id).like(s),
-            func.lower(CatalogProduct.category).like(s),
+            func.lower(func.coalesce(CatalogProduct.category, "")).like(s),
+            func.lower(func.coalesce(CatalogProduct.series, "")).like(s),
+            func.lower(func.coalesce(CatalogProduct.year_group, "")).like(s),
+            func.lower(func.coalesce(Vendor.business_name, "")).like(s),
+            func.lower(func.coalesce(City.name, "")).like(s),
         ))
     total = q.count()
-    rows = q.order_by(CatalogProduct.id.desc()).offset(offset).limit(limit).all()
+    rows = (
+        q.order_by(CatalogProduct.our_product_id.asc(), CatalogProduct.year_group.asc().nullsfirst(), CatalogProduct.id.asc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
     ids = [r.id for r in rows]
     addon_counts: dict[int, int] = {}
     alt_counts: dict[int, int] = {}
@@ -333,7 +391,7 @@ def list_products(
             .all()
         ):
             alt_counts[pid] = int(cnt)
-    return CatalogListResponse(
+    result = CatalogListResponse(
         items=[
             _to_public(
                 r,
@@ -350,6 +408,8 @@ def list_products(
         limit=limit,
         offset=offset,
     )
+    response_cache.set(cache_key, result.model_dump(), 25.0)
+    return result
 
 
 @router.get("/products/{product_id}", response_model=CatalogDetail, dependencies=[Depends(require_permission("catalog.read"))])
@@ -387,21 +447,30 @@ def get_product(product_id: int, db: Session = Depends(get_db)) -> CatalogDetail
     return CatalogDetail(**pub.model_dump(), alternatives=alt_pub, addon_links=link_pub, price_history=ph, change_history=eh)
 
 
+DEFAULT_YEAR_GROUP = "2026-27"
+
+
 @router.post("/products/bulk", response_model=List[CatalogProductPublic], status_code=201, dependencies=[Depends(require_permission("catalog.write"))])
 def bulk_create(body: CatalogBulkCreate, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("catalog.write"))) -> List[CatalogProductPublic]:
     vendor = db.get(Vendor, body.vendor_id)
     if not vendor or not vendor.is_active:
         raise HTTPException(400, "vendor not found")
 
-    ids_in_batch = [i.our_product_id.strip() for i in body.items]
-    if len(ids_in_batch) != len(set(ids_in_batch)):
-        raise HTTPException(400, "duplicate our_product_id in batch")
-    for pid in ids_in_batch:
-        clash = db.query(CatalogProduct).filter(
-            CatalogProduct.our_product_id == pid, CatalogProduct.is_active.is_(True)
-        ).first()
+    # Staff always get default year; only admin may set year_group.
+    def _year_for_item(raw: Optional[str]) -> Optional[str]:
+        if auth.is_admin:
+            return (raw or DEFAULT_YEAR_GROUP) or DEFAULT_YEAR_GROUP
+        return DEFAULT_YEAR_GROUP
+
+    batch_keys = [sku_year_label(i.our_product_id.strip(), _year_for_item(i.year_group)) for i in body.items]
+    if len(batch_keys) != len(set(k.lower() for k in batch_keys)):
+        raise HTTPException(400, "duplicate our_product_id + year_group in batch")
+    for item in body.items:
+        pid = item.our_product_id.strip()
+        yg = _year_for_item(item.year_group)
+        clash = find_active_sku_year(db, pid, yg)
         if clash:
-            raise HTTPException(409, f"our_product_id {pid} already exists")
+            raise HTTPException(409, f"our_product_id {pid} already exists for year group {year_key(yg) or '—'}")
 
     created: list[CatalogProduct] = []
     id_map: dict[str, int] = {}
@@ -414,9 +483,9 @@ def bulk_create(body: CatalogBulkCreate, db: Session = Depends(get_db), auth: Au
             category=item.category,
             series=item.series,
             unit=item.unit,
-            year_group=item.year_group,
+            year_group=_year_for_item(item.year_group),
             buying_price=item.buying_price.quantize(Decimal("0.01")),
-            selling_price=item.selling_price.quantize(Decimal("0.01")) if item.selling_price is not None else None,
+            selling_price=coerce_selling_price(item.buying_price, item.selling_price),
             image_keys=item.image_keys or [],
         )
         db.add(row)
@@ -426,7 +495,7 @@ def bulk_create(body: CatalogBulkCreate, db: Session = Depends(get_db), auth: Au
         db.flush()
     except IntegrityError:
         db.rollback()
-        raise HTTPException(409, "duplicate our_product_id") from None
+        raise HTTPException(409, "duplicate our_product_id for this year group") from None
 
     for row in created:
         id_map[row.our_product_id] = row.id
@@ -456,6 +525,8 @@ def bulk_create(body: CatalogBulkCreate, db: Session = Depends(get_db), auth: Au
             detail=f"Created product {row.our_product_id}",
         )
     db.commit()
+    response_cache.invalidate("catalog:")
+    response_cache.invalidate("stock:")
     for row in created:
         db.refresh(row)
     return [_to_public(r, db) for r in created]
@@ -479,16 +550,21 @@ def update_product(
 
     if "our_product_id" in data and data["our_product_id"]:
         new_id = data["our_product_id"].strip()
-        if new_id != row.our_product_id:
-            clash = db.query(CatalogProduct).filter(
-                CatalogProduct.our_product_id == new_id,
-                CatalogProduct.is_active.is_(True),
-                CatalogProduct.id != product_id,
-            ).first()
-            if clash:
-                raise HTTPException(409, f"product id {new_id} already exists")
-            row.our_product_id = new_id
+        row.our_product_id = new_id
         del data["our_product_id"]
+
+    if "year_group" in data:
+        if not auth.is_admin:
+            # Staff cannot change year group
+            del data["year_group"]
+        else:
+            row.year_group = data["year_group"] or None
+            del data["year_group"]
+
+    clash = find_active_sku_year(db, row.our_product_id, row.year_group, exclude_id=product_id)
+    if clash:
+        yg = year_key(row.year_group) or "—"
+        raise HTTPException(409, f"product id {row.our_product_id} already exists for year group {yg}")
 
     price_changed = False
     if "buying_price" in data and data["buying_price"] is not None:
@@ -496,9 +572,14 @@ def update_product(
         price_changed = True
         del data["buying_price"]
     if "selling_price" in data:
-        row.selling_price = data["selling_price"].quantize(Decimal("0.01")) if data["selling_price"] is not None else None
+        row.selling_price = coerce_selling_price(row.buying_price, data["selling_price"])
         price_changed = True
         del data["selling_price"]
+    elif price_changed:
+        # buy changed alone — clear accidental sell==buy copy
+        coerced = coerce_selling_price(row.buying_price, row.selling_price)
+        if coerced != row.selling_price:
+            row.selling_price = coerced
 
     for k, v in data.items():
         setattr(row, k, v)
@@ -534,6 +615,8 @@ def update_product(
         detail=summary if summary != "updated" else None,
     )
     db.commit()
+    response_cache.invalidate("catalog:")
+    response_cache.invalidate("stock:")
     db.refresh(row)
     return _to_public(row, db)
 
@@ -583,6 +666,8 @@ def add_product_alternative(
         detail=f"Linked alternative {alt.our_product_id}",
     )
     db.commit()
+    response_cache.invalidate("catalog:")
+    response_cache.invalidate("stock:")
     return {"ok": True, "alternative_our_product_id": alt.our_product_id}
 
 
@@ -616,6 +701,8 @@ def remove_product_alternative(
         detail=f"Unlinked alternative {alt.our_product_id}",
     )
     db.commit()
+    response_cache.invalidate("catalog:")
+    response_cache.invalidate("stock:")
     return {"ok": True}
 
 
@@ -632,6 +719,8 @@ def delete_product(
     row.deleted_at = datetime.now(timezone.utc)
     log_from_auth(db, auth, action="delete", entity_type="catalog", entity_id=row.id, entity_label=row.our_product_id)
     db.commit()
+    response_cache.invalidate("catalog:")
+    response_cache.invalidate("stock:")
 
 
 @router.post("/upload-image", dependencies=[Depends(require_permission("catalog.write"))])
@@ -639,6 +728,7 @@ async def upload_image(
     vendor_id: int = Form(...),
     our_product_id: str = Form(...),
     image_index: int = Form(..., ge=1, le=10),
+    year_group: Optional[str] = Form(None),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ) -> dict:
@@ -660,6 +750,6 @@ async def upload_image(
     if file.filename and "." in file.filename:
         ext = file.filename.rsplit(".", 1)[-1].lower()[:5]
     folder = vendor_folder_slug(vendor.business_name)
-    key = image_key(folder, our_product_id, image_index, ext)
+    key = image_key(folder, our_product_id, image_index, ext, year_group=year_group)
     upload_bytes(key, data, file.content_type or "image/jpeg")
     return {"key": key, "url": presigned_urls([key])[0]}

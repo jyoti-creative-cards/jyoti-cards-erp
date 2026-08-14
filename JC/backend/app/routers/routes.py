@@ -13,6 +13,7 @@ from app.deps import AuthContext, get_auth_context, require_permission
 from app.models.city import City
 from app.models.customer import Customer
 from app.models.route import Route
+from app.services.activity import log_from_auth
 from app.schemas.customer import (
     CityDetail,
     CityIn,
@@ -70,10 +71,72 @@ def _city_public(row: City, db: Session, *, include_deleted_customers: bool = Fa
     )
 
 
+def _cities_public_many(rows: list[City], db: Session) -> list[CityPublic]:
+    """Batch city list — avoids N+1 route lookup + customer count per city."""
+    if not rows:
+        return []
+    route_ids = {r.route_id for r in rows if r.route_id}
+    route_names = {
+        r.id: r.name
+        for r in db.query(Route).filter(Route.id.in_(route_ids)).all()
+    } if route_ids else {}
+    city_ids = [r.id for r in rows]
+    counts = dict(
+        db.query(Customer.city_id, func.count(Customer.id))
+        .filter(Customer.city_id.in_(city_ids), Customer.is_active.is_(True))
+        .group_by(Customer.city_id)
+        .all()
+    )
+    return [
+        CityPublic(
+            id=row.id,
+            name=row.name,
+            route_id=row.route_id,
+            route_name=route_names.get(row.route_id) if row.route_id else None,
+            is_active=row.is_active,
+            customer_count=int(counts.get(row.id) or 0),
+            deleted_at=row.deleted_at,
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]
+
+
+def _routes_public_many(rows: list[Route], db: Session) -> list[RoutePublic]:
+    if not rows:
+        return []
+    route_ids = [r.id for r in rows]
+    city_counts = dict(
+        db.query(City.route_id, func.count(City.id))
+        .filter(City.route_id.in_(route_ids), City.is_active.is_(True))
+        .group_by(City.route_id)
+        .all()
+    )
+    cust_counts = dict(
+        db.query(Customer.route_id, func.count(Customer.id))
+        .filter(Customer.route_id.in_(route_ids), Customer.is_active.is_(True))
+        .group_by(Customer.route_id)
+        .all()
+    )
+    return [
+        RoutePublic(
+            id=row.id,
+            name=row.name,
+            notes=row.notes,
+            is_active=row.is_active,
+            city_count=int(city_counts.get(row.id) or 0),
+            customer_count=int(cust_counts.get(row.id) or 0),
+            deleted_at=row.deleted_at,
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]
+
+
 @router.get("", response_model=List[RoutePublic], dependencies=[Depends(require_permission("setup.read"))])
 def list_routes(db: Session = Depends(get_db)) -> List[RoutePublic]:
     rows = db.query(Route).filter(Route.is_active.is_(True)).order_by(Route.name).all()
-    return [_route_public(r, db) for r in rows]
+    return _routes_public_many(rows, db)
 
 
 @router.get("/{route_id}", response_model=RouteDetail, dependencies=[Depends(require_permission("setup.read"))])
@@ -85,18 +148,19 @@ def get_route(route_id: int, db: Session = Depends(get_db)) -> RouteDetail:
     city_rows = db.query(City).filter(City.route_id == route_id).order_by(City.name).all()
     if row.is_active:
         city_rows = [c for c in city_rows if c.is_active]
-    cities = [_city_public(c, db) for c in city_rows]
+    cities = _cities_public_many(city_rows, db)
     return RouteDetail(**pub.model_dump(), cities=cities)
 
 
 @router.post("", response_model=RoutePublic, status_code=201, dependencies=[Depends(require_permission("setup.write"))])
-def create_route(body: RouteIn, db: Session = Depends(get_db)) -> RoutePublic:
+def create_route(body: RouteIn, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("setup.write"))) -> RoutePublic:
     name = body.name.strip()
     if not name:
         raise HTTPException(400, "name required")
     row = Route(name=name, notes=(body.notes or "").strip() or None)
     db.add(row)
     try:
+        log_from_auth(db, auth, action="create", entity_type="route", entity_id=row.id, entity_label=row.name)
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -106,7 +170,7 @@ def create_route(body: RouteIn, db: Session = Depends(get_db)) -> RoutePublic:
 
 
 @router.patch("/{route_id}", response_model=RoutePublic, dependencies=[Depends(require_permission("setup.write"))])
-def update_route(route_id: int, body: RouteUpdate, db: Session = Depends(get_db)) -> RoutePublic:
+def update_route(route_id: int, body: RouteUpdate, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("setup.write"))) -> RoutePublic:
     row = db.get(Route, route_id)
     if not row or not row.is_active:
         raise HTTPException(404, "route not found")
@@ -119,6 +183,7 @@ def update_route(route_id: int, body: RouteUpdate, db: Session = Depends(get_db)
         row.notes = (data["notes"] or "").strip() or None
     db.add(row)
     try:
+        log_from_auth(db, auth, action="update", entity_type="route", entity_id=row.id, entity_label=row.name)
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -128,12 +193,13 @@ def update_route(route_id: int, body: RouteUpdate, db: Session = Depends(get_db)
 
 
 @router.delete("/{route_id}", status_code=204, dependencies=[Depends(require_permission("setup.write"))])
-def delete_route(route_id: int, db: Session = Depends(get_db)) -> None:
+def delete_route(route_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("setup.write"))) -> None:
     row = db.get(Route, route_id)
     if not row or not row.is_active:
         raise HTTPException(404, "route not found")
     row.is_active = False
     row.deleted_at = _now()
+    log_from_auth(db, auth, action="delete", entity_type="route", entity_id=row.id, entity_label=row.name)
     db.commit()
 
 
@@ -142,7 +208,7 @@ def list_cities(route_id: Optional[int] = None, db: Session = Depends(get_db)) -
     q = db.query(City).filter(City.is_active.is_(True))
     if route_id:
         q = q.filter(City.route_id == route_id)
-    return [_city_public(r, db) for r in q.order_by(City.name).all()]
+    return _cities_public_many(q.order_by(City.name).all(), db)
 
 
 @city_router.get("/{city_id}", response_model=CityDetail, dependencies=[Depends(require_permission("setup.read"))])
@@ -161,7 +227,7 @@ def get_city(city_id: int, db: Session = Depends(get_db)) -> CityDetail:
 
 
 @city_router.post("", response_model=CityPublic, status_code=201, dependencies=[Depends(require_permission("setup.write"))])
-def create_city(body: CityIn, db: Session = Depends(get_db)) -> CityPublic:
+def create_city(body: CityIn, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("setup.write"))) -> CityPublic:
     name = body.name.strip()
     if not name:
         raise HTTPException(400, "name required")
@@ -172,6 +238,7 @@ def create_city(body: CityIn, db: Session = Depends(get_db)) -> CityPublic:
     row = City(name=name, route_id=body.route_id)
     db.add(row)
     try:
+        log_from_auth(db, auth, action="create", entity_type="city", entity_id=row.id, entity_label=row.name)
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -181,7 +248,7 @@ def create_city(body: CityIn, db: Session = Depends(get_db)) -> CityPublic:
 
 
 @city_router.patch("/{city_id}", response_model=CityPublic, dependencies=[Depends(require_permission("setup.write"))])
-def update_city(city_id: int, body: CityUpdate, db: Session = Depends(get_db)) -> CityPublic:
+def update_city(city_id: int, body: CityUpdate, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("setup.write"))) -> CityPublic:
     row = db.get(City, city_id)
     if not row or not row.is_active:
         raise HTTPException(404, "city not found")
@@ -200,6 +267,7 @@ def update_city(city_id: int, body: CityUpdate, db: Session = Depends(get_db)) -
         db.query(Customer).filter(Customer.city_id == city_id, Customer.is_active.is_(True)).update({"route_id": rid})
     db.add(row)
     try:
+        log_from_auth(db, auth, action="update", entity_type="city", entity_id=row.id, entity_label=row.name)
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -209,10 +277,11 @@ def update_city(city_id: int, body: CityUpdate, db: Session = Depends(get_db)) -
 
 
 @city_router.delete("/{city_id}", status_code=204, dependencies=[Depends(require_permission("setup.write"))])
-def delete_city(city_id: int, db: Session = Depends(get_db)) -> None:
+def delete_city(city_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("setup.write"))) -> None:
     row = db.get(City, city_id)
     if not row or not row.is_active:
         raise HTTPException(404, "city not found")
     row.is_active = False
     row.deleted_at = _now()
+    log_from_auth(db, auth, action="delete", entity_type="city", entity_id=row.id, entity_label=row.name)
     db.commit()

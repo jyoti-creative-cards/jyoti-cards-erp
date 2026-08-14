@@ -18,7 +18,7 @@ const Catalog = (() => {
   let wizardDupes = [];
 
   const MAX_ALTERNATIVES = 3;
-  const STEP_LABELS = ["Vendor & Products", "Details & Pricing", "Alternatives & Add-ons", "Review & Create"];
+  const STEP_LABELS = ["Product", "Price", "Create"];
 
   const CATALOG_COLS = [
     { key: "our_product_id", label: "Product ID", get: p => p.our_product_id },
@@ -57,17 +57,32 @@ const Catalog = (() => {
     return v.city_name ? `${name} — ${v.city_name}` : name;
   }
 
+  function skuYearKey(sku, yearGroup) {
+    const s = (sku || "").trim().toLowerCase();
+    const y = (yearGroup || "").trim().toLowerCase();
+    return y ? `${s}|${y}` : s;
+  }
+
   async function checkWizardDuplicates() {
     const filled = filledWizardRows();
     if (!filled.length) { wizardDupes = []; return; }
     try {
       const res = await ctx.api("/catalog/products/check-duplicates", {
         method: "POST",
-        body: JSON.stringify({ our_product_ids: filled.map(r => r.our_product_id.trim()) }),
+        body: JSON.stringify({
+          items: filled.map(r => ({
+            our_product_id: r.our_product_id.trim(),
+            year_group: r.year_group || null,
+          })),
+        }),
       });
       wizardDupes = res.duplicates || [];
     } catch (_) {
-      wizardDupes = filled.filter(r => products.some(p => p.our_product_id.toLowerCase() === r.our_product_id.trim().toLowerCase())).map(r => r.our_product_id);
+      wizardDupes = filled
+        .filter(r => products.some(p =>
+          skuYearKey(p.our_product_id, p.year_group) === skuYearKey(r.our_product_id, r.year_group)
+        ))
+        .map(r => r.our_product_id);
     }
   }
 
@@ -104,8 +119,9 @@ const Catalog = (() => {
     return all[type] || [];
   }
 
+  const DEFAULT_YEAR_GROUP = "2026-27";
+
   function emptyWizardRow() {
-    const ygs = lookups("year_group");
     return {
       _key: newRowKey(),
       selected: false,
@@ -115,12 +131,34 @@ const Catalog = (() => {
       category: "",
       series: "",
       unit: lookups("unit")[0] || "pcs",
-      year_group: ygs[0] || "",
+      year_group: DEFAULT_YEAR_GROUP,
       buying_price: "",
       selling_price: "",
       alternative_our_product_ids: [],
       addon_links: [],
     };
+  }
+
+  function yearSelectHtml(selected, { id = "", onchange = "", allowEmpty = false } = {}) {
+    const admin = !!ctx.isAdmin?.();
+    const chosen = (selected && String(selected).trim()) || DEFAULT_YEAR_GROUP;
+    if (!admin) {
+      return `<select class="input" style="font-size:12px;" disabled title="Only admin can change year group">
+        <option value="${ctx.esc(DEFAULT_YEAR_GROUP)}" selected>${ctx.esc(DEFAULT_YEAR_GROUP)}</option>
+      </select><input type="hidden" ${id ? `id="${id}"` : ""} value="${ctx.esc(DEFAULT_YEAR_GROUP)}" />`;
+    }
+    const vals = lookups("year_group");
+    const opts = new Set(vals);
+    // Always include default so create UI can pre-select it even if lookups lag.
+    if (!opts.has(DEFAULT_YEAR_GROUP)) opts.add(DEFAULT_YEAR_GROUP);
+    if (chosen && !opts.has(chosen)) opts.add(chosen);
+    const empty = allowEmpty ? `<option value="">—</option>` : "";
+    const options = [...opts].map(v =>
+      `<option value="${ctx.esc(v)}" ${chosen === v ? "selected" : ""}>${ctx.esc(v)}</option>`
+    ).join("");
+    return `<select ${id ? `id="${id}"` : ""} class="input" style="font-size:12px;" ${onchange ? `onchange="${onchange}"` : ""}>
+      ${empty}${options}
+    </select>`;
   }
 
   function filledWizardRows() {
@@ -135,7 +173,8 @@ const Catalog = (() => {
 
   function init(context) {
     ctx = context;
-    TableUtils.register("catalog", renderTable);
+    // List UI lives in Products hub; register no-op for legacy TableUtils callers.
+    TableUtils.register("catalog", () => {});
   }
 
   async function loadAddons() {
@@ -146,95 +185,38 @@ const Catalog = (() => {
     }
   }
 
-  async function load(append = false) {
-    if (!append) productsOffset = 0;
-    ensureVendors().catch(() => {});
-    const q = document.getElementById("catalog-search-input")?.value.trim() || "";
-    const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(productsOffset) });
-    if (q) params.set("search", q);
-    ctx.showLoading?.();
-    try {
-      const res = await ctx.api(`/catalog/products?${params}`);
-      const items = res.items || res;
-      productsTotal = res.total ?? items.length;
-      products = append ? products.concat(items) : items;
-      productsOffset = products.length;
-      render();
-    } finally {
-      ctx.hideLoading?.();
-    }
+  async function load() {
+    // Live hub is Products
+    if (typeof Products !== "undefined" && Products.refreshHub) await Products.refreshHub();
   }
 
-  function loadMore() {
-    if (products.length >= productsTotal) return;
-    load(true);
-  }
+  function loadMore() { /* legacy no-op */ }
+  function setViewMode() { /* legacy no-op */ }
+  function render() { /* legacy no-op */ }
 
-  function setViewMode(mode) {
-    viewMode = mode === "list" ? "list" : "grid";
-    document.getElementById("catalog-view-grid")?.classList.toggle("active", viewMode === "grid");
-    document.getElementById("catalog-view-list")?.classList.toggle("active", viewMode === "list");
-    document.getElementById("catalog-grid")?.classList.toggle("hidden", viewMode === "list");
-    document.getElementById("catalog-table")?.classList.toggle("hidden", viewMode !== "list");
-    render();
-  }
-
-  function render() {
-    if (viewMode === "list") renderTable();
-    else renderGrid();
-  }
-
-  function renderGrid() {
-    const el = document.getElementById("catalog-grid");
-    if (!el) return;
-    if (!products.length) {
-      el.innerHTML = '<div class="empty-state"><p>No catalog products yet.</p><button class="btn btn-primary btn-lg" style="margin-top:16px;" onclick="Catalog.openWizard()">+ Add Products</button></div>';
-      return;
-    }
-    el.innerHTML = `<div class="catalog-grid">${products.map(p => `
-      <button type="button" class="catalog-card" onclick="Catalog.openDetail(${p.id})">
-        ${productImage(p)}
-        <div class="catalog-card-body">
-          <div class="catalog-card-title">${ctx.esc(p.our_product_id)}</div>
-          <div class="catalog-card-vendor">${ctx.esc(p.vendor_name || "—")}</div>
-          <div class="catalog-card-city">${ctx.esc(p.vendor_city || "—")}</div>
-          <div class="catalog-card-price">${fmtPrice(p.buying_price)}</div>
-        </div>
-      </button>`).join("")}</div>
-      ${products.length < productsTotal ? `<div style="text-align:center;margin-top:20px;"><button class="btn btn-secondary" onclick="Catalog.loadMore()">Load more (${products.length} of ${productsTotal})</button></div>` : `<p style="text-align:center;margin-top:12px;color:var(--muted);font-size:13px;">Showing all ${productsTotal} products</p>`}`;
-  }
-
-  function renderTable() {
-    const el = document.getElementById("catalog-table");
-    if (!el) return;
-    if (!products.length) {
-      el.innerHTML = '<div class="empty-state"><p>No catalog products yet.</p><button class="btn btn-primary btn-lg" style="margin-top:16px;" onclick="Catalog.openWizard()">+ Add Products</button></div>';
-      return;
-    }
-    const rows = TableUtils.apply(products, "catalog", CATALOG_COLS);
-    el.innerHTML = `<table class="data">${TableUtils.headerHtml("catalog", CATALOG_COLS)}<tbody>
-      ${rows.map(p => `<tr class="clickable" onclick="Catalog.openDetail(${p.id})">
-        <td><strong>${ctx.esc(p.our_product_id)}</strong><br><span style="font-size:12px;color:var(--muted);">${ctx.esc(p.vendor_product_id)}</span></td>
-        <td>${ctx.esc(p.vendor_name || "—")}<br><span style="font-size:12px;color:var(--muted);">${ctx.esc(p.vendor_city || "—")}</span></td>
-        <td>${ctx.esc(p.category || "—")}</td>
-        <td>${fmtPrice(p.buying_price)}</td>
-        <td>${p.selling_price ? fmtPrice(p.selling_price) : "—"}</td>
-        <td onclick="event.stopPropagation()"></td>
-      </tr>`).join("")}
-    </tbody></table>`;
-  }
+  function renderGrid() { /* legacy — Products hub owns list */ }
+  function renderTable() { /* legacy — Products hub owns list */ }
 
   async function openDetail(id) {
+    if (typeof Products !== "undefined" && Products.openProductDetail) {
+      return Products.openProductDetail(id, "catalog");
+    }
     const p = await ctx.api(`/catalog/products/${id}`);
     let stockRow = null;
     try { stockRow = await ctx.api(`/stock/products/${id}`, {}, 0); } catch (_) {}
     const stockHtml = stockRow ? `<div class="detail-section" style="margin-bottom:20px;">
-      <h4>Stock Status</h4>
+      <h4>Stock</h4>
       <div class="review-grid">
         ${ctx.reviewRow("On hand", stockRow.quantity_on_hand)}
         ${ctx.reviewRow("Status", stockRow.stock_status?.replace(/_/g, " "))}
+        ${ctx.reviewRow("Pending order", stockRow.quantity_pending)}
         ${ctx.reviewRow("Low threshold", stockRow.low_stock_threshold)}
-      </div></div>` : "";
+      </div>
+      <button type="button" class="btn btn-secondary btn-sm" style="margin-top:10px;" onclick="Stock.openDetail(${p.id})">Open stock + ledger</button>
+    </div>` : `<div class="detail-section" style="margin-bottom:20px;">
+      <h4>Stock</h4>
+      <p style="color:var(--muted);font-size:14px;margin:0;">No stock balance yet — receive goods to create it.</p>
+    </div>`;
     const images = (p.image_urls || []).length
       ? `<div class="catalog-detail-images">${p.image_urls.map(u => `<img src="${ctx.esc(u)}" alt="" onclick="Products.enlargeImage(decodeURIComponent('${encodeURIComponent(u)}'))" style="cursor:zoom-in;" />`).join("")}</div>`
       : "";
@@ -277,13 +259,13 @@ const Catalog = (() => {
       ? ctx.changeHistoryTable(p.change_history)
       : '<p style="color:var(--muted);font-size:14px;">No change history</p>';
 
-    ctx.openDetail("Product Details", `
+    ctx.openDetail(p.our_product_id, `
       <div class="profile-hero" style="margin:-24px -24px 24px;border-radius:0;">
-        <h2>${ctx.esc(p.our_product_id)}</h2>
+        <h2>${ctx.esc(p.our_product_id)}${p.year_group ? ` <span class="prod-year-pill">${ctx.esc(p.year_group)}</span>` : ""}</h2>
         <p>${ctx.esc(p.vendor_name || "—")}${p.vendor_city ? ` · ${ctx.esc(p.vendor_city)}` : ""}</p>
         <div class="profile-meta">
-          <span class="badge badge-blue">${fmtPrice(p.buying_price)}</span>
-          ${p.selling_price ? `<span class="badge badge-green">${fmtPrice(p.selling_price)} sell</span>` : ""}
+          <span class="badge badge-green">Sell ${p.selling_price ? fmtPrice(p.selling_price) : "—"}</span>
+          <span class="badge badge-blue">Buy ${fmtPrice(p.buying_price)}</span>
           ${p.category ? `<span class="badge badge-gray">${ctx.esc(p.category)}</span>` : ""}
         </div>
         ${images}
@@ -308,7 +290,7 @@ const Catalog = (() => {
     );
   }
 
-  async function openWizard() {
+  async function openWizard(presetVendorId) {
     ctx.showLoading?.();
     try {
       await ensureVendors();
@@ -323,12 +305,16 @@ const Catalog = (() => {
       return;
     }
     wizardStep = 1;
-    wizardVendorId = null;
+    wizardVendorId = presetVendorId || null;
     wizardRows = [emptyWizardRow()];
     wizardSelectedRowIdx = 0;
     wizardCreatedProducts = [];
     document.getElementById("catalog-wizard")?.classList.remove("hidden");
     loadAddons().then(renderWizard);
+  }
+
+  function openWizardForVendor(vendorId) {
+    return openWizard(vendorId || null);
   }
 
   function closeWizard() {
@@ -360,28 +346,29 @@ const Catalog = (() => {
 
   function renderWizardStep1(body, footer) {
     body.innerHTML = `
-      <div style="display:grid;gap:16px;">
-        <div>
-          <label class="label">Vendor *</label>
-          <select id="cw-vendor_id" class="input" onchange="Catalog.setWizardVendor(this.value)">
-            <option value="">— Select vendor —</option>
-            ${catalogVendors.map(v => `<option value="${v.id}" ${wizardVendorId == v.id ? "selected" : ""}>${ctx.esc(vendorLabel(v))}</option>`).join("")}
-          </select>
-        </div>
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <p style="margin:0;font-size:13px;color:var(--muted);">Add product rows with images</p>
-          <div style="display:flex;gap:8px;">
-            <button type="button" class="btn btn-secondary btn-sm" onclick="Catalog.addWizardRow()">+ Add Row</button>
-            <button type="button" class="btn btn-secondary btn-sm" onclick="Catalog.removeWizardRows()">Remove Selected</button>
+      <div class="create-form">
+        <div class="create-band">
+          <div>
+            <label class="label">Vendor *</label>
+            <select id="cw-vendor_id" class="input" onchange="Catalog.setWizardVendor(this.value)">
+              <option value="">— Select vendor —</option>
+              ${catalogVendors.map(v => `<option value="${v.id}" ${wizardVendorId == v.id ? "selected" : ""}>${ctx.esc(vendorLabel(v))}</option>`).join("")}
+            </select>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div style="display:flex;gap:8px;">
+              <button type="button" class="btn btn-secondary btn-sm" onclick="Catalog.addWizardRow()">+ Row</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="Catalog.removeWizardRows()">Remove</button>
+            </div>
           </div>
         </div>
         <div class="table-wrap">
           <table class="data">
             <thead><tr>
               <th style="width:36px;"><input type="checkbox" onchange="Catalog.toggleAllWizardRows(this.checked)" /></th>
-              <th>Our Product ID *</th>
-              <th>Vendor Product ID *</th>
-              <th>Images</th>
+              <th>Our code *</th>
+              <th>Vendor code *</th>
+              <th>Photos</th>
             </tr></thead>
             <tbody>
               ${wizardRows.map((row, idx) => `
@@ -390,7 +377,7 @@ const Catalog = (() => {
                   <td><input class="input" style="font-size:13px;" value="${ctx.esc(row.our_product_id)}" placeholder="e.g. BC-001"
                     oninput="Catalog.updateWizardRow(${idx}, 'our_product_id', this.value)"
                     onblur="Catalog.maybeAddWizardRow(${idx})" /></td>
-                  <td><input class="input" style="font-size:13px;" value="${ctx.esc(row.vendor_product_id)}" placeholder="Vendor SKU"
+                  <td><input class="input" style="font-size:13px;" value="${ctx.esc(row.vendor_product_id)}" placeholder="Their SKU"
                     oninput="Catalog.updateWizardRow(${idx}, 'vendor_product_id', this.value)"
                     onblur="Catalog.maybeAddWizardRow(${idx})" /></td>
                   <td>
@@ -405,60 +392,62 @@ const Catalog = (() => {
       </div>`;
     footer.innerHTML = `
       <button class="btn btn-secondary" onclick="Catalog.closeWizard()">Cancel</button>
-      <button class="btn btn-primary" style="flex:1;" onclick="Catalog.wizardNext()">Continue</button>`;
+      <button class="btn btn-primary" style="flex:1;" onclick="Catalog.wizardNext()">Next →</button>`;
   }
 
   function renderWizardStep2(body, footer) {
     const filled = filledWizardRows();
     body.innerHTML = `
-      <div class="card" style="padding:16px;background:#eff6ff;border-color:#bfdbfe;margin-bottom:16px;">
-        <div style="font-size:12px;font-weight:700;color:var(--brand);margin-bottom:10px;">Apply to selected rows</div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;align-items:end;">
-          <div><label class="label">Category</label><select id="cw-bulk-category" class="input" style="font-size:13px;"><option value="">—</option>${lookupOptions("category")}</select></div>
-          <div><label class="label">Series</label><select id="cw-bulk-series" class="input" style="font-size:13px;"><option value="">—</option>${lookupOptions("series")}</select></div>
-          <div><label class="label">Unit</label><select id="cw-bulk-unit" class="input" style="font-size:13px;"><option value="">—</option>${lookupOptions("unit")}</select></div>
-          <div><label class="label">Year Group</label><select id="cw-bulk-year_group" class="input" style="font-size:13px;"><option value="">—</option>${lookupOptions("year_group")}</select></div>
-          <div><label class="label">Buy Price</label><input id="cw-bulk-buying_price" class="input" type="number" min="0" step="0.01" style="font-size:13px;" /></div>
-          <div><label class="label">Sell Price</label><input id="cw-bulk-selling_price" class="input" type="number" min="0" step="0.01" style="font-size:13px;" /></div>
-          <button type="button" class="btn btn-primary btn-sm" onclick="Catalog.applyBulkFields()">Apply</button>
+      <div class="create-form">
+        <div class="card" style="padding:16px;background:#eff6ff;border-color:#bfdbfe;">
+          <div style="font-size:12px;font-weight:700;color:var(--brand);margin-bottom:10px;">Apply to selected rows</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;align-items:end;">
+            <div><label class="label">Category</label><select id="cw-bulk-category" class="input" style="font-size:13px;"><option value="">—</option>${lookupOptions("category")}</select></div>
+            <div><label class="label">Series</label><select id="cw-bulk-series" class="input" style="font-size:13px;"><option value="">—</option>${lookupOptions("series")}</select></div>
+            <div><label class="label">Unit</label><select id="cw-bulk-unit" class="input" style="font-size:13px;"><option value="">—</option>${lookupOptions("unit")}</select></div>
+            <div><label class="label">Year ${ctx.isAdmin?.() ? "" : "(admin)"}</label>${yearSelectHtml(DEFAULT_YEAR_GROUP, { id: "cw-bulk-year_group", allowEmpty: true })}</div>
+            <div><label class="label">Buy (₹)</label><input id="cw-bulk-buying_price" class="input" type="number" min="0" step="0.01" style="font-size:13px;" /></div>
+            <div><label class="label">Sell (₹)</label><input id="cw-bulk-selling_price" class="input" type="number" min="0" step="0.01" style="font-size:13px;" /></div>
+            <button type="button" class="btn btn-primary btn-sm" onclick="Catalog.applyBulkFields()">Apply</button>
+          </div>
         </div>
-      </div>
-      <div class="table-wrap">
-        <table class="data" style="font-size:13px;">
-          <thead><tr>
-            <th style="width:36px;"></th>
-            <th>Product ID</th>
-            <th>Category</th>
-            <th>Series</th>
-            <th>Unit</th>
-            <th>Year Group</th>
-            <th>Buy</th>
-            <th>Sell</th>
-          </tr></thead>
-          <tbody>
-            ${filled.map((row) => {
-              const idx = wizardRows.indexOf(row);
-              return `<tr>
-                <td><input type="checkbox" ${row.selected ? "checked" : ""} onchange="Catalog.toggleWizardRow(${idx}, this.checked)" /></td>
-                <td><strong>${ctx.esc(row.our_product_id)}</strong></td>
-                <td><select class="input" style="font-size:12px;" onchange="Catalog.updateWizardRow(${idx}, 'category', this.value)">
-                  <option value="">—</option>${lookupOptions("category", row.category)}</select></td>
-                <td><select class="input" style="font-size:12px;" onchange="Catalog.updateWizardRow(${idx}, 'series', this.value)">
-                  <option value="">—</option>${lookupOptions("series", row.series)}</select></td>
-                <td><select class="input" style="font-size:12px;" onchange="Catalog.updateWizardRow(${idx}, 'unit', this.value)">${lookupOptions("unit", row.unit)}</select></td>
-                <td><select class="input" style="font-size:12px;" onchange="Catalog.updateWizardRow(${idx}, 'year_group', this.value)">${lookupOptions("year_group", row.year_group)}</select></td>
-                <td><input class="input" type="number" min="0" step="0.01" style="font-size:12px;width:90px;" value="${ctx.esc(row.buying_price)}"
-                  oninput="Catalog.updateWizardRow(${idx}, 'buying_price', this.value)" /></td>
-                <td><input class="input" type="number" min="0" step="0.01" style="font-size:12px;width:90px;" value="${ctx.esc(row.selling_price)}"
-                  oninput="Catalog.updateWizardRow(${idx}, 'selling_price', this.value)" /></td>
-              </tr>`;
-            }).join("")}
-          </tbody>
-        </table>
+        <div class="table-wrap">
+          <table class="data" style="font-size:13px;">
+            <thead><tr>
+              <th style="width:36px;"></th>
+              <th>Our code</th>
+              <th>Category</th>
+              <th>Series</th>
+              <th>Unit</th>
+              <th>Year</th>
+              <th>Buy</th>
+              <th>Sell</th>
+            </tr></thead>
+            <tbody>
+              ${filled.map((row) => {
+                const idx = wizardRows.indexOf(row);
+                return `<tr>
+                  <td><input type="checkbox" ${row.selected ? "checked" : ""} onchange="Catalog.toggleWizardRow(${idx}, this.checked)" /></td>
+                  <td><strong>${ctx.esc(row.our_product_id)}</strong></td>
+                  <td><select class="input" style="font-size:12px;" onchange="Catalog.updateWizardRow(${idx}, 'category', this.value)">
+                    <option value="">—</option>${lookupOptions("category", row.category)}</select></td>
+                  <td><select class="input" style="font-size:12px;" onchange="Catalog.updateWizardRow(${idx}, 'series', this.value)">
+                    <option value="">—</option>${lookupOptions("series", row.series)}</select></td>
+                  <td><select class="input" style="font-size:12px;" onchange="Catalog.updateWizardRow(${idx}, 'unit', this.value)">${lookupOptions("unit", row.unit)}</select></td>
+                  <td>${yearSelectHtml(row.year_group || DEFAULT_YEAR_GROUP, { onchange: `Catalog.updateWizardRow(${idx}, 'year_group', this.value)` })}</td>
+                  <td><input class="input" type="number" min="0" step="0.01" style="font-size:12px;width:90px;" value="${ctx.esc(row.buying_price)}"
+                    oninput="Catalog.updateWizardRow(${idx}, 'buying_price', this.value)" /></td>
+                  <td><input class="input" type="number" min="0" step="0.01" style="font-size:12px;width:90px;" value="${ctx.esc(row.selling_price)}"
+                    oninput="Catalog.updateWizardRow(${idx}, 'selling_price', this.value)" /></td>
+                </tr>`;
+              }).join("")}
+            </tbody>
+          </table>
+        </div>
       </div>`;
     footer.innerHTML = `
       <button class="btn btn-secondary" onclick="Catalog.wizardBack()">Back</button>
-      <button class="btn btn-primary" style="flex:1;" onclick="Catalog.wizardNext()">Continue</button>`;
+      <button class="btn btn-primary" style="flex:1;" onclick="Catalog.wizardNext()">Review →</button>`;
   }
 
   function allProductOptions(excludeOurId) {
@@ -490,77 +479,18 @@ const Catalog = (() => {
   }
 
   function renderWizardStep3(body, footer) {
-    const filled = filledWizardRows();
-    if (!filled.length) {
-      body.innerHTML = '<p style="color:var(--muted);">No products to configure.</p>';
-      footer.innerHTML = `<button class="btn btn-secondary" onclick="Catalog.wizardBack()">Back</button>`;
-      return;
-    }
-    if (wizardSelectedRowIdx >= filled.length) wizardSelectedRowIdx = 0;
-    const row = filled[wizardSelectedRowIdx];
-    const rowIdx = wizardRows.indexOf(row);
-    const options = allProductOptions(row.our_product_id);
-
-    body.innerHTML = `
-      <div style="display:grid;gap:16px;">
-        <div>
-          <label class="label">Select product row</label>
-          <select class="input" onchange="Catalog.setWizardSelectedRow(parseInt(this.value, 10))">
-            ${filled.map((r, i) => `<option value="${i}" ${i === wizardSelectedRowIdx ? "selected" : ""}>${ctx.esc(r.our_product_id)}</option>`).join("")}
-          </select>
-        </div>
-        <div class="card" style="padding:16px;">
-          <div style="font-weight:600;margin-bottom:12px;">${ctx.esc(row.our_product_id)} — alternatives (max ${MAX_ALTERNATIVES})</div>
-          <div id="cw-alt-slots">
-            ${[0, 1, 2].map(i => {
-              const val = row.alternative_our_product_ids[i] || "";
-              const used = row.alternative_our_product_ids.filter((a, j) => j !== i && a);
-              return `<div style="display:flex;gap:8px;margin-bottom:8px;">
-                <select class="input" style="font-size:13px;flex:1;" onchange="Catalog.setWizardAlt(${rowIdx}, ${i}, this.value)">
-                  <option value="">— none —</option>
-                  ${options.filter(o => !used.includes(o.value)).map(o => `<option value="${ctx.esc(o.value)}" ${val === o.value ? "selected" : ""}>${ctx.esc(o.label)}</option>`).join("")}
-                </select>
-              </div>`;
-            }).join("")}
-          </div>
-          <div style="margin-top:16px;">
-            <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--muted);margin-bottom:8px;">Vice-versa preview</div>
-            ${viceVersaPreview(row)}
-          </div>
-        </div>
-        <div class="card" style="padding:16px;">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-            <div style="font-weight:600;">Add-on links</div>
-            <button type="button" class="btn btn-secondary btn-sm" onclick="Catalog.addWizardAddon(${rowIdx})">+ Add link</button>
-          </div>
-          ${!addons.length ? '<p style="color:var(--muted);font-size:13px;">No add-ons available. Create add-ons first.</p>' : ""}
-          ${(row.addon_links.length ? row.addon_links : []).map((link, li) => `
-            <div style="display:flex;gap:8px;margin-bottom:8px;">
-              <select class="input" style="font-size:13px;flex:1;" onchange="Catalog.setWizardAddon(${rowIdx}, ${li}, 'addon_our_product_id', this.value)">
-                <option value="">— select add-on —</option>
-                ${addons.map(a => `<option value="${ctx.esc(a.our_product_id)}" ${link.addon_our_product_id === a.our_product_id ? "selected" : ""}>${ctx.esc(a.our_product_id)}${a.name ? ` — ${ctx.esc(a.name)}` : ""}</option>`).join("")}
-              </select>
-              <input class="input" type="number" min="1" style="width:72px;font-size:13px;" value="${link.quantity || 1}"
-                oninput="Catalog.setWizardAddon(${rowIdx}, ${li}, 'quantity', this.value)" />
-              <button type="button" class="btn btn-ghost btn-sm" onclick="Catalog.removeWizardAddon(${rowIdx}, ${li})">Remove</button>
-            </div>`).join("")}
-          ${!row.addon_links.length && addons.length ? '<p style="color:var(--muted);font-size:13px;">No add-on links yet.</p>' : ""}
-        </div>
-      </div>`;
-    footer.innerHTML = `
-      <button class="btn btn-secondary" onclick="Catalog.wizardBack()">Back</button>
-      <button class="btn btn-primary" style="flex:1;" onclick="Catalog.wizardNext()">Review</button>`;
-  }
-
-  function renderWizardStep4(body, footer) {
     const vendor = catalogVendors.find(v => v.id == wizardVendorId);
     const filled = filledWizardRows();
-    const dupes = wizardDupes.length ? wizardDupes : filled.filter(r => products.some(p => p.our_product_id.toLowerCase() === r.our_product_id.trim().toLowerCase()));
+    const dupes = wizardDupes.length
+      ? wizardDupes
+      : filled
+          .filter(r => products.some(p => skuYearKey(p.our_product_id, p.year_group) === skuYearKey(r.our_product_id, r.year_group)))
+          .map(r => skuYearKey(r.our_product_id, r.year_group));
 
     body.innerHTML = `
       ${dupes.length ? `<div class="card" style="padding:14px;margin-bottom:16px;background:#fffbeb;border-color:#fde68a;">
         <strong style="color:#b45309;">${dupes.length} duplicate ID(s)</strong>
-        <p style="margin:6px 0 0;font-size:13px;color:#92400e;">${dupes.map(r => ctx.esc(r.our_product_id)).join(", ")} already exist. Remove or rename before creating.</p>
+        <p style="margin:6px 0 0;font-size:13px;color:#92400e;">${dupes.map(d => ctx.esc(typeof d === "string" ? d : d.our_product_id)).join(", ")} already exist for the same year group. Same ID is allowed in a different year group.</p>
       </div>` : ""}
       <div class="review-grid" style="margin-bottom:16px;">
         ${ctx.reviewRow("Vendor", vendor ? vendorLabel(vendor) : "—")}
@@ -569,7 +499,7 @@ const Catalog = (() => {
       <div class="table-wrap">
         <table class="data" style="font-size:13px;">
           <thead><tr>
-            <th>Our ID</th><th>Vendor ID</th><th>Category</th><th>Unit</th><th>Buy</th><th>Alts</th><th>Add-ons</th><th>Images</th>
+            <th>Our code</th><th>Vendor code</th><th>Category</th><th>Unit</th><th>Buy</th><th>Sell</th><th>Photos</th>
           </tr></thead>
           <tbody>
             ${filled.map(r => `<tr>
@@ -578,8 +508,7 @@ const Catalog = (() => {
               <td>${ctx.esc(r.category || "—")}</td>
               <td>${ctx.esc(r.unit || "—")}</td>
               <td>${r.buying_price ? fmtPrice(r.buying_price) : "—"}</td>
-              <td>${(r.alternative_our_product_ids || []).filter(Boolean).map(ctx.esc).join(", ") || "—"}</td>
-              <td>${(r.addon_links || []).filter(l => l.addon_our_product_id).map(l => `${ctx.esc(l.addon_our_product_id)} x${l.quantity || 1}`).join(", ") || "—"}</td>
+              <td>${r.selling_price ? fmtPrice(r.selling_price) : "—"}</td>
               <td>${wizardImageThumbs(r) || "—"}</td>
             </tr>`).join("")}
           </tbody>
@@ -587,22 +516,22 @@ const Catalog = (() => {
       </div>`;
     footer.innerHTML = `
       <button class="btn btn-secondary" onclick="Catalog.wizardBack()">Back</button>
-      <button class="btn btn-primary" style="flex:1;" id="catalog-create-btn" onclick="Catalog.createAll()" ${dupes.length ? "disabled" : ""}>Create All</button>`;
+      <button class="btn btn-primary" style="flex:1;" id="catalog-create-btn" onclick="Catalog.createAll()" ${dupes.length ? "disabled" : ""}>Create all</button>`;
   }
 
-  function renderWizardStep5(body, footer) {
+  function renderWizardStep4(body, footer) {
     const vendor = catalogVendors.find(v => v.id == wizardVendorId);
     const rows = wizardCreatedProducts.length ? wizardCreatedProducts : filledWizardRows();
     body.innerHTML = `
       <div style="text-align:center;padding:8px 0 16px;">
         <div class="success-icon">✓</div>
-        <h3 style="margin:0 0 4px;">Products Created</h3>
+        <h3 style="margin:0 0 4px;">Products created</h3>
         <p style="color:var(--muted);margin:0;">${wizardCreatedProducts.length || filledWizardRows().length} product(s) added${vendor ? ` for ${ctx.esc(vendorLabel(vendor))}` : ""}</p>
       </div>
       <div class="table-wrap">
         <table class="data" style="font-size:13px;">
           <thead><tr>
-            <th></th><th>Our ID</th><th>Vendor ID</th><th>Category</th><th>Unit</th><th>Buy</th><th>Sell</th>
+            <th></th><th>Our code</th><th>Vendor code</th><th>Category</th><th>Unit</th><th>Buy</th><th>Sell</th>
           </tr></thead>
           <tbody>
             ${rows.map(p => {
@@ -638,7 +567,6 @@ const Catalog = (() => {
     else if (wizardStep === 2) renderWizardStep2(body, footer);
     else if (wizardStep === 3) renderWizardStep3(body, footer);
     else if (wizardStep === 4) renderWizardStep4(body, footer);
-    else if (wizardStep === 5) renderWizardStep5(body, footer);
   }
 
   function setWizardVendor(val) {
@@ -698,7 +626,7 @@ const Catalog = (() => {
     if (cat) patch.category = cat;
     if (ser) patch.series = ser;
     if (unit) patch.unit = unit;
-    if (yg) patch.year_group = yg;
+    if (yg && ctx.isAdmin?.()) patch.year_group = yg;
     if (buy) patch.buying_price = buy;
     if (sell) patch.selling_price = sell;
     if (!Object.keys(patch).length) return ctx.toast("Select at least one field to apply", "error");
@@ -709,6 +637,10 @@ const Catalog = (() => {
       applied++;
     });
     if (!applied) return ctx.toast("Select rows with checkboxes first", "error");
+    // Clear selection so next bulk apply targets a fresh set of rows.
+    wizardRows.forEach(r => { r.selected = false; });
+    const selectAll = document.getElementById("cw-select-all");
+    if (selectAll) selectAll.checked = false;
     ctx.toast(`Applied to ${applied} row(s)`, "success");
     renderWizard();
   }
@@ -796,17 +728,18 @@ const Catalog = (() => {
   async function wizardNext() {
     if (wizardStep === 1 && !validateStep1()) return;
     if (wizardStep === 2 && !validateStep2()) return;
-    if (wizardStep === 3) await checkWizardDuplicates();
-    if (wizardStep < 4) wizardStep++;
+    if (wizardStep === 2) await checkWizardDuplicates();
+    if (wizardStep < 3) wizardStep++;
     renderWizard();
   }
 
-  async function uploadImage(vendorId, ourProductId, imageIndex, file) {
-    if (ctx.uploadImage) return ctx.uploadImage(vendorId, ourProductId, file, imageIndex);
+  async function uploadImage(vendorId, ourProductId, imageIndex, file, yearGroup = null) {
+    if (ctx.uploadImage) return ctx.uploadImage(vendorId, ourProductId, file, imageIndex, yearGroup);
     const fd = new FormData();
     fd.append("vendor_id", String(vendorId));
     fd.append("our_product_id", ourProductId);
     fd.append("image_index", String(imageIndex));
+    if (yearGroup) fd.append("year_group", yearGroup);
     fd.append("file", file);
     let res;
     try {
@@ -828,8 +761,10 @@ const Catalog = (() => {
 
   async function createAll() {
     if (!validateStep1() || !validateStep2()) return;
-    const dupes = filledWizardRows().filter(r => wizardDupes.map(d => d.toLowerCase()).includes(r.our_product_id.trim().toLowerCase()));
-    if (dupes.length) return ctx.toast("Fix duplicate product IDs first", "error");
+    const filled = filledWizardRows();
+    const dupeKeys = new Set((wizardDupes || []).map(d => String(d).toLowerCase()));
+    const dupes = filled.filter(r => dupeKeys.has(skuYearKey(r.our_product_id, r.year_group)));
+    if (dupes.length) return ctx.toast("Fix duplicate product IDs for the same year group first", "error");
 
     const btn = document.getElementById("catalog-create-btn");
     const btnLabel = btn?.textContent || "Create All";
@@ -848,7 +783,7 @@ const Catalog = (() => {
           if (btn) btn.textContent = `Uploading images ${ri + 1}/${filled.length}…`;
           for (let i = 0; i < row.imageFiles.length; i++) {
             try {
-              const up = await uploadImage(wizardVendorId, row.our_product_id.trim(), i + 1, row.imageFiles[i]);
+              const up = await uploadImage(wizardVendorId, row.our_product_id.trim(), i + 1, row.imageFiles[i], row.year_group || null);
               if (up.key) imageKeys.push(up.key);
             } catch (e) {
               throw new Error(`Image upload failed for ${row.our_product_id}: ${e.message}`);
@@ -861,7 +796,7 @@ const Catalog = (() => {
           category: row.category || null,
           series: row.series || null,
           unit: row.unit || null,
-          year_group: row.year_group || null,
+          year_group: ctx.isAdmin?.() ? (row.year_group || DEFAULT_YEAR_GROUP) : DEFAULT_YEAR_GROUP,
           buying_price: Number(row.buying_price),
           selling_price: row.selling_price ? Number(row.selling_price) : null,
           image_keys: imageKeys,
@@ -879,7 +814,7 @@ const Catalog = (() => {
       });
 
       wizardCreatedProducts = Array.isArray(created) ? created : [];
-      wizardStep = 5;
+      wizardStep = 4;
       renderWizard();
       ctx.invalidateCache?.("/catalog");
       ctx.invalidateCache?.("/stats");
@@ -891,7 +826,7 @@ const Catalog = (() => {
       if (btn) btn.disabled = false;
     } finally {
       ctx.hideLoading?.();
-      if (btn && wizardStep !== 5) btn.textContent = btnLabel;
+      if (btn && wizardStep !== 4) btn.textContent = btnLabel;
     }
   }
 
@@ -904,6 +839,10 @@ const Catalog = (() => {
       loadAddons(),
     ]);
     const altOptions = (Array.isArray(optRes) ? optRes : []).filter(x => x.id !== p.id);
+
+    const imgPreview = p.image_urls && p.image_urls[0]
+      ? `<img id="ce-preview" src="${ctx.esc(p.image_urls[0])}" alt="" style="width:80px;height:80px;object-fit:cover;border-radius:8px;border:1px solid var(--border);" />`
+      : `<div id="ce-preview" style="width:80px;height:80px;border-radius:8px;background:#f1f5f9;border:1px dashed var(--border);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--muted);">No image</div>`;
 
     document.getElementById("catalog-edit-body").innerHTML = `
       <div style="display:grid;gap:16px;">
@@ -920,14 +859,26 @@ const Catalog = (() => {
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
           <div><label class="label">Unit</label>
             <select id="ce-unit" class="input">${lookupOptions("unit", p.unit)}</select></div>
-          <div><label class="label">Year Group</label>
-            <select id="ce-year_group" class="input">${lookupOptions("year_group", p.year_group)}</select></div>
+          <div><label class="label">Year Group ${ctx.isAdmin?.() ? "" : "(admin only)"}</label>
+            ${yearSelectHtml(p.year_group || DEFAULT_YEAR_GROUP, { id: "ce-year_group" })}</div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
           <div><label class="label">Buying Price</label>
             <input id="ce-buying_price" class="input" type="number" min="0" step="0.01" value="${ctx.esc(p.buying_price)}" /></div>
           <div><label class="label">Selling Price</label>
             <input id="ce-selling_price" class="input" type="number" min="0" step="0.01" value="${ctx.esc(p.selling_price || "")}" /></div>
+        </div>
+        <div>
+          <label class="label">Product Image</label>
+          <div style="display:flex;align-items:center;gap:16px;">
+            ${imgPreview}
+            <div style="flex:1;">
+              <input id="ce-image" type="file" accept="image/*" class="input" />
+              <input type="hidden" id="ce-image_keys" value="${ctx.esc((p.image_keys || []).join(","))}" />
+              <input type="hidden" id="ce-vendor_id" value="${p.vendor_id}" />
+              <p style="margin:6px 0 0;font-size:12px;color:var(--muted);">${p.image_urls?.length ? "Replace image (optional)." : "Add an image now, or leave empty."}</p>
+            </div>
+          </div>
         </div>
         <div>
           <label class="label">Alternatives (max ${MAX_ALTERNATIVES})</label>
@@ -991,19 +942,40 @@ const Catalog = (() => {
       if (id) addonLinks.push({ addon_our_product_id: id, quantity: qty });
     });
 
+    const ourId = document.getElementById("ce-our_product_id").value.trim();
+    if (!ourId) return ctx.toast("Our Product ID required", "error");
+
+    let imageKeys = (document.getElementById("ce-image_keys")?.value || "")
+      .split(",").map(s => s.trim()).filter(Boolean);
+    const fileEl = document.getElementById("ce-image");
+    const file = fileEl?.files?.[0];
+    if (file) {
+      try {
+        const vendorId = Number(document.getElementById("ce-vendor_id")?.value || 0);
+        const nextIndex = Math.max(1, imageKeys.length + 1);
+        const result = await uploadImage(vendorId, ourId, nextIndex, file);
+        if (result?.key) imageKeys = [result.key];
+      } catch (e) {
+        return ctx.toast("Image upload failed: " + e.message, "error");
+      }
+    }
+
     try {
       await ctx.api(`/catalog/products/${editingId}`, {
         method: "PATCH",
         body: JSON.stringify({
-          our_product_id: document.getElementById("ce-our_product_id").value.trim(),
+          our_product_id: ourId,
           vendor_product_id: document.getElementById("ce-vendor_product_id").value.trim(),
           category: document.getElementById("ce-category").value || null,
           series: document.getElementById("ce-series").value || null,
           unit: document.getElementById("ce-unit").value || null,
-          year_group: document.getElementById("ce-year_group").value || null,
+          year_group: ctx.isAdmin?.()
+            ? (document.getElementById("ce-year_group")?.value || null)
+            : undefined,
           buying_price: Number(document.getElementById("ce-buying_price").value),
           selling_price: document.getElementById("ce-selling_price").value
             ? Number(document.getElementById("ce-selling_price").value) : null,
+          image_keys: imageKeys,
           alternative_our_product_ids: altIds,
           addon_links: addonLinks,
         }),
@@ -1014,8 +986,11 @@ const Catalog = (() => {
       App.closeDetail();
       await load();
       ctx.invalidateCache?.("/stock");
+      ctx.invalidateCache?.("/catalog");
       ctx.toast("Product updated", "success");
-      if (ret === "stock") Stock.openDetail(id);
+      if (typeof Products !== "undefined" && Products.openProductDetail) {
+        await Products.openProductDetail(id, ret === "stock" ? "stock" : "catalog");
+      } else if (ret === "stock") Stock.openDetail(id);
       else openDetail(id);
     } catch (e) {
       ctx.toast(e.message, "error");
@@ -1038,7 +1013,7 @@ const Catalog = (() => {
   }
 
   return {
-    init, load, loadMore, setViewMode, renderGrid, renderTable, openDetail, openWizard, closeWizard,
+    init, load, loadMore, setViewMode, renderGrid, renderTable, openDetail, openWizard, openWizardForVendor, closeWizard,
     wizardBack, wizardNext, createAll, setWizardVendor, addWizardRow, maybeAddWizardRow, removeWizardRows,
     toggleWizardRow, toggleAllWizardRows, updateWizardRow, setWizardImages, applyBulkFields,
     setWizardSelectedRow, setWizardAlt, addWizardAddon, setWizardAddon, removeWizardAddon,

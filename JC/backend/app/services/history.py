@@ -15,7 +15,7 @@ TRACKED_FIELDS = {
     "vendor": ("business_name", "phone", "person_name", "secondary_phone", "alias", "address", "city_id", "gst_number"),
     "customer": (
         "business_name", "phone", "person_name", "secondary_phone", "alias", "address",
-        "city_id", "route_id", "gst_number", "credit_limit", "credit_override",
+        "additional_details", "city_id", "route_id", "gst_number", "credit_limit", "credit_override",
     ),
     "catalog_product": (
         "our_product_id", "vendor_id", "vendor_product_id", "category", "series",

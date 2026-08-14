@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
@@ -9,12 +9,14 @@ from pydantic import BaseModel, Field
 class VendorCreate(BaseModel):
     business_name: str = Field(..., min_length=1, max_length=500)
     phone: str = Field(..., min_length=10, max_length=32)
-    city_id: int
+    city_id: Optional[int] = None
     person_name: Optional[str] = Field(None, max_length=500)
     secondary_phone: Optional[str] = Field(None, max_length=32)
     alias: Optional[str] = Field(None, max_length=200)
     address: Optional[str] = None
     gst_number: Optional[str] = Field(None, max_length=20)
+    opening_balance_due: Optional[float] = Field(None, ge=0)
+    opening_balance_as_on: Optional[date] = None
 
 
 class VendorUpdate(BaseModel):
@@ -37,10 +39,12 @@ class VendorPublic(BaseModel):
     secondary_phone: Optional[str]
     alias: Optional[str]
     address: Optional[str]
-    city_id: int
+    city_id: Optional[int] = None
     city_name: Optional[str] = None
     gst_number: Optional[str]
     is_active: bool
+    opening_balance_due: Optional[str] = None
+    opening_balance_as_on: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     deleted_at: Optional[datetime] = None

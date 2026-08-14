@@ -47,8 +47,18 @@ def browse_documents(
         prefix = documents_root()
     if not prefix.endswith("/"):
         prefix = prefix + "/"
-    data = list_objects(prefix)
-    folders = [{"prefix": p, "name": p.rstrip("/").split("/")[-1] + "/"} for p in data.get("prefixes", [])]
+    data = list_objects(prefix, with_folder_stats=True)
+    stats = data.get("folder_stats") or {}
+    folders = []
+    for p in data.get("prefixes", []):
+        st = stats.get(p) or {}
+        folders.append({
+            "prefix": p,
+            "name": p.rstrip("/").split("/")[-1] + "/",
+            "size": int(st.get("size") or 0),
+            "last_modified": st.get("last_modified"),
+            "file_count": int(st.get("file_count") or 0),
+        })
     files = []
     for obj in data.get("objects", []):
         key = obj["key"]

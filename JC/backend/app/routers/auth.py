@@ -16,7 +16,7 @@ from app.schemas.customer import CustomerPublic, LoginRequest, LoginResponse
 from app.schemas.staff import StaffLoginRequest, StaffLoginResponse, StaffPublic
 from app.services.passwords import verify_password
 from app.services.permissions import parse_permissions
-from app.services.tokens import create_access_token, create_staff_token
+from app.services.tokens import create_access_token, create_staff_token, customer_token_ttl_minutes
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -38,6 +38,7 @@ def _to_public(row: Customer, db: Session) -> CustomerPublic:
         secondary_phone=row.secondary_phone,
         alias=row.alias,
         address=row.address,
+        additional_details=getattr(row, "additional_details", None),
         city_id=row.city_id,
         route_id=row.route_id,
         city_name=city_name,
@@ -59,9 +60,8 @@ def login(body: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse:
     row = db.query(Customer).filter(Customer.phone == digits, Customer.is_active.is_(True)).one_or_none()
     if row is None or not verify_password(body.password, row.password_hash):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="wrong phone or password")
-    s = get_settings()
     token = create_access_token(customer_id=row.id, phone=row.phone)
-    return LoginResponse(access_token=token, expires_in_minutes=s.jwt_expire_minutes)
+    return LoginResponse(access_token=token, expires_in_minutes=customer_token_ttl_minutes())
 
 
 @router.get("/me", response_model=CustomerPublic)

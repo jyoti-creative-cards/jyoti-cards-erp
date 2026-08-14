@@ -41,6 +41,9 @@ def _to_public(row: Vendor, db: Session, include_history: bool = False) -> Vendo
     history = []
     if include_history:
         history = [{"change_summary": h.change_summary, "valid_from": h.valid_from.isoformat(), "snapshot_json": h.snapshot_json} for h in list_entity_history(db, "vendor", row.id)]
+    from app.services.ap_ledger import get_opening_balance
+
+    opening = get_opening_balance(db, row.id)
     return VendorPublic(
         id=row.id,
         business_name=row.business_name,
@@ -53,6 +56,8 @@ def _to_public(row: Vendor, db: Session, include_history: bool = False) -> Vendo
         city_name=city_name,
         gst_number=row.gst_number,
         is_active=row.is_active,
+        opening_balance_due=format(opening.amount, "f") if opening else None,
+        opening_balance_as_on=opening.value_date.isoformat() if opening and opening.value_date else None,
         created_at=row.created_at,
         updated_at=row.updated_at,
         deleted_at=row.deleted_at,
@@ -76,15 +81,59 @@ def list_vendors(
     if city_id is not None:
         q = q.filter(Vendor.city_id == city_id)
     if search:
-        s = f"%{search.lower()}%"
-        q = q.filter(or_(
-            func.lower(Vendor.business_name).like(s),
-            func.lower(Vendor.person_name).like(s),
-            func.lower(Vendor.phone).like(s),
-            func.lower(Vendor.alias).like(s),
-        ))
-    rows = q.order_by(Vendor.id.desc()).all()
-    return [_to_public(r, db) for r in rows]
+        from app.services.token_search import sort_parties_by_search, token_match
+
+        q = q.outerjoin(City, Vendor.city_id == City.id)
+        clause = token_match(
+            search,
+            [
+                Vendor.business_name,
+                Vendor.person_name,
+                Vendor.phone,
+                Vendor.alias,
+                Vendor.address,
+                City.name,
+            ],
+        )
+        if clause is not None:
+            q = q.filter(clause)
+        rows = q.all()
+        city_ids = sorted({r.city_id for r in rows if r.city_id})
+        cities = {
+            c.id: c.name
+            for c in (db.query(City).filter(City.id.in_(city_ids)).all() if city_ids else [])
+        }
+        rows = sort_parties_by_search(rows, search, city_lookup=cities)
+    else:
+        rows = q.order_by(Vendor.id.desc()).all()
+        city_ids = sorted({r.city_id for r in rows if r.city_id})
+        cities = {
+            c.id: c.name
+            for c in (db.query(City).filter(City.id.in_(city_ids)).all() if city_ids else [])
+        }
+    out = []
+    for r in rows:
+        city_name = cities.get(r.city_id) if r.city_id else None
+        out.append(
+            VendorPublic(
+                id=r.id,
+                business_name=r.business_name,
+                phone=r.phone,
+                person_name=r.person_name,
+                secondary_phone=r.secondary_phone,
+                alias=r.alias,
+                address=r.address,
+                city_id=r.city_id,
+                city_name=city_name,
+                gst_number=r.gst_number,
+                is_active=r.is_active,
+                created_at=r.created_at,
+                updated_at=r.updated_at,
+                deleted_at=r.deleted_at,
+                change_history=[],
+            )
+        )
+    return out
 
 
 @router.get("/{vendor_id}", response_model=VendorPublic, dependencies=[Depends(require_permission("vendors.read"))])
@@ -113,7 +162,8 @@ def create_vendor(body: VendorCreate, db: Session = Depends(get_db), auth: AuthC
     phone = _normalize_phone(body.phone)
     sec = (body.secondary_phone or "").strip()
     sec_norm = _normalize_phone(sec) if sec else None
-    _validate_city(db, body.city_id)
+    if body.city_id is not None:
+        _validate_city(db, body.city_id)
 
     existing = db.query(Vendor).filter(Vendor.phone == phone, Vendor.is_active.is_(True)).one_or_none()
     if existing:
@@ -135,6 +185,20 @@ def create_vendor(body: VendorCreate, db: Session = Depends(get_db), auth: AuthC
     except IntegrityError:
         db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, detail="phone already registered") from None
+    if body.opening_balance_due and float(body.opening_balance_due) > 0:
+        from decimal import Decimal
+        from datetime import date as date_cls
+        from app.services.ap_ledger import set_opening_balance
+
+        set_opening_balance(
+            db,
+            vendor_id=row.id,
+            amount=Decimal(str(body.opening_balance_due)),
+            as_on=body.opening_balance_as_on or date_cls.today(),
+            actor_type=auth.actor_type,
+            actor_id=auth.actor_id,
+            actor_name=auth.actor_name,
+        )
     log_from_auth(db, auth, action="create", entity_type="vendor", entity_id=row.id, entity_label=row.business_name)
     db.commit()
     db.refresh(row)
@@ -167,8 +231,9 @@ def update_vendor(vendor_id: int, body: VendorUpdate, db: Session = Depends(get_
         row.secondary_phone = _normalize_phone(sec) if sec else None
         del data["secondary_phone"]
 
-    if "city_id" in data and data["city_id"] is not None:
-        _validate_city(db, data["city_id"])
+    if "city_id" in data:
+        if data["city_id"] is not None:
+            _validate_city(db, data["city_id"])
         row.city_id = data["city_id"]
         del data["city_id"]
 
@@ -216,6 +281,14 @@ def delete_vendor(vendor_id: int, db: Session = Depends(get_db), auth: AuthConte
     row = db.get(Vendor, vendor_id)
     if not row or not row.is_active:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="vendor not found")
+    from decimal import Decimal
+    from app.services.ap_ledger import vendor_ap_totals
+    due = vendor_ap_totals(db, vendor_id)["outstanding"]
+    if due > Decimal("0.009"):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot delete — ₹{due} still to pay. Settle first.",
+        )
     row.is_active = False
     row.deleted_at = datetime.now(timezone.utc)
     log_from_auth(db, auth, action="delete", entity_type="vendor", entity_id=row.id, entity_label=row.business_name)

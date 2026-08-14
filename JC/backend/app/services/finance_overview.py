@@ -1,4 +1,10 @@
-"""Finance overview — Revenue, Cost, PnL aggregates."""
+"""Finance overview — cash pulse + books snapshot.
+
+Money correctness:
+- Collect / Pay / Freight dues come only from money.dues_snapshot
+- cash_pulse is cash movement — NOT books P&L
+- books_snapshot is receivables/payables position + billed/collected to date
+"""
 
 from __future__ import annotations
 
@@ -11,70 +17,108 @@ from sqlalchemy.orm import Session
 from app.models.accounts_payable import ApLedgerEntry
 from app.models.accounts_receivable import ArLedgerEntry
 from app.models.expense import Expense
-from app.models.freight_agent import FreightAgent
 from app.models.manual_loss import ManualLoss
-from app.services.ap_ledger import list_ap_vendors
-from app.services.ar_ledger import list_ar_customers
+from app.services.ap_ledger import ap_dues_total
+from app.services.ar_ledger import ar_dues_total
+from app.services.freight_ledger import freight_dues_total
+from app.services.money import mag
 
 
 def _fmt(v: Decimal) -> str:
     return format(v.quantize(Decimal("0.01")), "f")
 
 
-def _month_key(d: date) -> str:
-    return f"{d.year:04d}-{d.month:02d}"
+def _sum_type(db: Session, model, entry_type: str) -> Decimal:
+    raw = (
+        db.query(func.coalesce(func.sum(model.amount), 0))
+        .filter(model.entry_type == entry_type)
+        .scalar()
+    )
+    return Decimal(str(raw or 0)).quantize(Decimal("0.01"))
 
 
 def finance_overview(db: Session) -> dict:
-    # Revenue = AR cash received (payments)
-    ar_payments = (
-        db.query(ArLedgerEntry)
+    # One dues pass — same numbers as GET /finance/dues
+    ar = ar_dues_total(db)
+    ap = ap_dues_total(db)
+    fr = freight_dues_total(db)
+    dues = {
+        "ar": {"total": _fmt(ar["total"]), "count": ar["count"]},
+        "ap": {"total": _fmt(ap["total"]), "count": ap["count"]},
+        "freight": {"total": _fmt(fr["total"]), "count": fr["count"]},
+        "currency": "INR",
+        "convention": "signed_ledger_sum",
+    }
+
+    # SQL aggregates — never load full ledgers into Python
+    ar_payment_sum = _sum_type(db, ArLedgerEntry, "payment")  # signed negative
+    revenue = mag(ar_payment_sum)
+    ar_billed = mag(_sum_type(db, ArLedgerEntry, "bill"))
+    ar_credit_total = mag(_sum_type(db, ArLedgerEntry, "credit_note"))
+    ar_opening = mag(_sum_type(db, ArLedgerEntry, "opening_balance"))
+
+    expense_total = Decimal(
+        str(db.query(func.coalesce(func.sum(Expense.amount), 0)).scalar() or 0)
+    ).quantize(Decimal("0.01"))
+    ap_payment_sum = _sum_type(db, ApLedgerEntry, "payment")
+    ap_paid = mag(ap_payment_sum)
+    cash_out = (expense_total + ap_paid).quantize(Decimal("0.01"))
+    ap_billed = _sum_type(db, ApLedgerEntry, "bill")
+
+    loss_total = Decimal(
+        str(db.query(func.coalesce(func.sum(ManualLoss.amount), 0)).scalar() or 0)
+    ).quantize(Decimal("0.01"))
+    net_cash = (revenue - cash_out - loss_total).quantize(Decimal("0.01"))
+
+    # Monthly cash series (last 6) via date_trunc
+    month_expr_ar = func.date_trunc("month", ArLedgerEntry.created_at)
+    ar_by_month = (
+        db.query(month_expr_ar, func.coalesce(func.sum(ArLedgerEntry.amount), 0))
         .filter(ArLedgerEntry.entry_type == "payment")
+        .group_by(month_expr_ar)
         .all()
     )
-    revenue = sum((p.amount for p in ar_payments), Decimal("0"))
-
-    # AR outstanding / billed
-    ar_bills = db.query(ArLedgerEntry).filter(ArLedgerEntry.entry_type == "bill").all()
-    ar_billed = sum((b.amount for b in ar_bills), Decimal("0"))
-    ar_outstanding = (ar_billed - revenue).quantize(Decimal("0.01"))
-
-    # Cost = expenses + AP payments made (cash out), not pending bills
-    expenses = db.query(Expense).all()
-    expense_total = sum((e.amount for e in expenses), Decimal("0"))
-    ap_payments = (
-        db.query(ApLedgerEntry)
+    month_expr_ap = func.date_trunc("month", ApLedgerEntry.created_at)
+    ap_by_month = (
+        db.query(month_expr_ap, func.coalesce(func.sum(ApLedgerEntry.amount), 0))
         .filter(ApLedgerEntry.entry_type == "payment")
+        .group_by(month_expr_ap)
         .all()
     )
-    ap_paid = sum((abs(p.amount) for p in ap_payments), Decimal("0"))
-    cost = (expense_total + ap_paid).quantize(Decimal("0.01"))
+    month_expr_ex = func.date_trunc("month", Expense.expense_date)
+    ex_by_month = (
+        db.query(month_expr_ex, func.coalesce(func.sum(Expense.amount), 0))
+        .group_by(month_expr_ex)
+        .all()
+    )
 
-    # AP outstanding
-    ap_rows = db.query(ApLedgerEntry).all()
-    ap_outstanding = sum((r.amount for r in ap_rows), Decimal("0")).quantize(Decimal("0.01"))
-    ap_billed = sum((r.amount for r in ap_rows if r.entry_type == "bill"), Decimal("0"))
-
-    losses = db.query(ManualLoss).order_by(ManualLoss.loss_date.desc(), ManualLoss.id.desc()).all()
-    loss_total = sum((l.amount for l in losses), Decimal("0"))
-    profit = (revenue - cost - loss_total).quantize(Decimal("0.01"))
-
-    # Monthly series (last 6 months of activity)
     monthly: dict[str, dict] = {}
-    for p in ar_payments:
-        k = _month_key(p.created_at.date())
+
+    def _mk(dt) -> str:
+        if dt is None:
+            return "unknown"
+        if hasattr(dt, "date"):
+            d = dt.date()
+        else:
+            d = dt
+        return f"{d.year:04d}-{d.month:02d}"
+
+    for dt, amt in ar_by_month:
+        k = _mk(dt)
         monthly.setdefault(k, {"month": k, "revenue": Decimal("0"), "cost": Decimal("0"), "expenses": Decimal("0"), "ap_paid": Decimal("0")})
-        monthly[k]["revenue"] += p.amount
-    for p in ap_payments:
-        k = _month_key(p.created_at.date())
+        monthly[k]["revenue"] += mag(amt)
+    for dt, amt in ap_by_month:
+        k = _mk(dt)
         monthly.setdefault(k, {"month": k, "revenue": Decimal("0"), "cost": Decimal("0"), "expenses": Decimal("0"), "ap_paid": Decimal("0")})
-        monthly[k]["ap_paid"] += abs(p.amount)
-        monthly[k]["cost"] += abs(p.amount)
-    for e in expenses:
-        k = _month_key(e.expense_date)
+        paid = mag(amt)
+        monthly[k]["ap_paid"] += paid
+        monthly[k]["cost"] += paid
+    for dt, amt in ex_by_month:
+        k = _mk(dt)
         monthly.setdefault(k, {"month": k, "revenue": Decimal("0"), "cost": Decimal("0"), "expenses": Decimal("0"), "ap_paid": Decimal("0")})
-        monthly[k]["expenses"] += e.amount
-        monthly[k]["cost"] += e.amount
+        a = Decimal(str(amt or 0))
+        monthly[k]["expenses"] += a
+        monthly[k]["cost"] += a
 
     month_series = []
     for k in sorted(monthly.keys())[-6:]:
@@ -85,49 +129,106 @@ def finance_overview(db: Session) -> dict:
             "cost": _fmt(m["cost"]),
             "expenses": _fmt(m["expenses"]),
             "ap_paid": _fmt(m["ap_paid"]),
+            "net_cash": _fmt(m["revenue"] - m["cost"]),
             "profit": _fmt(m["revenue"] - m["cost"]),
         })
 
-    # Expense by category
-    by_cat: dict[str, Decimal] = {}
-    for e in expenses:
-        by_cat[e.category] = by_cat.get(e.category, Decimal("0")) + e.amount
+    cat_rows = (
+        db.query(Expense.category, func.coalesce(func.sum(Expense.amount), 0))
+        .group_by(Expense.category)
+        .all()
+    )
     expense_breakdown = [
-        {"category": cat, "amount": _fmt(amt)}
-        for cat, amt in sorted(by_cat.items(), key=lambda x: x[1], reverse=True)
+        {"category": cat, "amount": _fmt(Decimal(str(amt or 0)))}
+        for cat, amt in sorted(cat_rows, key=lambda x: Decimal(str(x[1] or 0)), reverse=True)
     ]
 
-    # Cost mix
     cost_mix = [
         {"label": "Expenses", "amount": _fmt(expense_total)},
         {"label": "Vendor payments", "amount": _fmt(ap_paid)},
     ]
 
-    vendors = list_ap_vendors(db)
-    customers = list_ar_customers(db)
+    # Top-10 for hub cards — reuse dues parties already loaded
+    vendors = [
+        {
+            "vendor_id": v["vendor_id"],
+            "vendor_label": v["vendor_label"],
+            "outstanding": v["outstanding"],
+            "opening_total": "0.00",
+            "bill_total": "0.00",
+            "debit_note_total": "0.00",
+            "payment_total": "0.00",
+            "transaction_count": 0,
+        }
+        for v in ap["parties"][:10]
+    ]
+    customers = [
+        {
+            "customer_id": c["customer_id"],
+            "customer_label": c["customer_label"],
+            "outstanding": c["outstanding"],
+            "opening_total": "0.00",
+            "bill_total": "0.00",
+            "payment_total": "0.00",
+            "credit_total": "0.00",
+            "transaction_count": 0,
+        }
+        for c in ar["parties"][:10]
+    ]
 
-    freight_outstanding = (
-        db.query(func.coalesce(func.sum(FreightAgent.balance_due), 0)).scalar() or Decimal("0")
+    losses = (
+        db.query(ManualLoss)
+        .order_by(ManualLoss.loss_date.desc(), ManualLoss.id.desc())
+        .limit(50)
+        .all()
     )
-    freight_outstanding = Decimal(str(freight_outstanding)).quantize(Decimal("0.01"))
+
+    cash_pulse = {
+        "cash_in": _fmt(revenue),
+        "cash_out": _fmt(cash_out),
+        "net_cash": _fmt(net_cash),
+        "manual_losses": _fmt(loss_total),
+        "note": "Cash movement only — not books P&L. Does not include opening receivables or inventory.",
+    }
+
+    books_snapshot = {
+        "ar_outstanding": dues["ar"]["total"],
+        "ap_outstanding": dues["ap"]["total"],
+        "freight_outstanding": dues["freight"]["total"],
+        "ar_opening": _fmt(ar_opening),
+        "ar_billed": _fmt(ar_billed),
+        "ar_collected": _fmt(revenue),
+        "ar_credits": _fmt(ar_credit_total),
+        "ap_billed": _fmt(ap_billed),
+        "ap_paid": _fmt(ap_paid),
+        "note": "Position from signed ledgers. Not a full accounting P&L.",
+    }
 
     return {
+        "dues": dues,
+        "ar_outstanding": dues["ar"]["total"],
+        "ap_outstanding": dues["ap"]["total"],
+        "freight_outstanding": dues["freight"]["total"],
+        "ar_due_parties": dues["ar"]["count"],
+        "ap_due_parties": dues["ap"]["count"],
+        "cash_pulse": cash_pulse,
         "revenue": _fmt(revenue),
-        "revenue_billed": _fmt(ar_billed),
-        "ar_outstanding": _fmt(ar_outstanding),
-        "cost": _fmt(cost),
+        "cost": _fmt(cash_out),
         "expense_total": _fmt(expense_total),
         "ap_paid": _fmt(ap_paid),
-        "ap_outstanding": _fmt(ap_outstanding),
-        "ap_billed": _fmt(ap_billed),
-        "freight_outstanding": _fmt(freight_outstanding),
         "manual_loss_total": _fmt(loss_total),
-        "profit": _fmt(profit),
+        "net_cash": _fmt(net_cash),
+        "profit": _fmt(net_cash),
+        "profit_is_net_cash": True,
+        "books_snapshot": books_snapshot,
+        "revenue_billed": _fmt(ar_billed),
+        "ar_credit_total": _fmt(ar_credit_total),
+        "ap_billed": _fmt(ap_billed),
         "month_series": month_series,
         "expense_breakdown": expense_breakdown,
         "cost_mix": cost_mix,
-        "ap_vendors": vendors[:10],
-        "ar_customers": customers[:10],
+        "ap_vendors": vendors,
+        "ar_customers": customers,
         "losses": [
             {
                 "id": l.id,
@@ -137,6 +238,6 @@ def finance_overview(db: Session) -> dict:
                 "created_by_name": l.created_by_name,
                 "created_at": l.created_at,
             }
-            for l in losses[:50]
+            for l in losses
         ],
     }

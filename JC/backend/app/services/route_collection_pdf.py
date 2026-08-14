@@ -101,7 +101,7 @@ def render_route_collection_pdf(payload: Dict[str, Any]) -> bytes:
         story.append(Paragraph("No customers with outstanding on this route.", small))
     else:
         # Summary table
-        sum_data = [["#", "Customer", "City", "Phone", "Outstanding"]]
+        sum_data = [["#", "Customer", "City", "Phone", "Due"]]
         for i, c in enumerate(customers, 1):
             sum_data.append([
                 str(i),

@@ -4,7 +4,9 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, Numeric, String, Text, func
+from datetime import date
+
+from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -26,13 +28,13 @@ class VendorApAccount(Base):
 
 
 class ApLedgerEntry(Base):
-    """AP transactions: bill (+), debit note (-), payment (-)."""
+    """AP transactions: opening_balance (+), bill (+), debit note (±), payment (-)."""
 
     __tablename__ = "jc_ap_ledger_entries"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     vendor_id: Mapped[int] = mapped_column(Integer, ForeignKey("jc_vendors.id", ondelete="RESTRICT"), nullable=False, index=True)
-    entry_type: Mapped[str] = mapped_column(String(20), nullable=False)  # bill | debit_note | payment
+    entry_type: Mapped[str] = mapped_column(String(20), nullable=False)  # opening_balance | bill | debit_note | payment
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     receipt_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("jc_stock_receipts.id", ondelete="SET NULL"), nullable=True, index=True)
     debit_note_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("jc_debit_notes.id", ondelete="SET NULL"), nullable=True)
@@ -40,6 +42,8 @@ class ApLedgerEntry(Base):
     payment_receipt_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     payment_comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     description: Mapped[str] = mapped_column(String(500), nullable=False)
+    value_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    reverses_entry_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     created_by_type: Mapped[str] = mapped_column(String(20), nullable=False)
     created_by_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_by_name: Mapped[str] = mapped_column(String(200), nullable=False)

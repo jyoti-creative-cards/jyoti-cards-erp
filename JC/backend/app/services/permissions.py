@@ -12,10 +12,24 @@ PERMISSION_GROUPS = [
     ("Setup", [("setup.read", "View routes, cities, product options"), ("setup.write", "Manage setup data")]),
     ("Recycle Bin", [("recycle.read", "View recycle bin"), ("recycle.write", "Restore / permanently delete")]),
     ("Vendor Orders", [("vendor_orders.read", "View vendor orders"), ("vendor_orders.write", "Place & edit vendor orders")]),
+    ("Customer Orders", [("customer_orders.read", "View customer orders"), ("customer_orders.write", "Place & bill customer orders")]),
+    ("Returns", [("returns.read", "View customer returns"), ("returns.write", "Create customer returns")]),
     ("Stock", [("stock.read", "View stock"), ("stock.write", "Receive stock & edit prices")]),
 ]
 
 ALL_STAFF_PERMISSIONS: List[str] = [p for _, perms in PERMISSION_GROUPS for p, _ in perms]
+
+
+def _migrate_legacy_order_perms(perms: set[str]) -> set[str]:
+    """Old staff JSON used vendor_orders to gate selling + returns. Expand once."""
+    out = set(perms)
+    if "vendor_orders.read" in out:
+        out.add("customer_orders.read")
+        out.add("returns.read")
+    if "vendor_orders.write" in out:
+        out.add("customer_orders.write")
+        out.add("returns.write")
+    return {p for p in out if p in ALL_STAFF_PERMISSIONS}
 
 
 def parse_permissions(raw: str | None) -> set[str]:
@@ -24,7 +38,13 @@ def parse_permissions(raw: str | None) -> set[str]:
     try:
         data = json.loads(raw)
         if isinstance(data, list):
-            return {str(x) for x in data if str(x) in ALL_STAFF_PERMISSIONS}
+            raw_set = {str(x) for x in data if str(x) in ALL_STAFF_PERMISSIONS}
+            # Legacy rows only had vendor_orders; expand until staff is re-saved with split keys.
+            has_split = any(
+                p.startswith("customer_orders.") or p.startswith("returns.")
+                for p in raw_set
+            )
+            return raw_set if has_split else _migrate_legacy_order_perms(raw_set)
     except json.JSONDecodeError:
         pass
     return set()

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import List, Optional
 
@@ -9,11 +9,12 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.deps import AuthContext, require_admin, require_permission
+from app.deps import AuthContext, require_admin, require_permission, require_any_permission
 from app.models.bill_series import BillSeries
 from app.models.customer import Customer
 from app.models.customer_bill import CustomerBill, CustomerBillLine
 from app.models.customer_order import CustomerOrderPlacement
+from app.services.activity import log_from_auth
 from app.services.bill_series_alloc import bill_series_preview
 from app.services.storage import presigned_url, storage_configured
 
@@ -45,6 +46,7 @@ class BillSeriesBillSummary(BaseModel):
     customer_name: str
     grand_total: str
     placement_id: Optional[int] = None
+    bill_date: Optional[date] = None
     created_at: datetime
     created_by_name: str
 
@@ -92,6 +94,7 @@ class BillDetailPublic(BaseModel):
     gst_amount: str
     grand_total: str
     subtotal_inclusive: str
+    bill_date: Optional[date] = None
     created_at: datetime
     created_by_name: str
     document_url: Optional[str] = None
@@ -129,7 +132,7 @@ def _series_stats(db: Session, row: BillSeries) -> dict:
 
 
 @router.get("", response_model=List[BillSeriesPublic])
-def list_bill_series(db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("vendor_orders.read"))):
+def list_bill_series(db: Session = Depends(get_db), auth: AuthContext = Depends(require_any_permission("vendor_orders.read", "customer_orders.read"))):
     rows = db.query(BillSeries).filter(BillSeries.is_active.is_(True)).order_by(BillSeries.id.asc()).all()
     return [_to_public(r) for r in rows]
 
@@ -147,6 +150,15 @@ def create_bill_series(body: BillSeriesCreate, db: Session = Depends(get_db), au
         is_active=True,
     )
     db.add(row)
+    log_from_auth(
+        db,
+        auth,
+        action="create",
+        entity_type="bill_series",
+        entity_id=row.id,
+        entity_label=row.name,
+        detail=f"{row.prefix}{row.start_num}–{row.end_num}",
+    )
     db.commit()
     db.refresh(row)
     return _to_public(row)
@@ -186,6 +198,7 @@ def get_bill_detail(bill_id: int, db: Session = Depends(get_db), auth=Depends(re
         gst_amount=_fmt_money(bill.gst_amount),
         grand_total=_fmt_money(bill.grand_total),
         subtotal_inclusive=_fmt_money(bill.subtotal_inclusive),
+        bill_date=bill.bill_date,
         created_at=bill.created_at,
         created_by_name=bill.created_by_name,
         document_url=doc_url,
@@ -224,6 +237,7 @@ def get_bill_series_detail(series_id: int, db: Session = Depends(get_db), auth=D
             customer_name=c.business_name,
             grand_total=_fmt_money(b.grand_total),
             placement_id=b.placement_id,
+            bill_date=b.bill_date,
             created_at=b.created_at,
             created_by_name=b.created_by_name,
         )
@@ -253,10 +267,18 @@ def delete_bill_series(series_id: int, db: Session = Depends(get_db), auth=Depen
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="series not found")
     row.is_active = False
+    log_from_auth(
+        db,
+        auth,
+        action="delete",
+        entity_type="bill_series",
+        entity_id=row.id,
+        entity_label=row.name,
+    )
     db.commit()
     return {"ok": True, "id": series_id}
 
 
 @router.get("/{series_id}/next")
-def peek_next_bill_id(series_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("vendor_orders.read"))):
+def peek_next_bill_id(series_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_any_permission("vendor_orders.read", "customer_orders.read"))):
     return bill_series_preview(db, series_id)

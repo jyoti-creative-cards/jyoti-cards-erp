@@ -7,7 +7,23 @@ from app.models.catalog_addon_link import CatalogAddonLink
 from app.services.storage import presigned_urls
 
 
-def addon_snapshots_for_product(db: Session, catalog_product_id: int) -> list[dict]:
+def _addon_row(addon: AddonProduct, qty: int, *, with_images: bool) -> dict:
+    img = None
+    if with_images:
+        img = (presigned_urls(addon.image_keys or []) or [None])[0]
+    return {
+        "addon_product_id": addon.id,
+        "our_product_id": addon.our_product_id,
+        "name": addon.name or addon.our_product_id,
+        "quantity": int(qty or 1),
+        "unit": addon.unit or "pc",
+        "image_url": img,
+    }
+
+
+def addon_snapshots_for_product(
+    db: Session, catalog_product_id: int, *, with_images: bool = False
+) -> list[dict]:
     links = (
         db.query(CatalogAddonLink)
         .filter(CatalogAddonLink.catalog_product_id == catalog_product_id)
@@ -19,21 +35,61 @@ def addon_snapshots_for_product(db: Session, catalog_product_id: int) -> list[di
         addon = db.get(AddonProduct, link.addon_product_id)
         if not addon or not addon.is_active or addon.deleted_at:
             continue
-        img = (presigned_urls(addon.image_keys or []) or [None])[0]
-        out.append(
-            {
-                "addon_product_id": addon.id,
-                "our_product_id": addon.our_product_id,
-                "name": addon.name or addon.our_product_id,
-                "quantity": int(link.quantity or 1),
-                "unit": addon.unit or "pc",
-                "image_url": img,
-            }
-        )
+        out.append(_addon_row(addon, link.quantity, with_images=with_images))
     return out
 
 
-def addon_snapshots_map(db: Session, catalog_product_ids: list[int]) -> dict[int, list[dict]]:
+def attach_addons_to_totals(db: Session, totals: dict | None) -> dict:
+    """Copy live catalog addons onto bill totals lines (by product id or SKU)."""
+    if not isinstance(totals, dict):
+        return {}
+    lines = totals.get("lines")
+    if not isinstance(lines, list):
+        return totals
+    from app.models.catalog_product import CatalogProduct
+
+    cids: list[int] = []
+    skus: list[str] = []
+    for ln in lines:
+        if not isinstance(ln, dict):
+            continue
+        cid = int(ln.get("catalog_product_id") or 0)
+        if cid:
+            cids.append(cid)
+        elif ln.get("our_product_id"):
+            skus.append(str(ln["our_product_id"]))
+    sku_map: dict[str, int] = {}
+    if skus:
+        found = (
+            db.query(CatalogProduct)
+            .filter(CatalogProduct.our_product_id.in_(skus))
+            .all()
+        )
+        sku_map = {p.our_product_id: p.id for p in found}
+        cids.extend(sku_map.values())
+    addon_map = addon_snapshots_map(db, cids, with_images=False) if cids else {}
+    enriched = []
+    for ln in lines:
+        if not isinstance(ln, dict):
+            continue
+        row = dict(ln)
+        cid = int(row.get("catalog_product_id") or 0)
+        if not cid and row.get("our_product_id"):
+            cid = int(sku_map.get(str(row["our_product_id"])) or 0)
+            if cid:
+                row["catalog_product_id"] = cid
+        live = addon_map.get(cid) if cid else None
+        if live:
+            row["addons"] = live
+        elif not row.get("addons"):
+            row["addons"] = []
+        enriched.append(row)
+    return {**totals, "lines": enriched}
+
+
+def addon_snapshots_map(
+    db: Session, catalog_product_ids: list[int], *, with_images: bool = False
+) -> dict[int, list[dict]]:
     if not catalog_product_ids:
         return {}
     links = (
@@ -48,15 +104,7 @@ def addon_snapshots_map(db: Session, catalog_product_ids: list[int]) -> dict[int
         addon = addons.get(link.addon_product_id)
         if not addon or not addon.is_active or addon.deleted_at:
             continue
-        img = (presigned_urls(addon.image_keys or []) or [None])[0]
         grouped.setdefault(link.catalog_product_id, []).append(
-            {
-                "addon_product_id": addon.id,
-                "our_product_id": addon.our_product_id,
-                "name": addon.name or addon.our_product_id,
-                "quantity": int(link.quantity or 1),
-                "unit": addon.unit or "pc",
-                "image_url": img,
-            }
+            _addon_row(addon, link.quantity, with_images=with_images)
         )
     return grouped

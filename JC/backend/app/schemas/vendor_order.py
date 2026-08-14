@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
@@ -14,6 +14,7 @@ class VendorOrderLineIn(BaseModel):
 class PlacementCreate(BaseModel):
     vendor_id: int
     lines: List[VendorOrderLineIn] = Field(..., min_length=1)
+    placed_on: Optional[date] = None  # backdate; default = today
 
 
 class AlternativeBrief(BaseModel):
@@ -38,6 +39,7 @@ class PlacementLineDetail(BaseModel):
     catalog_product_id: int
     our_product_id: str
     quantity: int
+    quantity_remaining: Optional[int] = None
     quantity_billed: Optional[int] = None
     billed_amount: Optional[str] = None
     buying_price: str
@@ -71,6 +73,8 @@ class PlacementSummary(BaseModel):
     total_quantity: int = 0
     receipt_id: Optional[int] = None
     bill_number: Optional[str] = None
+    order_receipt_number: Optional[str] = None
+    notes: Optional[str] = None
     bill_file_url: Optional[str] = None
     closed_at: Optional[datetime] = None
     cancel_reason: Optional[str] = None
@@ -93,6 +97,7 @@ class VendorOrderSummary(BaseModel):
     line_count: int
     total_quantity: int
     updated_at: datetime
+    open_kind: Optional[str] = None  # to_receive | to_bill (Open tab)
 
 
 class VendorOrderDetail(BaseModel):

@@ -1,12 +1,23 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import List, Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
+
+_BIZ_TZ = ZoneInfo("Asia/Kolkata")
+
+
+def _local_day_bounds_utc(now: datetime | None = None) -> tuple[datetime, datetime]:
+    """Start/end of business 'today' in Asia/Kolkata, as UTC datetimes."""
+    local_now = (now or datetime.now(timezone.utc)).astimezone(_BIZ_TZ)
+    start_local = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_local = start_local + timedelta(days=1)
+    return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
 
 from app.db.session import get_db
 from app.deps import AuthContext, require_permission
@@ -100,13 +111,16 @@ def _build_detail(db: Session, order: VendorOrder, *, open_only: bool = False) -
         receipt = None
         if order.bucket == "billed":
             receipt = db.query(StockReceipt).filter(StockReceipt.billed_placement_id == p.id).first()
+        elif order.bucket == "received":
+            receipt = db.query(StockReceipt).filter(StockReceipt.received_placement_id == p.id).first()
         bill_amt = dn_total = net = bill_file = None
         if receipt:
-            ba = receipt_bill_amount(db, receipt.id)
-            dn = receipt_debit_note_total(db, receipt.id)
-            bill_amt = format(ba, "f")
-            dn_total = format(dn, "f")
-            net = format(ba + dn, "f")
+            if order.bucket == "billed":
+                ba = receipt_bill_amount(db, receipt.id)
+                dn = receipt_debit_note_total(db, receipt.id)
+                bill_amt = format(ba, "f")
+                dn_total = format(dn, "f")
+                net = format(ba + dn, "f")
             bill_file = presigned_url(receipt.bill_file_key) if receipt.bill_file_key else None
         placement_summaries.append(
             PlacementSummary(
@@ -120,6 +134,8 @@ def _build_detail(db: Session, order: VendorOrder, *, open_only: bool = False) -
                 total_quantity=sum(ln.quantity for ln in plines),
                 receipt_id=receipt.id if receipt else None,
                 bill_number=receipt.bill_number if receipt else None,
+                order_receipt_number=(receipt.order_receipt_number if receipt else None),
+                notes=(receipt.notes if receipt else None),
                 bill_file_url=bill_file,
                 closed_at=p.closed_at,
                 cancel_reason=p.cancel_reason,
@@ -168,6 +184,7 @@ def _build_detail(db: Session, order: VendorOrder, *, open_only: bool = False) -
                     catalog_product_id=ln.catalog_product_id,
                     our_product_id=ln.our_product_id,
                     quantity=qty,
+                    quantity_remaining=ln.quantity_remaining,
                     quantity_billed=ln.quantity_billed,
                     billed_amount=format(ln.billed_amount, "f") if ln.billed_amount is not None else None,
                     buying_price=str(ln.buying_price),
@@ -188,6 +205,13 @@ def _build_detail(db: Session, order: VendorOrder, *, open_only: bool = False) -
             v["total_quantity"] = v["total_placed"]
             if open_only and v["total_pending"] <= 0:
                 continue
+        elif order.bucket == "received":
+            v["total_received"] = v["total_quantity"]
+            v["total_pending"] = sum(
+                int(ln.quantity_remaining or 0)
+                for ln in all_lines
+                if ln.catalog_product_id == v["catalog_product_id"]
+            )
         elif order.bucket == "billed":
             v["total_received"] = v["total_quantity"]
         aggregated_lines.append(AggregatedLine(**v))
@@ -219,7 +243,12 @@ def _summary_from_order(db: Session, order: VendorOrder) -> VendorOrderSummary:
         .filter(VendorOrderPlacement.vendor_order_id == order.id)
         .all()
     )
-    total_qty = sum(ln.quantity for ln in line_stats)
+    if order.bucket == "received":
+        total_qty = sum(int(ln.quantity_remaining or 0) for ln in line_stats)
+        # Hub shows total received qty; keep sum of quantity for aggregate card
+        total_qty = sum(int(ln.quantity or 0) for ln in line_stats)
+    else:
+        total_qty = sum(ln.quantity for ln in line_stats)
     return VendorOrderSummary(
         id=order.id,
         vendor_id=order.vendor_id,
@@ -238,13 +267,90 @@ def _summary_from_order(db: Session, order: VendorOrder) -> VendorOrderSummary:
 
 @router.get("", response_model=List[VendorOrderSummary])
 def list_vendor_orders(
-    bucket: str = Query("open", pattern="^(open|placed|billed|cancelled|closed)$"),
+    bucket: str = Query("open", pattern="^(open|placed|received|billed|cancelled|closed)$"),
     view: str = Query("default", pattern="^(default|open|placed)$"),
+    day: str = Query("all", pattern="^(all|today)$"),
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("vendor_orders.read")),
 ):
+    """Same stages for Today and Past. `day=today` = IST calendar day; `day=all` = full history."""
+    from sqlalchemy import func
+    from app.services.vendor_receive_bill import unbilled_received_qty_by_product
+
+    day_start = day_end = None
+    if day == "today":
+        day_start, day_end = _local_day_bounds_utc()
+
+    def _vids_with_placement_today(statuses: tuple[str, ...] | None = None) -> set[int]:
+        assert day_start is not None and day_end is not None
+        q = (
+            db.query(VendorOrder.vendor_id)
+            .join(VendorOrderPlacement, VendorOrderPlacement.vendor_order_id == VendorOrder.id)
+            .filter(
+                VendorOrder.is_open.is_(True),
+                VendorOrderPlacement.placed_at >= day_start,
+                VendorOrderPlacement.placed_at < day_end,
+            )
+        )
+        if statuses:
+            q = q.filter(VendorOrderPlacement.status.in_(statuses))
+        return {int(r[0]) for r in q.distinct().all()}
+
+    def _vids_open_created_today() -> set[int]:
+        assert day_start is not None and day_end is not None
+        rows = (
+            db.query(VendorOpenLine.vendor_id)
+            .filter(
+                VendorOpenLine.status == "open",
+                VendorOpenLine.quantity > 0,
+                VendorOpenLine.created_at >= day_start,
+                VendorOpenLine.created_at < day_end,
+            )
+            .distinct()
+            .all()
+        )
+        return {int(r[0]) for r in rows}
+
+    def _vids_closed_today() -> set[int]:
+        assert day_start is not None and day_end is not None
+        from_lines = {
+            int(r[0])
+            for r in (
+                db.query(VendorOpenLine.vendor_id)
+                .filter(
+                    VendorOpenLine.status == "closed",
+                    VendorOpenLine.updated_at >= day_start,
+                    VendorOpenLine.updated_at < day_end,
+                )
+                .distinct()
+                .all()
+            )
+        }
+        from_placements = {
+            int(r[0])
+            for r in (
+                db.query(VendorOrder.vendor_id)
+                .join(VendorOrderPlacement, VendorOrderPlacement.vendor_order_id == VendorOrder.id)
+                .filter(
+                    VendorOrderPlacement.closed_at.isnot(None),
+                    VendorOrderPlacement.closed_at >= day_start,
+                    VendorOrderPlacement.closed_at < day_end,
+                )
+                .distinct()
+                .all()
+            )
+        }
+        return from_lines | from_placements
+
     if bucket == "open":
-        from sqlalchemy import func
+        out: list[VendorOrderSummary] = []
+        today_receive = None
+        today_bill = None
+        if day_start is not None:
+            today_receive = _vids_with_placement_today(("placed",)) | _vids_open_created_today()
+            today_bill = _vids_with_placement_today(("received", "billed"))
+
+        # Yet to receive (placed open lines)
         rows = (
             db.query(
                 VendorOpenLine.vendor_id,
@@ -255,19 +361,32 @@ def list_vendor_orders(
             .group_by(VendorOpenLine.vendor_id)
             .all()
         )
-        out: list[VendorOrderSummary] = []
         for vendor_id, total_qty, line_count in rows:
+            vid = int(vendor_id)
+            if today_receive is not None and vid not in today_receive:
+                continue
             try:
-                vendor, city_name, label = _vendor_context(db, int(vendor_id), require_active=False)
+                vendor, city_name, label = _vendor_context(db, vid, require_active=False)
             except HTTPException:
                 continue
             placed_order = (
                 db.query(VendorOrder)
-                .filter(VendorOrder.vendor_id == vendor_id, VendorOrder.bucket == "placed", VendorOrder.is_open.is_(True))
+                .filter(VendorOrder.vendor_id == vid, VendorOrder.bucket == "placed", VendorOrder.is_open.is_(True))
                 .first()
             )
             placement_count = 0
+            earliest = None
             if placed_order:
+                pq = db.query(func.min(VendorOrderPlacement.placed_at)).filter(
+                    VendorOrderPlacement.vendor_order_id == placed_order.id,
+                    VendorOrderPlacement.status == "placed",
+                )
+                if day_start is not None:
+                    pq = pq.filter(
+                        VendorOrderPlacement.placed_at >= day_start,
+                        VendorOrderPlacement.placed_at < day_end,
+                    )
+                earliest = pq.scalar()
                 placement_count = (
                     db.query(VendorOrderPlacement)
                     .filter(
@@ -279,30 +398,76 @@ def list_vendor_orders(
             out.append(
                 VendorOrderSummary(
                     id=placed_order.id if placed_order else 0,
-                    vendor_id=int(vendor_id),
+                    vendor_id=vid,
                     vendor_name=vendor.business_name,
                     vendor_city=city_name,
                     vendor_label=label,
-                    status="open",
+                    status="to_receive",
                     bucket="open",
                     is_open=True,
                     placement_count=placement_count,
                     line_count=int(line_count or 0),
                     total_quantity=int(total_qty or 0),
-                    updated_at=datetime.now(timezone.utc),
+                    updated_at=earliest or datetime.now(timezone.utc),
+                    open_kind="to_receive",
                 )
             )
-        out.sort(key=lambda x: x.vendor_label.lower())
+
+        # Yet to bill (unbilled received)
+        received_orders = (
+            db.query(VendorOrder)
+            .filter(VendorOrder.bucket == "received", VendorOrder.is_open.is_(True))
+            .all()
+        )
+        for ro in received_orders:
+            if today_bill is not None and ro.vendor_id not in today_bill:
+                continue
+            unbilled = unbilled_received_qty_by_product(db, ro.vendor_id)
+            if not unbilled:
+                continue
+            try:
+                vendor, city_name, label = _vendor_context(db, ro.vendor_id, require_active=False)
+            except HTTPException:
+                continue
+            total_qty = sum(unbilled.values())
+            out.append(
+                VendorOrderSummary(
+                    id=ro.id,
+                    vendor_id=ro.vendor_id,
+                    vendor_name=vendor.business_name,
+                    vendor_city=city_name,
+                    vendor_label=label,
+                    status="to_bill",
+                    bucket="open",
+                    is_open=True,
+                    placement_count=(
+                        db.query(VendorOrderPlacement)
+                        .filter(
+                            VendorOrderPlacement.vendor_order_id == ro.id,
+                            VendorOrderPlacement.status == "received",
+                        )
+                        .count()
+                    ),
+                    line_count=len(unbilled),
+                    total_quantity=int(total_qty),
+                    updated_at=ro.updated_at,
+                    open_kind="to_bill",
+                )
+            )
+        out.sort(key=lambda x: x.updated_at or datetime.min.replace(tzinfo=timezone.utc))
         return out
 
     if bucket == "closed":
         summaries: list[VendorOrderSummary] = []
         seen: set[int] = set()
+        today_closed = _vids_closed_today() if day_start is not None else None
         closed_lines = db.query(VendorOpenLine).filter(VendorOpenLine.status == "closed").all()
         by_vendor: dict[int, list] = defaultdict(list)
         for ln in closed_lines:
             by_vendor[ln.vendor_id].append(ln)
         for vendor_id, lines in by_vendor.items():
+            if today_closed is not None and vendor_id not in today_closed:
+                continue
             try:
                 vendor, city_name, label = _vendor_context(db, vendor_id, require_active=False)
             except HTTPException:
@@ -331,6 +496,11 @@ def list_vendor_orders(
                 .filter(VendorOrderPlacement.vendor_order_id == order.id, VendorOrderPlacement.closed_at.isnot(None))
                 .all()
             )
+            if day_start is not None:
+                closed_ps = [
+                    p for p in closed_ps
+                    if p.closed_at and day_start <= p.closed_at.astimezone(timezone.utc) < day_end
+                ]
             if not closed_ps:
                 continue
             closed_line_rows = (
@@ -372,15 +542,71 @@ def list_vendor_orders(
                     updated_at=latest,
                 )
             )
-        summaries.sort(key=lambda x: x.vendor_label.lower())
+        summaries.sort(key=lambda x: x.updated_at or datetime.min.replace(tzinfo=timezone.utc))
         return summaries
+
+    if bucket == "placed" and day_start is not None:
+        today_vids = _vids_with_placement_today(("placed",)) | _vids_open_created_today()
+        if not today_vids:
+            return []
+        orders = (
+            db.query(VendorOrder)
+            .filter(
+                VendorOrder.is_open.is_(True),
+                VendorOrder.bucket == "placed",
+                VendorOrder.vendor_id.in_(today_vids),
+            )
+            .order_by(VendorOrder.updated_at.asc())
+            .all()
+        )
+        summaries = [_summary_from_order(db, o) for o in orders]
+        if view == "open":
+            summaries = [s for s in summaries if s.total_quantity > 0]
+        return summaries
+
+    if bucket == "received" and day_start is not None:
+        today_vids = _vids_with_placement_today(("received",))
+        if not today_vids:
+            return []
+        orders = (
+            db.query(VendorOrder)
+            .filter(
+                VendorOrder.is_open.is_(True),
+                VendorOrder.bucket == "received",
+                VendorOrder.vendor_id.in_(today_vids),
+            )
+            .order_by(VendorOrder.updated_at.asc())
+            .all()
+        )
+        return [_summary_from_order(db, o) for o in orders]
+
+    if bucket == "billed" and day_start is not None:
+        today_vids = _vids_with_placement_today(("billed",))
+        if not today_vids:
+            return []
+        orders = (
+            db.query(VendorOrder)
+            .filter(
+                VendorOrder.is_open.is_(True),
+                VendorOrder.bucket == "billed",
+                VendorOrder.vendor_id.in_(today_vids),
+            )
+            .order_by(VendorOrder.updated_at.asc())
+            .all()
+        )
+        return [_summary_from_order(db, o) for o in orders]
 
     orders = (
         db.query(VendorOrder)
         .filter(VendorOrder.is_open.is_(True), VendorOrder.bucket == bucket)
-        .order_by(VendorOrder.updated_at.desc())
+        .order_by(VendorOrder.updated_at.asc())
         .all()
     )
+    if day_start is not None:
+        orders = [
+            o for o in orders
+            if o.updated_at and day_start <= o.updated_at.astimezone(timezone.utc) < day_end
+        ]
     summaries = [_summary_from_order(db, o) for o in orders]
     if bucket == "placed" and view == "open":
         summaries = [s for s in summaries if s.total_quantity > 0]
@@ -707,6 +933,9 @@ def create_placement(
     if missing:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"invalid catalog products for vendor: {missing}")
 
+    from app.services.biz_date import resolve_biz_dt
+
+    when = resolve_biz_dt(body.placed_on)
     order = get_or_create_open_order(db, body.vendor_id, "placed", "placed")
     placement = VendorOrderPlacement(
         vendor_order_id=order.id,
@@ -714,7 +943,7 @@ def create_placement(
         placed_by_type=auth.actor_type,
         placed_by_id=auth.actor_id,
         placed_by_name=auth.actor_name,
-        placed_at=datetime.now(timezone.utc),
+        placed_at=when,
     )
     db.add(placement)
     db.flush()
@@ -732,8 +961,8 @@ def create_placement(
             )
         )
 
-    order.updated_at = datetime.now(timezone.utc)
-    add_to_open(db, body.vendor_id, [(ln.catalog_product_id, ln.quantity) for ln in body.lines])
+    order.updated_at = when
+    add_to_open(db, body.vendor_id, [(ln.catalog_product_id, ln.quantity) for ln in body.lines], as_of=when)
     line_summary = ", ".join(f"{product_map[ln.catalog_product_id].our_product_id}×{ln.quantity}" for ln in body.lines)
     log_from_auth(
         db,
@@ -744,12 +973,7 @@ def create_placement(
         entity_label=label,
         detail=f"placement #{placement.id}: {line_summary}",
     )
-    if storage_configured():
-        try:
-            db.flush()
-            generate_vendor_placement_document(db, placement.id)
-        except Exception:
-            pass
+    # PDF on demand via GET .../document — sync gen here hung Place Save
     db.commit()
     db.refresh(order)
     return _build_detail(db, order)
@@ -1158,6 +1382,15 @@ def update_line(
 
     vendor, _, label = _vendor_context(db, order.vendor_id)
     changes: list[str] = []
+    before_snap = {
+        "line_id": line.id,
+        "catalog_product_id": line.catalog_product_id,
+        "our_product_id": line.our_product_id,
+        "quantity": line.quantity,
+        "placement_id": placement.id,
+    }
+    old_pid = line.catalog_product_id
+    old_qty = int(line.quantity or 0)
 
     if body.quantity is not None and body.quantity != line.quantity:
         changes.append(f"qty {line.quantity}→{body.quantity}")
@@ -1185,6 +1418,25 @@ def update_line(
     if not changes:
         return _build_detail(db, order)
 
+    # Keep Open pending in sync with placed line edits
+    new_pid = line.catalog_product_id
+    new_qty = int(line.quantity or 0)
+    if old_pid != new_pid:
+        if old_qty > 0:
+            reduce_from_open(db, order.vendor_id, [(old_pid, old_qty)])
+        if new_qty > 0:
+            add_to_open(db, order.vendor_id, [(new_pid, new_qty)])
+    elif new_qty != old_qty:
+        delta = new_qty - old_qty
+        if delta > 0:
+            add_to_open(db, order.vendor_id, [(new_pid, delta)])
+        elif delta < 0:
+            reduce_from_open(db, order.vendor_id, [(new_pid, -delta)])
+
+    from app.services.history import record_entity_history
+
+    summary = f"placed line #{line_id}: {', '.join(changes)}"
+    record_entity_history(db, "vendor_order_line", line.id, before_snap, summary)
     order.updated_at = datetime.now(timezone.utc)
     log_from_auth(
         db,
@@ -1193,7 +1445,7 @@ def update_line(
         entity_type="vendor_order",
         entity_id=order.id,
         entity_label=label,
-        detail=f"line #{line_id}: {', '.join(changes)}",
+        detail=summary,
     )
     db.commit()
     db.refresh(order)
@@ -1215,6 +1467,8 @@ def delete_line(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="order is closed")
     _, _, label = _vendor_context(db, order.vendor_id)
     detail = f"removed line #{line_id}: {line.our_product_id} x{line.quantity}"
+    if int(line.quantity or 0) > 0:
+        reduce_from_open(db, order.vendor_id, [(line.catalog_product_id, int(line.quantity))])
     db.delete(line)
     order.updated_at = datetime.now(timezone.utc)
     log_from_auth(db, auth, action="delete_line", entity_type="vendor_order", entity_id=order.id, entity_label=label, detail=detail)

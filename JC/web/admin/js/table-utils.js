@@ -57,7 +57,7 @@ const TableUtils = (() => {
     const filters = cols.map(c => {
       if (c.filterable === false) return `<th></th>`;
       const val = s.filters[c.key] || "";
-      return `<th><input class="col-filter" placeholder="Filter ${c.label.toLowerCase()}…" value="${escAttr(val)}" oninput="TableUtils.setFilter('${id}','${c.key}',this.value)" /></th>`;
+      return `<th><input class="col-filter" data-tu-id="${escAttr(id)}" data-tu-key="${escAttr(c.key)}" placeholder="Filter ${c.label.toLowerCase()}…" value="${escAttr(val)}" oninput="TableUtils.setFilter('${id}','${c.key}',this.value)" /></th>`;
     }).join("");
     return `<thead><tr>${labels}</tr><tr class="filter-row">${filters}</tr></thead>`;
   }
@@ -70,8 +70,20 @@ const TableUtils = (() => {
   }
 
   function setFilter(id, key, value) {
-    state(id).filters[key] = value;
-    if (state(id).rerender) state(id).rerender();
+    const s = state(id);
+    s.filters[key] = value;
+    const ae = document.activeElement;
+    const start = ae && ae.selectionStart != null ? ae.selectionStart : null;
+    const end = ae && ae.selectionEnd != null ? ae.selectionEnd : null;
+    if (s.rerender) s.rerender();
+    requestAnimationFrame(() => {
+      const el = document.querySelector(`input.col-filter[data-tu-id="${CSS.escape(id)}"][data-tu-key="${CSS.escape(key)}"]`);
+      if (!el) return;
+      el.focus();
+      if (start != null && end != null) {
+        try { el.setSelectionRange(start, end); } catch (_) { /* ignore */ }
+      }
+    });
   }
 
   function clearFilters(id) {

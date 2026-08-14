@@ -4,14 +4,32 @@ from decimal import Decimal
 from typing import List
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.deps import AuthContext, require_admin
 from app.models.vendor import Vendor
-from app.schemas.accounts_payable import ApLedgerEntryOut, ApSettlementIn, ApVendorDetail, ApVendorSummary
+from app.schemas.accounts_payable import (
+    ApLedgerEntryOut,
+    ApSettlementIn,
+    ApVendorDetail,
+    ApVendorSummary,
+    OpeningBalanceIn,
+)
 from app.services.activity import log_from_auth
-from app.services.ap_ledger import build_ap_ledger, build_ap_statement, list_ap_vendors, post_payment_entry, vendor_ap_totals, _vendor_label
+from app.services.ap_ledger import (
+    build_ap_ledger,
+    build_ap_statement,
+    get_opening_balance,
+    list_ap_vendors,
+    lock_ap_account,
+    post_payment_entry,
+    set_opening_balance,
+    vendor_ap_totals,
+    _vendor_label,
+)
+from app.services.payment_reverse import reverse_ap_payment
 from app.services.storage import payment_receipt_key, presigned_url, storage_configured, upload_bytes, vendor_folder_slug
 
 router = APIRouter(prefix="/accounts-payable", tags=["accounts-payable"])
@@ -35,17 +53,53 @@ def get_vendor_ap(
     if not vendor or vendor.deleted_at:
         raise HTTPException(404, "vendor not found")
     statement = build_ap_statement(db, vendor_id)
+    opening = get_opening_balance(db, vendor_id)
     return ApVendorDetail(
         vendor_id=vendor_id,
         vendor_label=_vendor_label(db, vendor_id),
         outstanding=statement["outstanding"],
+        opening_total=statement.get("opening_total", "0.00"),
+        opening_as_on=opening.value_date.isoformat() if opening and opening.value_date else None,
         bill_total=statement["bill_total"],
         debit_note_total=statement["debit_note_total"],
         payment_total=statement["payment_total"],
-        entries=[ApLedgerEntryOut(**e) for e in statement["entries"]],
+        entries=[ApLedgerEntryOut(**{k: v for k, v in e.items() if k in ApLedgerEntryOut.model_fields}) for e in statement["entries"]],
         bills=statement["bills"],
         payments=statement["payments"],
     )
+
+
+@router.post("/vendor/{vendor_id}/opening-balance")
+def set_vendor_opening_balance(
+    vendor_id: int,
+    body: OpeningBalanceIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    vendor = db.get(Vendor, vendor_id)
+    if not vendor or vendor.deleted_at:
+        raise HTTPException(404, "vendor not found")
+    set_opening_balance(
+        db,
+        vendor_id=vendor_id,
+        amount=body.amount,
+        as_on=body.as_on,
+        actor_type=auth.actor_type,
+        actor_id=auth.actor_id,
+        actor_name=auth.actor_name,
+    )
+    log_from_auth(
+        db, auth, action="opening_balance", entity_type="accounts_payable",
+        entity_id=vendor_id, entity_label=vendor.business_name,
+        detail=f"₹{body.amount} as on {body.as_on.isoformat()}",
+    )
+    db.commit()
+    totals = vendor_ap_totals(db, vendor_id)
+    return {"ok": True, "outstanding": format(totals["outstanding"], "f"), "opening_total": format(totals["opening_total"], "f")}
+
+
+class PaymentReverseIn(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=400)
 
 
 @router.post("/vendor/{vendor_id}/settle", response_model=ApLedgerEntryOut, status_code=status.HTTP_201_CREATED)
@@ -58,6 +112,7 @@ def settle_vendor_ap(
     vendor = db.get(Vendor, vendor_id)
     if not vendor or vendor.deleted_at:
         raise HTTPException(404, "vendor not found")
+    lock_ap_account(db, vendor_id)
     totals = vendor_ap_totals(db, vendor_id)
     outstanding = totals["outstanding"]
     if outstanding <= 0:
@@ -96,6 +151,76 @@ def settle_vendor_ap(
     return ApLedgerEntryOut(**match)
 
 
+def _ap_payment_out(db: Session, vendor_id: int, entry_id: int) -> ApLedgerEntryOut:
+    ledger = build_ap_ledger(db, vendor_id)
+    match = next((e for e in ledger if e["id"] == entry_id), None)
+    if not match:
+        raise HTTPException(500, "ledger entry missing")
+    return ApLedgerEntryOut(**match)
+
+
+@router.post("/payments/{entry_id}/reverse", response_model=ApLedgerEntryOut, status_code=status.HTTP_201_CREATED)
+def reverse_ap_payment_endpoint(
+    entry_id: int,
+    body: PaymentReverseIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    from app.models.accounts_payable import ApLedgerEntry
+
+    orig = db.get(ApLedgerEntry, entry_id)
+    if not orig or orig.entry_type != "payment":
+        raise HTTPException(404, "AP payment not found")
+    lock_ap_account(db, orig.vendor_id)
+    entry = reverse_ap_payment(
+        db,
+        entry_id=entry_id,
+        reason=body.reason,
+        actor_type=auth.actor_type,
+        actor_id=auth.actor_id,
+        actor_name=auth.actor_name,
+        void=False,
+    )
+    log_from_auth(
+        db, auth, action="ap_payment_reverse", entity_type="accounts_payable",
+        entity_id=orig.vendor_id, entity_label=_vendor_label(db, orig.vendor_id),
+        detail=f"reverse #{entry_id} — {body.reason}"[:500],
+    )
+    db.commit()
+    return _ap_payment_out(db, orig.vendor_id, entry.id)
+
+
+@router.post("/payments/{entry_id}/void", response_model=ApLedgerEntryOut, status_code=status.HTTP_201_CREATED)
+def void_ap_payment_endpoint(
+    entry_id: int,
+    body: PaymentReverseIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    from app.models.accounts_payable import ApLedgerEntry
+
+    orig = db.get(ApLedgerEntry, entry_id)
+    if not orig or orig.entry_type != "payment":
+        raise HTTPException(404, "AP payment not found")
+    lock_ap_account(db, orig.vendor_id)
+    entry = reverse_ap_payment(
+        db,
+        entry_id=entry_id,
+        reason=body.reason,
+        actor_type=auth.actor_type,
+        actor_id=auth.actor_id,
+        actor_name=auth.actor_name,
+        void=True,
+    )
+    log_from_auth(
+        db, auth, action="ap_payment_void", entity_type="accounts_payable",
+        entity_id=orig.vendor_id, entity_label=_vendor_label(db, orig.vendor_id),
+        detail=f"void #{entry_id} — {body.reason}"[:500],
+    )
+    db.commit()
+    return _ap_payment_out(db, orig.vendor_id, entry.id)
+
+
 @router.post("/upload-payment-receipt")
 async def upload_payment_receipt(
     vendor_id: int = Form(...),
@@ -107,7 +232,7 @@ async def upload_payment_receipt(
     if not storage_configured():
         raise HTTPException(503, "S3 not configured")
     vendor = db.get(Vendor, vendor_id)
-    if not vendor:
+    if not vendor or vendor.deleted_at:
         raise HTTPException(400, "vendor not found")
     data = await file.read()
     if not data:

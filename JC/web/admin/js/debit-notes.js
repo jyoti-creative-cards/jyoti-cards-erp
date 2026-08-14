@@ -372,7 +372,7 @@ const DebitNotes = (() => {
       }).join("");
       body.innerHTML = `
         <p class="dn-lead">Adjustments on this bill. Add another if needed.</p>
-        ${rows || `<div class="vo-wiz-empty"><p>No debit notes on this bill yet.</p></div>`}`;
+        ${rows || HubUI.emptyState({ title: "No debit notes yet", sub: "Add one if the bill needs adjusting." })}`;
       footer.innerHTML = `
         <button class="btn btn-secondary" onclick="DebitNotes.close()">Close</button>
         <button class="btn btn-primary" onclick="DebitNotes.addFromList()">+ Add Debit Note</button>`;

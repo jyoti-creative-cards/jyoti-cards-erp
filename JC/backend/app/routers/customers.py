@@ -24,7 +24,7 @@ from app.services.soft_delete import apply_is_active
 from app.services.activity import log_from_auth
 from app.services.ledger import build_customer_ledger
 from app.services.history import TRACKED_FIELDS, diff_summary, list_entity_history, record_entity_history, row_snapshot
-from app.services.passwords import hash_password
+from app.services.passwords import generate_portal_password, hash_password
 
 router = APIRouter(prefix="/customers", tags=["customers"])
 logger = logging.getLogger("jc.customers")
@@ -37,18 +37,15 @@ def _normalize_phone(raw: str) -> str:
     return digits
 
 
-def _to_public(row: Customer, db: Session, include_history: bool = False) -> CustomerPublic:
-    city_name = None
-    route_name = None
-    if row.city_id:
-        city = db.get(City, row.city_id)
-        city_name = city.name if city else None
-    if row.route_id:
-        route = db.get(Route, row.route_id)
-        route_name = route.name if route else None
-    history = []
-    if include_history:
-        history = [{"change_summary": h.change_summary, "valid_from": h.valid_from.isoformat(), "snapshot_json": h.snapshot_json} for h in list_entity_history(db, "customer", row.id)]
+def _row_to_public(
+    row: Customer,
+    *,
+    city_name: Optional[str],
+    route_name: Optional[str],
+    opening_amount=None,
+    opening_as_on=None,
+    history: Optional[list] = None,
+) -> CustomerPublic:
     return CustomerPublic(
         id=row.id,
         business_name=row.business_name,
@@ -57,6 +54,7 @@ def _to_public(row: Customer, db: Session, include_history: bool = False) -> Cus
         secondary_phone=row.secondary_phone,
         alias=row.alias,
         address=row.address,
+        additional_details=getattr(row, "additional_details", None),
         city_id=row.city_id,
         route_id=row.route_id,
         city_name=city_name,
@@ -65,11 +63,81 @@ def _to_public(row: Customer, db: Session, include_history: bool = False) -> Cus
         credit_override=row.credit_override,
         gst_number=row.gst_number,
         is_active=row.is_active,
+        opening_balance_due=format(opening_amount, "f") if opening_amount is not None else None,
+        opening_balance_as_on=opening_as_on.isoformat() if opening_as_on else None,
         created_at=row.created_at,
         updated_at=row.updated_at,
         deleted_at=row.deleted_at,
-        change_history=history,
+        change_history=history or [],
     )
+
+
+def _to_public(row: Customer, db: Session, include_history: bool = False) -> CustomerPublic:
+    return _to_public_many([row], db, include_history=include_history)[0]
+
+
+def _to_public_many(
+    rows: List[Customer],
+    db: Session,
+    *,
+    include_history: bool = False,
+) -> List[CustomerPublic]:
+    """Batch city/route/opening lookups — avoids N+1 on list endpoints."""
+    if not rows:
+        return []
+
+    city_ids = {r.city_id for r in rows if r.city_id}
+    route_ids = {r.route_id for r in rows if r.route_id}
+    cities = {
+        c.id: c.name
+        for c in (db.query(City).filter(City.id.in_(city_ids)).all() if city_ids else [])
+    }
+    routes = {
+        r.id: r.name
+        for r in (db.query(Route).filter(Route.id.in_(route_ids)).all() if route_ids else [])
+    }
+
+    from app.models.accounts_receivable import ArLedgerEntry
+
+    cust_ids = [r.id for r in rows]
+    openings: dict[int, ArLedgerEntry] = {}
+    if cust_ids:
+        for e in (
+            db.query(ArLedgerEntry)
+            .filter(
+                ArLedgerEntry.customer_id.in_(cust_ids),
+                ArLedgerEntry.entry_type == "opening_balance",
+            )
+            .all()
+        ):
+            prev = openings.get(e.customer_id)
+            if prev is None or e.id > prev.id:
+                openings[e.customer_id] = e
+
+    out: List[CustomerPublic] = []
+    for row in rows:
+        history = []
+        if include_history:
+            history = [
+                {
+                    "change_summary": h.change_summary,
+                    "valid_from": h.valid_from.isoformat(),
+                    "snapshot_json": h.snapshot_json,
+                }
+                for h in list_entity_history(db, "customer", row.id)
+            ]
+        opening = openings.get(row.id)
+        out.append(
+            _row_to_public(
+                row,
+                city_name=cities.get(row.city_id) if row.city_id else None,
+                route_name=routes.get(row.route_id) if row.route_id else None,
+                opening_amount=opening.amount if opening else None,
+                opening_as_on=opening.value_date if opening else None,
+                history=history,
+            )
+        )
+    return out
 
 
 def _send_whatsapp(name: str, phone: str, plain: str) -> tuple[bool, Optional[str]]:
@@ -114,15 +182,33 @@ def list_customers(
     if route_id is not None:
         q = q.filter(Customer.route_id == route_id)
     if search:
-        s = f"%{search.lower()}%"
-        q = q.filter(or_(
-            func.lower(Customer.business_name).like(s),
-            func.lower(Customer.person_name).like(s),
-            func.lower(Customer.phone).like(s),
-            func.lower(Customer.alias).like(s),
-        ))
+        from app.services.token_search import sort_parties_by_search, token_match
+
+        # Join city so tokens like "anjad" match city as well as name
+        q = q.outerjoin(City, Customer.city_id == City.id)
+        clause = token_match(
+            search,
+            [
+                Customer.business_name,
+                Customer.person_name,
+                Customer.phone,
+                Customer.alias,
+                Customer.address,
+                City.name,
+            ],
+        )
+        if clause is not None:
+            q = q.filter(clause)
+        rows = q.all()
+        city_ids = {r.city_id for r in rows if r.city_id}
+        city_lookup = {
+            c.id: c.name
+            for c in (db.query(City).filter(City.id.in_(city_ids)).all() if city_ids else [])
+        }
+        rows = sort_parties_by_search(rows, search, city_lookup=city_lookup)
+        return _to_public_many(rows, db)
     rows = q.order_by(Customer.id.desc()).all()
-    return [_to_public(r, db) for r in rows]
+    return _to_public_many(rows, db)
 
 
 @router.get("/{customer_id}", response_model=CustomerPublic, dependencies=[Depends(require_permission("customers.read"))])
@@ -156,7 +242,7 @@ def create_customer(body: CustomerCreate, db: Session = Depends(get_db), auth: A
     if existing is not None and existing.is_active and existing.deleted_at is None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="phone already registered")
 
-    plain = phone[-4:]
+    plain = generate_portal_password()
     route_id = _route_from_city(db, body.city_id)
     display_name = (body.person_name or "").strip() or body.business_name.strip()
 
@@ -168,6 +254,7 @@ def create_customer(body: CustomerCreate, db: Session = Depends(get_db), auth: A
         existing.secondary_phone = sec_norm
         existing.alias = (body.alias.strip() if body.alias else None)
         existing.address = (body.address.strip() if body.address else None)
+        existing.additional_details = (body.additional_details.strip() if body.additional_details else None)
         existing.city_id = body.city_id
         existing.route_id = route_id
         existing.credit_limit = Decimal(str(body.credit_limit)) if body.credit_limit is not None else None
@@ -182,11 +269,26 @@ def create_customer(body: CustomerCreate, db: Session = Depends(get_db), auth: A
             db.rollback()
             raise HTTPException(status.HTTP_409_CONFLICT, detail="phone already registered") from None
         db.refresh(existing)
+        if body.opening_balance_due and float(body.opening_balance_due) > 0:
+            from app.services.ar_ledger import set_opening_balance
+            from datetime import date as date_cls
+
+            set_opening_balance(
+                db,
+                customer_id=existing.id,
+                amount=Decimal(str(body.opening_balance_due)),
+                as_on=body.opening_balance_as_on or date_cls.today(),
+                actor_type=auth.actor_type,
+                actor_id=auth.actor_id,
+                actor_name=auth.actor_name,
+            )
         wa_ok, wa_err = _send_whatsapp(display_name, existing.phone, plain)
         log_from_auth(db, auth, action="create", entity_type="customer", entity_id=existing.id, entity_label=existing.business_name)
         db.commit()
         pub = _to_public(existing, db)
-        return CustomerCreateResponse(**pub.model_dump(), whatsapp_sent=wa_ok, whatsapp_error=wa_err)
+        return CustomerCreateResponse(
+            **pub.model_dump(), whatsapp_sent=wa_ok, whatsapp_error=wa_err, portal_password=plain
+        )
 
     row = Customer(
         business_name=body.business_name.strip(),
@@ -196,6 +298,7 @@ def create_customer(body: CustomerCreate, db: Session = Depends(get_db), auth: A
         secondary_phone=sec_norm,
         alias=(body.alias.strip() if body.alias else None),
         address=(body.address.strip() if body.address else None),
+        additional_details=(body.additional_details.strip() if body.additional_details else None),
         city_id=body.city_id,
         route_id=route_id,
         credit_limit=Decimal(str(body.credit_limit)) if body.credit_limit is not None else None,
@@ -210,11 +313,26 @@ def create_customer(body: CustomerCreate, db: Session = Depends(get_db), auth: A
         raise HTTPException(status.HTTP_409_CONFLICT, detail="phone already registered") from None
     db.refresh(row)
 
+    if body.opening_balance_due and float(body.opening_balance_due) > 0:
+        from app.services.ar_ledger import set_opening_balance
+        from datetime import date as date_cls
+
+        set_opening_balance(
+            db,
+            customer_id=row.id,
+            amount=Decimal(str(body.opening_balance_due)),
+            as_on=body.opening_balance_as_on or date_cls.today(),
+            actor_type=auth.actor_type,
+            actor_id=auth.actor_id,
+            actor_name=auth.actor_name,
+        )
     wa_ok, wa_err = _send_whatsapp(display_name, row.phone, plain)
     log_from_auth(db, auth, action="create", entity_type="customer", entity_id=row.id, entity_label=row.business_name)
     db.commit()
     pub = _to_public(row, db)
-    return CustomerCreateResponse(**pub.model_dump(), whatsapp_sent=wa_ok, whatsapp_error=wa_err)
+    return CustomerCreateResponse(
+        **pub.model_dump(), whatsapp_sent=wa_ok, whatsapp_error=wa_err, portal_password=plain
+    )
 
 
 @router.patch("/{customer_id}", response_model=CustomerPublic, dependencies=[Depends(require_permission("customers.write"))])
@@ -270,6 +388,28 @@ def update_customer(customer_id: int, body: CustomerUpdate, db: Session = Depend
         apply_is_active(row, data["is_active"])
         del data["is_active"]
 
+    # TEMP: opening balance editable on customer save
+    if "opening_balance_due" in data or "opening_balance_as_on" in data:
+        from datetime import date as date_cls
+        from app.services.ar_ledger import get_opening_balance, set_opening_balance
+
+        amt = data.pop("opening_balance_due", None)
+        as_on = data.pop("opening_balance_as_on", None)
+        if amt is None:
+            existing = get_opening_balance(db, customer_id)
+            amt = existing.amount if existing else 0
+        if as_on is None:
+            as_on = date_cls.today()
+        set_opening_balance(
+            db,
+            customer_id=customer_id,
+            amount=Decimal(str(amt or 0)),
+            as_on=as_on,
+            actor_type=auth.actor_type,
+            actor_id=auth.actor_id,
+            actor_name=auth.actor_name,
+        )
+
     after = row_snapshot(row, TRACKED_FIELDS["customer"])
     summary = diff_summary("customer", before, after)
     if summary != "updated":
@@ -287,6 +427,14 @@ def delete_customer(customer_id: int, db: Session = Depends(get_db), auth: AuthC
     row = db.get(Customer, customer_id)
     if not row or not row.is_active:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="customer not found")
+    from decimal import Decimal
+    from app.services.ar_ledger import customer_ar_totals
+    due = customer_ar_totals(db, customer_id)["outstanding"]
+    if due > Decimal("0.009"):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot delete — ₹{due} still to collect. Settle or write off first.",
+        )
     row.is_active = False
     row.deleted_at = datetime.now(timezone.utc)
     log_from_auth(db, auth, action="delete", entity_type="customer", entity_id=row.id, entity_label=row.business_name)
@@ -299,7 +447,7 @@ def reset_password(customer_id: int, db: Session = Depends(get_db)) -> dict:
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="customer not found")
 
-    plain = row.phone[-4:]
+    plain = generate_portal_password()
     row.password_hash = hash_password(plain)
     db.add(row)
     db.commit()
@@ -310,16 +458,26 @@ def reset_password(customer_id: int, db: Session = Depends(get_db)) -> dict:
         "ok": True,
         "whatsapp_sent": wa_ok,
         "whatsapp_error": wa_err,
+        "portal_password": plain,
         "message": "password reset" + (" and WhatsApp sent" if wa_ok else f" but WhatsApp failed: {wa_err}"),
     }
 
 
 @router.post("/{customer_id}/resend-whatsapp", dependencies=[Depends(require_permission("customers.write"))])
 def resend_whatsapp(customer_id: int, db: Session = Depends(get_db)) -> dict:
+    """New unique password + WhatsApp (cannot resend old plain password)."""
     row = db.get(Customer, customer_id)
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="customer not found")
-    plain = row.phone[-4:]
+    plain = generate_portal_password()
+    row.password_hash = hash_password(plain)
+    db.add(row)
+    db.commit()
     display_name = row.person_name or row.business_name
     wa_ok, wa_err = _send_whatsapp(display_name, row.phone, plain)
-    return {"ok": wa_ok, "whatsapp_sent": wa_ok, "whatsapp_error": wa_err}
+    return {
+        "ok": wa_ok,
+        "whatsapp_sent": wa_ok,
+        "whatsapp_error": wa_err,
+        "portal_password": plain,
+    }

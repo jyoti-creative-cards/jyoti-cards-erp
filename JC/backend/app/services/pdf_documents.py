@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import urllib.request
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from io import BytesIO
 from typing import Any, Dict, List, Optional
 from xml.sax.saxutils import escape
@@ -48,11 +48,8 @@ def _fetch_image(url: str, max_w: float, max_h: float) -> Optional[Image]:
 
 
 def _ist_fmt(dt: datetime | None) -> str:
-    ts = dt or datetime.now(timezone.utc)
-    if ts.tzinfo is None:
-        ts = ts.replace(tzinfo=timezone.utc)
-    ist = ts + timedelta(hours=5, minutes=30)
-    return ist.strftime("%d %b %Y, %I:%M %p")
+    from app.services.biz_date import format_ist
+    return format_ist(dt)
 
 
 def _code_pair(vendor_code: str | None, our_code: str | None) -> str:
@@ -320,7 +317,8 @@ def _items_table(
         for addon in ln.get("addons") or []:
             if not isinstance(addon, dict):
                 continue
-            aq = int(addon.get("quantity") or 1)
+            per = int(addon.get("quantity") or 1)
+            aq = per * max(qty, 1)
             atxt = f"  + {_safe(addon.get('name') or addon.get('our_product_id'), 40)} × {aq} {_safe(addon.get('unit') or 'pc', 8)} (included)"
             sub: list[Any] = ["", "", atxt, ""]
             if show_amounts:
@@ -518,6 +516,99 @@ def render_vendor_receipt_pdf(
     story.append(Spacer(1, 0.5 * cm))
     story.append(Paragraph("This is a goods receipt for vendor billing. Please retain for accounts and godown records.", ParagraphStyle(
         "foot", parent=getSampleStyleSheet()["Normal"], fontSize=8, alignment=TA_CENTER, textColor=colors.HexColor("#64748b"),
+    )))
+    doc.build(story)
+    return buf.getvalue()
+
+
+def render_customer_return_pdf(
+    *,
+    return_id: int,
+    return_number: str,
+    customer_name: str,
+    customer_phone: str | None = None,
+    customer_address: str | None = None,
+    customer_city: str | None = None,
+    lines: List[Dict[str, Any]],
+    image_urls: Dict[int, str | None],
+    calculated_amount: str,
+    credit_amount: str,
+    notes: str | None = None,
+    bill_numbers: List[str] | None = None,
+    created_by: str,
+    created_at: datetime | None = None,
+) -> bytes:
+    buf = BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=1.5 * cm, rightMargin=1.5 * cm, topMargin=1.5 * cm, bottomMargin=1.5 * cm)
+    story: list = []
+    bills_lbl = ", ".join(_safe(b, 40) for b in (bill_numbers or [])[:8]) or "—"
+    _header(
+        story,
+        "CREDIT NOTE / RETURN",
+        f"Return {_safe(return_number, 40)}",
+        f"#{return_id} · {_ist_fmt(created_at)} · By {escape(_safe(created_by, 40))}",
+    )
+    styles = getSampleStyleSheet()
+    info = [f"<b>Customer:</b> {escape(_safe(customer_name, 80))}"]
+    if customer_phone:
+        info.append(f"<b>Phone:</b> {escape(_safe(customer_phone, 20))}")
+    if customer_address:
+        info.append(f"<b>Address:</b> {escape(_safe(customer_address, 120))}")
+    if customer_city:
+        info.append(f"<b>City:</b> {escape(_safe(customer_city, 60))}")
+    info.append(f"<b>Against bills:</b> {escape(bills_lbl)}")
+    story.append(Paragraph("<br/>".join(info), ParagraphStyle("info", parent=styles["Normal"], fontSize=9, spaceAfter=12, leading=13)))
+
+    # Table with bill column
+    head = ["", "Code", "Bill", "Qty", "Sold (Rs.)", "Amount (Rs.)"]
+    col_widths = [1.4 * cm, 3.2 * cm, 3.2 * cm, 1.2 * cm, 2.4 * cm, 2.6 * cm]
+    data: list[list[Any]] = [head]
+    for ln in lines:
+        cid = int(ln.get("catalog_product_id") or 0)
+        img = _fetch_image(image_urls.get(cid) or "", 1.2 * cm, 1.2 * cm) or ""
+        data.append([
+            img,
+            _safe(ln.get("our_product_id"), 28),
+            _safe(ln.get("bill_number"), 28),
+            str(int(ln.get("quantity") or 0)),
+            _safe(ln.get("unit_price")),
+            _safe(ln.get("line_total")),
+        ])
+    if len(data) < 2:
+        data.append(["", "-", "—", "", "", ""])
+    table = Table(data, colWidths=col_widths, repeatRows=1)
+    style_cmds = [
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 8),
+        ("FONTSIZE", (0, 1), (-1, -1), 8),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f766e")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+        ("ALIGN", (3, 1), (3, -1), "CENTER"),
+        ("ALIGN", (4, 1), (-1, -1), "RIGHT"),
+        ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#cbd5e1")),
+    ]
+    for i in range(1, len(data)):
+        if i % 2 == 0:
+            style_cmds.append(("BACKGROUND", (0, i), (-1, i), colors.HexColor("#f0fdfa")))
+    table.setStyle(TableStyle(style_cmds))
+    story.append(table)
+    story.append(Spacer(1, 0.35 * cm))
+    story.append(_totals_block([
+        ["Calculated (qty × sold)", f"Rs. {_safe(calculated_amount)}"],
+        ["Credit amount (AR)", f"Rs. {_safe(credit_amount)}"],
+    ]))
+    if notes:
+        story.append(Spacer(1, 0.35 * cm))
+        story.append(Paragraph(f"<b>Notes:</b> {escape(_safe(notes, 500))}", ParagraphStyle(
+            "notes", parent=styles["Normal"], fontSize=9, textColor=colors.HexColor("#134e4a"),
+            backColor=colors.HexColor("#ccfbf1"), borderPadding=8, spaceAfter=8,
+        )))
+    story.append(Spacer(1, 0.5 * cm))
+    story.append(Paragraph("Goods restocked. This credit note reduces customer accounts receivable.", ParagraphStyle(
+        "foot", parent=styles["Normal"], fontSize=8, alignment=TA_CENTER, textColor=colors.HexColor("#64748b"),
     )))
     doc.build(story)
     return buf.getvalue()

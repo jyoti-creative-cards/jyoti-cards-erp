@@ -9,9 +9,15 @@ from app.config import get_settings
 
 def create_access_token(*, customer_id: int, phone: str) -> str:
     s = get_settings()
-    exp = int(time.time()) + s.jwt_expire_minutes * 60
+    minutes = getattr(s, "jwt_customer_expire_minutes", None) or s.jwt_expire_minutes
+    exp = int(time.time()) + int(minutes) * 60
     payload = {"sub": str(customer_id), "phone": phone, "exp": exp, "type": "customer"}
     return jwt.encode(payload, s.jwt_secret, algorithm=s.jwt_algorithm)
+
+
+def customer_token_ttl_minutes() -> int:
+    s = get_settings()
+    return int(getattr(s, "jwt_customer_expire_minutes", None) or s.jwt_expire_minutes)
 
 
 def create_staff_token(*, staff_id: int, phone: str) -> str:
@@ -27,6 +33,8 @@ def decode_access_token(token: str) -> dict:
 
 
 def token_customer_id(payload: dict) -> int:
+    if payload.get("type") != "customer":
+        raise JWTError("not a customer token")
     sub = payload.get("sub")
     if sub is None:
         raise JWTError("missing sub")

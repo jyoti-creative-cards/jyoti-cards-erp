@@ -27,6 +27,11 @@ def customer_bill_key(customer_slug: str, bill_number: str) -> str:
     return f"{_ROOT}/customer/{customer_slug}/bills/{safe}.pdf"
 
 
+def customer_return_key(customer_slug: str, return_id: int, return_number: str | None = None) -> str:
+    safe = re.sub(r"[^\w-]", "_", (return_number or f"return_{return_id}").strip())[:80]
+    return f"{_ROOT}/customer/{customer_slug}/returns/{safe}.pdf"
+
+
 def vendor_order_key(vendor_folder: str, placement_id: int) -> str:
     return f"{_ROOT}/vendor/{vendor_folder}/orders/placement_{placement_id}.pdf"
 
@@ -58,9 +63,23 @@ def payment_receipt_key(vendor_folder: str, payment_ref: str, ext: str = "pdf") 
     return f"JCC/vendor/{vendor_folder}/payments/{safe}.{ext.lstrip('.')}"
 
 
-def image_key(vendor_folder: str, our_product_id: str, index: int, ext: str = "jpg") -> str:
+def freight_payment_key(agent_folder: str, payment_ref: str, ext: str = "pdf") -> str:
+    safe = re.sub(r"[^\w-]", "_", (payment_ref or "payment").strip())[:80]
+    folder = re.sub(r"[^\w-]", "_", (agent_folder or "freight").strip())[:80]
+    return f"JCC/freight/{folder}/payments/{safe}.{ext.lstrip('.')}"
+
+
+def image_key(
+    vendor_folder: str,
+    our_product_id: str,
+    index: int,
+    ext: str = "jpg",
+    year_group: str | None = None,
+) -> str:
     safe_id = re.sub(r"[^\w-]", "_", our_product_id.strip())[:120]
-    return f"{_CATALOG_ROOT}/{vendor_folder}/{safe_id}_{index}.{ext.lstrip('.')}"
+    yg = re.sub(r"[^\w-]", "_", (year_group or "").strip())[:30]
+    suffix = f"_{yg}" if yg else ""
+    return f"{_CATALOG_ROOT}/{vendor_folder}/{safe_id}{suffix}_{index}.{ext.lstrip('.')}"
 
 
 _s3_client = None
@@ -103,6 +122,18 @@ def upload_bytes(key: str, data: bytes, content_type: str) -> None:
         raise RuntimeError("S3 not configured")
     s = get_settings()
     cli.put_object(Bucket=s.s3_bucket, Key=key, Body=data, ContentType=content_type or "application/octet-stream")
+
+
+def download_bytes(key: str) -> Optional[bytes]:
+    cli = _client()
+    if cli is None or not key:
+        return None
+    s = get_settings()
+    try:
+        obj = cli.get_object(Bucket=s.s3_bucket, Key=key)
+        return obj["Body"].read()
+    except Exception:
+        return None
 
 
 def delete_keys(keys: list[str]) -> None:
@@ -168,10 +199,10 @@ def update_image_keys_after_vendor_rename(keys: list[str], old_slug: str, new_sl
     return [k.replace(old_part, new_part, 1) if k.startswith(old_part) else k for k in keys]
 
 
-def list_objects(prefix: str, delimiter: str = "/") -> dict:
+def list_objects(prefix: str, delimiter: str = "/", *, with_folder_stats: bool = False) -> dict:
     cli = _client()
     if cli is None:
-        return {"prefixes": [], "objects": []}
+        return {"prefixes": [], "objects": [], "folder_stats": {}}
     s = get_settings()
     prefixes: list[str] = []
     objects: list[dict] = []
@@ -190,7 +221,49 @@ def list_objects(prefix: str, delimiter: str = "/") -> dict:
                     "last_modified": obj.get("LastModified").isoformat() if obj.get("LastModified") else None,
                 }
             )
-    return {"prefixes": prefixes, "objects": objects}
+    folder_stats: dict[str, dict] = {}
+    if with_folder_stats and prefixes:
+        folder_stats = _folder_stats_under(prefix, prefixes)
+    return {"prefixes": prefixes, "objects": objects, "folder_stats": folder_stats}
+
+
+def _folder_stats_under(parent_prefix: str, folder_prefixes: list[str]) -> dict[str, dict]:
+    """Aggregate size / latest modified / file count for each immediate child folder.
+
+    One recursive list under parent_prefix (no delimiter) — cheap enough for admin browse.
+    """
+    cli = _client()
+    if cli is None:
+        return {}
+    s = get_settings()
+    wanted = set(folder_prefixes)
+    out: dict[str, dict] = {
+        p: {"size": 0, "last_modified": None, "file_count": 0} for p in folder_prefixes
+    }
+    paginator = cli.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=s.s3_bucket, Prefix=parent_prefix):
+        for obj in page.get("Contents", []):
+            key = obj.get("Key", "")
+            if not key or key == parent_prefix or key.endswith("/"):
+                continue
+            if not key.startswith(parent_prefix):
+                continue
+            rel = key[len(parent_prefix) :]
+            if "/" not in rel:
+                continue
+            child = rel.split("/", 1)[0]
+            fp = f"{parent_prefix}{child}/"
+            if fp not in wanted:
+                continue
+            st = out[fp]
+            st["size"] += int(obj.get("Size") or 0)
+            st["file_count"] += 1
+            lm = obj.get("LastModified")
+            if lm is not None:
+                iso = lm.isoformat() if hasattr(lm, "isoformat") else str(lm)
+                if not st["last_modified"] or iso > st["last_modified"]:
+                    st["last_modified"] = iso
+    return out
 
 
 def copy_object(src_key: str, dest_key: str) -> None:

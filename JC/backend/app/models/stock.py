@@ -34,11 +34,16 @@ class StockReceipt(Base):
     billed_placement_id: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("jc_vendor_order_placements.id", ondelete="SET NULL"), nullable=True
     )
+    received_placement_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("jc_vendor_order_placements.id", ondelete="SET NULL"), nullable=True
+    )
     additional_charges: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 2), nullable=True)
     total_billed_amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 2), nullable=True)
     bill_number: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    order_receipt_number: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     bill_file_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     receipt_document_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     received_by_type: Mapped[str] = mapped_column(String(20), nullable=False)
     received_by_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     received_by_name: Mapped[str] = mapped_column(String(200), nullable=False)

@@ -27,6 +27,7 @@ const Vendors = (() => {
   }
 
   async function load() {
+    if (typeof App !== "undefined" && App.renderPeopleVendorSearch) App.renderPeopleVendorSearch();
     const q = document.getElementById("vendor-search-input")?.value.trim() || "";
     ctx.showLoading?.();
     try {
@@ -57,7 +58,14 @@ const Vendors = (() => {
     const el = document.getElementById("vendors-table");
     if (!el) return;
     if (!vendors.length) {
-      el.innerHTML = '<div class="empty-state"><p>No vendors yet.</p><button class="btn btn-primary btn-lg" style="margin-top:16px;" onclick="Vendors.openWizard()">+ Add First Vendor</button></div>';
+      const canAdd = !!ctx.canWrite?.("vendors");
+      el.innerHTML = (typeof HubUI !== "undefined" ? HubUI.emptyState : OrdersUI.emptyState)({
+        title: "No vendors yet",
+        sub: "Add suppliers you buy from.",
+        ctaHtml: canAdd
+          ? `<button class="btn btn-primary btn-lg" onclick="Vendors.openWizard()">+ Add First Vendor</button>`
+          : "",
+      });
       return;
     }
     const rows = TableUtils.apply(vendors, "vendors", VENDOR_COLS);
@@ -83,14 +91,17 @@ const Vendors = (() => {
     return prefix + Math.abs(n).toLocaleString("en-IN", { maximumFractionDigits: 2 });
   }
 
-  async function openDetail(id) {
+  async function openDetail(id, opts = {}) {
     currentVendorId = id;
     vendorLedgerExpanded = null;
     vendorAp = null;
+    // legacy tab names → activity
+    let tab = opts.tab || "activity";
+    if (tab === "orders" || tab === "money") tab = "activity";
     const v = await ctx.api(`/vendors/${id}`);
     vendorLedger = [];
-    ctx.openDetail("Vendor Profile", `
-      <div class="profile-hero" style="margin:-24px -24px 24px;border-radius:0;">
+    ctx.openDetail(v.business_name, `
+      <div class="profile-hero" style="margin:-24px -24px 16px;border-radius:0;">
         <h2>${ctx.esc(v.business_name)}</h2>
         <p>${ctx.esc(v.person_name || "No contact person")}</p>
         <div class="profile-meta">
@@ -99,27 +110,66 @@ const Vendors = (() => {
           <span class="badge badge-green">${ctx.esc(v.city_name || "—")}</span>
         </div>
       </div>
-      <div class="review-grid">
-        ${ctx.reviewRow("Secondary Phone", v.secondary_phone)}
-        ${ctx.reviewRow("GST Number", v.gst_number)}
-        ${ctx.reviewRow("Address", v.address)}
-        ${ctx.reviewRow("Created", ctx.fmtDate(v.created_at))}
-        ${ctx.reviewRow("Last Updated", ctx.fmtDate(v.updated_at))}
+      <div class="ord-mode-toggle" role="tablist" style="margin-bottom:16px;">
+        <button type="button" class="ord-mode-btn ${tab === "activity" ? "active" : ""}" onclick="Vendors.openDetail(${v.id},{tab:'activity'})">Activity</button>
+        <button type="button" class="ord-mode-btn ${tab === "profile" ? "active" : ""}" onclick="Vendors.openDetail(${v.id},{tab:'profile'})">Profile</button>
       </div>
-      <div id="vendor-ledger-wrap"><div class="detail-section"><h4>Ledger</h4><p style="color:var(--muted);font-size:13px;">Loading…</p></div></div>
-      ${ctx.isAdmin?.() ? `<div id="vendor-ap-wrap"><div class="detail-section"><h4>Accounts Payable</h4><p style="color:var(--muted);font-size:13px;">Loading…</p></div></div>` : ""}
-      ${ctx.changeHistoryTable ? ctx.changeHistoryTable(v.change_history) : ""}`,
+      ${tab === "activity" ? `
+        <div id="vendor-summary-wrap" class="person-summary"></div>
+        <div id="vendor-actions-wrap" class="person-actions"></div>
+        <div id="vendor-ledger-wrap"><p style="color:var(--muted);font-size:13px;">Loading activity…</p></div>
+      ` : ""}
+      ${tab === "profile" ? `
+        <div class="review-grid">
+          ${ctx.reviewRow("Secondary Phone", v.secondary_phone)}
+          ${ctx.reviewRow("GST Number", v.gst_number)}
+          ${ctx.reviewRow("Address", v.address)}
+          ${ctx.reviewRow("Created", ctx.fmtDate(v.created_at))}
+          ${ctx.reviewRow("Last Updated", ctx.fmtDate(v.updated_at))}
+        </div>
+        ${ctx.changeHistoryTable ? ctx.changeHistoryTable(v.change_history) : ""}
+      ` : ""}`,
       `${ctx.canWrite?.("vendors") ? `<button class="btn btn-danger btn-sm" onclick="Vendors.deleteVendor(${v.id})">Delete</button>
-       <button class="btn btn-secondary btn-sm" onclick="Vendors.openEdit(${v.id})">Edit</button>
-       <button class="btn btn-secondary btn-sm" onclick="Vendors.createOrder(${v.id})">Create Order</button>` : ""}
+       <button class="btn btn-secondary btn-sm" onclick="Vendors.openEdit(${v.id})">Edit</button>` : ""}
        <button class="btn btn-primary" style="flex:1;" onclick="App.closeDetail()">Close</button>`,
-      "md"
+      "lg"
     );
-    await refreshVendorLedger(id);
+    if (tab === "activity") await refreshVendorLedger(id);
+  }
+
+  function renderVendorActions(id) {
+    const el = document.getElementById("vendor-actions-wrap");
+    if (!el) return;
+    const canBuy = !!(ctx.canWrite?.("vendors") || ctx.canWrite?.("vendor_orders"));
+    const due = ctx.isAdmin?.() && vendorAp && Number(vendorAp.outstanding) > 0;
+    const bits = [];
+    // Everyday jobs stay visible — place first, or goods already here (offline).
+    if (canBuy) {
+      bits.push(`<button class="btn btn-primary btn-sm" onclick="Vendors.placeOrder(${id})">Order</button>`);
+      bits.push(`<button class="btn btn-secondary btn-sm" onclick="Vendors.stockIn(${id})">Stock in</button>`);
+      bits.push(`<button class="btn btn-secondary btn-sm" onclick="Vendors.openBuying(${id})">Orders</button>`);
+    }
+    if (due) {
+      bits.push(`<button class="btn btn-secondary btn-sm" onclick="Vendors.settlePayment(${id})">Pay</button>`);
+    }
+    const more = [];
+    if (canBuy) {
+      more.push(`<button type="button" onclick="Vendors.receiveGoods(${id})">Receive against order</button>`);
+    }
+    if (ctx.isAdmin?.()) {
+      if (!due) more.push(`<button type="button" onclick="Vendors.settlePayment(${id})">Pay</button>`);
+      more.push(`<button type="button" onclick="Vendors.openMoney(${id})">Money statement</button>`);
+      more.push(`<button type="button" onclick="Vendors.setOpeningBalance(${id})">Opening</button>`);
+    }
+    if (more.length) {
+      bits.push(`<details class="person-more"><summary>More</summary><div class="person-more-menu">${more.join("")}</div></details>`);
+    }
+    el.innerHTML = bits.join("") || "";
   }
 
   async function refreshVendorLedger(id) {
     const wrap = document.getElementById("vendor-ledger-wrap");
+    const sumWrap = document.getElementById("vendor-summary-wrap");
     try {
       const [ledgerRes, ap] = await Promise.all([
         ctx.api(`/vendors/${id}/ledger`, {}, 0),
@@ -127,29 +177,22 @@ const Vendors = (() => {
       ]);
       vendorLedger = ledgerRes.items || [];
       vendorAp = ap;
-      if (wrap) wrap.innerHTML = renderVendorStatement(id);
-      if (ctx.isAdmin?.() && ap) {
-        const apWrap = document.getElementById("vendor-ap-wrap");
-        if (apWrap) {
-          apWrap.innerHTML = `<div class="detail-section">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px;">
-              <h4 style="margin:0;">Accounts Payable</h4>
-              <div style="display:flex;gap:6px;flex-wrap:wrap;">
-                ${Number(ap.outstanding) > 0 ? `<button class="btn btn-primary btn-sm" onclick="Vendors.settlePayment(${id})">Settle Payment</button>` : ""}
-                <button class="btn btn-secondary btn-sm" onclick="Finance.showApFromVendor(${id})">Full AP →</button>
-              </div>
-            </div>
-            <div class="review-grid">
-              ${ctx.reviewRow("Outstanding", fmtMoney(ap.outstanding))}
-              ${ctx.reviewRow("Bills", fmtMoney(ap.bill_total))}
-              ${ctx.reviewRow("Debit notes", fmtMoney(ap.debit_note_total))}
-              ${ctx.reviewRow("Paid", fmtMoney(ap.payment_total))}
-            </div>
+      if (sumWrap) {
+        if (ap) {
+          sumWrap.innerHTML = `<div class="person-summary-grid">
+            <div><span class="person-summary-label">Due</span><strong>${fmtMoney(ap.outstanding)}</strong></div>
+            <div><span class="person-summary-label">Bills</span><strong>${fmtMoney(ap.bill_total)}</strong></div>
+            <div><span class="person-summary-label">Paid</span><strong>${fmtMoney(ap.payment_total)}</strong></div>
+            <div><span class="person-summary-label">Opening</span><strong>${fmtMoney(ap.opening_total || "0")}</strong></div>
           </div>`;
+        } else {
+          sumWrap.innerHTML = "";
         }
       }
+      renderVendorActions(id);
+      if (wrap) wrap.innerHTML = renderVendorStatement(id);
     } catch (e) {
-      if (wrap) wrap.innerHTML = `<div class="detail-section"><h4>Ledger</h4><p style="color:var(--danger);font-size:13px;">${ctx.esc(e.message)}</p></div>`;
+      if (wrap) wrap.innerHTML = `<p style="color:var(--danger);font-size:13px;">${ctx.esc(e.message)}</p>`;
     }
   }
 
@@ -166,12 +209,6 @@ const Vendors = (() => {
     }
 
     const sections = [];
-    sections.push(`<div class="vled-toolbar">
-      <button class="btn btn-secondary btn-sm" onclick="Vendors.createOrder(${vendorId})">+ Place order</button>
-      <button class="btn btn-secondary btn-sm" onclick="Stock.openOfflineForVendor(${vendorId})">Offline bill</button>
-      ${ctx.isAdmin?.() && vendorAp && Number(vendorAp.outstanding) > 0
-        ? `<button class="btn btn-primary btn-sm" onclick="Vendors.settlePayment(${vendorId})">Settle payment</button>` : ""}
-    </div>`);
 
     sections.push(renderLedgerGroup("Orders placed", orders, "order", (e) => {
       const d = e.details || {};
@@ -257,7 +294,12 @@ const Vendors = (() => {
           </div>
           <div class="vled-actions">
             ${d.payment_receipt_url ? `<a class="btn btn-secondary btn-sm" href="${ctx.esc(d.payment_receipt_url)}" target="_blank">Payment receipt</a>` : ""}
-            ${ctx.isAdmin?.() ? `<button class="btn btn-primary btn-sm" onclick="Vendors.settlePayment(${vendorId})">Settle again</button>` : ""}
+            ${ctx.isAdmin?.() ? `<button class="btn btn-primary btn-sm" onclick="Vendors.settlePayment(${vendorId})">Pay again</button>` : ""}
+            ${ctx.isAdmin?.() && d.ledger_entry_id && !d.reversed ? `
+              <button class="btn btn-secondary btn-sm" onclick="Finance.undoApPayment(${d.ledger_entry_id},'reverse',${vendorId})">Reverse</button>
+              <button class="btn btn-ghost btn-sm" onclick="Finance.undoApPayment(${d.ledger_entry_id},'void',${vendorId})">Void</button>
+            ` : ""}
+            ${d.reversed ? `<span class="badge badge-amber">Reversed</span>` : ""}
             <button class="btn btn-secondary btn-sm" onclick="Finance.showApFromVendor(${vendorId})">Open AP</button>
           </div>
         </div>` : ""}
@@ -265,9 +307,9 @@ const Vendors = (() => {
     }));
 
     if (!orders.length && !bills.length && !payments.length) {
-      return `<div class="detail-section"><h4>Ledger</h4><p style="color:var(--muted);font-size:13px;">No ledger entries yet.</p>${sections[0]}</div>`;
+      return `<div class="detail-section"><h4>Activity</h4><p style="color:var(--muted);font-size:13px;">Nothing yet. Place an order or receive goods.</p></div>`;
     }
-    return `<div class="detail-section"><h4>Ledger</h4><p class="vled-hint">Bill-wise statement — expand a row for details</p>${sections.join("")}</div>`;
+    return `<div class="detail-section"><h4>Activity</h4>${sections.join("")}</div>`;
   }
 
   function renderLedgerGroup(title, items, _key, rowFn) {
@@ -288,7 +330,7 @@ const Vendors = (() => {
     if (!d.vendor_order_id) return ctx.toast?.("Order link missing", "error");
     const bucket = d.bucket === "cancelled" ? "cancelled" : d.bucket === "placed" ? "placed" : "billed";
     ctx.closeDetail?.();
-    ctx.showView?.("orders");
+    ctx.showView?.("buying");
     VendorOrders.openDetail(d.vendor_order_id, bucket, d.vendor_id || currentVendorId || undefined);
   }
 
@@ -304,8 +346,46 @@ const Vendors = (() => {
 
   function settlePayment(vendorId) {
     if (typeof Finance === "undefined") return;
-    Finance.showApFromVendor(vendorId);
-    setTimeout(() => Finance.openSettle?.(), 400);
+    if (!ctx.isAdmin?.()) return ctx.toast?.("Finance is admin only", "error");
+    App.closeDetail();
+    App.showView("money");
+    Finance.openVendorAp?.(vendorId, { settle: true });
+  }
+
+  async function setOpeningBalance(vendorId) {
+    if (!ctx.isAdmin?.()) return ctx.toast?.("Admin only", "error");
+    const ap = vendorAp;
+    const today = new Date().toISOString().slice(0, 10);
+    ctx.openDetail("Opening", `
+      <p style="color:var(--muted);font-size:13px;margin:0 0 16px;">Tally start you owed this vendor. Use 0 to clear. Not Due (Due = opening + bills − paid).</p>
+      <label class="label">Opening (₹)</label>
+      <input type="number" step="0.01" min="0" class="input" id="vob-amt" value="${ctx.esc(ap?.opening_total || "0")}" style="margin-bottom:12px;" />
+      <label class="label">As on date</label>
+      <input type="date" class="input" id="vob-as-on" value="${ctx.esc(ap?.opening_as_on || today)}" />
+    `, `
+      <button class="btn btn-secondary" onclick="App.closeDetail();Vendors.openDetail(${vendorId},{tab:'activity'})">Cancel</button>
+      <button class="btn btn-primary" style="flex:1;" onclick="Vendors.saveOpeningBalance(${vendorId})">Save</button>
+    `, "sm");
+  }
+
+  async function saveOpeningBalance(vendorId) {
+    if (!ctx.isAdmin?.()) return;
+    const amount = parseFloat(document.getElementById("vob-amt")?.value || "0");
+    const asOn = (document.getElementById("vob-as-on")?.value || "").trim();
+    if (!Number.isFinite(amount) || amount < 0) return ctx.toast("Enter a valid amount", "error");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(asOn)) return ctx.toast("Pick a valid date", "error");
+    ctx.showLoading?.();
+    try {
+      await ctx.api(`/accounts-payable/vendor/${vendorId}/opening-balance`, {
+        method: "POST",
+        body: JSON.stringify({ amount, as_on: asOn }),
+      });
+      ctx.invalidateCache?.("/vendors");
+      ctx.invalidateCache?.("/accounts-payable");
+      ctx.toast("Opening saved", "success");
+      await openDetail(vendorId, { tab: "activity" });
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
   }
 
   function openDebitNote(noteId) {
@@ -325,12 +405,44 @@ const Vendors = (() => {
     }
   }
 
-  function openWizard() {
+  function cityOptionLabel(c) {
+    const route = c.route_name ? ` (${c.route_name})` : "";
+    return `${c.name || "City"}${route}`;
+  }
+
+  function cityRouteHint(cityId) {
     const cities = ctx.getCities();
-    if (!cities.length) {
-      ctx.toast("Add cities in Setup first", "error");
-      return;
-    }
+    const city = cities.find(c => c.id == cityId);
+    if (!city) return `<p class="people-field-hint">City is for this supplier’s location. Routes are for customer delivery.</p>`;
+    return `<p class="people-field-hint">Location: <strong>${ctx.esc(city.name)}</strong>${
+      city.route_name ? ` · route area <strong>${ctx.esc(city.route_name)}</strong>` : ""
+    }. Routes are for customer delivery.</p>`;
+  }
+
+  function normalizePhone(raw) {
+    return String(raw || "").replace(/\D/g, "");
+  }
+
+  function normalizeGst(raw) {
+    return String(raw || "").replace(/\s+/g, "").toUpperCase();
+  }
+
+  function validateGst(raw) {
+    const gst = normalizeGst(raw);
+    if (!gst) return { ok: true, value: null };
+    const re = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+    if (!re.test(gst)) return { ok: false, value: gst };
+    return { ok: true, value: gst };
+  }
+
+  function validateSecondaryPhone(raw) {
+    const p = normalizePhone(raw);
+    if (!p) return { ok: true, value: null };
+    if (p.length !== 10) return { ok: false, value: p };
+    return { ok: true, value: p };
+  }
+
+  function openWizard() {
     wizardStep = 1;
     wizardForm = {};
     document.getElementById("vendor-wizard").classList.remove("hidden");
@@ -343,53 +455,61 @@ const Vendors = (() => {
 
   function renderWizard() {
     const cities = ctx.getCities();
-    document.getElementById("vendor-wizard-steps").innerHTML = ["Business Info", "Review & Create"].map((label, i) => {
-      const n = i + 1;
-      const cls = n < wizardStep ? "done" : n === wizardStep ? "active" : "";
-      return `<div class="step ${cls}"><div class="step-num">${n < wizardStep ? "✓" : n}</div>${label}</div>`;
-    }).join("");
+    const stepsEl = document.getElementById("vendor-wizard-steps");
+    if (stepsEl) { stepsEl.innerHTML = ""; stepsEl.classList.add("hidden"); }
 
     const body = document.getElementById("vendor-wizard-body");
     const footer = document.getElementById("vendor-wizard-footer");
+    const today = new Date().toISOString().slice(0, 10);
 
     if (wizardStep === 1) {
-      body.innerHTML = `<div style="display:grid;gap:16px;">
-        <div><label class="label">Business Name *</label><input id="vw-business_name" class="input" value="${ctx.esc(wizardForm.business_name)}" placeholder="e.g. ABC Supplies" /></div>
-        <div><label class="label">Primary Phone *</label><input id="vw-phone" class="input" type="tel" maxlength="10" value="${ctx.esc(wizardForm.phone)}" placeholder="10-digit mobile" /></div>
-        <div><label class="label">City *</label>
-          <select id="vw-city_id" class="input"><option value="">— Select city —</option>
-            ${cities.map(c => `<option value="${c.id}" ${wizardForm.city_id == c.id ? "selected" : ""}>${ctx.esc(c.name)}</option>`).join("")}
-          </select></div>
-        <div><label class="label">Person Name</label><input id="vw-person_name" class="input" value="${ctx.esc(wizardForm.person_name)}" placeholder="Optional" /></div>
-        <div><label class="label">Secondary Phone</label><input id="vw-secondary_phone" class="input" type="tel" maxlength="10" value="${ctx.esc(wizardForm.secondary_phone)}" /></div>
-        <div><label class="label">Alias</label><input id="vw-alias" class="input" value="${ctx.esc(wizardForm.alias)}" placeholder="Short search name" /></div>
-        <div><label class="label">GST Number</label><input id="vw-gst_number" class="input" value="${ctx.esc(wizardForm.gst_number)}" /></div>
-        <div><label class="label">Address</label><textarea id="vw-address" class="input" rows="2">${ctx.esc(wizardForm.address)}</textarea></div>
+      body.innerHTML = `<div class="create-form">
+        <div><label class="label">Business name *</label><input id="vw-business_name" class="input" value="${ctx.esc(wizardForm.business_name || "")}" autofocus /></div>
+        <div><label class="label">Phone *</label><input id="vw-phone" class="input" type="tel" maxlength="10" value="${ctx.esc(wizardForm.phone || "")}" /></div>
+        <div class="create-field-row">
+          <div><label class="label">Opening (₹)</label><input id="vw-opening_due" class="input" type="number" min="0" step="0.01" value="${ctx.esc(wizardForm.opening_balance_due || "")}" /></div>
+          <div><label class="label">As on</label><input id="vw-opening_as_on" class="input" type="date" value="${ctx.esc(wizardForm.opening_balance_as_on || today)}" /></div>
+        </div>
+        <details class="create-details">
+          <summary>More</summary>
+          <div class="create-details-body">
+            <div><label class="label">Person</label><input id="vw-person_name" class="input" value="${ctx.esc(wizardForm.person_name || "")}" /></div>
+            <div class="create-field-row">
+              <div><label class="label">Secondary phone</label><input id="vw-secondary_phone" class="input" type="tel" maxlength="10" value="${ctx.esc(wizardForm.secondary_phone || "")}" /></div>
+              <div><label class="label">Alias</label><input id="vw-alias" class="input" value="${ctx.esc(wizardForm.alias || "")}" /></div>
+            </div>
+            <div><label class="label">City</label>
+              <select id="vw-city_id" class="input">
+                <option value="">— Optional —</option>
+                ${cities.map(c => `<option value="${c.id}" ${wizardForm.city_id == c.id ? "selected" : ""}>${ctx.esc(cityOptionLabel(c))}</option>`).join("")}
+              </select>
+            </div>
+            <div><label class="label">GST</label><input id="vw-gst_number" class="input" value="${ctx.esc(wizardForm.gst_number || "")}" maxlength="15" style="text-transform:uppercase;" /></div>
+            <div><label class="label">Address</label><textarea id="vw-address" class="input" rows="2">${ctx.esc(wizardForm.address || "")}</textarea></div>
+          </div>
+        </details>
       </div>`;
       footer.innerHTML = `<button class="btn btn-secondary" onclick="Vendors.closeWizard()">Cancel</button>
-        <button class="btn btn-primary" style="flex:1;" onclick="Vendors.wizardNext()">Review →</button>`;
-    } else if (wizardStep === 2) {
-      const city = cities.find(c => c.id == wizardForm.city_id);
-      body.innerHTML = `<div class="review-grid">
-        ${ctx.reviewRow("Business", wizardForm.business_name)}
-        ${ctx.reviewRow("Phone", wizardForm.phone)}
-        ${ctx.reviewRow("City", city?.name)}
-        ${ctx.reviewRow("Person", wizardForm.person_name)}
-        ${ctx.reviewRow("Secondary", wizardForm.secondary_phone)}
-        ${ctx.reviewRow("Alias", wizardForm.alias)}
-        ${ctx.reviewRow("GST", wizardForm.gst_number)}
-        ${ctx.reviewRow("Address", wizardForm.address)}
+        <button class="btn btn-primary" style="flex:1;" id="vendor-create-btn" onclick="Vendors.create()">Create</button>`;
+    } else {
+      const id = wizardForm._result?.id;
+      body.innerHTML = `<div style="text-align:center;padding:20px 0 8px;">
+        <div class="success-icon">✓</div><h3 style="margin:0 0 8px;">Vendor created</h3>
+        <p style="color:var(--muted);margin:0;">${ctx.esc(wizardForm._result?.business_name || "")}</p>
       </div>`;
-      footer.innerHTML = `<button class="btn btn-secondary" onclick="Vendors.wizardBack()">← Back</button>
-        <button class="btn btn-primary" style="flex:1;" id="vendor-create-btn" onclick="Vendors.create()">Create Vendor</button>`;
-    } else if (wizardStep === 3) {
-      body.innerHTML = `<div style="text-align:center;padding:24px 0;">
-        <div class="success-icon">✓</div><h3 style="margin:0 0 8px;">Vendor Created!</h3>
-        <p style="color:var(--muted);">${ctx.esc(wizardForm._result?.business_name)}</p>
-      </div>`;
-      footer.innerHTML = `<button class="btn btn-secondary" onclick="Vendors.openWizard()">+ Another</button>
-        <button class="btn btn-primary" style="flex:1;" onclick="Vendors.closeWizard()">Done</button>`;
+      footer.innerHTML = `
+        <button class="btn btn-secondary" onclick="Vendors.openWizard()">+ Another</button>
+        ${id ? `<button class="btn btn-secondary" onclick="Vendors.finishOpen(${id})">Open</button>
+        <button class="btn btn-secondary" onclick="Vendors.finishAddProducts(${id})">Add products</button>
+        <button class="btn btn-primary" style="flex:1;" onclick="Vendors.finishPlaceOrder(${id})">Place order →</button>`
+          : `<button class="btn btn-primary" style="flex:1;" onclick="Vendors.closeWizard()">Done</button>`}`;
     }
+  }
+
+  function onWizardCityChange(val) {
+    wizardForm.city_id = parseCityId(val);
+    const hint = document.getElementById("vw-city-hint");
+    if (hint) hint.innerHTML = cityRouteHint(wizardForm.city_id);
   }
 
   function collectWizard() {
@@ -399,50 +519,91 @@ const Vendors = (() => {
     });
     const cityEl = document.getElementById("vw-city_id");
     if (cityEl) wizardForm.city_id = parseCityId(cityEl.value);
+    const od = document.getElementById("vw-opening_due");
+    if (od) wizardForm.opening_balance_due = od.value.trim();
+    const oa = document.getElementById("vw-opening_as_on");
+    if (oa) wizardForm.opening_balance_as_on = oa.value;
   }
 
-  function wizardBack() { collectWizard(); wizardStep = 1; renderWizard(); }
-
-  function wizardNext() {
+  function wizardBack() {
     collectWizard();
-    if (!wizardForm.business_name) return ctx.toast("Business name required", "error");
-    const phone = (wizardForm.phone || "").replace(/\D/g, "");
-    if (phone.length !== 10) return ctx.toast("Phone must be 10 digits", "error");
-    wizardForm.phone = phone;
-    if (!wizardForm.city_id) return ctx.toast("Please select a city", "error");
-    wizardStep = 2;
+    wizardStep = 1;
     renderWizard();
   }
 
+  function wizardNext() {
+    create();
+  }
+
   async function create() {
+    collectWizard();
+    if (!wizardForm.business_name) return ctx.toast("Business name required", "error");
+    const phone = normalizePhone(wizardForm.phone);
+    if (phone.length !== 10) return ctx.toast("Phone must be 10 digits", "error");
+    wizardForm.phone = phone;
     const cityId = parseCityId(wizardForm.city_id);
-    if (!wizardForm.business_name || !wizardForm.phone) return ctx.toast("Go back and fill required fields", "error");
-    if (!cityId) return ctx.toast("Please select a city", "error");
+    const sec = validateSecondaryPhone(wizardForm.secondary_phone);
+    if (!sec.ok) return ctx.toast("Secondary phone must be 10 digits or blank", "error");
+    const gst = validateGst(wizardForm.gst_number);
+    if (!gst.ok) return ctx.toast("GST looks invalid — use 15-char GSTIN or leave blank", "error");
     const btn = document.getElementById("vendor-create-btn");
     if (btn) btn.disabled = true;
     try {
+      const openingDue = wizardForm.opening_balance_due ? parseFloat(wizardForm.opening_balance_due) : 0;
       const result = await ctx.api("/vendors", { method: "POST", body: JSON.stringify({
         business_name: wizardForm.business_name,
         phone: wizardForm.phone,
-        city_id: cityId,
+        city_id: cityId || null,
         person_name: wizardForm.person_name || null,
-        secondary_phone: wizardForm.secondary_phone || null,
+        secondary_phone: sec.value,
         alias: wizardForm.alias || null,
-        gst_number: wizardForm.gst_number || null,
+        gst_number: gst.value,
         address: wizardForm.address || null,
+        opening_balance_due: openingDue > 0 ? openingDue : null,
+        opening_balance_as_on: openingDue > 0 ? (wizardForm.opening_balance_as_on || null) : null,
       })});
       wizardForm._result = result;
-      wizardStep = 3;
+      wizardStep = 2;
       renderWizard();
-      await load();
       ctx.invalidateCache?.("/vendors");
       ctx.invalidateCache?.("/stats");
-      if (ctx.refreshStats) await ctx.refreshStats();
+      ctx.invalidateCache?.("/catalog/vendors");
+      // Soft refresh list — do not block UI on full refreshAll (spinner stuck).
+      try {
+        vendors = await ctx.api("/vendors", {}, 0);
+        if (ctx.setVendors) ctx.setVendors(vendors);
+        renderTable();
+      } catch (_) {}
       ctx.toast("Vendor created", "success");
     } catch (e) {
       ctx.toast(e.message, "error");
+    } finally {
       if (btn) btn.disabled = false;
+      ctx.hideLoading?.();
     }
+  }
+
+  function finishOpen(id) {
+    closeWizard();
+    openDetail(id);
+  }
+
+  function finishPlaceOrder(id) {
+    closeWizard();
+    // Force fresh vendor list so the new vendor is visible in the order wizard.
+    ctx.invalidateCache?.("/vendors");
+    if (typeof VendorOrders !== "undefined" && VendorOrders.primeVendors) {
+      VendorOrders.primeVendors(null);
+    }
+    placeOrder(id);
+  }
+
+  function finishAddProducts(id) {
+    closeWizard();
+    App.showView("products");
+    if (typeof Products !== "undefined" && Products.setMainTab) Products.setMainTab("catalog");
+    if (typeof Catalog !== "undefined" && Catalog.openWizardForVendor) Catalog.openWizardForVendor(id);
+    else if (typeof Catalog !== "undefined") Catalog.openWizard();
   }
 
   async function openEdit(id) {
@@ -452,21 +613,28 @@ const Vendors = (() => {
     document.getElementById("vendor-edit-body").innerHTML = `
       <div style="display:grid;gap:16px;">
         <div><label class="label">Business Name *</label><input id="ve-business_name" class="input" value="${ctx.esc(v.business_name)}" /></div>
-        <div><label class="label">Primary Phone *</label><input id="ve-phone" class="input" value="${ctx.esc(v.phone)}" /></div>
-        <div><label class="label">City *</label>
-          <select id="ve-city_id" class="input"><option value="">— Select city —</option>
-            ${cities.map(c => `<option value="${c.id}" ${v.city_id == c.id ? "selected" : ""}>${ctx.esc(c.name)}</option>`).join("")}
-          </select></div>
-        <div><label class="label">Person Name</label><input id="ve-person_name" class="input" value="${ctx.esc(v.person_name || "")}" /></div>
-        <div><label class="label">Secondary Phone</label><input id="ve-secondary_phone" class="input" value="${ctx.esc(v.secondary_phone || "")}" /></div>
-        <div><label class="label">Alias</label><input id="ve-alias" class="input" value="${ctx.esc(v.alias || "")}" /></div>
-        <div><label class="label">GST</label><input id="ve-gst_number" class="input" value="${ctx.esc(v.gst_number || "")}" /></div>
+        <div><label class="label">Primary Phone *</label><input id="ve-phone" class="input" type="tel" maxlength="10" value="${ctx.esc(v.phone)}" /></div>
+        <div><label class="label">City</label>
+          <select id="ve-city_id" class="input" onchange="Vendors.onEditCityChange(this.value)">
+            <option value="">— Optional —</option>
+            ${cities.map(c => `<option value="${c.id}" ${v.city_id == c.id ? "selected" : ""}>${ctx.esc(cityOptionLabel(c))}</option>`).join("")}
+          </select>
+        </div>
+        <div><label class="label">Contact person</label><input id="ve-person_name" class="input" value="${ctx.esc(v.person_name || "")}" /></div>
+        <div><label class="label">Secondary Phone</label><input id="ve-secondary_phone" class="input" type="tel" maxlength="10" value="${ctx.esc(v.secondary_phone || "")}" placeholder="10 digits or blank" /></div>
+        <div><label class="label">Alias / search name</label><input id="ve-alias" class="input" value="${ctx.esc(v.alias || "")}" /></div>
+        <div><label class="label">GST Number</label><input id="ve-gst_number" class="input" value="${ctx.esc(v.gst_number || "")}" placeholder="22AAAAA0000A1Z5" maxlength="15" style="text-transform:uppercase;" /></div>
         <div><label class="label">Address</label><textarea id="ve-address" class="input" rows="2">${ctx.esc(v.address || "")}</textarea></div>
       </div>`;
     document.getElementById("vendor-edit-footer").innerHTML = `
       <button class="btn btn-secondary" onclick="Vendors.closeEdit()">Cancel</button>
       <button class="btn btn-primary" style="flex:1;" onclick="Vendors.save()">Save Changes</button>`;
     document.getElementById("vendor-edit-modal").classList.remove("hidden");
+  }
+
+  function onEditCityChange(val) {
+    const hint = document.getElementById("ve-city-hint");
+    if (hint) hint.innerHTML = cityRouteHint(parseCityId(val));
   }
 
   function closeEdit() {
@@ -476,17 +644,24 @@ const Vendors = (() => {
 
   async function save() {
     if (!editingId) return;
+    const business = document.getElementById("ve-business_name").value.trim();
+    const phone = normalizePhone(document.getElementById("ve-phone").value);
     const cityId = parseCityId(document.getElementById("ve-city_id").value);
-    if (!cityId) return ctx.toast("Please select a city", "error");
+    if (!business) return ctx.toast("Business name required", "error");
+    if (phone.length !== 10) return ctx.toast("Phone must be 10 digits", "error");
+    const sec = validateSecondaryPhone(document.getElementById("ve-secondary_phone").value);
+    if (!sec.ok) return ctx.toast("Secondary phone must be 10 digits or blank", "error");
+    const gst = validateGst(document.getElementById("ve-gst_number").value);
+    if (!gst.ok) return ctx.toast("GST looks invalid — use 15-char GSTIN or leave blank", "error");
     try {
       await ctx.api(`/vendors/${editingId}`, { method: "PATCH", body: JSON.stringify({
-        business_name: document.getElementById("ve-business_name").value.trim(),
-        phone: document.getElementById("ve-phone").value.trim(),
-        city_id: cityId,
+        business_name: business,
+        phone,
+        city_id: cityId || null,
         person_name: document.getElementById("ve-person_name").value.trim() || null,
-        secondary_phone: document.getElementById("ve-secondary_phone").value.trim() || null,
+        secondary_phone: sec.value,
         alias: document.getElementById("ve-alias").value.trim() || null,
-        gst_number: document.getElementById("ve-gst_number").value.trim() || null,
+        gst_number: gst.value,
         address: document.getElementById("ve-address").value.trim() || null,
       })});
       const id = editingId;
@@ -511,16 +686,51 @@ const Vendors = (() => {
     } catch (e) { ctx.toast(e.message, "error"); }
   }
 
+  /** Place order first (then receive later). */
+  function placeOrder(vendorId) {
+    App.closeDetail();
+    App.showView("buying");
+    VendorOrders.openWizard?.(vendorId);
+  }
+
+  /** Goods already here — offline receive for this vendor. */
+  function stockIn(vendorId) {
+    App.closeDetail();
+    Stock.openOfflineForVendor(vendorId);
+  }
+
+  /** Legacy: create menu with both paths. */
   function createOrder(vendorId) {
     App.closeDetail();
-    App.showView("orders");
-    App.setOrdersType("vendor");
+    App.showView("buying");
     VendorOrders.showCreateMenuFromVendor(vendorId);
+  }
+
+  function receiveGoods(vendorId) {
+    App.closeDetail();
+    Stock.openReceiveForVendor(vendorId);
+  }
+
+  function openMoney(vendorId) {
+    App.closeDetail();
+    App.showView("money");
+    Finance.openVendorAp?.(vendorId);
+  }
+
+  /** Open this vendor’s order screen (past stages). */
+  function openBuying(vendorId) {
+    App.closeDetail();
+    App.showView("buying");
+    VendorOrders.setBucket?.("placed");
+    VendorOrders.openDetail(0, "placed", vendorId).then?.(() => App.updateGlobalBack?.());
+    App.updateGlobalBack?.();
   }
 
   return {
     init, load, reload, openDetail, openLedgerEntry, openDebitNote,
-    toggleLedgerRow, openOrderFromLedger, openBillDebitNotes, settlePayment,
-    openWizard, closeWizard, wizardBack, wizardNext, create, openEdit, closeEdit, save, deleteVendor, createOrder,
+    toggleLedgerRow, openOrderFromLedger, openBillDebitNotes, settlePayment, setOpeningBalance, saveOpeningBalance,
+    openWizard, closeWizard, wizardBack, wizardNext, create, openEdit, closeEdit, save, deleteVendor,
+    placeOrder, stockIn, createOrder, receiveGoods, openMoney, openBuying,
+    onWizardCityChange, onEditCityChange, finishOpen, finishPlaceOrder, finishAddProducts,
   };
 })();

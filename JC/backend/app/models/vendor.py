@@ -19,7 +19,7 @@ class Vendor(Base):
     secondary_phone: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     alias: Mapped[Optional[str]] = mapped_column(String(200), nullable=True, index=True)
     address: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    city_id: Mapped[int] = mapped_column(Integer, ForeignKey("jc_cities.id", ondelete="RESTRICT"), nullable=False, index=True)
+    city_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("jc_cities.id", ondelete="RESTRICT"), nullable=True, index=True)
     gst_number: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=sql_true())
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

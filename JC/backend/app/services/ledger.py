@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import datetime
 from decimal import Decimal
 from typing import List, Optional
@@ -145,6 +146,18 @@ def build_vendor_ledger(db: Session, vendor_id: int, *, show_actor: bool = True,
         .order_by(ApLedgerEntry.created_at.desc())
         .all()
     ) if include_ap else []
+    reversed_ap_ids = set()
+    if include_ap and ap_entries:
+        rev_rows = (
+            db.query(ApLedgerEntry.reverses_entry_id)
+            .filter(
+                ApLedgerEntry.vendor_id == vendor_id,
+                ApLedgerEntry.entry_type == "payment_reversal",
+                ApLedgerEntry.reverses_entry_id.isnot(None),
+            )
+            .all()
+        )
+        reversed_ap_ids = {r[0] for r in rev_rows if r[0]}
     for ap in ap_entries:
         entries.append(
             (
@@ -157,10 +170,12 @@ def build_vendor_ledger(db: Session, vendor_id: int, *, show_actor: bool = True,
                     occurred_at=ap.created_at,
                     **_actor_fields(ap.created_by_name, ap.created_by_type, show_actor),
                     details={
+                        "ledger_entry_id": ap.id,
                         "payment_ref": ap.payment_ref,
                         "amount": format(abs(ap.amount), "f"),
                         "payment_receipt_url": presigned_url(ap.payment_receipt_key) if ap.payment_receipt_key else None,
                         "comment": ap.payment_comment,
+                        "reversed": ap.id in reversed_ap_ids,
                     },
                 ),
             )
@@ -214,5 +229,220 @@ def build_vendor_ledger(db: Session, vendor_id: int, *, show_actor: bool = True,
 
 
 def build_customer_ledger(db: Session, customer_id: int, *, show_actor: bool = True) -> List[EntityLedgerEntry]:
-    """Ready for customer orders — returns empty until order module exists."""
-    return []
+    """Orders placed, bills sold, payments collected, returns — full customer activity."""
+    from app.models.customer_order import CustomerOrder, CustomerOrderLine, CustomerOrderPlacement
+    from app.models.customer_bill import CustomerBill, CustomerBillLine
+    from app.models.customer_return import CustomerReturn, CustomerReturnLine
+    from app.models.accounts_receivable import ArLedgerEntry
+
+    entries: list[tuple[datetime, EntityLedgerEntry]] = []
+
+    placements = (
+        db.query(CustomerOrderPlacement, CustomerOrder)
+        .join(CustomerOrder, CustomerOrderPlacement.customer_order_id == CustomerOrder.id)
+        .filter(CustomerOrder.customer_id == customer_id)
+        .order_by(CustomerOrderPlacement.placed_at.desc())
+        .all()
+    )
+    placement_ids = [p.id for p, _ in placements]
+    olines_by: dict[int, list] = defaultdict(list)
+    if placement_ids:
+        for ln in db.query(CustomerOrderLine).filter(CustomerOrderLine.placement_id.in_(placement_ids)).all():
+            olines_by[ln.placement_id].append(ln)
+    for placement, order in placements:
+        lines = olines_by.get(placement.id) or []
+        line_details = [
+            LedgerLineDetail(
+                our_product_id=ln.our_product_id,
+                quantity=ln.quantity,
+                quantity_billed=ln.quantity_billed,
+                buying_price=format(ln.unit_price, "f"),
+                unit_price=format(ln.unit_price, "f"),
+                selling_price=format(ln.unit_price, "f"),
+            )
+            for ln in lines
+        ]
+        cancelled = placement.status == "cancelled" or order.bucket == "cancelled"
+        event_type = "order_cancelled" if cancelled else "order_placed"
+        title = "Cancelled order" if cancelled else "Order placed"
+        summary = ", ".join(f"{ln.our_product_id} × {ln.quantity}" for ln in lines[:8]) or "—"
+        entries.append(
+            (
+                placement.placed_at,
+                EntityLedgerEntry(
+                    id=f"co-placement-{placement.id}",
+                    event_type=event_type,
+                    title=title,
+                    summary=summary,
+                    occurred_at=placement.placed_at,
+                    **_actor_fields("—", "system", show_actor),
+                    details={
+                        "bucket": order.bucket,
+                        "placement_id": placement.id,
+                        "customer_order_id": order.id,
+                        "customer_id": customer_id,
+                        "customer_notes": placement.customer_notes,
+                        "lines": [l.model_dump() for l in line_details],
+                    },
+                ),
+            )
+        )
+
+    bills = (
+        db.query(CustomerBill)
+        .filter(CustomerBill.customer_id == customer_id)
+        .order_by(CustomerBill.created_at.desc())
+        .all()
+    )
+    bill_ids = [b.id for b in bills]
+    blines_by: dict[int, list] = defaultdict(list)
+    if bill_ids:
+        for ln in db.query(CustomerBillLine).filter(CustomerBillLine.bill_id.in_(bill_ids)).all():
+            blines_by[ln.bill_id].append(ln)
+    for bill in bills:
+        blines = blines_by.get(bill.id) or []
+        line_details = [
+            LedgerLineDetail(
+                our_product_id=ln.our_product_id,
+                quantity=ln.quantity_shipped,
+                quantity_billed=ln.quantity_shipped,
+                billed_amount=_fmt_amount(ln.line_total),
+                buying_price=format(ln.unit_price, "f"),
+                unit_price=format(ln.unit_price, "f"),
+                selling_price=format(ln.unit_price, "f"),
+            )
+            for ln in blines
+        ]
+        summary = ", ".join(f"{ln.our_product_id} × {ln.quantity_shipped}" for ln in blines[:8]) or "—"
+        entries.append(
+            (
+                bill.created_at,
+                EntityLedgerEntry(
+                    id=f"co-bill-{bill.id}",
+                    event_type="customer_bill",
+                    title=f"Bill {bill.bill_number}",
+                    summary=f"₹{bill.grand_total} · {summary}",
+                    occurred_at=bill.created_at,
+                    **_actor_fields(bill.created_by_name, bill.created_by_type, show_actor),
+                    details={
+                        "bill_id": bill.id,
+                        "bill_number": bill.bill_number,
+                        "grand_total": format(bill.grand_total, "f"),
+                        "placement_id": bill.placement_id,
+                        "customer_id": customer_id,
+                        "document_url": presigned_url(bill.document_key) if bill.document_key else None,
+                        "lines": [l.model_dump() for l in line_details],
+                    },
+                ),
+            )
+        )
+
+    returns = (
+        db.query(CustomerReturn)
+        .filter(CustomerReturn.customer_id == customer_id)
+        .order_by(CustomerReturn.created_at.desc())
+        .all()
+    )
+    return_ids = [r.id for r in returns]
+    rlines_by: dict[int, list] = defaultdict(list)
+    if return_ids:
+        for ln in db.query(CustomerReturnLine).filter(CustomerReturnLine.return_id.in_(return_ids)).all():
+            rlines_by[ln.return_id].append(ln)
+    for ret in returns:
+        rlines = rlines_by.get(ret.id) or []
+        summary = ", ".join(f"{ln.our_product_id} × {ln.quantity_returned}" for ln in rlines[:8]) or "—"
+        entries.append(
+            (
+                ret.created_at,
+                EntityLedgerEntry(
+                    id=f"co-return-{ret.id}",
+                    event_type="customer_return",
+                    title=f"Return {ret.return_number}",
+                    summary=f"Credit ₹{ret.credit_amount} · {summary}",
+                    occurred_at=ret.created_at,
+                    **_actor_fields(ret.created_by_name, ret.created_by_type, show_actor),
+                    details={
+                        "return_id": ret.id,
+                        "return_number": ret.return_number,
+                        "credit_amount": format(ret.credit_amount, "f"),
+                        "calculated_amount": format(ret.calculated_amount, "f"),
+                        "customer_id": customer_id,
+                        "notes": ret.notes,
+                        "lines": [
+                            {
+                                "our_product_id": ln.our_product_id,
+                                "quantity": ln.quantity_returned,
+                                "billed_amount": format(ln.line_calculated, "f"),
+                            }
+                            for ln in rlines
+                        ],
+                    },
+                ),
+            )
+        )
+
+    ar_entries = (
+        db.query(ArLedgerEntry)
+        .filter(
+            ArLedgerEntry.customer_id == customer_id,
+            ArLedgerEntry.entry_type.in_(("payment", "opening_balance")),
+        )
+        .order_by(ArLedgerEntry.created_at.desc())
+        .all()
+    )
+    reversed_ar_ids = {
+        r[0]
+        for r in db.query(ArLedgerEntry.reverses_entry_id)
+        .filter(
+            ArLedgerEntry.customer_id == customer_id,
+            ArLedgerEntry.entry_type == "payment_reversal",
+            ArLedgerEntry.reverses_entry_id.isnot(None),
+        )
+        .all()
+        if r[0]
+    }
+    for ar in ar_entries:
+        if ar.entry_type == "opening_balance":
+            entries.append(
+                (
+                    ar.created_at,
+                    EntityLedgerEntry(
+                        id=f"ar-opening-{ar.id}",
+                        event_type="ar_opening",
+                        title="Opening due",
+                        summary=f"₹{abs(ar.amount)}" + (f" as on {ar.value_date}" if ar.value_date else ""),
+                        occurred_at=ar.created_at,
+                        **_actor_fields(ar.created_by_name, ar.created_by_type, show_actor),
+                        details={
+                            "ledger_entry_id": ar.id,
+                            "amount": format(abs(ar.amount), "f"),
+                            "as_on": ar.value_date.isoformat() if ar.value_date else None,
+                        },
+                    ),
+                )
+            )
+        else:
+            entries.append(
+                (
+                    ar.created_at,
+                    EntityLedgerEntry(
+                        id=f"ar-payment-{ar.id}",
+                        event_type="ar_payment",
+                        title="Payment collected",
+                        summary=f"₹{abs(ar.amount)} — {ar.payment_ref or 'payment'}",
+                        occurred_at=ar.created_at,
+                        **_actor_fields(ar.created_by_name, ar.created_by_type, show_actor),
+                        details={
+                            "ledger_entry_id": ar.id,
+                            "payment_ref": ar.payment_ref,
+                            "amount": format(abs(ar.amount), "f"),
+                            "comment": ar.payment_comment,
+                            "reversed": ar.id in reversed_ar_ids,
+                            "customer_id": customer_id,
+                        },
+                    ),
+                )
+            )
+
+    entries.sort(key=lambda x: x[0], reverse=True)
+    return [e[1] for e in entries]

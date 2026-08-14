@@ -103,7 +103,7 @@ def get_deleted_vendor(vendor_id: int, db: Session = Depends(get_db)) -> VendorP
 
 
 @router.post("/routes/{route_id}/restore", dependencies=[Depends(require_permission("recycle.write"))])
-def restore_route(route_id: int, db: Session = Depends(get_db)) -> dict:
+def restore_route(route_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("recycle.write"))) -> dict:
     row = db.get(Route, route_id)
     if not row or row.is_active:
         raise HTTPException(404, "deleted route not found")
@@ -111,12 +111,13 @@ def restore_route(route_id: int, db: Session = Depends(get_db)) -> dict:
         raise HTTPException(409, "an active route with this name already exists")
     row.is_active = True
     row.deleted_at = None
+    log_from_auth(db, auth, action="restore", entity_type="route", entity_id=row.id, entity_label=row.name)
     db.commit()
     return {"ok": True, "message": "route restored"}
 
 
 @router.post("/cities/{city_id}/restore", dependencies=[Depends(require_permission("recycle.write"))])
-def restore_city(city_id: int, db: Session = Depends(get_db)) -> dict:
+def restore_city(city_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("recycle.write"))) -> dict:
     row = db.get(City, city_id)
     if not row or row.is_active:
         raise HTTPException(404, "deleted city not found")
@@ -128,12 +129,13 @@ def restore_city(city_id: int, db: Session = Depends(get_db)) -> dict:
             raise HTTPException(400, "linked route is deleted — reassign route before restoring")
     row.is_active = True
     row.deleted_at = None
+    log_from_auth(db, auth, action="restore", entity_type="city", entity_id=row.id, entity_label=row.name)
     db.commit()
     return {"ok": True, "message": "city restored"}
 
 
 @router.post("/customers/{customer_id}/restore", dependencies=[Depends(require_permission("recycle.write"))])
-def restore_customer(customer_id: int, db: Session = Depends(get_db)) -> dict:
+def restore_customer(customer_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("recycle.write"))) -> dict:
     row = db.get(Customer, customer_id)
     if not row or row.is_active:
         raise HTTPException(404, "deleted customer not found")
@@ -145,12 +147,13 @@ def restore_customer(customer_id: int, db: Session = Depends(get_db)) -> dict:
             raise HTTPException(400, "linked city is deleted — reassign city before restoring")
     row.is_active = True
     row.deleted_at = None
+    log_from_auth(db, auth, action="restore", entity_type="customer", entity_id=row.id, entity_label=row.business_name)
     db.commit()
     return {"ok": True, "message": "customer restored"}
 
 
 @router.post("/vendors/{vendor_id}/restore", dependencies=[Depends(require_permission("recycle.write"))])
-def restore_vendor(vendor_id: int, db: Session = Depends(get_db)) -> dict:
+def restore_vendor(vendor_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("recycle.write"))) -> dict:
     row = db.get(Vendor, vendor_id)
     if not row or row.is_active:
         raise HTTPException(404, "deleted vendor not found")
@@ -161,6 +164,7 @@ def restore_vendor(vendor_id: int, db: Session = Depends(get_db)) -> dict:
         raise HTTPException(400, "linked city is deleted — reassign city before restoring")
     row.is_active = True
     row.deleted_at = None
+    log_from_auth(db, auth, action="restore", entity_type="vendor", entity_id=row.id, entity_label=row.business_name)
     db.commit()
     return {"ok": True, "message": "vendor restored"}
 
@@ -182,23 +186,26 @@ def get_deleted_addon(addon_id: int, db: Session = Depends(get_db)) -> AddonPubl
 
 
 @router.post("/catalog-products/{product_id}/restore", dependencies=[Depends(require_permission("recycle.write"))])
-def restore_catalog_product(product_id: int, db: Session = Depends(get_db)) -> dict:
+def restore_catalog_product(product_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("recycle.write"))) -> dict:
     row = db.get(CatalogProduct, product_id)
     if not row or row.is_active:
         raise HTTPException(404, "deleted product not found")
-    if db.query(CatalogProduct).filter(CatalogProduct.our_product_id == row.our_product_id, CatalogProduct.is_active.is_(True), CatalogProduct.id != product_id).first():
-        raise HTTPException(409, "active product with same our_product_id exists")
+    from app.services.catalog_identity import find_active_sku_year, year_key
+    if find_active_sku_year(db, row.our_product_id, row.year_group, exclude_id=product_id):
+        yg = year_key(row.year_group) or "—"
+        raise HTTPException(409, f"active product with same our_product_id exists for year group {yg}")
     vendor = db.get(Vendor, row.vendor_id)
     if not vendor or not vendor.is_active or vendor.deleted_at:
         raise HTTPException(400, "linked vendor is deleted — restore vendor first")
     row.is_active = True
     row.deleted_at = None
+    log_from_auth(db, auth, action="restore", entity_type="catalog", entity_id=row.id, entity_label=row.our_product_id)
     db.commit()
     return {"ok": True, "message": "product restored"}
 
 
 @router.post("/addons/{addon_id}/restore", dependencies=[Depends(require_permission("recycle.write"))])
-def restore_addon(addon_id: int, db: Session = Depends(get_db)) -> dict:
+def restore_addon(addon_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("recycle.write"))) -> dict:
     row = db.get(AddonProduct, addon_id)
     if not row or row.is_active:
         raise HTTPException(404, "deleted addon not found")
@@ -206,22 +213,24 @@ def restore_addon(addon_id: int, db: Session = Depends(get_db)) -> dict:
         raise HTTPException(409, "active addon with same our_product_id exists")
     row.is_active = True
     row.deleted_at = None
+    log_from_auth(db, auth, action="restore", entity_type="addon", entity_id=row.id, entity_label=row.our_product_id)
     db.commit()
     return {"ok": True, "message": "addon restored"}
 
 
 @router.delete("/routes/{route_id}", dependencies=[Depends(require_permission("recycle.write"))])
-def purge_route(route_id: int, db: Session = Depends(get_db)) -> dict:
+def purge_route(route_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("recycle.write"))) -> dict:
     row = db.get(Route, route_id)
     if not row or row.is_active:
         raise HTTPException(404, "deleted route not found")
+    log_from_auth(db, auth, action="purge", entity_type="route", entity_id=row.id, entity_label=row.name)
     db.delete(row)
     db.commit()
     return {"ok": True, "message": "route permanently deleted"}
 
 
 @router.delete("/cities/{city_id}", dependencies=[Depends(require_permission("recycle.write"))])
-def purge_city(city_id: int, db: Session = Depends(get_db)) -> dict:
+def purge_city(city_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("recycle.write"))) -> dict:
     row = db.get(City, city_id)
     if not row or row.is_active:
         raise HTTPException(404, "deleted city not found")
@@ -229,18 +238,21 @@ def purge_city(city_id: int, db: Session = Depends(get_db)) -> dict:
     cust_n = db.query(Customer).filter(Customer.city_id == city_id).count()
     if vend_n or cust_n:
         raise HTTPException(400, f"city still linked to {vend_n} vendor(s) and {cust_n} customer(s) — purge those first")
+    log_from_auth(db, auth, action="purge", entity_type="city", entity_id=row.id, entity_label=row.name)
     db.delete(row)
     db.commit()
     return {"ok": True, "message": "city permanently deleted"}
 
 
 @router.delete("/customers/{customer_id}", dependencies=[Depends(require_permission("recycle.write"))])
-def purge_customer(customer_id: int, db: Session = Depends(get_db)) -> dict:
+def purge_customer(customer_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("recycle.write"))) -> dict:
     row = db.get(Customer, customer_id)
     if not row or row.is_active:
         raise HTTPException(404, "deleted customer not found")
     original_phone = row.phone
+    customer_name = row.business_name
     try:
+        log_from_auth(db, auth, action="purge", entity_type="customer", entity_id=row.id, entity_label=customer_name)
         db.delete(row)
         db.commit()
         return {"ok": True, "message": "customer permanently deleted"}
@@ -257,6 +269,15 @@ def purge_customer(customer_id: int, db: Session = Depends(get_db)) -> dict:
             row.deleted_at = datetime.now(timezone.utc)
         db.add(row)
         try:
+            log_from_auth(
+                db,
+                auth,
+                action="purge",
+                entity_type="customer",
+                entity_id=row.id,
+                entity_label=customer_name,
+                detail="phone freed for reuse",
+            )
             db.commit()
         except IntegrityError:
             db.rollback()
@@ -272,7 +293,7 @@ def purge_customer(customer_id: int, db: Session = Depends(get_db)) -> dict:
 
 
 @router.delete("/vendors/{vendor_id}", dependencies=[Depends(require_permission("recycle.write"))])
-def purge_vendor(vendor_id: int, db: Session = Depends(get_db)) -> dict:
+def purge_vendor(vendor_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("recycle.write"))) -> dict:
     row = db.get(Vendor, vendor_id)
     if not row or row.is_active:
         raise HTTPException(404, "deleted vendor not found")
@@ -280,13 +301,14 @@ def purge_vendor(vendor_id: int, db: Session = Depends(get_db)) -> dict:
     addon_n = db.query(AddonProduct).filter(AddonProduct.vendor_id == vendor_id).count()
     if cat_n or addon_n:
         raise HTTPException(400, f"vendor still has {cat_n} catalog and {addon_n} addon product(s) — purge those first")
+    log_from_auth(db, auth, action="purge", entity_type="vendor", entity_id=row.id, entity_label=row.business_name)
     db.delete(row)
     db.commit()
     return {"ok": True, "message": "vendor permanently deleted"}
 
 
 @router.delete("/catalog-products/{product_id}", dependencies=[Depends(require_permission("recycle.write"))])
-def purge_catalog_product(product_id: int, db: Session = Depends(get_db)) -> dict:
+def purge_catalog_product(product_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("recycle.write"))) -> dict:
     row = db.get(CatalogProduct, product_id)
     if not row or row.is_active:
         raise HTTPException(404, "deleted product not found")
@@ -296,26 +318,28 @@ def purge_catalog_product(product_id: int, db: Session = Depends(get_db)) -> dic
     db.query(CatalogAddonLink).filter(CatalogAddonLink.catalog_product_id == product_id).delete(synchronize_session=False)
     if row.image_keys:
         delete_keys(row.image_keys)
+    log_from_auth(db, auth, action="purge", entity_type="catalog", entity_id=row.id, entity_label=row.our_product_id)
     db.delete(row)
     db.commit()
     return {"ok": True, "message": "product permanently deleted"}
 
 
 @router.delete("/addons/{addon_id}", dependencies=[Depends(require_permission("recycle.write"))])
-def purge_addon(addon_id: int, db: Session = Depends(get_db)) -> dict:
+def purge_addon(addon_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("recycle.write"))) -> dict:
     row = db.get(AddonProduct, addon_id)
     if not row or row.is_active:
         raise HTTPException(404, "deleted addon not found")
     db.query(CatalogAddonLink).filter(CatalogAddonLink.addon_product_id == addon_id).delete(synchronize_session=False)
     if row.image_keys:
         delete_keys(row.image_keys)
+    log_from_auth(db, auth, action="purge", entity_type="addon", entity_id=row.id, entity_label=row.our_product_id)
     db.delete(row)
     db.commit()
     return {"ok": True, "message": "addon permanently deleted"}
 
 
 @router.post("/staff/{staff_id}/restore", dependencies=[Depends(require_admin)])
-def restore_staff(staff_id: int, db: Session = Depends(get_db)) -> dict:
+def restore_staff(staff_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_admin)) -> dict:
     row = db.get(Staff, staff_id)
     if not row or row.is_active:
         raise HTTPException(404, "deleted staff not found")
@@ -323,15 +347,17 @@ def restore_staff(staff_id: int, db: Session = Depends(get_db)) -> dict:
         raise HTTPException(409, "an active staff with this phone already exists")
     row.is_active = True
     row.deleted_at = None
+    log_from_auth(db, auth, action="restore", entity_type="staff", entity_id=row.id, entity_label=row.name)
     db.commit()
     return {"ok": True, "message": "staff restored"}
 
 
 @router.delete("/staff/{staff_id}", dependencies=[Depends(require_admin)])
-def purge_staff(staff_id: int, db: Session = Depends(get_db)) -> dict:
+def purge_staff(staff_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_admin)) -> dict:
     row = db.get(Staff, staff_id)
     if not row or row.is_active:
         raise HTTPException(404, "deleted staff not found")
+    log_from_auth(db, auth, action="purge", entity_type="staff", entity_id=row.id, entity_label=row.name)
     db.delete(row)
     db.commit()
     return {"ok": True, "message": "staff permanently deleted"}

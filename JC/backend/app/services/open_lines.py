@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy.orm import Session
@@ -8,7 +9,13 @@ from app.models.catalog_product import CatalogProduct
 from app.models.vendor_open_line import VendorOpenLine
 
 
-def _get_or_create_open(db: Session, vendor_id: int, catalog_product_id: int) -> VendorOpenLine | None:
+def _get_or_create_open(
+    db: Session,
+    vendor_id: int,
+    catalog_product_id: int,
+    *,
+    as_of: datetime | None = None,
+) -> VendorOpenLine | None:
     prod = db.get(CatalogProduct, catalog_product_id)
     if not prod:
         return None
@@ -34,16 +41,24 @@ def _get_or_create_open(db: Session, vendor_id: int, catalog_product_id: int) ->
         buying_price=prod.buying_price,
         status="open",
     )
+    if as_of is not None:
+        row.created_at = as_of
     db.add(row)
     db.flush()
     return row
 
 
-def add_to_open(db: Session, vendor_id: int, lines: list[tuple[int, int]]) -> None:
+def add_to_open(
+    db: Session,
+    vendor_id: int,
+    lines: list[tuple[int, int]],
+    *,
+    as_of: datetime | None = None,
+) -> None:
     for catalog_product_id, qty in lines:
         if qty <= 0:
             continue
-        row = _get_or_create_open(db, vendor_id, catalog_product_id)
+        row = _get_or_create_open(db, vendor_id, catalog_product_id, as_of=as_of)
         if row:
             row.quantity += qty
             row.status = "open"

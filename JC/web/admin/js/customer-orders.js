@@ -1,14 +1,25 @@
-/** Customer orders — received / open / billed / cancelled / closed */
+/** Customer orders — Today/Past date scope + same stage chips */
 const CustomerOrders = (() => {
   let ctx = {};
   let orders = [];
   let currentOrder = null;
-  let currentBucket = "summary";
+  let currentBucket = "open"; // same stages for Today + Past
+  let hubMode = "queue"; // queue (Today) | past — date scope only
+  let hubSearch = "";
+  let coExpandedId = null;
+  let hubExpandedCustomerId = null;
+  let hubExpandCache = {};
   let detailCustomerId = null;
+
+  let dispatchParcels = [];
+  let dispatchAgents = [];
+  let dispatchStatus = "pending"; // pending | picked | all
+  let dispatchAgentId = ""; // "" = all agents
 
   let processStep = 1;
   let processContext = null;
   let processLines = [];
+  let discountEnabled = false;
   let useOverallDiscount = false;
   let overallDiscount = "";
   let gstEnabled = false;
@@ -17,60 +28,266 @@ const CustomerOrders = (() => {
   let billSeries = [];
   let freightAgentId = "";
   let freightCharges = "";
+  let transportMode = "";
+  let transportReceiptNumber = "";
   let packagingCharges = "";
   let additionalCharges = [{ name: "", amount: "" }];
   let billSeriesId = "";
+  let customerNotes = "";
   let narration = "";
   let previewTotals = null;
   let processBusy = false;
+  let forceCreditOverride = false;
+  let editBillId = null;
+  let editBillNumber = "";
+  let billEditSearch = "";
+  let billEditProducts = [];
 
-  const BUCKETS = ["summary", "received", "open", "billed", "cancelled", "closed"];
+  // Past stages — Dispatch is an ops stage (parcels), not a Today/Past peer.
+  const PAST_BUCKETS = ["received", "open", "billed", "dispatch", "cancelled", "closed"];
+  const BROWSE_BUCKETS = PAST_BUCKETS; // legacy alias
   const BUCKET_LABELS = {
-    summary: "Order Summary",
-    received: "Received",
-    open: "Open",
+    needs_action: "Today",
+    queue: "Today",
+    summary: "Today",
+    received: "Orders",
+    open: "To bill",
     billed: "Billed",
+    dispatch: "Dispatch",
     cancelled: "Cancelled",
     closed: "Closed",
   };
-  const ACTION_LABELS = { received: "Process Order", open: "Process Order", billed: "Close Order" };
+
+  function isTodayMode() {
+    return hubMode === "queue" || hubMode === "needs_action" || hubMode === "today";
+  }
+
+  function dayParam() {
+    return isTodayMode() ? "today" : "all";
+  }
+
+  function isDispatchBucket() {
+    return currentBucket === "dispatch";
+  }
+
+  /** Jump to Dispatch stage (keeps Today/Past date scope). */
+  function goToDispatch() {
+    document.getElementById("co-hub")?.classList.remove("hidden");
+    document.getElementById("co-detail")?.classList.add("hidden");
+    currentOrder = null;
+    detailCustomerId = null;
+    currentBucket = "dispatch";
+    dispatchStatus = "pending";
+    hubSearch = "";
+    hubExpandedCustomerId = null;
+    hubExpandCache = {};
+    syncHubChrome();
+    loadDispatch();
+    App.updateGlobalBack?.();
+  }
+
+  function customerActionOf(o) {
+    return (o.total_quantity || 0) > 0 ? "to_bill" : "other";
+  }
 
   let offlineStep = 1;
   let offlineCustomerId = null;
   let offlineCustomerName = "";
+  let offlineCustomerSearch = "";
   let offlineLines = [];
   let offlineSearchQuery = "";
   let offlineSearchResults = [];
-  let offlineSearchTimer = null;
-  let offlineUseOverallDiscount = false;
-  let offlineOverallDiscount = "";
-  let offlineGstEnabled = false;
-  let offlineGstRate = "18";
-  let offlineAdditionalCharges = [{ name: "", amount: "" }];
-  let offlineBillSeries = [];
-  let offlineBillSeriesId = "";
+  let offlineNotes = "";
+  let offlinePlacedOn = "";
   let offlinePreview = null;
   let offlineBusy = false;
+  let offlineCustomers = [];
+  let offlineEditPlacementId = null;
+  let billDate = "";
+
+  function localToday() {
+    const n = new Date();
+    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
+  }
 
   function init(context) { ctx = context; }
 
-  function syncBucketSelect(bucket, prefix) {
-    // legacy no-op — tabs replaced selects
+  function syncHubChrome() {
+    const chips = document.getElementById("co-bucket-bar");
+    const actionHost = document.getElementById("co-action-chips");
+    const today = isTodayMode();
+    const dispatch = isDispatchBucket();
+    chips?.classList.remove("hidden");
+    OrdersUI.syncModeButtons("#co-hub-mode", today ? "queue" : "past");
+    OrdersUI.syncStageChips("#co-bucket-bar", currentBucket);
+    if (dispatch) {
+      OrdersUI.actionChips({
+        hostId: "co-action-chips",
+        active: dispatchStatus,
+        onclickFn: "CustomerOrders.setDispatchStatus",
+        items: [
+          { id: "pending", label: "Pending pick", count: dispatchStatus === "pending" ? dispatchParcels.length : undefined },
+          { id: "picked", label: "Picked" },
+          { id: "all", label: "All" },
+        ],
+      });
+    } else if (actionHost) {
+      actionHost.innerHTML = "";
+      actionHost.classList.add("hidden");
+    }
+    const title = document.getElementById("co-list-title");
+    if (title) {
+      const stage = BUCKET_LABELS[currentBucket] || "Orders";
+      if (dispatch) {
+        const sub = dispatchStatus === "picked" ? "Picked" : dispatchStatus === "all" ? "All parcels" : "Pending pick";
+        title.textContent = today ? `Today · ${sub}` : sub;
+      } else {
+        title.textContent = today ? `Today · ${stage}` : stage;
+      }
+    }
+    const searchSlot = document.getElementById("co-hub-search-slot");
+    if (searchSlot) {
+      const agentOpts = [
+        `<option value="">All agents</option>`,
+        ...dispatchAgents.map(a =>
+          `<option value="${a.id}" ${String(dispatchAgentId) === String(a.id) ? "selected" : ""}>${ctx.esc(a.name)}</option>`
+        ),
+      ].join("");
+      searchSlot.innerHTML = dispatch
+        ? `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;width:100%;">
+            <select class="input" style="max-width:200px;" onchange="CustomerOrders.setDispatchAgent(this.value)">
+              ${agentOpts}
+            </select>
+            ${HubUI.searchBar({
+              id: "co-hub-search",
+              value: hubSearch,
+              placeholder: "Search customer, bill…",
+              oninput: "CustomerOrders.setHubSearch(this.value)",
+            })}
+          </div>`
+        : HubUI.searchBar({
+          id: "co-hub-search",
+          value: hubSearch,
+          placeholder: "Search customer…",
+          oninput: "CustomerOrders.setHubSearch(this.value)",
+        });
+    }
+  }
+
+  function goCollectPayment(customerId) {
+    const cid = customerId || detailCustomerId;
+    if (!cid) return;
+    App.closeDetail?.();
+    App.showView("money");
+    Finance.openCustomerAr?.(cid, { settle: true });
+  }
+
+  function updateDetailPrimary() {
+    const btn = document.getElementById("co-detail-primary-btn");
+    if (!btn) return;
+    const canOrders = !!ctx.canWrite?.("customer_orders");
+    const canMoney = !!ctx.isAdmin?.() || !!ctx.canWrite?.("accounts_receivable") || !!ctx.canWrite?.("finance");
+    let label = "";
+    let onclick = "";
+    // Next-step hero CTA by stage
+    if (currentBucket === "open" && canOrders) {
+      label = "Bill";
+      onclick = "CustomerOrders.processOrder()";
+    } else if (currentBucket === "billed" && canOrders) {
+      label = "Dispatch";
+      onclick = "CustomerOrders.goToDispatch()";
+    }
+    const show = !!label;
+    btn.classList.toggle("hidden", !show);
+    if (show) {
+      btn.textContent = label;
+      btn.setAttribute("onclick", onclick);
+    }
+    // secondary create button stays; collect lives in billed toolbar
+    void canMoney;
   }
 
   function updateActionButtons(view) {
-    const hubBtn = document.getElementById("co-hub-action-btn");
-    const detailBtn = document.getElementById("co-detail-action-btn");
-    const label = ACTION_LABELS[currentBucket];
-    [hubBtn, detailBtn].forEach(btn => {
-      if (!btn) return;
-      const show = !!label && ctx.canWrite?.("vendor_orders");
-      const isDetail = view === "detail";
-      btn.classList.toggle("hidden", !show || (isDetail ? btn !== detailBtn : btn !== hubBtn));
-      if (show && ((isDetail && btn === detailBtn) || (!isDetail && btn === hubBtn))) btn.textContent = label;
-    });
-    if (view === "detail") hubBtn?.classList.add("hidden");
-    else detailBtn?.classList.add("hidden");
+    if (view === "detail") updateDetailPrimary();
+  }
+
+  function setHubMode(mode) {
+    // Legacy: setHubMode('dispatch') → Dispatch stage
+    if (mode === "dispatch") {
+      goToDispatch();
+      return;
+    }
+    if (mode === "browse" || mode === "past") hubMode = "past";
+    else hubMode = "queue";
+    if (!PAST_BUCKETS.includes(currentBucket)) currentBucket = "open";
+    hubExpandedCustomerId = null;
+    hubExpandCache = {};
+    hubSearch = "";
+    syncHubChrome();
+    loadList();
+  }
+
+  function setDispatchStatus(status) {
+    dispatchStatus = ["pending", "picked", "all"].includes(status) ? status : "pending";
+    loadDispatch();
+  }
+
+  function setDispatchAgent(id) {
+    dispatchAgentId = id ? String(id) : "";
+    loadDispatch();
+  }
+
+  function setQueueFilter() {
+    /* removed — Today/Past share stage chips */
+  }
+
+  function setHubSearch(val) {
+    hubSearch = val || "";
+    hubExpandedCustomerId = null;
+    if (isDispatchBucket()) renderDispatchList();
+    else renderList();
+  }
+
+  function filterHubOrders(list) {
+    // Hub rows only have customer_name — still token-match; rank by name starts-with
+    const ranked = OrdersUI.filterAndRankParties(
+      (list || []).map(o => ({
+        ...o,
+        business_name: o.customer_name || o.business_name || "",
+      })),
+      hubSearch,
+    );
+    return ranked;
+  }
+
+  function addonsUnderHtml(addons, qtyScale) {
+    const list = Array.isArray(addons) ? addons : [];
+    if (!list.length) return "";
+    const scale = Number(qtyScale) > 0 ? Number(qtyScale) : 1;
+    return `<div class="co-addons">${list.map(a => {
+      const per = Number(a.quantity) || 1;
+      const total = per * scale;
+      const label = a.name || a.our_product_id || "Add-on";
+      return `<div class="co-addon-row">+ ${ctx.esc(a.our_product_id || "")} · ${ctx.esc(label)} × ${total}</div>`;
+    }).join("")}</div>`;
+  }
+
+  function calcNetFromDisc(rate, discPct) {
+    const r = Number(rate);
+    const d = Number(discPct);
+    if (!Number.isFinite(r) || r <= 0) return "";
+    if (!Number.isFinite(d) || d <= 0) return String(r);
+    const net = r * (1 - Math.min(100, Math.max(0, d)) / 100);
+    return (Math.round(net * 100) / 100).toString();
+  }
+
+  function calcDiscFromNet(rate, netRate) {
+    const r = Number(rate);
+    const n = Number(netRate);
+    if (!Number.isFinite(r) || r <= 0 || !Number.isFinite(n) || n < 0) return "";
+    if (n >= r) return "0";
+    const pct = ((r - n) / r) * 100;
+    return (Math.round(pct * 100) / 100).toString();
   }
 
   function fmtPrice(val) {
@@ -85,24 +302,166 @@ const CustomerOrders = (() => {
     return `<div class="vo-thumb vo-thumb-empty">—</div>`;
   }
 
-  function updateTabs(active, barId) {
-    const bar = document.getElementById(barId || "co-bucket-bar");
-    bar?.querySelectorAll(".prod-tab").forEach(btn => {
-      btn.classList.toggle("active", btn.getAttribute("data-bucket") === active);
-    });
-  }
-
   function setBucket(bucket) {
-    currentBucket = bucket;
-    updateTabs(bucket, "co-bucket-bar");
-    updateActionButtons("hub");
+    // Stage only — do not flip Today/Past
+    currentBucket = PAST_BUCKETS.includes(bucket) ? bucket : "open";
+    hubExpandedCustomerId = null;
+    hubExpandCache = {};
+    hubSearch = "";
+    syncHubChrome();
     loadList();
   }
 
-  async function loadList() {
+  async function loadDispatch() {
     ctx.showLoading?.();
     try {
-      orders = await ctx.api(`/customer-orders?bucket=${currentBucket}`, {}, 0);
+      const q = new URLSearchParams({ status: dispatchStatus, day: dayParam() });
+      if (dispatchAgentId) q.set("agent_id", dispatchAgentId);
+      const [parcels, agents] = await Promise.all([
+        ctx.api(`/freight-agents/parcels?${q}`, {}, 0),
+        ctx.api("/freight-agents", {}, 0).catch(() => dispatchAgents),
+      ]);
+      dispatchParcels = Array.isArray(parcels) ? parcels : [];
+      dispatchAgents = Array.isArray(agents) ? agents : [];
+      syncHubChrome();
+      renderDispatchList();
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  function filterDispatchParcels(list) {
+    const q = hubSearch.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter(p => {
+      const hay = [
+        p.customer_label, p.bill_number, p.customer_city, p.customer_phone,
+        p.freight_agent_name, String(p.bill_id || ""), p.transport_mode, p.transport_receipt_number,
+      ].join(" ").toLowerCase();
+      return hay.includes(q);
+    });
+  }
+
+  function renderDispatchList() {
+    const el = document.getElementById("customer-orders-list");
+    if (!el) return;
+    const canWrite = !!ctx.canWrite?.("customer_orders");
+    const list = filterDispatchParcels(dispatchParcels);
+    if (!list.length) {
+      el.innerHTML = OrdersUI.emptyState({
+        title: dispatchStatus === "pending" ? "No pending parcels" : "No parcels",
+        sub: "After bill, parcels land here. Bus: tick Picked when agent takes goods. Transport / self-pickup: mark dispatched.",
+      });
+      return;
+    }
+    el.innerHTML = `<div class="ord-card-list">${list.map(p => {
+      const pending = p.status === "pending";
+      const mode = p.transport_mode || (p.freight_agent_id ? "bus" : "self_pickup");
+      const modeLbl = mode === "bus" ? "Bus" : mode === "transport" ? "Transport" : "Self-pickup";
+      const chargeLbl = mode === "transport" ? "transport" : mode === "bus" ? "freight" : "";
+      const lines = (p.lines || []).slice(0, 6).map(l =>
+        `${ctx.esc(l.our_product_id)} × ${l.quantity}`
+      ).join(" · ");
+      const more = (p.lines || []).length > 6 ? ` · +${p.lines.length - 6} more` : "";
+      const meta = [
+        p.bill_number ? `Bill ${p.bill_number}` : null,
+        modeLbl,
+        p.freight_agent_name || null,
+        p.transport_receipt_number ? `Rcpt ${p.transport_receipt_number}` : null,
+        p.customer_city || null,
+        `${p.line_count || 0} lines · ${p.total_pcs || 0} pcs`,
+        p.customer_phone || null,
+      ].filter(Boolean).join(" · ");
+      const actions = [];
+      if (canWrite) {
+        actions.push(`<button type="button" class="btn btn-secondary btn-sm" onclick="CustomerOrders.openEditBill(${p.bill_id})">Edit</button>`);
+      }
+      if (pending && canWrite) {
+        actions.push(`<button type="button" class="btn btn-primary btn-sm" onclick="CustomerOrders.pickParcel(${p.bill_id})">${mode === "bus" ? "✓ Picked" : "Mark dispatched"}</button>`);
+        if (mode === "bus") {
+          actions.push(`<button type="button" class="btn btn-secondary btn-sm" onclick="CustomerOrders.reassignParcel(${p.bill_id})">Change agent</button>`);
+        }
+      } else if (!pending) {
+        actions.push(`<span class="badge badge-green">${mode === "bus" ? "Picked" : "Dispatched"}</span>`);
+        if (p.picked_at) actions.push(`<span style="font-size:12px;color:var(--muted);">${ctx.fmtDate?.(p.picked_at) || p.picked_at.slice(0, 10)}</span>`);
+      }
+      return `<div class="ord-card" style="padding:14px 16px;">
+        <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;">
+          <div style="min-width:0;flex:1;">
+            <strong class="ord-card-title" style="font-size:16px;">${ctx.esc(p.customer_label || "Customer")}</strong>
+            <div class="ord-card-meta" style="margin-top:4px;">${ctx.esc(meta)}</div>
+            <div style="font-size:13px;margin-top:8px;">${lines || "—"}${more}</div>
+          </div>
+          <div style="text-align:right;">
+            ${chargeLbl ? `<div style="font-weight:700;font-size:18px;">${fmtPrice(p.freight_charges)}</div>
+            <div style="font-size:12px;color:var(--muted);">${chargeLbl}</div>` : `<div style="font-size:12px;color:var(--muted);">No charges</div>`}
+            <div class="ord-card-actions" style="margin-top:10px;justify-content:flex-end;">${actions.join("")}</div>
+          </div>
+        </div>
+      </div>`;
+    }).join("")}</div>`;
+  }
+
+  async function pickParcel(billId) {
+    if (!confirm("Mark picked? Freight amount goes to this agent's dues in Money → Freight.")) return;
+    ctx.showLoading?.();
+    try {
+      await ctx.api(`/freight-agents/parcels/${billId}/pick`, { method: "POST", body: "{}" }, 0);
+      ctx.toast("Picked — dues updated", "success");
+      ctx.invalidateCache?.("/freight-agents");
+      await loadDispatch();
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  async function reassignParcel(billId) {
+    const parcel = dispatchParcels.find(p => p.bill_id === billId);
+    const currentId = parcel?.freight_agent_id || Number(dispatchAgentId) || "";
+    const opts = dispatchAgents.map(a =>
+      `<option value="${a.id}" ${a.id === currentId ? "selected" : ""}>${ctx.esc(a.name)}</option>`
+    ).join("");
+    ctx.openDetail?.("Change freight agent", `
+      <p style="margin:0 0 12px;color:var(--muted);font-size:13px;">Only for unpicked parcels.</p>
+      <label class="label">Agent</label>
+      <select class="input" id="co-reassign-agent" style="margin-bottom:12px;">${opts}</select>
+      <label class="label">Freight amount (₹) — optional</label>
+      <input type="number" step="0.01" min="0" class="input" id="co-reassign-amt" placeholder="Leave blank to keep" />
+    `, `
+      <button class="btn btn-secondary" style="flex:1;" onclick="App.closeDetail()">Cancel</button>
+      <button class="btn btn-primary" style="flex:1;" onclick="CustomerOrders.submitParcelReassign(${billId})">Save</button>
+    `, "sm");
+  }
+
+  async function submitParcelReassign(billId) {
+    const agentId = Number(document.getElementById("co-reassign-agent")?.value || 0);
+    const amtRaw = (document.getElementById("co-reassign-amt")?.value || "").trim();
+    if (!agentId) return ctx.toast("Pick agent", "error");
+    const body = { freight_agent_id: agentId };
+    if (amtRaw !== "") body.freight_charges = parseFloat(amtRaw);
+    ctx.showLoading?.();
+    try {
+      await ctx.api(`/freight-agents/parcels/${billId}`, { method: "PATCH", body: JSON.stringify(body) }, 0);
+      ctx.toast("Agent updated", "success");
+      App.closeDetail?.();
+      ctx.invalidateCache?.("/freight-agents");
+      await loadDispatch();
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  async function loadList() {
+    if (isDispatchBucket()) {
+      await loadDispatch();
+      return;
+    }
+    ctx.showLoading?.();
+    try {
+      if (!PAST_BUCKETS.includes(currentBucket) || currentBucket === "dispatch") {
+        currentBucket = "open";
+      }
+      const day = dayParam();
+      orders = await ctx.api(`/customer-orders?bucket=${currentBucket}&day=${day}`, {}, 0);
+      if (!Array.isArray(orders)) orders = [];
+      syncHubChrome();
       renderList();
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
@@ -113,53 +472,225 @@ const CustomerOrders = (() => {
     document.getElementById("co-detail")?.classList.add("hidden");
     currentOrder = null;
     detailCustomerId = null;
-    setBucket(currentBucket);
+    hubExpandedCustomerId = null;
+    hubExpandCache = {};
+    if (!PAST_BUCKETS.includes(currentBucket)) currentBucket = "open";
+    syncHubChrome();
+    loadList();
+    App.updateGlobalBack?.();
+  }
+
+  function detailBucketFor(o) {
+    if (currentBucket === "dispatch" || currentBucket === "summary" || currentBucket === "queue") {
+      return (o.total_quantity || 0) > 0 ? "open" : "received";
+    }
+    if (["received", "open", "billed", "cancelled", "closed"].includes(currentBucket)) {
+      return currentBucket;
+    }
+    return (o.total_quantity || 0) > 0 ? "open" : "received";
+  }
+
+  function filterQueueList(list) {
+    return list;
+  }
+
+  function sourceMeta(sources) {
+    const list = Array.isArray(sources) ? sources : [];
+    if (!list.length) return "";
+    return list.map(s => {
+      if (s === "phone") return "Phone";
+      if (s === "portal") return "Portal";
+      return String(s);
+    }).filter(Boolean).join(" · ");
+  }
+
+  function renderHubExpand(detail, canWrite, customerId) {
+    const lines = detail?.open_lines || [];
+    if (!lines.length) return `<p class="vo-muted" style="margin:0;">Nothing to bill.</p>`;
+    return `<table class="data vo-hub-table"><thead><tr>
+      <th></th><th>Product</th><th>To bill</th><th>Rate</th>
+    </tr></thead><tbody>
+      ${lines.map(l => {
+        const img = (l.image_urls || [])[0] || "";
+        return `<tr>
+          <td>${thumb(img)}</td>
+          <td><strong>${ctx.esc(l.our_product_id)}</strong></td>
+          <td><strong>${l.quantity_open}</strong></td>
+          <td>${fmtPrice(l.unit_price)}</td>
+        </tr>`;
+      }).join("")}
+    </tbody></table>
+    ${canWrite ? `<div class="vo-hub-expand-actions">
+      <button class="btn btn-primary" onclick="CustomerOrders.processFromHub(${customerId}, 'open')">Bill</button>
+      <button class="btn btn-danger" onclick="CustomerOrders.cancelCustomerOpen(${customerId})">Cancel order</button>
+    </div>` : ""}`;
+  }
+
+  function renderHubCard(o, canWrite) {
+    const openQty = o.total_quantity || 0;
+    const hasOpen = openQty > 0;
+    const bucket = detailBucketFor(o);
+    const src = sourceMeta(o.sources);
+    let primaryLabel = "View";
+    let primaryOnclick = `CustomerOrders.openDetail(${o.customer_id}, '${bucket}')`;
+    let metaBits = [];
+    const canExpand = hasOpen && (currentBucket === "open" || currentBucket === "received");
+    const expandKey = `open-${o.customer_id}`;
+    const open = hubExpandedCustomerId === expandKey;
+    const cache = hubExpandCache[expandKey];
+    const viewFn = `CustomerOrders.openDetail(${o.customer_id}, '${bucket}')`;
+    const canMoney = !!ctx.isAdmin?.();
+
+    // Primary = next step in flow. More = secondary / danger.
+    if (currentBucket === "open") {
+      primaryLabel = "Bill";
+      primaryOnclick = `CustomerOrders.processFromHub(${o.customer_id}, 'open')`;
+      metaBits = [`${o.line_count || 0} lines`, `<strong>${openQty}</strong> to bill`];
+    } else if (currentBucket === "received") {
+      primaryLabel = "View";
+      primaryOnclick = viewFn;
+      metaBits = [`${o.placement_count || 0} placements`, `${o.total_quantity || 0} qty`];
+    } else if (currentBucket === "billed") {
+      primaryLabel = "Dispatch";
+      primaryOnclick = "CustomerOrders.goToDispatch()";
+      metaBits = [`${o.placement_count || o.bill_count || 0} bills`];
+    } else if (currentBucket === "cancelled" || currentBucket === "closed") {
+      primaryLabel = "View";
+      primaryOnclick = viewFn;
+      metaBits = [`${o.placement_count || 0} placements`];
+    } else {
+      primaryLabel = "View";
+      primaryOnclick = viewFn;
+      metaBits = [`${o.placement_count || 0} placements`, `${o.line_count || 0} lines`];
+    }
+    if (src) metaBits.push(src);
+    const meta = `${metaBits.join(" · ")}<div style="margin-top:2px;font-size:12px;">${o.updated_at ? new Date(o.updated_at).toLocaleString() : ""}</div>`;
+
+    const more = [];
+    more.push({ label: "View", onclick: viewFn });
+    if (canExpand) {
+      more.push({
+        label: open ? "Hide lines" : "Show lines",
+        onclick: `CustomerOrders.toggleHubCustomer(${o.customer_id})`,
+      });
+    }
+    if (canWrite && (currentBucket === "received" || currentBucket === "open")) {
+      more.push({ label: "Edit / place more", onclick: `CustomerOrders.openOfflineWizard(${o.customer_id})` });
+    }
+    if (canWrite && (currentBucket === "open" || currentBucket === "received") && hasOpen) {
+      more.push({
+        label: "Cancel order",
+        danger: true,
+        onclick: `CustomerOrders.cancelCustomerOpen(${o.customer_id})`,
+      });
+    }
+    if (currentBucket === "billed") {
+      if (canWrite) {
+        more.push({ label: "Edit bill", onclick: `CustomerOrders.editLatestBill(${o.customer_id})` });
+      }
+      if (canMoney) {
+        more.push({ label: "Collect payment", onclick: `CustomerOrders.goCollectPayment(${o.customer_id})` });
+      }
+      more.push({ label: "View bills", onclick: `CustomerOrders.openDetail(${o.customer_id}, 'billed')` });
+      if (canWrite) {
+        more.push({ label: "Close", onclick: `CustomerOrders.openCloseBatch(${o.customer_id})` });
+      }
+    }
+
+    return OrdersUI.partyCard({
+      title: o.customer_name,
+      meta,
+      pillHtml: "",
+      primaryLabel: canWrite || currentBucket === "billed" || currentBucket === "cancelled" || currentBucket === "closed"
+        ? primaryLabel
+        : "View",
+      primaryOnclick: (canWrite || currentBucket === "billed" || currentBucket === "cancelled" || currentBucket === "closed")
+        ? primaryOnclick
+        : viewFn,
+      moreItems: more.filter(m => m.label !== primaryLabel),
+      canWrite: true,
+      open,
+      rowOnclick: viewFn,
+      expandHtml: open
+        ? `<div id="co-hub-expand-${o.customer_id}">${cache ? renderHubExpand(cache, canWrite, o.customer_id) : `<p class="vo-muted" style="margin:0;padding:8px 0;">Loading…</p>`}</div>`
+        : "",
+    });
+  }
+
+  async function toggleHubCustomer(customerId) {
+    const key = `open-${customerId}`;
+    if (hubExpandedCustomerId === key) {
+      hubExpandedCustomerId = null;
+      renderList();
+      return;
+    }
+    hubExpandedCustomerId = key;
+    renderList();
+    try {
+      hubExpandCache[key] = await ctx.api(`/customer-orders/customer/${customerId}?bucket=open`, {}, 0);
+    } catch (e) {
+      hubExpandCache[key] = { open_lines: [] };
+      ctx.toast?.(e.message, "error");
+    }
+    if (hubExpandedCustomerId === key) renderList();
   }
 
   function renderList() {
     const el = document.getElementById("customer-orders-list");
     if (!el) return;
-    if (!orders.length) {
-      el.innerHTML = `<div class="empty-state"><p>No ${BUCKET_LABELS[currentBucket] || currentBucket} customer orders.</p></div>`;
+    const canWrite = !!ctx.canWrite?.("customer_orders");
+    const list = filterHubOrders(orders);
+    const stage = BUCKET_LABELS[currentBucket] || "orders";
+    const today = isTodayMode();
+
+    if (!list.length) {
+      el.innerHTML = OrdersUI.emptyState({
+        title: today ? `No ${stage} today` : `No ${stage}`,
+        sub: today
+          ? "Switch to Past for older dates. Same stages there."
+          : "Try another stage, or place an order.",
+        ctaHtml: canWrite
+          ? `<button class="btn btn-primary" onclick="CustomerOrders.openOfflineWizard()">+ Place for customer</button>`
+          : "",
+      });
       return;
     }
-    const qtyLabel = currentBucket === "open" || currentBucket === "summary" ? "Open qty" : "Qty";
-    el.innerHTML = orders.map(o => `
-      <div class="co-hub-card">
-        <div class="co-hub-row" onclick="CustomerOrders.openDetail(${o.customer_id}, '${currentBucket === "summary" ? "received" : currentBucket}')">
-          <div>
-            <div class="co-hub-title">${ctx.esc(o.customer_name)}</div>
-            <div class="co-hub-meta">${o.placement_count} placements · ${o.line_count} lines · <strong>${o.total_quantity}</strong> ${qtyLabel.toLowerCase()}</div>
-          </div>
-          <div style="text-align:right;">
-            <div style="font-size:12px;color:var(--muted);">${new Date(o.updated_at).toLocaleString()}</div>
-            <button class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="event.stopPropagation();CustomerOrders.openDetail(${o.customer_id}, '${currentBucket === "summary" ? "received" : currentBucket}')">Open</button>
-          </div>
-        </div>
-      </div>`).join("");
+    el.innerHTML = `<div class="ord-hub-list">${list.map(o => renderHubCard(o, canWrite)).join("")}</div>`;
   }
 
   async function openDetail(customerId, bucket) {
     ctx.showLoading?.();
     try {
-      currentBucket = bucket;
+      let b = bucket || "open";
+      if (b === "summary" || b === "needs_action" || b === "queue") b = "open";
+      if (b === "dispatch") b = "billed"; // Dispatch is hub-only (parcels), not customer detail
+      const detailBuckets = ["received", "open", "billed", "cancelled", "closed"];
+      if (!detailBuckets.includes(b)) b = "open";
+      currentBucket = b;
       detailCustomerId = customerId;
-      currentOrder = await ctx.api(`/customer-orders/customer/${customerId}?bucket=${bucket}`, {}, 0);
+      coExpandedId = null;
+      currentOrder = await ctx.api(`/customer-orders/customer/${customerId}?bucket=${b}`, {}, 0);
       document.getElementById("co-hub")?.classList.add("hidden");
       document.getElementById("co-detail")?.classList.remove("hidden");
-      updateTabs(bucket === "received" ? "received" : bucket, "co-detail-bucket-bar");
-      updateActionButtons("detail");
+      OrdersUI.syncStageChips("#co-detail-bucket-bar", b);
+      updateDetailPrimary();
       renderDetail();
-    } catch (e) { ctx.toast(e.message, "error"); }
-    finally { ctx.hideLoading?.(); }
+      App.updateGlobalBack?.();
+      return true;
+    } catch (e) {
+      ctx.toast(e.message, "error");
+      return false;
+    } finally { ctx.hideLoading?.(); }
   }
 
   async function switchBucket(bucket) {
     if (!detailCustomerId) return;
-    updateTabs(bucket, "co-detail-bucket-bar");
-    const effective = bucket === "summary" ? "received" : bucket;
-    await openDetail(detailCustomerId, effective);
-    if (bucket === "summary") updateTabs("summary", "co-detail-bucket-bar");
+    if (bucket === "dispatch") {
+      goToDispatch();
+      return;
+    }
+    coExpandedId = null;
+    await openDetail(detailCustomerId, bucket);
   }
 
   function renderDetail() {
@@ -169,118 +700,318 @@ const CustomerOrders = (() => {
     if (!el || !currentOrder) return;
     if (title) title.textContent = currentOrder.customer_name;
     if (sub) {
-      sub.textContent = currentBucket === "received" ? "All customer placements"
-        : currentBucket === "open" ? "Pending to ship — click Process to bill"
-          : currentBucket === "billed" ? "Shipped and billed"
-            : currentBucket === "closed" ? "Manually closed"
-              : "Cancelled orders";
+      sub.textContent = currentBucket === "received" ? "Waiting stock. Then To bill."
+        : currentBucket === "open" ? "Next: Bill"
+          : currentBucket === "billed" ? "Next: Dispatch · Collect · then Close"
+            : currentBucket === "closed" ? "Closed"
+              : "Cancelled";
     }
-
-    const processBtn = document.getElementById("co-process-btn");
-    if (processBtn) processBtn.classList.add("hidden");
+    updateDetailPrimary();
+    const canWrite = !!ctx.canWrite?.("customer_orders");
+    const canMoney = !!ctx.isAdmin?.();
 
     if (currentBucket === "open") {
+      const lines = currentOrder.open_lines || [];
       el.innerHTML = `
-        <div class="card table-wrap">
-          <table class="data"><thead><tr>
-            <th></th><th>Product</th><th>Received</th><th>Open</th><th>Billed</th><th>Rate</th><th></th>
-          </tr></thead><tbody>
-            ${(currentOrder.open_lines || []).map(line => `
-              <tr>
-                <td>${thumb((line.image_urls || [])[0])}</td>
-                <td><strong>${ctx.esc(line.our_product_id)}</strong></td>
-                <td>${line.quantity_received}</td>
-                <td><strong>${line.quantity_open}</strong></td>
-                <td>${line.quantity_billed}</td>
-                <td>${fmtPrice(line.unit_price)}</td>
-                <td><button class="btn btn-secondary btn-sm" onclick="CustomerOrders.cancelOpenLine(${line.id})">Cancel</button></td>
-              </tr>`).join("")}
-            ${!(currentOrder.open_lines || []).length ? `<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted);">Nothing open.</td></tr>` : ""}
-          </tbody></table>
-        </div>`;
+        ${canWrite && lines.length ? `<div class="ui-toolbar" style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-primary btn-sm" onclick="CustomerOrders.processOrder()">Bill</button>
+          <button class="btn btn-secondary btn-sm" onclick="CustomerOrders.openEditFromOpen()">Edit order</button>
+          <button class="btn btn-danger btn-sm" onclick="CustomerOrders.cancelCustomerOpen(${detailCustomerId})">Cancel order</button>
+        </div>` : ""}
+        <div class="ord-hub-list">${lines.length ? lines.map(line => HubUI.partyCard({
+          title: line.our_product_id,
+          meta: `${thumb((line.image_urls || [])[0])} Recv ${line.quantity_received} · To bill <strong>${line.quantity_open}</strong> · Billed ${line.quantity_billed} · ${fmtPrice(line.unit_price)}${addonsUnderHtml(line.addons, line.quantity_open)}`,
+          pillHtml: "",
+          primaryLabel: canWrite ? "Edit qty" : null,
+          primaryOnclick: `CustomerOrders.editOpenLine(${line.id}, ${line.quantity_open})`,
+          moreItems: canWrite
+            ? [
+                { label: "Edit order (add/remove)", onclick: "CustomerOrders.openEditFromOpen()" },
+                { label: "Cancel line", onclick: `CustomerOrders.cancelOpenLine(${line.id})`, danger: true },
+              ]
+            : [],
+          canWrite,
+        })).join("") : HubUI.emptyState({
+          title: "Nothing to bill",
+          sub: "No open qty for this customer.",
+          ctaHtml: canWrite ? `<button class="btn btn-primary" onclick="CustomerOrders.openOfflineWizard()">+ Place for customer</button>` : "",
+        })}</div>`;
       return;
     }
 
     if (currentBucket === "billed" && (currentOrder.bills || []).length) {
-      el.innerHTML = (currentOrder.bills || []).map(b => `
-        <div class="card" style="margin-bottom:16px;padding:16px;">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-            <strong>Bill ${ctx.esc(b.bill_number)}</strong>
-            <span>${fmtPrice(b.grand_total)} · ${new Date(b.created_at).toLocaleString()}</span>
-          </div>
-          <div style="display:flex;gap:8px;margin-bottom:8px;">
-            <button class="btn btn-secondary btn-sm" onclick="CustomerOrders.openBillDoc(${b.id}, true)">Print</button>
-            <button class="btn btn-secondary btn-sm" onclick="CustomerOrders.openBillDoc(${b.id}, false)">Download PDF</button>
-          </div>
-          ${b.narration ? `<p style="font-size:13px;color:var(--muted);margin:0 0 8px;">${ctx.esc(b.narration)}</p>` : ""}
-          <table class="data" style="margin:0;"><thead><tr><th>Product</th><th>Qty</th><th>Rate</th><th>Total</th><th></th></tr></thead><tbody>
-            ${(b.lines || []).map(ln => `<tr>
-              <td>${ctx.esc(ln.our_product_id)}</td>
-              <td>${ln.quantity_shipped}</td>
-              <td>${fmtPrice(ln.unit_price)}</td>
-              <td>${fmtPrice(ln.line_total)}</td>
-              <td>${ln.status === "billed" ? `<button class="btn btn-secondary btn-sm" onclick="CustomerOrders.closeBillLine(${ln.id})">Close</button>` : `<span style="font-size:12px;color:var(--muted);">Closed</span>`}</td>
-            </tr>`).join("")}
-          </tbody></table>
-        </div>`).join("");
+      el.innerHTML = `
+        <div class="ui-toolbar" style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">
+          ${canWrite ? `<button class="btn btn-primary btn-sm" onclick="CustomerOrders.goToDispatch()">Dispatch</button>` : ""}
+          ${canMoney ? `<button class="btn btn-secondary btn-sm" onclick="CustomerOrders.goCollectPayment(${detailCustomerId})">Collect payment</button>` : ""}
+          ${canWrite ? `<button class="btn btn-secondary btn-sm" onclick="CustomerOrders.openCloseBatch(${detailCustomerId})">Close</button>` : ""}
+        </div>
+        <div class="ord-hub-list">${(currentOrder.bills || []).map(b => {
+        const openKey = `bill-${b.id}`;
+        const expanded = coExpandedId === openKey;
+        const canEditBill = canWrite && (b.lines || []).every(ln => ln.status === "billed");
+        const hasFreight = b.transport_mode === "bus" || !!(b.freight_agent_id);
+        const modeLbl = b.transport_mode === "bus" ? "Bus" : b.transport_mode === "transport" ? "Transport" : b.transport_mode === "self_pickup" ? "Self-pickup" : (hasFreight ? "Bus" : "");
+        const linesHtml = `<table class="data vo-hub-table"><thead><tr><th>Product</th><th>Qty</th><th>Rate</th><th>Disc</th><th>Net</th><th>Total</th><th></th></tr></thead><tbody>
+          ${(b.lines || []).map(ln => `<tr>
+            <td>${ctx.esc(ln.our_product_id)}${addonsUnderHtml(ln.addons, ln.quantity_shipped)}</td>
+            <td>${ln.quantity_shipped}</td>
+            <td>${fmtPrice(ln.unit_price)}</td>
+            <td>${ln.discount_percent ? ctx.esc(String(ln.discount_percent)) + "%" : "—"}</td>
+            <td>${fmtPrice(ln.net_rate)}</td>
+            <td>${fmtPrice(ln.line_total)}</td>
+            <td>${ln.status === "billed" && canWrite
+              ? `<button class="btn btn-secondary btn-sm" onclick="CustomerOrders.closeBillLine(${ln.id})">Close line</button>`
+              : `<span class="vo-muted">${ctx.esc(ln.status === "billed" ? "Open" : "Closed")}</span>`}</td>
+          </tr>`).join("")}
+        </tbody></table>`;
+        const more = [
+          { label: "Download PDF", onclick: `CustomerOrders.openBillDoc(${b.id}, false)` },
+          { label: "WhatsApp", onclick: `CustomerOrders.shareBillWhatsApp(${b.id})` },
+        ];
+        if (canWrite) {
+          more.push({ label: "Edit bill number", onclick: `CustomerOrders.promptEditBillNumber(${b.id}, ${JSON.stringify(b.bill_number || "")})` });
+        }
+        if (canEditBill) {
+          more.push({ label: "Cancel bill", onclick: `CustomerOrders.cancelBill(${b.id})`, danger: true });
+        }
+        if (canWrite) {
+          more.unshift({ label: "Dispatch", onclick: "CustomerOrders.goToDispatch()" });
+        }
+        more.unshift({ label: "Print", onclick: `CustomerOrders.openBillDoc(${b.id}, true)` });
+        const chargeBit = Number(b.freight_charges) > 0
+          ? (b.transport_mode === "transport" ? ` · Transport ${fmtPrice(b.freight_charges)}` : ` · Freight ${fmtPrice(b.freight_charges)}`)
+          : "";
+        const receiptBit = b.transport_receipt_number ? ` · Rcpt ${ctx.esc(b.transport_receipt_number)}` : "";
+        return HubUI.partyCard({
+          title: `Bill ${b.bill_number}`,
+          meta: `${fmtPrice(b.grand_total)} · ${ctx.fmtDate(b.created_at)}${b.bill_date && ctx.fmtDay(b.bill_date) !== ctx.fmtDay(b.created_at) ? ` · Bill ${ctx.fmtDay(b.bill_date)}` : ""}${modeLbl ? ` · ${modeLbl}` : ""}${chargeBit}${receiptBit}${b.narration ? `<div style="margin-top:2px;">${ctx.esc(b.narration)}</div>` : ""}`,
+          pillHtml: "",
+          primaryLabel: canEditBill ? "Edit" : "Print",
+          primaryOnclick: canEditBill
+            ? `CustomerOrders.openEditBill(${b.id})`
+            : `CustomerOrders.openBillDoc(${b.id}, true)`,
+          moreItems: more.filter(m => m.label !== (canEditBill ? "Edit" : "Print")),
+          open: expanded,
+          rowOnclick: `CustomerOrders.toggleDetailExpand('${openKey}')`,
+          canWrite: true,
+          expandHtml: expanded ? linesHtml : "",
+        });
+      }).join("")}</div>`;
       return;
     }
 
     if (currentBucket === "received") {
-      const hasPlacements = (currentOrder.placements || []).length > 0;
+      const placements = currentOrder.placements || [];
       el.innerHTML = `
-        ${hasPlacements && ctx.canWrite?.("vendor_orders") ? `
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;padding:14px 16px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;">
-            <div>
-              <div style="font-weight:600;font-size:15px;">Ready to bill?</div>
-              <div style="font-size:13px;color:var(--muted);margin-top:2px;">Process received placements into a customer bill.</div>
-            </div>
-            <button class="btn btn-primary" onclick="CustomerOrders.processOrder()">Process Order</button>
-          </div>` : ""}
-        <div class="card table-wrap">
-        ${(currentOrder.placements || []).map(p => `
-          <div style="padding:16px;border-bottom:1px solid var(--border);">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-              <strong>Placement #${p.id}</strong>
-              <span style="font-size:12px;color:var(--muted);">${new Date(p.placed_at).toLocaleString()}</span>
-            </div>
-            ${p.customer_notes ? `<p style="font-size:13px;color:var(--muted);margin:0 0 8px;">${ctx.esc(p.customer_notes)}</p>` : ""}
-            ${p.cancel_reason ? `<p style="font-size:12px;color:var(--danger);margin:0 0 8px;">Cancelled: ${ctx.esc(p.cancel_reason)}</p>` : ""}
-            <table class="data" style="margin:0;"><thead><tr><th>Product</th><th>Qty</th><th>Billed</th><th>Rate</th></tr></thead><tbody>
-              ${(p.lines || []).map(ln => `<tr>
-                <td>${ctx.esc(ln.our_product_id)}</td>
-                <td>${ln.quantity}</td>
-                <td>${ln.quantity_billed}</td>
-                <td>${fmtPrice(ln.unit_price)}</td>
-              </tr>`).join("")}
-            </tbody></table>
-          </div>`).join("")}
-        ${!(currentOrder.placements || []).length ? `<p style="padding:24px;text-align:center;color:var(--muted);margin:0;">No placements.</p>` : ""}
-      </div>`;
+        ${canWrite && placements.length ? `<div class="ui-toolbar" style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-secondary btn-sm" onclick="CustomerOrders.openOfflineWizard(${detailCustomerId})">Edit / place more</button>
+          <button class="btn btn-danger btn-sm" onclick="CustomerOrders.cancelCustomerOpen(${detailCustomerId})">Cancel order</button>
+        </div>` : ""}
+        <div class="ord-hub-list">${placements.length ? placements.map(p => {
+        const active = (p.lines || []).filter(ln => ln.status === "active");
+        const canEdit = canWrite && p.status === "received" && active.length > 0;
+        const hasUnbilled = active.some(ln => Number(ln.quantity) > Number(ln.quantity_billed || 0));
+        const hasBilled = active.some(ln => Number(ln.quantity_billed) > 0);
+        const canCancel = canWrite && p.status === "received" && hasUnbilled;
+        const cancelLabel = hasBilled ? "Cancel remaining" : "Cancel order";
+        const openKey = `recv-${p.id}`;
+        const expanded = coExpandedId === openKey;
+        const linesHtml = `<table class="data vo-hub-table"><thead><tr><th>Product</th><th>Qty</th><th>Billed</th><th>Rate</th><th></th></tr></thead><tbody>
+          ${(p.lines || []).map(ln => `<tr>
+            <td>${ctx.esc(ln.our_product_id)}${addonsUnderHtml(ln.addons, ln.quantity)}</td>
+            <td>${ln.quantity}</td>
+            <td>${ln.quantity_billed}</td>
+            <td>${fmtPrice(ln.unit_price)}</td>
+            <td style="white-space:nowrap;">
+              ${ln.status === "active" && canWrite ? `
+                <button class="btn btn-secondary btn-sm" onclick="CustomerOrders.editReceivedLine(${ln.id}, ${ln.quantity})">Qty</button>
+                ${Number(ln.quantity) > Number(ln.quantity_billed || 0)
+                  ? `<button class="btn btn-secondary btn-sm" onclick="CustomerOrders.deleteReceivedLine(${ln.id})">Remove</button>`
+                  : ""}
+              ` : `<span class="vo-muted">${ctx.esc(ln.status || "")}</span>`}
+            </td>
+          </tr>`).join("")}
+        </tbody></table>`;
+        const more = [];
+        if (canEdit) more.push({ label: "Edit order", onclick: `CustomerOrders.openEditPlacement(${p.id})` });
+        if (canCancel) more.push({ label: cancelLabel, onclick: `CustomerOrders.cancelPlacement(${p.id})`, danger: true });
+        return HubUI.partyCard({
+          title: `Order #${p.id}`,
+          meta: `${new Date(p.placed_at).toLocaleString()}${p.customer_notes ? ` · ${ctx.esc(p.customer_notes)}` : ""}${p.cancel_reason ? `<div style="color:var(--danger);margin-top:2px;">Cancelled: ${ctx.esc(p.cancel_reason)}</div>` : ""}`,
+          pillHtml: p.cancel_reason ? HubUI.pill("Cancelled", "danger") : "",
+          primaryLabel: canEdit ? "Edit" : null,
+          primaryOnclick: canEdit ? `CustomerOrders.openEditPlacement(${p.id})` : "",
+          moreItems: more.filter(m => !(canEdit && m.label === "Edit order")),
+          open: expanded,
+          rowOnclick: `CustomerOrders.toggleDetailExpand('${openKey}')`,
+          canWrite,
+          expandHtml: expanded ? linesHtml : "",
+        });
+      }).join("") : HubUI.emptyState({
+        title: "No orders",
+        sub: "No placements for this customer yet.",
+        ctaHtml: canWrite ? `<button class="btn btn-primary" onclick="CustomerOrders.openOfflineWizard()">+ Place for customer</button>` : "",
+      })}</div>`;
       return;
     }
 
-    el.innerHTML = `
-      <div class="card table-wrap">
-        ${(currentOrder.placements || []).map(p => `
-          <div style="padding:16px;border-bottom:1px solid var(--border);">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-              <strong>Placement #${p.id}</strong>
-              <span style="font-size:12px;color:var(--muted);">${new Date(p.placed_at).toLocaleString()}</span>
-            </div>
-            ${p.customer_notes ? `<p style="font-size:13px;color:var(--muted);margin:0 0 8px;">${ctx.esc(p.customer_notes)}</p>` : ""}
-            ${p.cancel_reason ? `<p style="font-size:12px;color:var(--danger);margin:0 0 8px;">Cancelled: ${ctx.esc(p.cancel_reason)}</p>` : ""}
-            <table class="data" style="margin:0;"><thead><tr><th>Product</th><th>Qty</th><th>Billed</th><th>Rate</th></tr></thead><tbody>
-              ${(p.lines || []).map(ln => `<tr>
-                <td>${ctx.esc(ln.our_product_id)}</td>
-                <td>${ln.quantity}</td>
-                <td>${ln.quantity_billed}</td>
-                <td>${fmtPrice(ln.unit_price)}</td>
-              </tr>`).join("")}
-            </tbody></table>
-          </div>`).join("")}
-        ${!(currentOrder.placements || []).length ? `<p style="padding:24px;text-align:center;color:var(--muted);margin:0;">No placements.</p>` : ""}
-      </div>`;
+    // cancelled / closed / billed-without-bills fallback
+    const placements = currentOrder.placements || [];
+    el.innerHTML = `<div class="ord-hub-list">${placements.length ? placements.map(p => {
+      const openKey = `hist-${p.id}`;
+      const expanded = coExpandedId === openKey;
+      const linesHtml = `<table class="data vo-hub-table"><thead><tr><th>Product</th><th>Qty</th><th>Billed</th><th>Rate</th></tr></thead><tbody>
+        ${(p.lines || []).map(ln => `<tr>
+          <td>${ctx.esc(ln.our_product_id)}${addonsUnderHtml(ln.addons, ln.quantity)}</td>
+          <td>${ln.quantity}</td>
+          <td>${ln.quantity_billed}</td>
+          <td>${fmtPrice(ln.unit_price)}</td>
+        </tr>`).join("")}
+      </tbody></table>`;
+      return HubUI.partyCard({
+        title: `Placement #${p.id}`,
+        meta: `${new Date(p.placed_at).toLocaleString()}${p.customer_notes ? ` · ${ctx.esc(p.customer_notes)}` : ""}${p.cancel_reason ? `<div style="color:var(--danger);margin-top:2px;">Cancelled: ${ctx.esc(p.cancel_reason)}</div>` : ""}`,
+        pillHtml: currentBucket === "cancelled" || p.cancel_reason
+          ? HubUI.pill("Cancelled", "danger")
+          : HubUI.pill(currentBucket === "closed" ? "Closed" : "History", "muted"),
+        open: expanded,
+        rowOnclick: `CustomerOrders.toggleDetailExpand('${openKey}')`,
+        canWrite: true,
+        expandHtml: expanded ? linesHtml : "",
+      });
+    }).join("") : HubUI.emptyState({
+      title: "No placements",
+      sub: "Nothing in this stage for this customer.",
+    })}</div>`;
+  }
+
+  function toggleDetailExpand(key) {
+    coExpandedId = coExpandedId === key ? null : key;
+    renderDetail();
+  }
+
+  async function editOpenLine(lineId, currentQty) {
+    const raw = prompt("Edit open quantity:", String(currentQty ?? 1));
+    if (raw == null) return;
+    const qty = parseInt(raw, 10);
+    if (!Number.isFinite(qty) || qty < 0) return ctx.toast("Invalid quantity", "error");
+    ctx.showLoading?.();
+    try {
+      await ctx.api(`/customer-orders/open-lines/${lineId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ quantity: qty }),
+      });
+      ctx.invalidateCache?.("/customer-orders");
+      ctx.toast("Open qty updated", "success");
+      if (currentOrder) await openDetail(currentOrder.customer_id, "open");
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  async function editReceivedLine(lineId, currentQty) {
+    const raw = prompt("Edit received quantity (0 removes):", String(currentQty ?? 1));
+    if (raw == null) return;
+    const qty = parseInt(raw, 10);
+    if (!Number.isFinite(qty) || qty < 0) return ctx.toast("Invalid quantity", "error");
+    ctx.showLoading?.();
+    try {
+      if (qty === 0) {
+        await ctx.api(`/customer-orders/lines/${lineId}`, { method: "DELETE" });
+        ctx.toast("Line removed", "success");
+      } else {
+        await ctx.api(`/customer-orders/lines/${lineId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ quantity: qty }),
+        });
+        ctx.toast("Received qty updated", "success");
+      }
+      ctx.invalidateCache?.("/customer-orders");
+      ctx.invalidateCache?.("/stock");
+      if (currentOrder) await openDetail(currentOrder.customer_id, "received");
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  async function deleteReceivedLine(lineId) {
+    if (!confirm("Remove unbilled qty for this product?")) return;
+    ctx.showLoading?.();
+    try {
+      // Find billed floor — DELETE only works when billed=0; else shrink to billed.
+      let billed = 0;
+      for (const p of (currentOrder?.placements || [])) {
+        const ln = (p.lines || []).find(x => x.id === lineId);
+        if (ln) { billed = Number(ln.quantity_billed) || 0; break; }
+      }
+      if (billed > 0) {
+        await ctx.api(`/customer-orders/lines/${lineId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ quantity: billed }),
+        });
+        ctx.toast("Unbilled qty removed — billed kept", "success");
+      } else {
+        await ctx.api(`/customer-orders/lines/${lineId}`, { method: "DELETE" });
+        ctx.toast("Line removed", "success");
+      }
+      ctx.invalidateCache?.("/customer-orders");
+      ctx.invalidateCache?.("/stock");
+      if (currentOrder) await openDetail(currentOrder.customer_id, "received");
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  async function openEditFromOpen() {
+    if (!detailCustomerId) return;
+    ctx.showLoading?.();
+    try {
+      const detail = await ctx.api(`/customer-orders/customer/${detailCustomerId}?bucket=received`, {}, 0);
+      const placements = (detail.placements || []).filter(p => p.status === "received");
+      const pick = placements.find(p => (p.lines || []).some(ln => ln.status === "active"
+        && Number(ln.quantity) > Number(ln.quantity_billed || 0)))
+        || placements.find(p => (p.lines || []).some(ln => ln.status === "active"))
+        || placements[0];
+      if (!pick) return ctx.toast("No incoming order to edit — place one first", "error");
+      currentOrder = detail;
+      await openEditPlacement(pick.id);
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  async function openEditPlacement(placementId) {
+    if (!currentOrder) return;
+    const p = (currentOrder.placements || []).find(x => x.id === placementId);
+    if (!p) return ctx.toast("Placement not found", "error");
+    const active = (p.lines || []).filter(ln => ln.status === "active");
+    if (!active.length) return ctx.toast("Nothing editable on this placement", "error");
+
+    offlineEditPlacementId = placementId;
+    offlineStep = 2;
+    offlineCustomerId = currentOrder.customer_id;
+    offlineCustomerName = currentOrder.customer_name || currentOrder.customer_label || "";
+    offlineNotes = p.customer_notes || "";
+    offlinePreview = null;
+    offlineBusy = false;
+    offlineSearchQuery = "";
+    offlineSearchResults = [];
+    ctx.showLoading?.();
+    try {
+      offlineCustomers = await ctx.api("/customers", {}, 30000) || [];
+      await ensureOfflineProductsLoaded();
+      offlineLines = active.map(ln => {
+        const stock = offlineSearchResults.find(x => x.catalog_product_id === ln.catalog_product_id);
+        return {
+          catalog_product_id: ln.catalog_product_id,
+          our_product_id: ln.our_product_id,
+          quantity: ln.quantity,
+          min_qty: Number(ln.quantity_billed) || 0,
+          selling_price: ln.unit_price ?? stock?.selling_price,
+          quantity_on_hand: stock?.quantity_on_hand,
+        };
+      });
+      document.getElementById("co-offline-wizard")?.classList.remove("hidden");
+      renderOfflineWizard();
+    } catch (e) { ctx.toast(e.message, "error"); offlineEditPlacementId = null; }
+    finally { ctx.hideLoading?.(); }
   }
 
   function promptReason(title, onOk) {
@@ -301,16 +1032,81 @@ const CustomerOrders = (() => {
   }
 
   function cancelOpenLine(lineId) {
-    promptReason("Cancel open line", async (reason) => {
+    promptReason("Cancel line", async (reason) => {
       ctx.showLoading?.();
       try {
         await ctx.api(`/customer-orders/open-lines/${lineId}/cancel`, { method: "POST", body: JSON.stringify({ reason }) });
-        ctx.toast("Line cancelled", "success");
+        ctx.toast("Line cancelled — billed kept", "success");
         await openDetail(detailCustomerId, currentBucket);
         loadList();
       } catch (e) { ctx.toast(e.message, "error"); }
       finally { ctx.hideLoading?.(); }
     });
+  }
+
+  function cancelPlacement(placementId) {
+    const p = (currentOrder?.placements || []).find(x => x.id === placementId);
+    const lines = (p?.lines || []).filter(
+      ln => ln.status === "active" && Number(ln.quantity) > Number(ln.quantity_billed || 0)
+    );
+    if (!lines.length) return ctx.toast("Nothing open to cancel — billed qty stays", "error");
+    const hasBilled = (p?.lines || []).some(ln => Number(ln.quantity_billed) > 0);
+    promptReason(hasBilled ? "Cancel remaining" : "Cancel Order", async (reason) => {
+      ctx.showLoading?.();
+      try {
+        await ctx.api(`/customer-orders/placements/${placementId}/cancel`, {
+          method: "POST",
+          body: JSON.stringify({ reason }),
+        });
+        ctx.toast(hasBilled ? "Remaining cancelled — billed kept" : "Order cancelled", "success");
+        ctx.invalidateCache?.("/customer-orders");
+        await openDetail(detailCustomerId, hasBilled ? "received" : "cancelled");
+        loadList();
+      } catch (e) { ctx.toast(e.message, "error"); }
+      finally { ctx.hideLoading?.(); }
+    });
+  }
+
+  /** Re-fetch open lines by customer id — never use stale currentOrder from another party. */
+  async function cancelCustomerOpen(customerId) {
+    const cid = customerId || detailCustomerId;
+    if (!cid) return ctx.toast("No customer", "error");
+    ctx.showLoading?.();
+    try {
+      const detail = await ctx.api(`/customer-orders/customer/${cid}?bucket=open`, {}, 0);
+      const lines = (detail.open_lines || []).filter(l => Number(l.quantity_open) > 0);
+      if (!lines.length) return ctx.toast("No open lines", "error");
+      const hasBilled = lines.some(l => Number(l.quantity_billed) > 0);
+      promptReason(hasBilled ? "Cancel remaining" : "Cancel Order", async (reason) => {
+        ctx.showLoading?.();
+        let ok = 0;
+        let failed = 0;
+        try {
+          for (const line of lines) {
+            try {
+              await ctx.api(`/customer-orders/open-lines/${line.id}/cancel`, {
+                method: "POST",
+                body: JSON.stringify({ reason }),
+              });
+              ok += 1;
+            } catch (_) { failed += 1; }
+          }
+          if (failed) ctx.toast(`Cancelled ${ok}, failed ${failed}`, "error");
+          else ctx.toast(hasBilled ? `Remaining cancelled ${ok} — billed kept` : `Order cancelled (${ok})`, "success");
+          ctx.invalidateCache?.("/customer-orders");
+          detailCustomerId = cid;
+          currentOrder = detail;
+          await openDetail(cid, "open");
+          loadList();
+        } catch (e) { ctx.toast(e.message, "error"); }
+        finally { ctx.hideLoading?.(); }
+      });
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  function cancelAllOpen() {
+    return cancelCustomerOpen(detailCustomerId);
   }
 
   function closeBillLine(lineId) {
@@ -325,36 +1121,112 @@ const CustomerOrders = (() => {
     });
   }
 
+  function cancelBill(billId) {
+    promptReason("Cancel bill — qty returns to To bill. Freight cleared.", async (reason) => {
+      if (!confirm("Cancel this bill? Order stays open to bill again.")) return;
+      ctx.showLoading?.();
+      try {
+        await ctx.api(`/customer-orders/bills/${billId}/cancel`, {
+          method: "POST",
+          body: JSON.stringify({ reason }),
+        });
+        ctx.toast("Bill cancelled — order open again", "success");
+        ctx.invalidateCache?.("/customer-orders");
+        ctx.invalidateCache?.("/freight-agents");
+        await openDetail(detailCustomerId, "open");
+      } catch (e) { ctx.toast(e.message, "error"); }
+      finally { ctx.hideLoading?.(); }
+    });
+  }
+
   function buildProcessBody() {
+    const discOn = discountEnabled;
     const lines = processLines
       .filter(l => Number(l.quantity_to_ship) > 0)
-      .map(l => ({
-        catalog_product_id: l.catalog_product_id,
-        quantity_to_ship: Number(l.quantity_to_ship),
-        discount_percent: useOverallDiscount ? undefined : (l.discount_percent ? Number(l.discount_percent) : undefined),
-      }));
+      .map(l => {
+        const row = {
+          catalog_product_id: l.catalog_product_id,
+          quantity_to_ship: Number(l.quantity_to_ship),
+          quantity: Number(l.quantity_to_ship),
+        };
+        if (discOn && !useOverallDiscount) {
+          const hasPct = l.discount_percent !== "" && l.discount_percent != null && Number.isFinite(Number(l.discount_percent));
+          const hasNet = l.net_rate !== "" && l.net_rate != null && Number.isFinite(Number(l.net_rate));
+          if (l.discSource === "net" && hasNet) {
+            row.net_rate = Number(l.net_rate);
+          } else if (hasPct) {
+            row.discount_percent = Number(l.discount_percent);
+          } else if (hasNet) {
+            row.net_rate = Number(l.net_rate);
+          }
+        }
+        return row;
+      });
     const extra = additionalCharges.filter(c => c.name.trim() && c.amount.trim() && Number(c.amount) > 0)
       .map(c => ({ name: c.name.trim(), amount: String(c.amount) }));
     const body = {
       lines,
       gst_enabled: gstEnabled,
       gst_rate_percent: Number(gstRate) || 18,
-      bill_series_id: Number(billSeriesId),
       narration: narration.trim() || null,
       additional_charges: extra,
+      force_credit_override: !!forceCreditOverride,
     };
-    if (useOverallDiscount && overallDiscount.trim()) body.overall_discount_percent = Number(overallDiscount);
-    if (freightAgentId) body.freight_agent_id = Number(freightAgentId);
-    if (freightCharges.trim()) body.freight_charges = String(freightCharges);
+    if (!editBillId) body.bill_series_id = Number(billSeriesId);
+    if ((editBillNumber || "").trim()) body.bill_number = editBillNumber.trim();
+    if (discOn && useOverallDiscount && overallDiscount.trim()) {
+      body.overall_discount_percent = Number(overallDiscount);
+    }
+    if (!transportMode) {
+      /* router rejects missing mode */
+    } else {
+      body.transport_mode = transportMode;
+    }
+    if (transportMode === "transport" && transportReceiptNumber.trim()) {
+      body.transport_receipt_number = transportReceiptNumber.trim();
+    }
+    if (transportMode === "bus" && freightAgentId) body.freight_agent_id = Number(freightAgentId);
+    if (transportMode === "bus" || transportMode === "transport") {
+      if (freightCharges.trim() !== "") body.freight_charges = String(freightCharges);
+    }
     if (packagingCharges.trim()) body.packaging_charges = String(packagingCharges);
+    if (!editBillId && billDate) body.bill_date = billDate;
     return body;
+  }
+
+  function creditBannerHtml(cr, { afterBill = false } = {}) {
+    if (!cr) return "";
+    if (cr.unlimited) {
+      return `<div class="card" style="padding:12px 14px;margin-bottom:12px;background:#f8fafc;">
+        <strong>Credit</strong> — unlimited · outstanding ₹${ctx.esc(cr.used || "0")}
+      </div>`;
+    }
+    const left = afterBill ? cr.left_after_bill : cr.left;
+    const used = afterBill ? cr.used_after_bill : cr.used;
+    const over = afterBill ? cr.would_exceed : (Number(left) < 0);
+    const bg = over ? "#fef2f2" : "#f0fdf4";
+    const border = over ? "#fecaca" : "#bbf7d0";
+    return `<div class="card" style="padding:12px 14px;margin-bottom:12px;background:${bg};border:1px solid ${border};">
+      <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+        <div><strong>Credit limit</strong> ₹${ctx.esc(cr.credit_limit)}</div>
+        <div>Used ₹${ctx.esc(used)} · Left ₹${ctx.esc(left)}</div>
+      </div>
+      ${over ? `<p style="margin:8px 0 0;font-size:13px;color:#b91c1c;">${cr.credit_override ? "Over limit — override allowed if you confirm." : "Over limit — enable credit override on customer to bill."}</p>` : ""}
+    </div>`;
+  }
+
+  async function processFromHub(customerId, bucket) {
+    await openDetail(customerId, bucket || "open");
+    await processOrder();
   }
 
   async function processOrder() {
     if (!detailCustomerId) return;
+    editBillId = null;
     processStep = 1;
     processBusy = false;
     previewTotals = null;
+    forceCreditOverride = false;
     ctx.showLoading?.();
     try {
       const [pctx, agents, series] = await Promise.all([
@@ -369,42 +1241,239 @@ const CustomerOrders = (() => {
         ...l,
         quantity_to_ship: l.quantity_open,
         discount_percent: "",
+        net_rate: calcNetFromDisc(l.unit_price, 0),
+        discSource: "",
       }));
       if (!processLines.length) {
-        ctx.toast("No open lines to bill. Switch to Open bucket or wait for stock.", "error");
+        ctx.toast("Nothing to bill yet. Qty must be in To bill (stock reserved). If still in Orders, wait for stock.", "error");
         return;
       }
+      discountEnabled = false;
       useOverallDiscount = false;
       overallDiscount = "";
       gstEnabled = false;
       gstRate = "18";
       freightAgentId = "";
       freightCharges = "";
+      transportMode = "";
+      transportReceiptNumber = "";
       packagingCharges = "";
       additionalCharges = [{ name: "", amount: "" }];
       billSeriesId = billSeries.length ? String(billSeries[0].id) : "";
-      narration = pctx.default_narration || "";
+      editBillNumber = nextBillNumberFromSeries();
+      customerNotes = pctx.default_narration || "";
+      narration = "";
+      billDate = localToday();
+      billEditSearch = "";
       document.getElementById("co-wizard")?.classList.remove("hidden");
+      const title = document.getElementById("co-wizard-title");
+      if (title) title.textContent = "Bill customer";
       renderProcessWizard();
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
   }
 
+  async function editLatestBill(customerId) {
+    if (!customerId) return;
+    ctx.showLoading?.();
+    try {
+      const detail = await ctx.api(`/customer-orders/customer/${customerId}?bucket=billed`, {}, 0);
+      const bills = detail?.bills || [];
+      if (!bills.length) return ctx.toast("No bills to edit", "error");
+      const editable = bills.find(b => (b.lines || []).length && (b.lines || []).every(ln => ln.status === "billed"));
+      const bill = editable || bills[0];
+      detailCustomerId = customerId;
+      currentOrder = detail;
+      await openEditBill(bill.id);
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  async function openEditBill(billId) {
+    if (!billId) return;
+    editBillId = billId;
+    processStep = 1;
+    processBusy = false;
+    previewTotals = null;
+    forceCreditOverride = false;
+    ctx.showLoading?.();
+    try {
+      const [bill, agents] = await Promise.all([
+        ctx.api(`/customer-orders/bills/${billId}`, {}, 0),
+        ctx.api("/freight-agents", {}, 30000),
+      ]);
+      if (bill.cancelled_at) {
+        ctx.toast("Cannot edit — bill cancelled", "error");
+        editBillId = null;
+        return;
+      }
+      if ((bill.lines || []).some(ln => ln.status === "closed")) {
+        ctx.toast("Cannot edit — close was done. Cancel close first or edit before Close.", "error");
+        editBillId = null;
+        return;
+      }
+      detailCustomerId = bill.customer_id || detailCustomerId;
+      processContext = { customer_id: bill.customer_id, customer_name: currentOrder?.customer_name || "" };
+      freightAgents = agents || [];
+      billSeries = [];
+      processLines = (bill.lines || []).filter(ln => ln.status === "billed").map(l => ({
+        catalog_product_id: l.catalog_product_id,
+        our_product_id: l.our_product_id,
+        unit_price: l.unit_price,
+        quantity_open: 999999,
+        quantity_on_hand: "—",
+        quantity_to_ship: l.quantity_shipped,
+        discount_percent: l.discount_percent || "",
+        net_rate: l.net_rate || (l.discount_percent
+          ? calcNetFromDisc(l.unit_price, l.discount_percent)
+          : calcNetFromDisc(l.unit_price, 0)),
+        discSource: l.discount_percent ? "pct" : (l.net_rate ? "net" : ""),
+        addons: l.addons || [],
+      }));
+      if (!processLines.length) {
+        ctx.toast("No editable lines on this bill", "error");
+        editBillId = null;
+        return;
+      }
+      const hasOverall = bill.discount_percent != null && Number(bill.discount_percent) > 0;
+      const hasLineDisc = processLines.some(l => l.discount_percent && Number(l.discount_percent) > 0);
+      discountEnabled = hasOverall || hasLineDisc;
+      useOverallDiscount = hasOverall;
+      overallDiscount = hasOverall ? String(bill.discount_percent) : "";
+      gstEnabled = !!bill.gst_enabled;
+      gstRate = bill.gst_rate_percent != null ? String(bill.gst_rate_percent) : "18";
+      freightAgentId = bill.freight_agent_id != null ? String(bill.freight_agent_id) : "";
+      freightCharges = bill.freight_charges != null ? String(bill.freight_charges) : "";
+      transportMode = bill.transport_mode || (bill.freight_agent_id ? "bus" : (Number(bill.freight_charges) > 0 ? "transport" : "self_pickup"));
+      transportReceiptNumber = bill.transport_receipt_number || "";
+      packagingCharges = bill.packaging_charges != null ? String(bill.packaging_charges) : "";
+      additionalCharges = (bill.additional_charges || []).length
+        ? bill.additional_charges.map(c => ({ name: c.name || "", amount: String(c.amount || "") }))
+        : [{ name: "", amount: "" }];
+      billSeriesId = bill.bill_series_id != null ? String(bill.bill_series_id) : "";
+      editBillNumber = bill.bill_number || "";
+      customerNotes = "";
+      narration = bill.narration || "";
+      billEditSearch = "";
+      if (!billEditProducts.length) {
+        try { billEditProducts = await ctx.api("/stock/products?lite=1", {}, 120000) || []; }
+        catch (_) { billEditProducts = []; }
+      }
+      document.getElementById("co-wizard")?.classList.remove("hidden");
+      const title = document.getElementById("co-wizard-title");
+      if (title) title.textContent = `Edit bill ${bill.bill_number}`;
+      renderProcessWizard();
+    } catch (e) { ctx.toast(e.message, "error"); editBillId = null; }
+    finally { ctx.hideLoading?.(); }
+  }
+
   function closeProcessWizard() {
     document.getElementById("co-wizard")?.classList.add("hidden");
+    editBillId = null;
+    editBillNumber = "";
+  }
+
+  function promptEditBillNumber(billId, current) {
+    ctx.openDetail?.("Edit bill number", `
+      <p style="margin:0 0 12px;color:var(--muted);font-size:13px;">Temporary correction. Must be unique among open bills.</p>
+      <label class="label">Bill number</label>
+      <input class="input" id="co-edit-bill-num" value="${ctx.esc(current || "")}" />
+    `, `
+      <button class="btn btn-secondary" style="flex:1;" onclick="App.closeDetail()">Cancel</button>
+      <button class="btn btn-primary" style="flex:1;" onclick="CustomerOrders.saveBillNumber(${billId})">Save</button>
+    `, "sm");
+  }
+
+  async function saveBillNumber(billId) {
+    const num = (document.getElementById("co-edit-bill-num")?.value || "").trim();
+    if (!num) return ctx.toast("Bill number required", "error");
+    ctx.showLoading?.();
+    try {
+      const res = await ctx.api(`/customer-orders/bills/${billId}/number`, {
+        method: "PATCH",
+        body: JSON.stringify({ bill_number: num }),
+      }, 0);
+      ctx.toast(`Bill number → ${res.bill_number}`, "success");
+      App.closeDetail?.();
+      ctx.invalidateCache?.("/customer-orders");
+      if (detailCustomerId) await openDetail(detailCustomerId, "billed");
+      else await loadList();
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  function enableDiscount() {
+    discountEnabled = true;
+    useOverallDiscount = false;
+    overallDiscount = "";
+    renderProcessWizard();
+  }
+
+  function clearDiscount() {
+    discountEnabled = false;
+    useOverallDiscount = false;
+    overallDiscount = "";
+    processLines.forEach(l => { l.discount_percent = ""; l.net_rate = ""; l.discSource = ""; });
+    renderProcessWizard();
+  }
+
+  function addBillEditProduct(catalogProductId) {
+    const p = billEditProducts.find(x => x.catalog_product_id === catalogProductId);
+    if (!p) return;
+    if (processLines.some(l => l.catalog_product_id === catalogProductId)) {
+      return ctx.toast("Already on bill", "error");
+    }
+    processLines.push({
+      catalog_product_id: p.catalog_product_id,
+      our_product_id: p.our_product_id,
+      unit_price: p.selling_price,
+      quantity_open: 999999,
+      quantity_on_hand: p.quantity_on_hand ?? 0,
+      quantity_to_ship: 50,
+      discount_percent: "",
+      net_rate: "",
+      discSource: "",
+      addons: p.addons || [],
+    });
+    billEditSearch = "";
+    renderProcessWizard();
+  }
+
+  function removeProcessLine(idx) {
+    if (!editBillId) return;
+    if (processLines.length <= 1) return ctx.toast("Bill needs at least one product", "error");
+    processLines.splice(idx, 1);
+    renderProcessWizard();
   }
 
   function setShipQty(idx, val) {
     const ln = processLines[idx];
     if (!ln) return;
-    const max = ln.quantity_open;
-    let q = Math.max(0, Math.min(max, parseInt(val, 10) || 0));
+    let q = Math.max(0, parseInt(val, 10) || 0);
+    if (!editBillId) q = Math.min(ln.quantity_open, q);
     ln.quantity_to_ship = q;
-    renderProcessWizard();
   }
 
   function setLineDisc(idx, val) {
-    if (processLines[idx]) processLines[idx].discount_percent = val;
+    const ln = processLines[idx];
+    if (!ln) return;
+    ln.discount_percent = val;
+    ln.discSource = val === "" || val == null ? "" : "pct";
+    ln.net_rate = val === "" || val == null ? "" : calcNetFromDisc(ln.unit_price, val);
+  }
+
+  function setLineNetRate(idx, val) {
+    const ln = processLines[idx];
+    if (!ln) return;
+    ln.net_rate = val;
+    ln.discSource = val === "" || val == null ? "" : "net";
+    if (val === "" || val == null) {
+      ln.discount_percent = "";
+      return;
+    }
+    ln.discount_percent = calcDiscFromNet(ln.unit_price, val);
+    discountEnabled = true;
+    useOverallDiscount = false;
   }
 
   function renderProcessWizard() {
@@ -413,7 +1482,7 @@ const CustomerOrders = (() => {
     const footerEl = document.getElementById("co-wizard-footer");
     if (!stepsEl || !bodyEl || !footerEl) return;
 
-    const labels = ["Lines", "Charges", "Narration", "Review"];
+    const labels = ["Lines", "Transport", "Charges", "Narration", "Review"];
     stepsEl.innerHTML = labels.map((l, i) => {
       const n = i + 1;
       const cls = n === processStep ? "step active" : n < processStep ? "step done" : "step";
@@ -421,30 +1490,60 @@ const CustomerOrders = (() => {
     }).join("");
 
     if (processStep === 1) {
+      const lineDiscLocked = !discountEnabled || useOverallDiscount;
+      const discPanel = `<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:12px;border:1px solid var(--border);border-radius:10px;background:#fafafa;">
+            <strong style="font-size:13px;">Discount</strong>
+            <label style="display:flex;align-items:center;gap:6px;font-size:14px;">
+              <input type="radio" name="co-disc-mode" ${!discountEnabled ? "checked" : ""} onchange="CustomerOrders.setDiscToggle('off')" /> Off
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:14px;">
+              <input type="radio" name="co-disc-mode" ${discountEnabled && !useOverallDiscount ? "checked" : ""} onchange="CustomerOrders.setDiscToggle('line')" /> Per item
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:14px;">
+              <input type="radio" name="co-disc-mode" ${discountEnabled && useOverallDiscount ? "checked" : ""} onchange="CustomerOrders.setDiscToggle('overall')" /> Overall
+            </label>
+            ${discountEnabled && useOverallDiscount ? `<input class="input" style="width:100px;" placeholder="%" value="${ctx.esc(overallDiscount)}" oninput="CustomerOrders.setOverallDisc(this.value)" />` : ""}
+          </div>`;
+      const addProd = editBillId ? (() => {
+        const q = billEditSearch.trim().toLowerCase();
+        const matches = q
+          ? billEditProducts.filter(p => String(p.our_product_id || "").toLowerCase().includes(q)).slice(0, 8)
+          : [];
+        return `<div style="margin-top:14px;">
+          <label class="label">Add product</label>
+          <input class="input" style="width:100%;margin-bottom:8px;" placeholder="Search product ID…" value="${ctx.esc(billEditSearch)}" oninput="CustomerOrders.setBillEditSearch(this.value)" />
+          ${matches.length ? `<div style="display:flex;flex-direction:column;gap:4px;">${matches.map(p => `
+            <button type="button" class="btn btn-secondary btn-sm" style="justify-content:flex-start;" onclick="CustomerOrders.addBillEditProduct(${p.catalog_product_id})">
+              ${ctx.esc(p.our_product_id)} · ${fmtPrice(p.selling_price)} · stock ${p.quantity_on_hand ?? 0}
+            </button>`).join("")}</div>` : (q ? `<p style="font-size:12px;color:var(--muted);">No matches</p>` : "")}
+        </div>`;
+      })() : "";
       bodyEl.innerHTML = `
-        <p style="margin:0 0 12px;color:var(--muted);font-size:14px;">Customer: <strong>${ctx.esc(processContext?.customer_name || "")}</strong></p>
-        <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
-          <label style="display:flex;align-items:center;gap:6px;font-size:14px;">
-            <input type="radio" name="co-disc-mode" ${!useOverallDiscount ? "checked" : ""} onchange="CustomerOrders.setDiscMode(false)" /> Per-line discount
-          </label>
-          <label style="display:flex;align-items:center;gap:6px;font-size:14px;">
-            <input type="radio" name="co-disc-mode" ${useOverallDiscount ? "checked" : ""} onchange="CustomerOrders.setDiscMode(true)" /> Overall discount
-          </label>
-          ${useOverallDiscount ? `<input class="input" style="width:100px;" placeholder="%" value="${ctx.esc(overallDiscount)}" oninput="CustomerOrders.setOverallDisc(this.value)" />` : ""}
-        </div>
+        ${!editBillId ? creditBannerHtml(processContext?.credit) : ""}
+        <p style="margin:0 0 12px;color:var(--muted);font-size:14px;">Customer: <strong>${ctx.esc(processContext?.customer_name || "")}</strong>${editBillId ? " · editing bill (order syncs on save)" : ""}</p>
+        <div style="margin-bottom:12px;">${discPanel}</div>
         <table class="data"><thead><tr>
-          <th></th><th>Product</th><th>Stock</th><th>Open</th><th>Rate</th><th>Ship</th>${!useOverallDiscount ? "<th>Disc %</th>" : ""}
+          <th></th><th>Product</th>${editBillId ? "" : "<th>Stock</th><th>To bill</th>"}<th>Rate</th><th>${editBillId ? "Qty" : "Ship"}</th><th>Disc %</th><th>Net rate</th>${editBillId ? "<th></th>" : ""}
         </tr></thead><tbody>
-          ${processLines.map((ln, i) => `<tr>
+          ${processLines.map((ln, i) => {
+            const shownNet = useOverallDiscount && overallDiscount
+              ? calcNetFromDisc(ln.unit_price, overallDiscount)
+              : (ln.net_rate || calcNetFromDisc(ln.unit_price, ln.discount_percent || 0));
+            const shownDisc = useOverallDiscount ? (overallDiscount || "") : (ln.discount_percent || "");
+            const ro = lineDiscLocked ? "readonly" : "";
+            return `<tr>
             <td>${thumb((ln.image_urls || [])[0])}</td>
-            <td><strong>${ctx.esc(ln.our_product_id)}</strong></td>
-            <td>${ln.quantity_on_hand}</td>
-            <td>${ln.quantity_open}</td>
+            <td><strong>${ctx.esc(ln.our_product_id)}</strong>${addonsUnderHtml(ln.addons, ln.quantity_to_ship || 1)}</td>
+            ${editBillId ? "" : `<td>${ln.quantity_on_hand}</td><td>${ln.quantity_open}</td>`}
             <td>${fmtPrice(ln.unit_price)}</td>
-            <td><input type="number" class="input" style="width:72px;" min="0" max="${ln.quantity_open}" value="${ln.quantity_to_ship}" onchange="CustomerOrders.setShipQty(${i}, this.value)" /></td>
-            ${!useOverallDiscount ? `<td><input type="number" class="input" style="width:64px;" min="0" max="100" step="0.1" value="${ctx.esc(ln.discount_percent)}" oninput="CustomerOrders.setLineDisc(${i}, this.value)" /></td>` : ""}
-          </tr>`).join("")}
-        </tbody></table>`;
+            <td><input type="number" class="input" style="width:72px;" min="0" ${editBillId ? "" : `max="${ln.quantity_open}"`} value="${ln.quantity_to_ship}" onchange="CustomerOrders.setShipQty(${i}, this.value)" /></td>
+            <td><input type="number" class="input" style="width:64px;" min="0" max="100" step="0.1" ${ro} value="${ctx.esc(shownDisc)}" oninput="CustomerOrders.setLineDisc(${i}, this.value)" /></td>
+            <td><input type="number" class="input" style="width:80px;" min="0" step="0.01" placeholder="₹" ${ro} value="${ctx.esc(shownNet || "")}" oninput="CustomerOrders.setLineNetRate(${i}, this.value)" /></td>
+            ${editBillId ? `<td><button type="button" class="btn btn-ghost btn-sm" style="color:var(--danger);" onclick="CustomerOrders.removeProcessLine(${i})">Remove</button></td>` : ""}
+          </tr>`;
+          }).join("")}
+        </tbody></table>
+        ${addProd}`;
       footerEl.innerHTML = `
         <button class="btn btn-secondary" onclick="CustomerOrders.closeProcessWizard()">Cancel</button>
         <button class="btn btn-primary" onclick="CustomerOrders.processNext()">Next →</button>`;
@@ -452,14 +1551,43 @@ const CustomerOrders = (() => {
     }
 
     if (processStep === 2) {
+      const modeBtn = (id, label) => `<button type="button" class="btn ${transportMode === id ? "btn-primary" : "btn-secondary"}" style="flex:1;min-width:120px;" onclick="CustomerOrders.setTransportMode('${id}')">${label}</button>`;
+      let extra = "";
+      if (transportMode === "bus") {
+        extra = `
+          <label class="label">Freight agent</label>
+          <select class="input" style="margin-bottom:12px;width:100%;" onchange="CustomerOrders.setFreightAgent(this.value)">
+            <option value="">— Select agent —</option>
+            ${freightAgents.map(a => `<option value="${a.id}" ${String(a.id) === freightAgentId ? "selected" : ""}>${ctx.esc(a.name)} (due ${fmtPrice(a.balance_due)})</option>`).join("")}
+          </select>
+          <label class="label">Freight charges (₹)</label>
+          <input class="input" style="width:100%;max-width:220px;" value="${ctx.esc(freightCharges)}" oninput="CustomerOrders.setFreightCharges(this.value)" />`;
+      } else if (transportMode === "transport") {
+        extra = `
+          <label class="label">Transport charges (₹)</label>
+          <input class="input" style="width:100%;max-width:220px;margin-bottom:12px;" value="${ctx.esc(freightCharges)}" oninput="CustomerOrders.setFreightCharges(this.value)" />
+          <label class="label">Receipt number <span style="font-weight:400;color:var(--muted);">(optional)</span></label>
+          <input class="input" style="width:100%;max-width:280px;" placeholder="If you have it" value="${ctx.esc(transportReceiptNumber)}" oninput="CustomerOrders.setTransportReceipt(this.value)" />`;
+      } else if (transportMode === "self_pickup") {
+        extra = `<p style="font-size:13px;color:var(--muted);margin:0;">Customer picks up. No agent or charges.</p>`;
+      }
       bodyEl.innerHTML = `
-        <label class="label">Freight agent</label>
-        <select class="input" style="margin-bottom:12px;width:100%;" onchange="CustomerOrders.setFreightAgent(this.value)">
-          <option value="">— None —</option>
-          ${freightAgents.map(a => `<option value="${a.id}" ${String(a.id) === freightAgentId ? "selected" : ""}>${ctx.esc(a.name)} (due ${fmtPrice(a.balance_due)})</option>`).join("")}
-        </select>
+        <p style="margin:0 0 12px;color:var(--muted);font-size:14px;">Mode of transport</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
+          ${modeBtn("bus", "Bus")}
+          ${modeBtn("transport", "Transport")}
+          ${modeBtn("self_pickup", "Self-pickup")}
+        </div>
+        ${extra}`;
+      footerEl.innerHTML = `
+        <button class="btn btn-secondary" onclick="CustomerOrders.processBack()">← Back</button>
+        <button class="btn btn-primary" onclick="CustomerOrders.processNext()">Next →</button>`;
+      return;
+    }
+
+    if (processStep === 3) {
+      bodyEl.innerHTML = `
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
-          <div><label class="label">Freight (₹)</label><input class="input" value="${ctx.esc(freightCharges)}" oninput="CustomerOrders.setFreightCharges(this.value)" /></div>
           <div><label class="label">Packaging (₹)</label><input class="input" value="${ctx.esc(packagingCharges)}" oninput="CustomerOrders.setPackagingCharges(this.value)" /></div>
         </div>
         <label class="label">Additional charges</label>
@@ -474,23 +1602,38 @@ const CustomerOrders = (() => {
             <input type="checkbox" ${gstEnabled ? "checked" : ""} onchange="CustomerOrders.setGst(this.checked)" /> GST inclusive split
           </label>
           ${gstEnabled ? `<label class="label">GST rate %</label><input class="input" style="width:100px;margin-bottom:12px;" value="${ctx.esc(gstRate)}" oninput="CustomerOrders.setGstRate(this.value)" />` : ""}
-          <label class="label">Bill series</label>
+          ${editBillId ? "" : `<label class="label">Bill series</label>
           <select class="input" style="width:100%;" onchange="CustomerOrders.setBillSeries(this.value)">
             ${billSeries.map(s => `<option value="${s.id}" ${String(s.id) === billSeriesId ? "selected" : ""}>${ctx.esc(s.name)} (${s.prefix}${s.current_num + 1 >= s.start_num ? s.current_num + 1 : s.start_num}…${s.prefix}${s.end_num})</option>`).join("")}
             ${!billSeries.length ? `<option value="">No series — create one in Setup</option>` : ""}
-          </select>
+          </select>`}
         </div>`;
       footerEl.innerHTML = `
         <button class="btn btn-secondary" onclick="CustomerOrders.processBack()">← Back</button>
-        <button class="btn btn-primary" ${billSeriesId ? "" : "disabled"} onclick="CustomerOrders.processNext()">Next →</button>`;
+        <button class="btn btn-primary" ${(!editBillId && !billSeriesId) ? "disabled" : ""} onclick="CustomerOrders.processNext()">Next →</button>`;
       return;
     }
 
-    if (processStep === 3) {
+    if (processStep === 4) {
       bodyEl.innerHTML = `
-        <label class="label">Bill narration</label>
-        <textarea class="input" rows="5" style="width:100%;" oninput="CustomerOrders.setNarration(this.value)">${ctx.esc(narration)}</textarea>
-        <p style="font-size:12px;color:var(--muted);margin-top:8px;">Prefilled from customer notes. Edit as needed.</p>`;
+        ${customerNotes ? `
+          <label class="label">Customer note</label>
+          <div class="card" style="padding:12px 14px;margin-bottom:16px;background:#f8fafc;white-space:pre-wrap;font-size:14px;">${ctx.esc(customerNotes)}</div>
+          <p style="font-size:12px;color:var(--muted);margin:-8px 0 16px;">From the customer — not editable here.</p>
+        ` : (editBillId ? "" : `<p style="font-size:13px;color:var(--muted);margin:0 0 16px;">No customer note on this order.</p>`)}
+        ${`
+          <label class="label">Bill number — temp</label>
+          <input class="input" style="width:100%;max-width:220px;margin-bottom:4px;" value="${ctx.esc(editBillNumber)}" oninput="CustomerOrders.setEditBillNumber(this.value)" />
+          <p style="font-size:12px;color:var(--muted);margin:0 0 16px;">${editBillId ? "Temporary. Fix typo / wrong number." : "Next from series. Change if you need a different number."} Must be unique among open bills.</p>
+        `}
+        ${editBillId ? "" : `
+          <label class="label">Bill date</label>
+          <input type="date" class="input" style="width:100%;max-width:220px;margin-bottom:4px;" value="${ctx.esc(billDate || localToday())}" onchange="CustomerOrders.setBillDate(this.value)" />
+          <p style="font-size:12px;color:var(--muted);margin:0 0 16px;">Use the day the bill actually happened (backdate OK).</p>
+        `}
+        <label class="label">Your narration</label>
+        <textarea class="input" rows="4" style="width:100%;" placeholder="Staff note for the bill…" oninput="CustomerOrders.setNarration(this.value)">${ctx.esc(narration)}</textarea>
+        <p style="font-size:12px;color:var(--muted);margin-top:8px;">This goes on the bill. Separate from the customer note above.</p>`;
       footerEl.innerHTML = `
         <button class="btn btn-secondary" onclick="CustomerOrders.processBack()">← Back</button>
         <button class="btn btn-primary" onclick="CustomerOrders.processNext()">Review →</button>`;
@@ -499,7 +1642,10 @@ const CustomerOrders = (() => {
 
     const shipCount = processLines.filter(l => Number(l.quantity_to_ship) > 0).length;
     const tot = previewTotals || {};
+    const cr = tot.credit || processContext?.credit;
     const discAmt = Number(tot.discount_amount || 0);
+    const blocked = cr && cr.would_exceed && !cr.credit_override && !forceCreditOverride;
+    const needForce = cr && cr.would_exceed && cr.credit_override;
     const lineRows = (tot.lines || []).map(ln => {
       const disc = Number(ln.line_discount || 0);
       const discPct = ln.item_discount_percent ? ` (${ln.item_discount_percent}%)` : "";
@@ -507,45 +1653,108 @@ const CustomerOrders = (() => {
         <td><strong>${ctx.esc(ln.our_product_id)}</strong></td>
         <td>${ln.quantity}</td>
         <td>${fmtPrice(ln.rate_inclusive || ln.unit_price)}</td>
-        <td>${disc > 0 ? `−${fmtPrice(disc)}${discPct}` : "—"}</td>
+        <td>${disc > 0 ? `${discPct.trim() || "—"}` : "—"}</td>
+        <td>${fmtPrice(ln.net_rate || ln.effective_price)}</td>
         <td>${fmtPrice(ln.line_total)}</td>
       </tr>`;
     }).join("");
+    const modeLabel = transportMode === "bus" ? "Bus" : transportMode === "transport" ? "Transport" : transportMode === "self_pickup" ? "Self-pickup" : "—";
+    const chargeLabel = transportMode === "transport" ? "Transport charges" : "Freight";
+    const agentName = (freightAgents.find(a => String(a.id) === String(freightAgentId)) || {}).name;
     bodyEl.innerHTML = `
+      ${creditBannerHtml(cr, { afterBill: true })}
+      ${needForce ? `<label style="display:flex;gap:8px;align-items:center;margin:0 0 12px;font-size:13px;">
+        <input type="checkbox" ${forceCreditOverride ? "checked" : ""} onchange="CustomerOrders.setForceCredit(this.checked)" />
+        Force bill over credit limit (override)
+      </label>` : ""}
       <div class="card table-wrap" style="margin-bottom:16px;">
         <table class="data"><thead><tr>
-          <th>Item</th><th>Qty</th><th>Price</th><th>Discount</th><th>Total</th>
+          <th>Item</th><th>Qty</th><th>Rate</th><th>Disc</th><th>Net</th><th>Total</th>
         </tr></thead><tbody>
-          ${lineRows || `<tr><td colspan="5" style="text-align:center;color:var(--muted);">No lines</td></tr>`}
+          ${lineRows || `<tr><td colspan="6" style="text-align:center;color:var(--muted);">No lines</td></tr>`}
         </tbody></table>
       </div>
       <div class="review-grid" style="margin-bottom:16px;">
         ${ctx.reviewRow("Customer", processContext?.customer_name)}
+        ${ctx.reviewRow("Bill number", editBillNumber || "—")}
+        ${!editBillId ? ctx.reviewRow("Bill date", billDate || localToday()) : ""}
         ${ctx.reviewRow("Lines shipping", shipCount)}
+        ${ctx.reviewRow("Transport", modeLabel)}
+        ${transportMode === "bus" && agentName ? ctx.reviewRow("Freight agent", agentName) : ""}
+        ${transportMode === "transport" && transportReceiptNumber.trim() ? ctx.reviewRow("Receipt", transportReceiptNumber.trim()) : ""}
         ${ctx.reviewRow("Subtotal", fmtPrice(tot.subtotal_inclusive))}
         ${discAmt > 0 ? ctx.reviewRow(tot.discount_percent ? `Discount (${tot.discount_percent}%)` : "Discount", "−" + fmtPrice(tot.discount_amount)) : ""}
         ${Number(tot.taxable_value) > 0 && tot.gst_enabled ? ctx.reviewRow("Taxable", fmtPrice(tot.taxable_value)) : ""}
         ${Number(tot.gst_amount) > 0 ? ctx.reviewRow(`GST (${tot.gst_rate_label || ""})`, fmtPrice(tot.gst_amount)) : ""}
-        ${tot.freight_charges ? ctx.reviewRow("Freight", fmtPrice(tot.freight_charges)) : ""}
+        ${tot.freight_charges && transportMode !== "self_pickup" ? ctx.reviewRow(chargeLabel, fmtPrice(tot.freight_charges)) : ""}
         ${tot.packaging_charges ? ctx.reviewRow("Packaging", fmtPrice(tot.packaging_charges)) : ""}
         ${(tot.additional_charges || []).map(c => ctx.reviewRow(c.name, fmtPrice(c.amount))).join("")}
         ${ctx.reviewRow("Grand total", fmtPrice(tot.rounded_grand_total || tot.grand_total))}
       </div>
-      <p style="font-size:13px;color:var(--muted);margin:0;">${ctx.esc(narration || "—")}</p>`;
+      ${customerNotes ? `<p style="font-size:13px;margin:0 0 6px;"><span class="vo-muted">Customer note:</span> ${ctx.esc(customerNotes)}</p>` : ""}
+      <p style="font-size:13px;color:var(--muted);margin:0;"><span class="vo-muted">Narration:</span> ${ctx.esc(narration || "—")}</p>
+      ${editBillId ? `<p style="font-size:12px;color:var(--muted);margin:10px 0 0;">Saving updates the bill and syncs the customer order quantities.</p>` : ""}`;
     footerEl.innerHTML = `
       <button class="btn btn-secondary" onclick="CustomerOrders.processBack()">← Back</button>
-      <button class="btn btn-primary" ${processBusy ? "disabled" : ""} onclick="CustomerOrders.submitProcess()">${processBusy ? "Submitting…" : "Submit Bill"}</button>`;
+      <button class="btn btn-primary" ${(processBusy || blocked || (needForce && !forceCreditOverride)) ? "disabled" : ""} onclick="CustomerOrders.submitProcess()">${processBusy ? "Saving…" : (editBillId ? "Save bill" : "Submit Bill")}</button>`;
   }
 
-  function setDiscMode(overall) { useOverallDiscount = overall; renderProcessWizard(); }
+  function setForceCredit(v) { forceCreditOverride = !!v; renderProcessWizard(); }
+
+  function setDiscToggle(mode) {
+    if (mode === "off") {
+      discountEnabled = false;
+      useOverallDiscount = false;
+      overallDiscount = "";
+      processLines.forEach(l => { l.discount_percent = ""; l.net_rate = calcNetFromDisc(l.unit_price, 0); l.discSource = ""; });
+    } else if (mode === "overall") {
+      discountEnabled = true;
+      useOverallDiscount = true;
+      processLines.forEach(l => { l.discount_percent = overallDiscount; l.net_rate = calcNetFromDisc(l.unit_price, overallDiscount); l.discSource = ""; });
+    } else {
+      discountEnabled = true;
+      useOverallDiscount = false;
+      overallDiscount = "";
+    }
+    renderProcessWizard();
+  }
+  function setDiscMode(overall) {
+    setDiscToggle(overall ? "overall" : "line");
+  }
   function setOverallDisc(v) { overallDiscount = v; }
+  function setBillEditSearch(v) { billEditSearch = v || ""; renderProcessWizard(); }
   function setFreightAgent(v) { freightAgentId = v; }
   function setFreightCharges(v) { freightCharges = v; }
+  function setTransportMode(v) {
+    transportMode = v;
+    if (v === "self_pickup") {
+      freightAgentId = "";
+      freightCharges = "";
+      transportReceiptNumber = "";
+    } else if (v === "transport") {
+      freightAgentId = "";
+    } else if (v === "bus") {
+      transportReceiptNumber = "";
+    }
+    renderProcessWizard();
+  }
+  function setTransportReceipt(v) { transportReceiptNumber = v; }
   function setPackagingCharges(v) { packagingCharges = v; }
   function setGst(v) { gstEnabled = v; renderProcessWizard(); }
   function setGstRate(v) { gstRate = v; }
-  function setBillSeries(v) { billSeriesId = v; }
+  function setBillSeries(v) {
+    billSeriesId = v;
+    if (!editBillId) editBillNumber = nextBillNumberFromSeries();
+  }
+  function nextBillNumberFromSeries() {
+    const s = billSeries.find(x => String(x.id) === String(billSeriesId));
+    if (!s) return "";
+    const n = s.current_num + 1 >= s.start_num ? s.current_num + 1 : s.start_num;
+    return `${s.prefix}${n}`;
+  }
   function setNarration(v) { narration = v; }
+  function setEditBillNumber(v) { editBillNumber = v || ""; }
+  function setBillDate(v) { billDate = v || localToday(); }
   function setAddCharge(i, field, val) { if (additionalCharges[i]) additionalCharges[i][field] = val; }
   function addChargeRow() { additionalCharges.push({ name: "", amount: "" }); renderProcessWizard(); }
 
@@ -557,19 +1766,70 @@ const CustomerOrders = (() => {
       return;
     }
     if (processStep === 2) {
-      if (!billSeriesId) return ctx.toast("Select bill series", "error");
+      if (!transportMode) return ctx.toast("Select mode of transport", "error");
+      if (transportMode === "bus") {
+        if (!freightAgentId) return ctx.toast("Select freight agent", "error");
+        if (freightCharges.trim() === "") return ctx.toast("Enter freight charges", "error");
+      }
+      if (transportMode === "transport" && freightCharges.trim() === "") {
+        return ctx.toast("Enter transport charges", "error");
+      }
       processStep = 3;
       renderProcessWizard();
       return;
     }
     if (processStep === 3) {
+      if (!editBillId && !billSeriesId) return ctx.toast("Select bill series", "error");
+      processStep = 4;
+      renderProcessWizard();
+      return;
+    }
+    if (processStep === 4) {
+      if (editBillId) {
+        const lines = processLines.filter(l => Number(l.quantity_to_ship) > 0);
+        previewTotals = {
+          lines: lines.map(l => {
+            const rate = Number(l.unit_price) || 0;
+            const qty = Number(l.quantity_to_ship) || 0;
+            const discPct = discountEnabled && useOverallDiscount
+              ? Number(overallDiscount) || 0
+              : (discountEnabled ? Number(l.discount_percent) || 0 : 0);
+            const net = discPct > 0 ? rate * (1 - Math.min(100, discPct) / 100) : (Number(l.net_rate) || rate);
+            const lineTotal = net * qty;
+            const lineDisc = (rate * qty) - lineTotal;
+            return {
+              our_product_id: l.our_product_id,
+              quantity: qty,
+              unit_price: l.unit_price,
+              rate_inclusive: l.unit_price,
+              item_discount_percent: discPct || null,
+              net_rate: (Math.round(net * 100) / 100).toString(),
+              line_discount: lineDisc > 0 ? lineDisc : 0,
+              line_total: lineTotal,
+            };
+          }),
+          subtotal_inclusive: lines.reduce((s, l) => s + (Number(l.unit_price) || 0) * Number(l.quantity_to_ship || 0), 0),
+          discount_amount: 0,
+          freight_charges: transportMode === "self_pickup" ? null : freightCharges,
+          transport_mode: transportMode,
+          transport_receipt_number: transportReceiptNumber,
+          packaging_charges: packagingCharges,
+          grand_total: 0,
+        };
+        previewTotals.discount_amount = previewTotals.lines.reduce((s, l) => s + Number(l.line_discount || 0), 0);
+        previewTotals.grand_total = previewTotals.lines.reduce((s, l) => s + Number(l.line_total || 0), 0)
+          + Number(previewTotals.freight_charges || 0) + Number(packagingCharges || 0);
+        processStep = 5;
+        renderProcessWizard();
+        return;
+      }
       ctx.showLoading?.();
       try {
         previewTotals = await ctx.api(`/customer-orders/customer/${detailCustomerId}/process/preview`, {
           method: "POST",
           body: JSON.stringify(buildProcessBody()),
         });
-        processStep = 4;
+        processStep = 5;
         renderProcessWizard();
       } catch (e) { ctx.toast(e.message, "error"); }
       finally { ctx.hideLoading?.(); }
@@ -586,44 +1846,100 @@ const CustomerOrders = (() => {
     renderProcessWizard();
     ctx.showLoading?.();
     try {
-      const res = await ctx.api(`/customer-orders/customer/${detailCustomerId}/process`, {
-        method: "POST",
-        body: JSON.stringify(buildProcessBody()),
-      });
+      let res = null;
+      const body = buildProcessBody();
+      while (!res) {
+        try {
+          if (editBillId) {
+            res = await ctx.api(`/customer-orders/bills/${editBillId}`, {
+              method: "PUT",
+              body: JSON.stringify(body),
+            });
+          } else {
+            res = await ctx.api(`/customer-orders/customer/${detailCustomerId}/process`, {
+              method: "POST",
+              body: JSON.stringify(body),
+            });
+          }
+        } catch (e) {
+          if (e.detail?.code === "credit_limit_exceeded" && e.detail?.credit?.credit_override) {
+            if (confirm(e.message + "\n\nForce bill with override?")) {
+              forceCreditOverride = true;
+              continue;
+            }
+          }
+          throw e;
+        }
+      }
       ctx.invalidateCache?.("/customer-orders");
       ctx.invalidateCache?.("/accounts-receivable");
+      ctx.invalidateCache?.("/stock");
+      const edited = !!editBillId;
       closeProcessWizard();
-      if (res.document_url) {
+      const cid = detailCustomerId;
+      if (edited) {
+        ctx.toast(`Bill ${res.bill_number} updated — order + dispatch synced`, "success");
+        ctx.invalidateCache?.("/freight-agents");
+        if (isDispatchBucket()) await loadDispatch();
+      } else {
+        const hasFreight = transportMode === "bus" || !!(res.freight_agent_id || freightAgentId);
+        const nextHint = transportMode === "bus" || hasFreight
+          ? "Next: Dispatch (agent pick) or Collect."
+          : "Next: Dispatch or Collect — then Close.";
         ctx.openDetail?.(`Bill ${res.bill_number}`, `
-          <p style="margin:0 0 16px;color:var(--muted);">Bill created — ${fmtPrice(res.grand_total)}</p>
-          <div style="display:flex;gap:8px;">
-            <button class="btn btn-primary" style="flex:1;" onclick="CustomerOrders.openBillDoc(${res.bill_id}, true);App.closeDetail();">Print</button>
-            <button class="btn btn-secondary" style="flex:1;" onclick="CustomerOrders.openBillDoc(${res.bill_id}, false);App.closeDetail();">Download PDF</button>
-          </div>`,
-          `<button class="btn btn-primary" style="flex:1;" onclick="App.closeDetail()">Done</button>`, "sm");
+            <p style="margin:0 0 16px;color:var(--muted);">Bill created — ${fmtPrice(res.grand_total)}. AR posted. ${nextHint}</p>
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              <button class="btn btn-primary" onclick="App.closeDetail();CustomerOrders.goToDispatch()">Dispatch</button>
+              ${ctx.isAdmin?.() ? `<button class="btn btn-secondary" onclick="App.closeDetail();CustomerOrders.goCollectPayment(${cid})">Collect payment</button>` : ""}
+              <button class="btn btn-secondary" onclick="CustomerOrders.openBillDoc(${res.bill_id}, true)">Print</button>
+              <button class="btn btn-secondary" onclick="CustomerOrders.shareBillWhatsApp(${res.bill_id})">WhatsApp</button>
+              <button class="btn btn-secondary" onclick="App.closeDetail();CustomerOrders.openCloseBatch(${cid})">Close</button>
+            </div>`,
+          `<button class="btn btn-secondary" style="flex:1;" onclick="App.closeDetail()">Done</button>`, "sm");
+        ctx.toast(`Bill ${res.bill_number} — ${fmtPrice(res.grand_total)}`, "success");
       }
-      ctx.toast(`Bill ${res.bill_number} — ${fmtPrice(res.grand_total)}`, "success");
       await openDetail(detailCustomerId, "billed");
       loadList();
-    } catch (e) { ctx.toast(e.message, "error"); }
-    finally { processBusy = false; ctx.hideLoading?.(); }
+    } catch (e) {
+      ctx.toast(e.message, "error");
+      renderProcessWizard();
+    } finally {
+      processBusy = false;
+      ctx.hideLoading?.();
+    }
   }
 
   async function openBillDoc(billId, print) {
     try {
-      const d = await ctx.api(`/customer-orders/bills/${billId}/document`, {}, 0);
-      if (!d.document_url) return ctx.toast("PDF not available", "error");
-      if (print) {
-        const w = window.open(d.document_url, "_blank");
-        if (w) w.addEventListener("load", () => w.print());
-      } else {
-        const a = document.createElement("a");
-        a.href = d.document_url;
-        a.download = `${d.bill_number || "bill"}.pdf`;
-        a.target = "_blank";
-        a.click();
+      await DocShare.openPdf(`/share/bills/${billId}/pdf`, {
+        print: !!print,
+        filename: `bill_${billId}.pdf`,
+      });
+    } catch (e) {
+      try {
+        const d = await ctx.api(`/customer-orders/bills/${billId}/document`, {}, 0);
+        if (!d.document_url) throw e;
+        if (print) {
+          const w = window.open(d.document_url, "_blank");
+          if (w) w.addEventListener("load", () => w.print());
+        } else {
+          window.open(d.document_url, "_blank");
+        }
+      } catch (e2) { ctx.toast(e2.message || e.message, "error"); }
+    }
+  }
+
+  async function shareBillWhatsApp(billId) {
+    ctx.showLoading?.();
+    try {
+      const res = await DocShare.whatsapp({ kind: "bill", id: billId, caption: `Bill` });
+      if (res.ok) ctx.toast("Sent on WhatsApp", "success");
+      else {
+        ctx.toast(res.hint || "WA failed — opening link", "error");
+        if (res.wa_me) window.open(res.wa_me, "_blank");
       }
     } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
   }
 
   function showCreateMenuFromCustomer(customerId) {
@@ -640,7 +1956,7 @@ const CustomerOrders = (() => {
   }
 
   function runDetailAction() {
-    if (currentBucket === "received" || currentBucket === "open") processOrder();
+    if (currentBucket === "open") processOrder();
     else if (currentBucket === "billed") openCloseBatch(detailCustomerId);
   }
 
@@ -674,212 +1990,346 @@ const CustomerOrders = (() => {
 
   async function openOfflineWizard(presetCustomerId) {
     const cid = presetCustomerId != null ? presetCustomerId : detailCustomerId;
+    offlineEditPlacementId = null;
     offlineStep = 1;
     offlineCustomerId = cid || null;
     offlineCustomerName = "";
+    offlineCustomerSearch = "";
     offlineLines = [];
     offlineSearchQuery = "";
     offlineSearchResults = [];
-    offlineUseOverallDiscount = false;
-    offlineOverallDiscount = "";
-    offlineGstEnabled = false;
-    offlineGstRate = "18";
-    offlineAdditionalCharges = [{ name: "", amount: "" }];
+    offlineNotes = "";
+    offlinePlacedOn = localToday();
     offlinePreview = null;
     offlineBusy = false;
     ctx.showLoading?.();
     try {
-      if (presetCustomerId || cid) {
-        const c = await ctx.api(`/customers/${cid}`, {}, 30000);
-        offlineCustomerName = c.business_name || "";
+      offlineCustomers = await ctx.api("/customers", {}, 30000) || [];
+      if (cid) {
+        const c = offlineCustomers.find(x => x.id === cid) || await ctx.api(`/customers/${cid}`, {}, 30000);
+        offlineCustomerName = c?.business_name || "";
+        offlineCustomerId = c?.id || cid;
       }
-      offlineBillSeries = (await ctx.api("/bill-series", {}, 30000) || []).filter(s => s.is_active && s.current_num < s.end_num);
-      offlineBillSeriesId = offlineBillSeries.length ? String(offlineBillSeries[0].id) : "";
       document.getElementById("co-offline-wizard")?.classList.remove("hidden");
       renderOfflineWizard();
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
   }
 
+  function matchOfflineCustomer(c, tokens) {
+    if (!tokens.length) return true;
+    return OrdersUI.partySearchRank(c, tokens) != null;
+  }
+
+  function onOfflineCustomerSearch(val) {
+    offlineCustomerSearch = val || "";
+    renderOfflineWizard();
+    setTimeout(() => {
+      const el = document.getElementById("co-offline-cust-search");
+      if (!el) return;
+      el.focus();
+      try { el.setSelectionRange(el.value.length, el.value.length); } catch (_) {}
+    }, 0);
+  }
+
+  function pickOfflineCustomer(id) {
+    if (!id) {
+      offlineCustomerId = null;
+      offlineCustomerName = "";
+      renderOfflineWizard();
+      return;
+    }
+    const c = (offlineCustomers || []).find(x => x.id === id);
+    offlineCustomerId = id;
+    offlineCustomerName = c?.business_name || "";
+    renderOfflineWizard();
+  }
+
   function closeOfflineWizard() {
     document.getElementById("co-offline-wizard")?.classList.add("hidden");
+    offlineEditPlacementId = null;
   }
 
   function buildOfflineBody() {
-    const lines = offlineLines.filter(l => Number(l.quantity) > 0).map(l => ({
-      catalog_product_id: l.catalog_product_id,
-      quantity: Number(l.quantity),
-      discount_percent: offlineUseOverallDiscount ? undefined : (l.discount_percent ? Number(l.discount_percent) : undefined),
-    }));
-    const extra = offlineAdditionalCharges.filter(c => c.name.trim() && c.amount.trim() && Number(c.amount) > 0)
-      .map(c => ({ name: c.name.trim(), amount: String(c.amount) }));
-    const body = {
-      lines,
-      gst_enabled: offlineGstEnabled,
-      gst_rate_percent: Number(offlineGstRate) || 18,
-      bill_series_id: Number(offlineBillSeriesId),
-      additional_charges: extra,
+    return {
+      lines: offlineLines.filter(l => Number(l.quantity) > 0).map(l => ({
+        catalog_product_id: l.catalog_product_id,
+        quantity: Number(l.quantity),
+      })),
+      narration: (offlineNotes || "").trim() || null,
+      placed_on: offlinePlacedOn || localToday(),
     };
-    if (offlineUseOverallDiscount && offlineOverallDiscount.trim()) body.overall_discount_percent = Number(offlineOverallDiscount);
-    return body;
   }
 
-  async function renderOfflineWizard() {
+  function filterOfflineProducts() {
+    const q = offlineSearchQuery.trim().toLowerCase();
+    const all = offlineSearchResults || [];
+    if (!q) return all.slice(0, 40);
+    const scored = [];
+    for (const p of all) {
+      const id = String(p.our_product_id || "").toLowerCase();
+      const cat = String(p.category || "").toLowerCase();
+      const series = String(p.series || "").toLowerCase();
+      const vendor = String(p.vendor_name || "").toLowerCase();
+      let score = 0;
+      if (id === q) score = 100;
+      else if (id.startsWith(q)) score = 80;
+      else if (id.includes(q)) score = 40;
+      else if (cat.startsWith(q) || series.startsWith(q)) score = 30;
+      else if (cat.includes(q) || series.includes(q) || vendor.includes(q)) score = 10;
+      else continue;
+      scored.push({ p, score, id });
+    }
+    scored.sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
+    return scored.map(x => x.p).slice(0, 40);
+  }
+
+  function offlineCartQty() {
+    return offlineLines.reduce((s, l) => s + (Number(l.quantity) || 0), 0);
+  }
+
+  function offlineCartTotal() {
+    return offlineLines.reduce((s, l) => s + (Number(l.selling_price) || 0) * (Number(l.quantity) || 0), 0);
+  }
+
+  function renderOfflineWizard() {
     const stepsEl = document.getElementById("co-offline-steps");
     const bodyEl = document.getElementById("co-offline-body");
     const footerEl = document.getElementById("co-offline-footer");
     if (!stepsEl || !bodyEl || !footerEl) return;
-    const labels = ["Customer", "Products", "Charges", "Review"];
-    stepsEl.innerHTML = labels.map((l, i) => {
+
+    const editing = !!offlineEditPlacementId;
+    const labels = editing ? ["Products", "Review"] : ["Customer", "Products", "Review"];
+    const stepNum = editing ? offlineStep - 1 : offlineStep;
+    stepsEl.innerHTML = labels.map((lbl, i) => {
       const n = i + 1;
-      const cls = n === offlineStep ? "step active" : n < offlineStep ? "step done" : "step";
-      return `<div class="${cls}"><span class="step-num">${n}</span><span class="step-label">${l}</span></div>`;
+      const cls = n === stepNum ? "step active" : n < stepNum ? "step done" : "step";
+      return `<div class="${cls}"><span class="step-num">${n < stepNum ? "✓" : n}</span><span class="step-label">${lbl}</span></div>`;
     }).join("");
 
-    if (offlineStep === 1) {
-      let customers = [];
-      try { customers = await ctx.api("/customers", {}, 30000); } catch (_) {}
+    if (offlineStep === 1 && !editing) {
+      const tokens = OrdersUI.partySearchTokens(offlineCustomerSearch);
+      const customers = OrdersUI.filterAndRankParties(
+        (offlineCustomers || []).filter(c => c.is_active !== false),
+        offlineCustomerSearch,
+      ).slice(0, tokens.length ? 40 : 60);
+      const selected = offlineCustomerId
+        ? (offlineCustomers || []).find(c => c.id === offlineCustomerId)
+        : null;
       bodyEl.innerHTML = `
-        <p style="margin:0 0 16px;color:var(--muted);font-size:14px;">Who is this order for?</p>
-        <label class="label">Customer</label>
-        <select class="input" style="font-size:15px;padding:12px;" onchange="CustomerOrders.setOfflineCustomer(parseInt(this.value,10)||null, this.options[this.selectedIndex].text)">
-          <option value="">— Select customer —</option>
-          ${customers.filter(c => c.is_active).map(c => `<option value="${c.id}" ${offlineCustomerId === c.id ? "selected" : ""}>${ctx.esc(c.business_name)}${c.city_name ? ` · ${ctx.esc(c.city_name)}` : ""}</option>`).join("")}
-        </select>
-        ${offlineCustomerId ? `<div style="margin-top:16px;padding:12px 14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;font-size:14px;">
-          <strong>${ctx.esc(offlineCustomerName)}</strong> selected — next, add products.
-        </div>` : ""}`;
+        <div class="vo-wiz-step-head">
+          <h4>Select customer</h4>
+          <p>Search any part of name, city, or phone — e.g. <em>natraj</em> or <em>anjad</em>.</p>
+        </div>
+        <div class="vo-wiz-search-wrap">
+          <span class="vo-wiz-search-icon" aria-hidden="true">⌕</span>
+          <input id="co-offline-cust-search" class="input vo-wiz-search" type="search" placeholder="Search customer, city, phone…" value="${ctx.esc(offlineCustomerSearch)}" oninput="CustomerOrders.onOfflineCustomerSearch(this.value)" autocomplete="off" />
+          ${offlineCustomerSearch ? `<button type="button" class="vo-wiz-search-clear" onclick="CustomerOrders.onOfflineCustomerSearch('')">×</button>` : ""}
+        </div>
+        ${selected ? `<div class="vo-wiz-selected-banner">
+          <div>
+            <span class="vo-wiz-selected-label">Selected</span>
+            <strong>${ctx.esc(selected.business_name || offlineCustomerName)}</strong>
+            ${selected.city_name ? `<span class="vo-muted"> · ${ctx.esc(selected.city_name)}</span>` : ""}
+          </div>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="CustomerOrders.pickOfflineCustomer(null)">Change</button>
+        </div>` : ""}
+        <div class="vo-wiz-vendor-list">
+          ${customers.length ? customers.map(c => {
+            const selectedCls = offlineCustomerId === c.id ? " selected" : "";
+            return `<button type="button" class="vo-wiz-vendor-card${selectedCls}" onclick="CustomerOrders.pickOfflineCustomer(${c.id})">
+              <span class="vo-wiz-vendor-letter">${ctx.esc((c.business_name || "?").slice(0, 1).toUpperCase())}</span>
+              <span class="vo-wiz-vendor-meta">
+                <strong>${ctx.esc(c.business_name || "Customer")}</strong>
+                <span>${c.city_name ? ctx.esc(c.city_name) : "No city"}${c.phone ? ` · ${ctx.esc(c.phone)}` : ""}</span>
+              </span>
+              <span class="vo-wiz-vendor-check">${offlineCustomerId === c.id ? "✓" : ""}</span>
+            </button>`;
+          }).join("") : HubUI.emptyState({
+            title: "No matches",
+            sub: tokens.length ? `No customer matches “${ctx.esc(offlineCustomerSearch)}”.` : "No customers loaded.",
+          })}
+        </div>`;
       footerEl.innerHTML = `
         <button class="btn btn-secondary" onclick="CustomerOrders.closeOfflineWizard()">Cancel</button>
         <button class="btn btn-primary" ${offlineCustomerId ? "" : "disabled"} onclick="CustomerOrders.offlineNext()">Next →</button>`;
+      setTimeout(() => document.getElementById("co-offline-cust-search")?.focus(), 30);
       return;
     }
 
     if (offlineStep === 2) {
-      const cartRows = offlineLines.length ? offlineLines.map((line, i) => `
-        <tr>
-          <td><strong>${ctx.esc(line.our_product_id)}</strong></td>
-          <td><span class="badge ${line.quantity_on_hand > 0 ? "badge-green" : "badge-red"}">${line.quantity_on_hand ?? 0}</span></td>
-          <td>${fmtPrice(line.selling_price)}</td>
-          <td><input type="number" min="1" class="input" style="width:72px;" value="${line.quantity}" onchange="CustomerOrders.setOfflineQty(${line.catalog_product_id}, this.value)" /></td>
-          ${!offlineUseOverallDiscount ? `<td><input type="number" min="0" max="100" step="0.1" class="input" style="width:64px;" value="${ctx.esc(line.discount_percent || "")}" oninput="CustomerOrders.setOfflineLineDisc(${line.catalog_product_id}, this.value)" /></td>` : ""}
-          <td><button class="btn btn-ghost btn-sm" onclick="CustomerOrders.removeOfflineLine(${line.catalog_product_id})">✕</button></td>
-        </tr>`).join("") : `<tr><td colspan="${offlineUseOverallDiscount ? 5 : 6}" style="text-align:center;padding:20px;color:var(--muted);">Add products from the list below</td></tr>`;
-
-      const q = offlineSearchQuery.trim().toLowerCase();
-      const filtered = (offlineSearchResults || []).filter(p => {
-        if (!q) return true;
-        return String(p.our_product_id || "").toLowerCase().includes(q)
-          || String(p.vendor_name || "").toLowerCase().includes(q);
-      }).slice(0, 50);
-
-      const searchRows = filtered.map(p => {
-        const inCart = offlineLines.some(l => l.catalog_product_id === p.catalog_product_id);
-        const img = (p.image_urls && p.image_urls[0]) || "";
-        return `<button type="button" class="co-search-hit ${inCart ? "in-cart" : ""}" onclick="CustomerOrders.addOfflineProduct(${p.catalog_product_id})" ${inCart ? "disabled" : ""}>
-          ${thumb(img)}
-          <div class="co-search-hit-body">
-            <strong>${ctx.esc(p.our_product_id)}</strong>
-            <span>${fmtPrice(p.selling_price)} · Stock ${p.quantity_on_hand ?? 0}${p.vendor_name ? ` · ${ctx.esc(p.vendor_name)}` : ""}</span>
+      const shown = filterOfflineProducts();
+      const selectedNotShown = offlineLines
+        .map(l => offlineSearchResults.find(p => p.catalog_product_id === l.catalog_product_id))
+        .filter(p => p && !shown.some(s => s.catalog_product_id === p.catalog_product_id));
+      const list = [...selectedNotShown, ...shown];
+      const cartHtml = offlineLines.length ? `
+        <div class="vo-wiz-cart">
+          <div class="vo-wiz-cart-head">
+            <strong>In this order</strong>
+            <span>${offlineLines.length} product${offlineLines.length === 1 ? "" : "s"} · ${offlineCartQty()} qty</span>
           </div>
-          <span class="co-search-hit-add">${inCart ? "Added" : "+ Add"}</span>
-        </button>`;
-      }).join("");
+          <div class="vo-wiz-cart-chips">
+            ${offlineLines.map(l => `<span class="vo-wiz-cart-chip">
+              <span>${ctx.esc(l.our_product_id)} × ${l.quantity}</span>
+              <button type="button" title="Remove" onclick="CustomerOrders.toggleOfflineProduct(${l.catalog_product_id}, false)">×</button>
+            </span>`).join("")}
+          </div>
+        </div>` : "";
 
       bodyEl.innerHTML = `
-        <div style="margin-bottom:12px;font-size:14px;color:var(--muted);">Customer: <strong style="color:var(--text);">${ctx.esc(offlineCustomerName)}</strong></div>
-        <label class="label">Find product</label>
-        <input class="input search-big" id="co-offline-search" placeholder="Filter by product ID or vendor…" value="${ctx.esc(offlineSearchQuery)}" oninput="CustomerOrders.onOfflineSearchInput(this.value)" autocomplete="off" />
-        <div class="co-offline-products co-search-results">
-          ${searchRows || `<p style="padding:16px;text-align:center;color:var(--muted);font-size:13px;margin:0;">${offlineSearchResults.length ? "No match" : "Loading products…"}</p>`}
+        <div class="vo-wiz-step-head vo-wiz-step-head-row">
+          <div>
+            <h4 style="margin:0;">${editing ? `Edit placement #${offlineEditPlacementId}` : `Products for ${ctx.esc(offlineCustomerName)}`}</h4>
+            <p style="margin:4px 0 0;font-size:13px;color:var(--muted);">${editing ? "Add, change qty, or remove products. Stock updates on save." : "Search product ID — tick rows, set qty. Enter adds exact / best match."}</p>
+          </div>
+          <div class="vo-wiz-count-pill">${offlineLines.length} selected</div>
         </div>
-        <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
-          <span style="font-size:13px;font-weight:600;">Discount</span>
-          <label style="display:flex;align-items:center;gap:6px;font-size:13px;">
-            <input type="radio" name="co-off-disc" ${!offlineUseOverallDiscount ? "checked" : ""} onchange="CustomerOrders.setOfflineDiscMode(false)" /> Per line
-          </label>
-          <label style="display:flex;align-items:center;gap:6px;font-size:13px;">
-            <input type="radio" name="co-off-disc" ${offlineUseOverallDiscount ? "checked" : ""} onchange="CustomerOrders.setOfflineDiscMode(true)" /> Overall
-          </label>
-          ${offlineUseOverallDiscount ? `<input class="input" style="width:80px;" placeholder="%" value="${ctx.esc(offlineOverallDiscount)}" oninput="CustomerOrders.setOfflineOverallDisc(this.value)" />` : ""}
+        ${cartHtml}
+        <div class="vo-wiz-search-wrap">
+          <span class="vo-wiz-search-icon" aria-hidden="true">⌕</span>
+          <input id="co-offline-search" class="input vo-wiz-search" type="search" placeholder="Search product ID, category, series…" value="${ctx.esc(offlineSearchQuery)}" oninput="CustomerOrders.onOfflineSearchInput(this.value)" onkeydown="CustomerOrders.onOfflineSearchKey(event)" autocomplete="off" />
+          ${offlineSearchQuery ? `<button type="button" class="vo-wiz-search-clear" onclick="CustomerOrders.onOfflineSearchInput('')">×</button>` : ""}
         </div>
-        <div class="card table-wrap" style="margin:0;">
-          <table class="data" style="margin:0;font-size:13px;"><thead><tr>
-            <th>Product</th><th>Stock</th><th>Rate</th><th>Qty</th>${!offlineUseOverallDiscount ? "<th>Disc %</th>" : ""}<th></th>
-          </tr></thead><tbody>${cartRows}</tbody></table>
+        <div class="vo-wiz-product-meta">
+          <span>Showing ${list.length}${offlineSearchQuery ? " match" : " (type to search)"}${offlineSearchResults.length ? ` · ${offlineSearchResults.length} loaded` : ""}</span>
+        </div>
+        <div class="vo-wiz-products" id="co-offline-product-list">
+          ${!offlineSearchResults.length ? HubUI.emptyState({ title: "Loading…", sub: "Loading products…" })
+            : list.length ? list.map(p => {
+              const line = offlineLines.find(l => l.catalog_product_id === p.catalog_product_id);
+              const qty = line ? line.quantity : 1;
+              const checked = !!line;
+              const img = (p.image_urls && p.image_urls[0]) || "";
+              return `<div class="vo-wiz-product ${checked ? "selected" : ""}" onclick="CustomerOrders.toggleOfflineProduct(${p.catalog_product_id}, ${checked ? "false" : "true"})">
+                <div class="vo-wiz-product-main">
+                  <input type="checkbox" ${checked ? "checked" : ""} onclick="event.stopPropagation();CustomerOrders.toggleOfflineProduct(${p.catalog_product_id}, this.checked)" />
+                  ${thumb(img)}
+                  <div class="vo-wiz-product-info">
+                    <strong>${ctx.esc(p.our_product_id)}${p.year_group ? ` <span class="prod-year-pill">${ctx.esc(p.year_group)}</span>` : ""}</strong>
+                    <span class="vo-wiz-product-sub">${p.category ? ctx.esc(p.category) : "Product"}${p.series ? ` · ${ctx.esc(p.series)}` : ""}${p.year_group ? ` · ${ctx.esc(p.year_group)}` : ""}${p.vendor_name ? ` · ${ctx.esc(p.vendor_name)}` : ""}</span>
+                    <span class="vo-wiz-product-price">${fmtPrice(p.selling_price)} · Stock ${p.quantity_on_hand ?? 0}</span>
+                  </div>
+                </div>
+                <div class="vo-wiz-qty" onclick="event.stopPropagation()">
+                  <label>Qty</label>
+                  <div class="vo-wiz-qty-controls">
+                    <button type="button" class="vo-wiz-qty-btn" ${checked ? "" : "disabled"} onclick="CustomerOrders.bumpOfflineQty(${p.catalog_product_id}, -1)">−</button>
+                    <input type="number" min="1" class="input vo-wiz-qty-input" value="${qty}" ${checked ? "" : "disabled"} onchange="CustomerOrders.setOfflineQty(${p.catalog_product_id}, this.value)" onclick="event.stopPropagation()" />
+                    <button type="button" class="vo-wiz-qty-btn" ${checked ? "" : "disabled"} onclick="CustomerOrders.bumpOfflineQty(${p.catalog_product_id}, 1)">+</button>
+                  </div>
+                </div>
+              </div>`;
+            }).join("") : HubUI.emptyState({
+              title: "No matches",
+              sub: `No products match “${offlineSearchQuery}”.`,
+              ctaHtml: `<button type="button" class="btn btn-secondary" onclick="CustomerOrders.onOfflineSearchInput('')">Clear search</button>`,
+            })}
         </div>`;
       footerEl.innerHTML = `
-        <button class="btn btn-secondary" onclick="CustomerOrders.offlineBack()">← Back</button>
-        <button class="btn btn-primary" ${offlineLines.some(l => Number(l.quantity) > 0) ? "" : "disabled"} onclick="CustomerOrders.offlineNext()">Next →</button>`;
-      return;
-    }
-
-    if (offlineStep === 3) {
-      bodyEl.innerHTML = `
-        <p style="margin:0 0 12px;font-size:14px;color:var(--muted);">${offlineLines.length} product(s) for <strong>${ctx.esc(offlineCustomerName)}</strong></p>
-        <label class="label">Additional charges</label>
-        ${offlineAdditionalCharges.map((c, i) => `
-          <div style="display:flex;gap:8px;margin-bottom:8px;">
-            <input class="input" placeholder="Name / note" value="${ctx.esc(c.name)}" oninput="CustomerOrders.setOfflineAddCharge(${i}, 'name', this.value)" />
-            <input class="input" placeholder="₹" style="width:100px;" value="${ctx.esc(c.amount)}" oninput="CustomerOrders.setOfflineAddCharge(${i}, 'amount', this.value)" />
-          </div>`).join("")}
-        <button type="button" class="btn btn-secondary btn-sm" onclick="CustomerOrders.addOfflineChargeRow()">+ Add charge</button>
-        <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);">
-          <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-            <input type="checkbox" ${offlineGstEnabled ? "checked" : ""} onchange="CustomerOrders.setOfflineGst(this.checked)" /> GST inclusive split
-          </label>
-          ${offlineGstEnabled ? `<label class="label">GST rate %</label><input class="input" style="width:100px;margin-bottom:12px;" value="${ctx.esc(offlineGstRate)}" oninput="CustomerOrders.setOfflineGstRate(this.value)" />` : ""}
-          <label class="label">Bill series</label>
-          <select class="input" style="width:100%;" onchange="CustomerOrders.setOfflineBillSeries(this.value)">
-            ${offlineBillSeries.map(s => `<option value="${s.id}" ${String(s.id) === offlineBillSeriesId ? "selected" : ""}>${ctx.esc(s.name)}</option>`).join("")}
-          </select>
-        </div>`;
-      footerEl.innerHTML = `
-        <button class="btn btn-secondary" onclick="CustomerOrders.offlineBack()">← Back</button>
-        <button class="btn btn-primary" ${offlineBillSeriesId ? "" : "disabled"} onclick="CustomerOrders.offlineNext()">Review →</button>`;
+        <button class="btn btn-secondary" onclick="${editing ? "CustomerOrders.closeOfflineWizard()" : "CustomerOrders.offlineBack()"}">${editing ? "Cancel" : "← Back"}</button>
+        <div class="vo-wiz-footer-mid">${offlineLines.length ? `${offlineLines.length} item(s) · est. ${fmtPrice(offlineCartTotal())}` : "Select at least one product"}</div>
+        <button class="btn btn-primary" ${offlineLines.length ? "" : "disabled"} onclick="CustomerOrders.offlineNext()">Review →</button>`;
+      setTimeout(() => {
+        const inp = document.getElementById("co-offline-search");
+        if (!inp) return;
+        inp.focus();
+        try { const n = (offlineSearchQuery || "").length; inp.setSelectionRange(n, n); } catch (_) {}
+      }, 30);
       return;
     }
 
     const tot = offlinePreview || {};
-    const discAmt = Number(tot.discount_amount || 0);
-    const lineRows = (tot.lines || []).map(ln => {
-      const disc = Number(ln.line_discount || 0);
-      const discPct = ln.item_discount_percent ? ` (${ln.item_discount_percent}%)` : "";
-      return `<tr>
-        <td><strong>${ctx.esc(ln.our_product_id)}</strong></td>
-        <td>${ln.quantity}</td>
-        <td>${fmtPrice(ln.rate_inclusive || ln.unit_price)}</td>
-        <td>${disc > 0 ? `−${fmtPrice(disc)}${discPct}` : "—"}</td>
-        <td>${fmtPrice(ln.line_total)}</td>
-      </tr>`;
-    }).join("");
+    const lines = tot.lines || offlineLines.map(l => ({
+      our_product_id: l.our_product_id,
+      quantity: l.quantity,
+      unit_price: l.selling_price,
+      line_total: (Number(l.selling_price) || 0) * (Number(l.quantity) || 0),
+      out_of_stock: Number(l.quantity_on_hand) < Number(l.quantity),
+      on_hand: l.quantity_on_hand,
+    }));
+    const warnings = tot.stock_warnings || lines.filter(l => l.out_of_stock).map(l => ({
+      message: `${l.our_product_id}: need ${l.quantity}, have ${l.on_hand ?? 0} — will go negative`,
+    }));
+    const warnHtml = warnings.length
+      ? `<div style="margin:0 0 14px;padding:12px 14px;background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;">
+          <strong style="color:#b45309;">Out of stock — order still allowed (offline)</strong>
+          <ul style="margin:8px 0 0;padding-left:18px;font-size:13px;color:#92400e;">
+            ${warnings.map(w => `<li>${ctx.esc(w.message || w.our_product_id)}</li>`).join("")}
+          </ul>
+          <p style="margin:8px 0 0;font-size:12px;color:#92400e;">Stock on hand will go negative after place. Portal customers still cannot oversell.</p>
+        </div>`
+      : "";
     bodyEl.innerHTML = `
-      <div class="card table-wrap" style="margin-bottom:16px;">
-        <table class="data"><thead><tr>
-          <th>Item</th><th>Qty</th><th>Price</th><th>Discount</th><th>Total</th>
-        </tr></thead><tbody>${lineRows}</tbody></table>
-      </div>
+      ${warnHtml}
       <div class="review-grid" style="margin-bottom:16px;">
         ${ctx.reviewRow("Customer", offlineCustomerName)}
-        ${ctx.reviewRow("Subtotal", fmtPrice(tot.subtotal_inclusive))}
-        ${discAmt > 0 ? ctx.reviewRow(tot.discount_percent ? `Discount (${tot.discount_percent}%)` : "Discount", "−" + fmtPrice(tot.discount_amount)) : ""}
-        ${Number(tot.gst_amount) > 0 ? ctx.reviewRow("GST", fmtPrice(tot.gst_amount)) : ""}
-        ${ctx.reviewRow("Grand total", fmtPrice(tot.rounded_grand_total || tot.grand_total))}
-      </div>`;
+        ${editing ? ctx.reviewRow("Placement", `#${offlineEditPlacementId}`) : ""}
+        ${ctx.reviewRow("Items", String(lines.length))}
+        ${ctx.reviewRow("Est. total", fmtPrice(tot.subtotal || offlineCartTotal()))}
+      </div>
+      ${editing ? "" : `
+        <label class="label">Order date</label>
+        <input type="date" class="input" style="width:100%;max-width:220px;margin-bottom:4px;" value="${ctx.esc(offlinePlacedOn || localToday())}" onchange="CustomerOrders.setOfflinePlacedOn(this.value)" />
+        <p style="font-size:12px;color:var(--muted);margin:0 0 12px;">Day the call / order actually happened (backdate OK).</p>
+      `}
+      <label class="label">Notes (optional — shown on order)</label>
+      <textarea class="input" id="co-offline-notes" rows="2" style="width:100%;margin-bottom:12px;" oninput="CustomerOrders.setOfflineNotes(this.value)">${ctx.esc(offlineNotes || "")}</textarea>
+      <div class="card table-wrap">
+        <table class="data"><thead><tr><th>Product</th><th>Stock</th><th>Qty</th><th>Rate</th><th>Line</th></tr></thead>
+        <tbody>${lines.map(ln => `<tr>
+          <td><strong>${ctx.esc(ln.our_product_id)}</strong>${ln.out_of_stock ? ` <span style="color:#b45309;font-size:11px;font-weight:700;">out of stock</span>` : ""}</td>
+          <td>${ln.on_hand != null ? ln.on_hand : "—"}</td>
+          <td>${ln.quantity}</td>
+          <td>${fmtPrice(ln.unit_price || ln.rate_inclusive)}</td>
+          <td>${fmtPrice(ln.line_total)}</td>
+        </tr>`).join("")}</tbody></table>
+      </div>
+      <p style="margin:12px 0 0;font-size:13px;color:var(--muted);">${editing
+        ? "Saves changes to this incoming order. Stock reserve adjusts automatically."
+        : "Goes to <strong>To bill</strong>. Next: Bill when packed."}</p>`;
     footerEl.innerHTML = `
       <button class="btn btn-secondary" onclick="CustomerOrders.offlineBack()">← Back</button>
-      <button class="btn btn-primary" ${offlineBusy ? "disabled" : ""} onclick="CustomerOrders.submitOffline()">${offlineBusy ? "Creating…" : "Confirm Order"}</button>`;
+      <button class="btn btn-primary" ${offlineBusy ? "disabled" : ""} onclick="CustomerOrders.submitOffline()">${offlineBusy ? "Saving…" : (editing ? "Save changes" : (warnings.length ? "Place anyway" : "Place for customer"))}</button>`;
   }
 
   function setOfflineCustomer(id, name) {
     offlineCustomerId = id || null;
-    offlineCustomerName = name && name !== "— Select customer —" ? name.split(" · ")[0] : offlineCustomerName;
-    if (!id) offlineCustomerName = "";
+    if (!id) {
+      offlineCustomerName = "";
+    } else if (name && name !== "— Select customer —") {
+      offlineCustomerName = name.split(" · ")[0];
+    } else {
+      const c = (offlineCustomers || []).find(x => x.id === id);
+      offlineCustomerName = c?.business_name || offlineCustomerName;
+    }
     renderOfflineWizard();
   }
 
+  function setOfflineNotes(v) { offlineNotes = v || ""; }
+  function setOfflinePlacedOn(v) { offlinePlacedOn = v || localToday(); }
+
   function onOfflineSearchInput(val) {
-    offlineSearchQuery = val;
+    const prev = document.getElementById("co-offline-search");
+    const start = prev?.selectionStart;
+    offlineSearchQuery = val || "";
+    renderOfflineWizard();
+    const inp = document.getElementById("co-offline-search");
+    if (inp && typeof start === "number") {
+      try { inp.setSelectionRange(start, start); } catch (_) {}
+    }
+  }
+
+  function onOfflineSearchKey(e) {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const q = offlineSearchQuery.trim().toLowerCase();
+    if (!q) return;
+    const exact = offlineSearchResults.find(p => String(p.our_product_id || "").toLowerCase() === q);
+    const best = exact || filterOfflineProducts()[0];
+    if (!best) return ctx.toast("No product match", "error");
+    toggleOfflineProduct(best.catalog_product_id, true);
+    offlineSearchQuery = "";
     renderOfflineWizard();
   }
 
@@ -893,46 +2343,68 @@ const CustomerOrders = (() => {
     }
   }
 
-  async function searchOfflineProducts(q) {
-    await ensureOfflineProductsLoaded();
+  function toggleOfflineProduct(catalogProductId, checked) {
+    const p = offlineSearchResults.find(x => x.catalog_product_id === catalogProductId);
+    if (!p) return;
+    if (checked) {
+      if (!offlineLines.find(l => l.catalog_product_id === catalogProductId)) {
+        offlineLines.push({
+          catalog_product_id: p.catalog_product_id,
+          our_product_id: p.our_product_id,
+          quantity: 1,
+          min_qty: 0,
+          selling_price: p.selling_price,
+          quantity_on_hand: p.quantity_on_hand,
+        });
+      }
+    } else {
+      const existing = offlineLines.find(l => l.catalog_product_id === catalogProductId);
+      if (existing && Number(existing.min_qty) > 0) {
+        existing.quantity = Number(existing.min_qty);
+        return ctx.toast(`Keep billed qty (${existing.min_qty}) — cannot remove billed product`, "error");
+      }
+      offlineLines = offlineLines.filter(l => l.catalog_product_id !== catalogProductId);
+    }
     renderOfflineWizard();
   }
 
   function addOfflineProduct(catalogProductId) {
-    const p = offlineSearchResults.find(x => x.catalog_product_id === catalogProductId);
-    if (!p || offlineLines.some(l => l.catalog_product_id === catalogProductId)) return;
-    offlineLines.push({
-      catalog_product_id: p.catalog_product_id,
-      our_product_id: p.our_product_id,
-      quantity: 1,
-      discount_percent: "",
-      selling_price: p.selling_price,
-      quantity_on_hand: p.quantity_on_hand,
-    });
-    renderOfflineWizard();
+    toggleOfflineProduct(catalogProductId, true);
   }
 
   function removeOfflineLine(catalogProductId) {
-    offlineLines = offlineLines.filter(l => l.catalog_product_id !== catalogProductId);
-    renderOfflineWizard();
+    toggleOfflineProduct(catalogProductId, false);
   }
-  function setOfflineDiscMode(v) { offlineUseOverallDiscount = v; renderOfflineWizard(); }
-  function setOfflineOverallDisc(v) { offlineOverallDiscount = v; }
-  function setOfflineGst(v) { offlineGstEnabled = v; renderOfflineWizard(); }
-  function setOfflineGstRate(v) { offlineGstRate = v; }
-  function setOfflineBillSeries(v) { offlineBillSeriesId = v; }
-  function setOfflineAddCharge(i, field, val) { if (offlineAdditionalCharges[i]) offlineAdditionalCharges[i][field] = val; }
-  function addOfflineChargeRow() { offlineAdditionalCharges.push({ name: "", amount: "" }); renderOfflineWizard(); }
 
   function setOfflineQty(cid, raw) {
     const line = offlineLines.find(l => l.catalog_product_id === cid);
-    if (line) line.quantity = Math.max(1, parseInt(raw, 10) || 1);
-    renderOfflineWizard();
+    const minQ = line ? (Number(line.min_qty) || 0) : 0;
+    const qty = Math.max(minQ || 1, parseInt(String(raw || "1"), 10) || 1);
+    if (line) line.quantity = qty;
+    else {
+      const p = offlineSearchResults.find(x => x.catalog_product_id === cid);
+      if (p) offlineLines.push({
+        catalog_product_id: p.catalog_product_id,
+        our_product_id: p.our_product_id,
+        quantity: qty,
+        min_qty: 0,
+        selling_price: p.selling_price,
+        quantity_on_hand: p.quantity_on_hand,
+      });
+    }
+    const mid = document.querySelector("#co-offline-footer .vo-wiz-footer-mid");
+    if (mid && offlineLines.length) mid.textContent = `${offlineLines.length} item(s) · est. ${fmtPrice(offlineCartTotal())}`;
   }
 
-  function setOfflineLineDisc(cid, val) {
+  function bumpOfflineQty(cid, delta) {
     const line = offlineLines.find(l => l.catalog_product_id === cid);
-    if (line) line.discount_percent = val;
+    if (!line) {
+      if (delta > 0) toggleOfflineProduct(cid, true);
+      return;
+    }
+    const minQ = Number(line.min_qty) || 0;
+    line.quantity = Math.max(minQ || 1, (Number(line.quantity) || 1) + delta);
+    renderOfflineWizard();
   }
 
   async function offlineNext() {
@@ -945,20 +2417,14 @@ const CustomerOrders = (() => {
       return;
     }
     if (offlineStep === 2) {
-      if (!offlineLines.some(l => Number(l.quantity) > 0)) return ctx.toast("Add at least one product", "error");
-      offlineStep = 3;
-      renderOfflineWizard();
-      return;
-    }
-    if (offlineStep === 3) {
-      if (!offlineBillSeriesId) return ctx.toast("Select bill series", "error");
+      if (!offlineLines.length) return ctx.toast("Add at least one product", "error");
       ctx.showLoading?.();
       try {
         offlinePreview = await ctx.api(`/customer-orders/customer/${offlineCustomerId}/offline/preview`, {
           method: "POST",
           body: JSON.stringify(buildOfflineBody()),
         });
-        offlineStep = 4;
+        offlineStep = 3;
         renderOfflineWizard();
       } catch (e) { ctx.toast(e.message, "error"); }
       finally { ctx.hideLoading?.(); }
@@ -966,49 +2432,93 @@ const CustomerOrders = (() => {
   }
 
   function offlineBack() {
+    if (offlineEditPlacementId) {
+      if (offlineStep > 2) { offlineStep -= 1; renderOfflineWizard(); }
+      return;
+    }
     if (offlineStep > 1) { offlineStep -= 1; renderOfflineWizard(); }
   }
 
   async function submitOffline() {
     if (offlineBusy || !offlineCustomerId) return;
+    const notesEl = document.getElementById("co-offline-notes");
+    if (notesEl) offlineNotes = notesEl.value || "";
     offlineBusy = true;
     renderOfflineWizard();
     ctx.showLoading?.();
     try {
+      const body = buildOfflineBody();
+      if (offlineEditPlacementId) {
+        const pid = offlineEditPlacementId;
+        const cid = offlineCustomerId;
+        await ctx.api(`/customer-orders/placements/${pid}`, {
+          method: "PUT",
+          body: JSON.stringify(body),
+        });
+        ctx.invalidateCache?.("/customer-orders");
+        ctx.invalidateCache?.("/stock");
+        closeOfflineWizard();
+        ctx.toast("Order updated", "success");
+        await openDetail(cid, "received");
+        loadList();
+        return;
+      }
       const res = await ctx.api(`/customer-orders/customer/${offlineCustomerId}/offline`, {
         method: "POST",
-        body: JSON.stringify(buildOfflineBody()),
+        body: JSON.stringify(body),
       });
       ctx.invalidateCache?.("/customer-orders");
       ctx.invalidateCache?.("/stock");
       closeOfflineWizard();
-      const docBtns = [];
-      if (res.order_document_url) docBtns.push(`<button class="btn btn-primary" style="flex:1;" onclick="window.open('${res.order_document_url}','_blank')?.print?.()">Print Receipt</button>`);
-      if (res.order_document_url) docBtns.push(`<button class="btn btn-secondary" style="flex:1;" onclick="window.open('${res.order_document_url}','_blank')">Download Receipt</button>`);
-      if (res.bill_document_url) docBtns.push(`<button class="btn btn-secondary" style="flex:1;" onclick="window.open('${res.bill_document_url}','_blank')">Bill PDF</button>`);
-      ctx.openDetail?.(`Offline order — ${res.bill_number}`, `
-        <p style="margin:0 0 12px;color:var(--muted);">Bill ${ctx.esc(res.bill_number)} · ${fmtPrice(res.grand_total)}</p>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">${docBtns.join("")}</div>`,
-        `<button class="btn btn-primary" style="flex:1;" onclick="App.closeDetail()">Done</button>`, "sm");
-      ctx.toast("Offline order created", "success");
-      setBucket("billed");
-    } catch (e) { ctx.toast(e.message, "error"); }
-    finally { offlineBusy = false; ctx.hideLoading?.(); }
+      const cid = offlineCustomerId;
+      ctx.openDetail?.(`Order #${res.placement_id}`, `
+        <div class="doc-success-banner">
+          <strong>Placed for customer</strong>
+          <span>Same as portal · stock reserved</span>
+        </div>
+        <p style="margin:12px 0;font-size:14px;color:var(--muted);">Order in <strong>To bill</strong>. Bill now, or view order.</p>`,
+        `<button class="btn btn-primary" style="flex:1;" onclick="App.closeDetail();CustomerOrders.processFromHub(${cid}, 'open')">Bill now</button>
+         <button class="btn btn-secondary" style="flex:1;" onclick="App.closeDetail();CustomerOrders.openDetail(${cid}, 'received')">View order</button>`, "sm");
+      ctx.toast("Order placed for customer", "success");
+      hubMode = "needs_action";
+      currentBucket = "open";
+      syncHubChrome();
+      loadList();
+    } catch (e) { ctx.toast(e.message || "Could not place order", "error"); }
+    finally {
+      offlineBusy = false;
+      ctx.hideLoading?.();
+      // Re-draw so Save button unlocks after error (was stuck on “Saving…”)
+      if (!document.getElementById("co-offline-wizard")?.classList.contains("hidden")) {
+        renderOfflineWizard();
+      }
+    }
+  }
+
+  function _detailCustomerId() { return detailCustomerId; }
+
+  function openCustomer(customerId, bucket) {
+    return openDetail(customerId, bucket || "open");
   }
 
   return {
-    init, loadList, setBucket, showHub, openDetail, switchBucket,
+    init, loadList, setBucket, setHubMode, setQueueFilter, setHubSearch, showHub, openDetail, openCustomer, switchBucket, toggleDetailExpand, toggleHubCustomer,
+    goToDispatch, goCollectPayment, setDispatchStatus, setDispatchAgent, pickParcel, reassignParcel, submitParcelReassign,
     showCreateMenu, showCreateMenuFromCustomer, runHubAction, runDetailAction, openCloseBatch,
-    processOrder, closeProcessWizard, renderProcessWizard,
-    setShipQty, setLineDisc, setDiscMode, setOverallDisc,
-    setFreightAgent, setFreightCharges, setPackagingCharges,
-    setGst, setGstRate, setBillSeries, setNarration, setAddCharge, addChargeRow,
+    processOrder, processFromHub, closeProcessWizard, renderProcessWizard,
+    openEditBill, editLatestBill, promptEditBillNumber, saveBillNumber, enableDiscount, clearDiscount, setBillEditSearch, addBillEditProduct, removeProcessLine,
+    openEditFromOpen,
+    _detailCustomerId,
+    setShipQty, setLineDisc, setLineNetRate, setDiscMode, setDiscToggle, setOverallDisc,
+    setFreightAgent, setFreightCharges, setTransportMode, setTransportReceipt, setPackagingCharges,
+    setGst, setGstRate, setBillSeries, setNarration, setEditBillNumber, setBillDate, setAddCharge, addChargeRow,
+    setOfflinePlacedOn,
+    setForceCredit,
     processNext, processBack, submitProcess,
-    cancelOpenLine, closeBillLine, openBillDoc,
+    cancelOpenLine, cancelPlacement, cancelCustomerOpen, cancelAllOpen, editOpenLine, editReceivedLine, deleteReceivedLine, openEditPlacement, closeBillLine, cancelBill, openBillDoc, shareBillWhatsApp,
     openOfflineWizard, closeOfflineWizard, renderOfflineWizard,
-    setOfflineCustomer, setOfflineDiscMode, setOfflineOverallDisc, setOfflineGst, setOfflineGstRate,
-    setOfflineBillSeries, setOfflineAddCharge, addOfflineChargeRow,
-    onOfflineSearchInput, addOfflineProduct, removeOfflineLine,
-    setOfflineQty, setOfflineLineDisc, offlineNext, offlineBack, submitOffline,
+    setOfflineCustomer, pickOfflineCustomer, onOfflineCustomerSearch, setOfflineNotes,
+    onOfflineSearchInput, onOfflineSearchKey, toggleOfflineProduct, addOfflineProduct, removeOfflineLine,
+    setOfflineQty, bumpOfflineQty, offlineNext, offlineBack, submitOffline,
   };
 })();

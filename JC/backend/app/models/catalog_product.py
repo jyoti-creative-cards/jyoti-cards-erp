@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, Numeric, String, UniqueConstraint, func, true as sql_true
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, Numeric, String, func, true as sql_true
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -12,7 +12,7 @@ from app.db.session import Base
 
 class CatalogProduct(Base):
     __tablename__ = "jc_catalog_products"
-    __table_args__ = (UniqueConstraint("our_product_id", name="uq_jc_catalog_our_product_id"),)
+    # Unique (our_product_id, year_group) enforced in _migrate_catalog_year_unique
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     our_product_id: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
@@ -22,7 +22,7 @@ class CatalogProduct(Base):
     series: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
     unit: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     year_group: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
-    buying_price: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    buying_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 2), nullable=True)
     selling_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 2), nullable=True)
     image_keys: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=sql_true())

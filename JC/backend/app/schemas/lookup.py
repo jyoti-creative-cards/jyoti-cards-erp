@@ -11,6 +11,10 @@ class LookupCreate(BaseModel):
     value: str = Field(..., min_length=1, max_length=120)
 
 
+class LookupUpdate(BaseModel):
+    value: str = Field(..., min_length=1, max_length=120)
+
+
 class LookupPublic(BaseModel):
     id: int
     lookup_type: str

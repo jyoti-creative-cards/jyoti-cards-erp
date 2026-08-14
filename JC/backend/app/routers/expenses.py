@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.deps import AuthContext, require_admin
 from app.models.expense import Expense
+from app.services.activity import log_from_auth
 
 router = APIRouter(prefix="/expenses", tags=["expenses"])
 
@@ -77,6 +78,15 @@ def create_expense(body: ExpenseIn, db: Session = Depends(get_db), auth: AuthCon
         created_by_name=auth.actor_name,
     )
     db.add(row)
+    log_from_auth(
+        db,
+        auth,
+        action="create",
+        entity_type="expense",
+        entity_id=row.id,
+        entity_label=row.category,
+        detail=f"₹{row.amount}",
+    )
     db.commit()
     db.refresh(row)
     return ExpensePublic.from_row(row)
@@ -89,5 +99,14 @@ def delete_expense(expense_id: int, db: Session = Depends(get_db), auth: AuthCon
         raise HTTPException(404, "expense not found")
     if row.freight_agent_id:
         raise HTTPException(400, "cannot delete freight-linked expense")
+    log_from_auth(
+        db,
+        auth,
+        action="delete",
+        entity_type="expense",
+        entity_id=row.id,
+        entity_label=row.category,
+        detail=f"₹{row.amount}",
+    )
     db.delete(row)
     db.commit()

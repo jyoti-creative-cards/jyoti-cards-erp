@@ -1,4 +1,4 @@
-/** Finance — AP, AR, Expenses, Revenue, Cost, PnL */
+/** Finance — money hub (Due / Collect / Pay / Freight / …) */
 const Finance = (() => {
   let ctx = {};
   let vendors = [];
@@ -9,9 +9,8 @@ const Finance = (() => {
   let currentCustomer = null;
   let apDetail = null;
   let arDetail = null;
-  let financeView = "hub";
   let apTab = "statement";
-  let arTab = "ledger";
+  let arTab = "statement";
   let expandedBillId = null;
   let freightAgents = [];
   let freightAgentId = null;
@@ -19,6 +18,38 @@ const Finance = (() => {
   let routeCollections = [];
   let routeDetail = null;
   let routeCustomerDetail = null;
+  let activeChip = "due";
+  let hubMode = "needs_action";
+  let browseSection = "ap";
+  let reportTab = "revenue";
+  let hubSearch = "";
+  let showSettled = false;
+  let expenseFilters = { from_date: "", to_date: "", category: "" };
+  let settleFile = null;
+  let freightSettleFile = null;
+  let freightPayMode = "settle"; // settle | advance
+  let paymentModes = [];
+  let chipCounts = { due: 0, ar: 0, ap: 0, freight: 0 };
+  let dues = null; // from GET /finance/dues — single money API
+
+  const CHART_LABELS = {
+    revenue: "Cash in",
+    expenses: "Expenses",
+    ap_paid: "Paid vendors",
+    cost: "Cash out",
+    profit: "Net cash",
+    net_cash: "Net cash",
+  };
+
+  const CHIP_SUB = {
+    due: "Who needs money action",
+    ar: "Money to collect from customers",
+    ap: "Money to pay vendors",
+    freight: "Freight agent dues",
+    expenses: "Rent, salary, misc",
+    routes: "Collect by route",
+    reports: "Quick cash snapshot — full books under More → Reports",
+  };
 
   function init(context) { ctx = context; }
 
@@ -30,43 +61,135 @@ const Finance = (() => {
     return prefix + Math.abs(n).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
   }
 
-  function setHubFocus(active) {
-    const tiles = document.getElementById("finance-tiles");
-    if (!tiles) return;
-    const inSection = !!active && active !== "hub";
-    tiles.classList.toggle("finance-tiles-compact", inSection);
-    tiles.classList.toggle("finance-tiles-dim", inSection);
-    tiles.querySelectorAll(".big-tile").forEach(btn => {
-      const key = btn.getAttribute("data-finance");
-      btn.classList.toggle("is-active", key === active);
-      btn.classList.toggle("is-dim", inSection && key !== active);
-    });
+  function fmtPriceShort(val) {
+    if (val == null || val === "") return "—";
+    const n = Number(val);
+    if (Number.isNaN(n)) return "—";
+    const prefix = n < 0 ? "-₹" : "₹";
+    return prefix + Math.abs(n).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  }
+
+  function matchSearch(label) {
+    const q = hubSearch.trim().toLowerCase();
+    if (!q) return true;
+    return String(label || "").toLowerCase().includes(q);
+  }
+
+  /** Same fields as Vendors/Customers list search (name, alias, person, phone, city). */
+  function matchParty(row, labelKey) {
+    const tokens = OrdersUI.partySearchTokens(hubSearch);
+    if (!tokens.length) return true;
+    const party = {
+      business_name: row?.business_name || row?.[labelKey] || "",
+      city_name: row?.city_name || "",
+      person_name: row?.person_name || "",
+      alias: row?.alias || "",
+      phone: row?.phone || "",
+      secondary_phone: row?.secondary_phone || "",
+      customer_label: row?.customer_label || "",
+      vendor_label: row?.vendor_label || "",
+    };
+    return OrdersUI.partySearchRank(party, tokens) != null;
+  }
+
+  function rankParties(list, labelKey) {
+    return OrdersUI.filterAndRankParties(
+      (list || []).map(row => ({
+        ...row,
+        business_name: row.business_name || row[labelKey] || "",
+      })),
+      hubSearch,
+    );
+  }
+
+  function barPct(part, whole) {
+    const a = Math.max(0, Number(part) || 0);
+    const b = Math.max(a, Number(whole) || 0);
+    if (b <= 0) return 0;
+    return Math.min(100, Math.round((a / b) * 100));
   }
 
   function hideAllPanels() {
-    ["ap", "ar", "expenses", "revenue", "cost", "pnl", "freight", "routes"].forEach(k => {
+    ["ap", "ar", "expenses", "freight", "routes", "reports"].forEach(k => {
       document.getElementById(`finance-panel-${k}`)?.classList.add("hidden");
     });
     document.getElementById("finance-freight-detail")?.classList.add("hidden");
     document.getElementById("finance-routes-detail")?.classList.add("hidden");
-    document.getElementById("finance-pick")?.classList.add("hidden");
+  }
+
+  function refreshChipCounts() {
+    const apN = vendors.filter(v => Number(v.outstanding) > 0).length;
+    const arN = customers.filter(c => Number(c.outstanding) > 0).length;
+    const frN = freightAgents.filter(a => Number(a.balance_due) > 0).length;
+    chipCounts = { due: apN + arN + frN, ar: arN, ap: apN, freight: frN };
+  }
+
+  function renderHubChrome() {
+    const prevSearch = document.getElementById("finance-hub-search");
+    const caret = prevSearch && document.activeElement === prevSearch
+      ? { start: prevSearch.selectionStart, end: prevSearch.selectionEnd }
+      : null;
+
+    const sub = document.getElementById("finance-hub-sub");
+    if (sub) sub.textContent = CHIP_SUB[activeChip] || "Collect, pay, and track cash";
+
+    OrdersUI.actionChips({
+      hostId: "finance-action-chips",
+      active: activeChip,
+      onclickFn: "Finance.setChip",
+      items: [
+        { id: "due", label: "To do", count: chipCounts.due || undefined },
+        { id: "ar", label: "To collect", count: chipCounts.ar || undefined },
+        { id: "ap", label: "To pay", count: chipCounts.ap || undefined },
+        { id: "freight", label: "Freight", count: chipCounts.freight || undefined },
+        { id: "expenses", label: "Other spend" },
+        { id: "routes", label: "Routes" },
+        { id: "reports", label: "Cash snapshot" },
+      ],
+    });
+
+    const needs = document.getElementById("finance-needs");
+    if (needs) needs.classList.toggle("hidden", activeChip !== "due");
+
+    const slot = document.getElementById("finance-search-slot");
+    if (slot) {
+      const ph = activeChip === "due" ? "Search parties…"
+        : activeChip === "ap" ? "Search vendors…"
+          : activeChip === "ar" ? "Search customers…"
+            : activeChip === "freight" ? "Search agents…"
+              : activeChip === "routes" ? "Search routes…"
+                : "Search…";
+      const showSearch = ["due", "ap", "ar", "freight", "routes"].includes(activeChip);
+      slot.innerHTML = showSearch
+        ? OrdersUI.searchBar({
+          id: "finance-hub-search",
+          value: hubSearch,
+          placeholder: ph,
+          oninput: "Finance.setHubSearch(this.value)",
+        })
+        : "";
+      slot.classList.toggle("hidden", !showSearch);
+      if (caret && showSearch) {
+        const el = document.getElementById("finance-hub-search");
+        if (el) {
+          el.focus();
+          try { el.setSelectionRange(caret.start, caret.end); } catch (_) { /* ignore */ }
+        }
+      }
+    }
   }
 
   function showHub() {
     if (!ctx.isAdmin?.()) {
       ctx.toast?.("Finance is admin only", "error");
-      ctx.showView?.("products");
+      ctx.showView?.("today");
       return;
     }
-    financeView = "hub";
     document.getElementById("finance-hub")?.classList.remove("hidden");
     document.getElementById("finance-ap-detail")?.classList.add("hidden");
     document.getElementById("finance-ar-detail")?.classList.add("hidden");
     document.getElementById("finance-freight-detail")?.classList.add("hidden");
     document.getElementById("finance-routes-detail")?.classList.add("hidden");
-    hideAllPanels();
-    document.getElementById("finance-pick")?.classList.remove("hidden");
-    setHubFocus("hub");
     currentVendor = null;
     currentCustomer = null;
     apDetail = null;
@@ -74,38 +197,109 @@ const Finance = (() => {
     freightAgentId = null;
     routeDetail = null;
     routeCustomerDetail = null;
+    loadDuesSilent();
     loadOverviewSilent();
+    setChip(activeChip || "due", true);
+    App.updateGlobalBack?.();
   }
 
-  function showPanel(name, loader) {
-    financeView = name;
+  function setHubMode(mode) {
+    if (mode === "browse") setChip(browseSection === "due" ? "ap" : browseSection || "ap");
+    else setChip("due");
+  }
+
+  function setChip(id, fromHub) {
+    const map = { revenue: "reports", cost: "reports", pnl: "reports", needs_action: "due", browse: "ap" };
+    const chip = map[id] || id || "due";
+    if (chip !== activeChip) hubSearch = "";
+    activeChip = chip;
+    if (chip === "due") {
+      hubMode = "needs_action";
+      browseSection = "ap";
+    } else {
+      hubMode = "browse";
+      browseSection = chip;
+    }
+
+    document.getElementById("finance-hub")?.classList.remove("hidden");
     document.getElementById("finance-ap-detail")?.classList.add("hidden");
     document.getElementById("finance-ar-detail")?.classList.add("hidden");
     document.getElementById("finance-freight-detail")?.classList.add("hidden");
     document.getElementById("finance-routes-detail")?.classList.add("hidden");
-    document.getElementById("finance-hub")?.classList.remove("hidden");
     hideAllPanels();
-    const panel = document.getElementById(`finance-panel-${name}`);
-    panel?.classList.remove("hidden");
-    setHubFocus(name);
-    loader?.();
-    requestAnimationFrame(() => {
-      panel?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
+    renderHubChrome();
+
+    if (chip === "due") {
+      loadNeedsAction();
+    } else if (chip === "ap") {
+      document.getElementById("finance-panel-ap")?.classList.remove("hidden");
+      loadApList();
+    } else if (chip === "ar") {
+      document.getElementById("finance-panel-ar")?.classList.remove("hidden");
+      loadArList();
+    } else if (chip === "freight") {
+      document.getElementById("finance-panel-freight")?.classList.remove("hidden");
+      loadFreightList();
+    } else if (chip === "expenses") {
+      document.getElementById("finance-panel-expenses")?.classList.remove("hidden");
+      loadExpenses();
+    } else if (chip === "routes") {
+      document.getElementById("finance-panel-routes")?.classList.remove("hidden");
+      loadRouteCollections();
+    } else if (chip === "reports") {
+      document.getElementById("finance-panel-reports")?.classList.remove("hidden");
+      loadOverview().then(() => renderReportsPanel());
+    }
+
+    if (!fromHub && chip !== "due") {
+      requestAnimationFrame(() => {
+        document.querySelector(".fin-browse-panel:not(.hidden)")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }
   }
 
-  function showAp() { showPanel("ap", loadApList); }
-  function showAr() { showPanel("ar", loadArList); }
-  function showExpenses() { showPanel("expenses", loadExpenses); }
-  function showRevenue() { showPanel("revenue", () => loadOverview().then(renderRevenue)); }
-  function showCost() { showPanel("cost", () => loadOverview().then(renderCost)); }
-  function showPnl() { showPanel("pnl", () => loadOverview().then(renderPnl)); }
-  function showFreight() { showPanel("freight", loadFreightList); }
-  function showRouteCollections() { showPanel("routes", loadRouteCollections); }
+  function setHubSearch(val) {
+    hubSearch = val || "";
+    if (activeChip === "due") renderNeedsAction();
+    else if (activeChip === "ap") renderApList();
+    else if (activeChip === "ar") renderArList();
+    else if (activeChip === "freight") renderFreightList();
+    else if (activeChip === "routes") renderRouteListFiltered();
+  }
+
+  function setBrowseSection(id, fromHub) {
+    setChip(id, fromHub);
+  }
+
+  function showAp() { setChip("ap"); }
+  function showAr() { setChip("ar"); }
+  function showExpenses() { setChip("expenses"); }
+  function showRevenue() { reportTab = "revenue"; setChip("reports"); }
+  function showCost() { reportTab = "cost"; setChip("reports"); }
+  function showPnl() { reportTab = "pnl"; setChip("reports"); }
+  function showFreight() { setChip("freight"); }
+  function showRouteCollections() { setChip("routes"); }
+
+  async function loadDuesSilent() {
+    try {
+      dues = await ctx.api("/finance/dues", {}, 0);
+      if (dues?.ar) {
+        chipCounts = {
+          due: (dues.ar.count || 0) + (dues.ap.count || 0) + (dues.freight.count || 0),
+          ar: dues.ar.count || 0,
+          ap: dues.ap.count || 0,
+          freight: dues.freight.count || 0,
+        };
+      }
+      renderHubChrome();
+      renderHubStrip();
+    } catch (_) { /* ignore */ }
+  }
 
   async function loadOverviewSilent() {
     try {
       overview = await ctx.api("/finance/overview", {}, 0);
+      if (overview?.dues) dues = overview.dues;
       renderHubStrip();
     } catch (_) { /* ignore */ }
   }
@@ -114,6 +308,7 @@ const Finance = (() => {
     ctx.showLoading?.();
     try {
       overview = await ctx.api("/finance/overview", {}, 0);
+      if (overview?.dues) dues = overview.dues;
       renderHubStrip();
       return overview;
     } catch (e) { ctx.toast(e.message, "error"); return null; }
@@ -122,14 +317,155 @@ const Finance = (() => {
 
   function renderHubStrip() {
     const el = document.getElementById("finance-hub-strip");
-    if (!el || !overview) return;
+    if (!el) return;
+    if (!dues && !overview) return;
+    // Single money API only — never sum raw ledgers in the UI
+    const collect = Number(dues?.ar?.total ?? overview?.ar_outstanding) || 0;
+    const pay = Number(dues?.ap?.total ?? overview?.ap_outstanding) || 0;
+    const freight = Number(dues?.freight?.total ?? overview?.freight_outstanding) || 0;
+    const netCash = Number(overview?.cash_pulse?.net_cash ?? overview?.net_cash ?? overview?.profit) || 0;
+    const cashIn = Number(overview?.cash_pulse?.cash_in ?? overview?.revenue) || 0;
+    const cashOut = Number(overview?.cash_pulse?.cash_out ?? overview?.cost) || 0;
+    const maxDue = Math.max(collect, pay, freight, 1);
+    const rows = [
+      { label: "Collect", value: fmtPriceShort(collect), pct: barPct(collect, maxDue), tone: "in", chip: "ar", sub: "Customer dues" },
+      { label: "Pay", value: fmtPriceShort(pay), pct: barPct(pay, maxDue), tone: "out", chip: "ap", sub: "Vendor dues" },
+      { label: "Freight", value: fmtPriceShort(freight), pct: barPct(freight, maxDue), tone: "sales", chip: "freight", sub: "Agent dues" },
+    ];
     el.innerHTML = `
-      <div class="fin-stat"><span class="fin-stat-label">Revenue</span><strong>${fmtPrice(overview.revenue)}</strong></div>
-      <div class="fin-stat"><span class="fin-stat-label">Cost</span><strong>${fmtPrice(overview.cost)}</strong></div>
-      <div class="fin-stat"><span class="fin-stat-label">Profit</span><strong class="${Number(overview.profit) >= 0 ? "is-pos" : "is-neg"}">${fmtPrice(overview.profit)}</strong></div>
-      <div class="fin-stat"><span class="fin-stat-label">AP due</span><strong>${fmtPrice(overview.ap_outstanding)}</strong></div>
-      <div class="fin-stat"><span class="fin-stat-label">AR due</span><strong>${fmtPrice(overview.ar_outstanding)}</strong></div>
-      <div class="fin-stat"><span class="fin-stat-label">Freight due</span><strong>${fmtPrice(overview.freight_outstanding || 0)}</strong></div>`;
+      <div class="fin-pulse-head">
+        <div>
+          <span class="fin-pulse-label">Cash pulse · not books P&amp;L</span>
+          <strong class="fin-pulse-profit ${netCash >= 0 ? "is-pos" : "is-neg"}">${fmtPriceShort(netCash)} net cash</strong>
+        </div>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="Finance.setChip('reports')">Pulse →</button>
+      </div>
+      <div class="home-pulse-bars">
+        ${rows.map(r => `
+          <button type="button" class="fin-pulse-row" onclick="Finance.setChip('${r.chip}')">
+            <div class="home-pulse-meta">
+              <span class="home-pulse-label">${r.label}</span>
+              <strong class="home-pulse-val">${r.value}</strong>
+            </div>
+            <div class="home-pulse-track" aria-hidden="true"><span class="home-pulse-fill is-${r.tone}" style="width:${r.pct}%"></span></div>
+            <span class="home-pulse-sub">${ctx.esc(r.sub)}</span>
+          </button>
+        `).join("")}
+      </div>
+      <div class="home-pulse-foot">
+        <span>Cash in ${fmtPriceShort(cashIn)}</span>
+        <span>· Cash out ${fmtPriceShort(cashOut)}</span>
+      </div>`;
+  }
+
+  async function loadNeedsAction() {
+    const el = document.getElementById("finance-needs");
+    if (!el) return;
+    ctx.showLoading?.();
+    try {
+      const [ap, ar, fr] = await Promise.all([
+        ctx.api("/accounts-payable", {}, 0).catch(() => []),
+        ctx.api("/accounts-receivable", {}, 0).catch(() => []),
+        ctx.api("/freight-agents", {}, 0).catch(() => []),
+        loadDuesSilent(),
+      ]);
+      vendors = Array.isArray(ap) ? ap : [];
+      customers = Array.isArray(ar) ? ar : [];
+      freightAgents = Array.isArray(fr) ? fr : [];
+      refreshChipCounts();
+      renderHubChrome();
+      renderHubStrip();
+      renderNeedsAction();
+    } catch (e) { ctx.toast?.(e.message || "Failed to load", "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  function dueRow({ name, amount, openFn, settleFn, cta, settled = false }) {
+    if (settled) {
+      return HubUI.partyCard({
+        title: name,
+        meta: "Clear",
+        pillHtml: HubUI.pill("OK", "muted"),
+        primaryLabel: "Open",
+        primaryOnclick: openFn,
+        rowOnclick: openFn,
+        canWrite: true,
+      });
+    }
+    return HubUI.partyCard({
+      title: name,
+      meta: `<strong>${fmtPrice(amount)}</strong> due`,
+      pillHtml: HubUI.pill("Due", "danger"),
+      primaryLabel: cta,
+      primaryOnclick: settleFn,
+      moreItems: [{ label: "Open", onclick: openFn }],
+      rowOnclick: openFn,
+      canWrite: true,
+    });
+  }
+
+  function renderNeedsAction() {
+    const el = document.getElementById("finance-needs");
+    if (!el) return;
+    const apDue = rankParties(vendors.filter(v => Number(v.outstanding) > 0), "vendor_label");
+    const arDue = rankParties(customers.filter(c => Number(c.outstanding) > 0), "customer_label");
+    const frDue = freightAgents.filter(a => Number(a.balance_due) > 0 && matchSearch(a.name));
+    const total = apDue.length + arDue.length + frDue.length;
+
+    if (!total) {
+      el.innerHTML = HubUI.emptyState({
+        title: hubSearch.trim() ? "No matches" : "All clear",
+        sub: hubSearch.trim()
+          ? "Try another name, or open Collect / Pay for full lists."
+          : "When customer or vendor dues land, they show here.",
+        ctaHtml: `<div class="home-clear-actions">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.setChip('ar')">Collect</button>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.setChip('ap')">Pay</button>
+        </div>`,
+      });
+      return;
+    }
+
+    const section = (title, count, rows, moreChip) => rows.length
+      ? `<section class="fin-needs-section">
+          <div class="ui-toolbar fin-needs-head">
+            <h3 class="fin-needs-title">${title}</h3>
+            <span class="home-count">${count}</span>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="Finance.setChip('${moreChip}')">All →</button>
+          </div>
+          <div class="ord-card-list">${rows}</div>
+        </section>`
+      : "";
+
+    const arRows = arDue.slice(0, 8).map(c => dueRow({
+      name: c.customer_label,
+      amount: c.outstanding,
+      openFn: `Finance.openCustomerAr(${c.customer_id})`,
+      settleFn: `Finance.openCustomerAr(${c.customer_id},{settle:true})`,
+      cta: "Collect",
+    })).join("");
+
+    const apRows = apDue.slice(0, 8).map(v => dueRow({
+      name: v.vendor_label,
+      amount: v.outstanding,
+      openFn: `Finance.openVendorAp(${v.vendor_id})`,
+      settleFn: `Finance.openVendorAp(${v.vendor_id},{settle:true})`,
+      cta: "Pay",
+    })).join("");
+
+    const frRows = frDue.slice(0, 8).map(a => dueRow({
+      name: a.name,
+      amount: a.balance_due,
+      openFn: `Finance.openFreightAgent(${a.id})`,
+      settleFn: `Finance.openFreightAgent(${a.id},{settle:true})`,
+      cta: "Settle",
+    })).join("");
+
+    el.innerHTML = `
+      <p class="fin-needs-intro">${total} part${total === 1 ? "y" : "ies"} need action</p>
+      ${section("Collect", arDue.length, arRows, "ar")}
+      ${section("Pay", apDue.length, apRows, "ap")}
+      ${section("Freight", frDue.length, frRows, "freight")}`;
   }
 
   /* —— Charts —— */
@@ -147,18 +483,19 @@ const Finance = (() => {
         const bh = (v / max) * (h - pad * 2);
         const x = pad + i * groupW + ki * (barW + 2);
         const y = h - pad - bh;
+        const lbl = CHART_LABELS[k] || k;
         bars += `<rect x="${x}" y="${y}" width="${barW}" height="${bh}" fill="${colors[ki]}" rx="2">
-          <title>${s.month} ${k}: ${fmtPrice(s[k])}</title></rect>`;
+          <title>${s.month} ${lbl}: ${fmtPrice(s[k])}</title></rect>`;
       });
       bars += `<text x="${pad + i * groupW + groupW / 2}" y="${h - 8}" text-anchor="middle" class="fin-chart-label">${ctx.esc((s.month || "").slice(5))}</text>`;
     });
-    const legend = keys.map((k, i) => `<span class="fin-legend"><i style="background:${colors[i]}"></i>${ctx.esc(k)}</span>`).join("");
+    const legend = keys.map((k, i) => `<span class="fin-legend"><i style="background:${colors[i]}"></i>${ctx.esc(CHART_LABELS[k] || k)}</span>`).join("");
     return `<div class="fin-chart">${legend}<svg viewBox="0 0 ${w} ${h}" class="fin-svg">${bars}</svg></div>`;
   }
 
   function donutChart(parts, colors) {
     const items = (parts || []).map((p, i) => ({
-      label: p.label || p.category,
+      label: CHART_LABELS[p.label] || p.label || p.category,
       value: Math.abs(Number(p.amount) || 0),
       color: colors[i % colors.length],
     })).filter(p => p.value > 0);
@@ -187,7 +524,7 @@ const Finance = (() => {
   }
 
   function hBarList(rows, labelKey, valueKey) {
-    if (!rows?.length) return `<div class="fin-empty-chart">Nothing outstanding</div>`;
+    if (!rows?.length) return `<div class="fin-empty-chart">Nothing due</div>`;
     const max = Math.max(...rows.map(r => Math.abs(Number(r[valueKey]) || 0)), 1);
     return `<div class="fin-hbar-list">${rows.map(r => {
       const v = Math.abs(Number(r[valueKey]) || 0);
@@ -200,12 +537,25 @@ const Finance = (() => {
     }).join("")}</div>`;
   }
 
+  function settleSuccess({ title, party, amount, balanceAfter, reopenFn }) {
+    ctx.openDetail?.(title, `
+      <div class="doc-success-banner">
+        <strong>Payment settled</strong>
+        <span>${ctx.esc(party)} · ${fmtPrice(amount)}</span>
+      </div>
+      <div class="review-block">
+        ${ctx.reviewRow("Party", party)}
+        ${ctx.reviewRow("Amount", fmtPrice(amount))}
+        ${ctx.reviewRow("Balance after", fmtPrice(balanceAfter))}
+      </div>`,
+      `<button class="btn btn-primary" style="flex:1;" onclick="App.closeDetail();${reopenFn}">Open party</button>
+       <button class="btn btn-secondary" style="flex:1;" onclick="App.closeDetail();App.showView('money');Finance.showHub()">Done</button>`,
+      "sm");
+  }
+
   /* —— AP —— */
   async function loadApList() {
-    if (!ctx.api) {
-      ctx.toast?.("Finance not ready — hard refresh the page", "error");
-      return;
-    }
+    if (!ctx.api) return ctx.toast?.("Finance not ready — hard refresh the page", "error");
     ctx.showLoading?.();
     try {
       vendors = await ctx.api("/accounts-payable", {}, 0);
@@ -219,40 +569,60 @@ const Finance = (() => {
     const el = document.getElementById("finance-ap-list");
     const sum = document.getElementById("finance-ap-summary");
     if (!el) return;
-    const totalOut = vendors.reduce((s, v) => s + (Number(v.outstanding) || 0), 0);
+    refreshChipCounts();
+    renderHubChrome();
+    let list = rankParties(vendors, "vendor_label");
+    if (!showSettled) list = list.filter(v => Number(v.outstanding) > 0);
+    const dueVendors = vendors.filter(v => Number(v.outstanding) > 0);
+    const totalOut = dueVendors.reduce((s, v) => s + (Number(v.outstanding) || 0), 0);
     if (sum) {
       sum.innerHTML = `
-        <div class="fin-summary-grid">
-          <div class="fin-card">
-            <div class="fin-card-title">Total outstanding</div>
-            <div class="fin-card-value">${fmtPrice(totalOut)}</div>
-            <div class="fin-card-sub">${vendors.length} vendor${vendors.length === 1 ? "" : "s"}</div>
+        <div class="home-card fin-list-sum">
+          <div class="fin-list-sum-top">
+            <div>
+              <span class="fin-pulse-label">To pay</span>
+              <strong class="fin-list-sum-val">${fmtPriceShort(totalOut)}</strong>
+              <span class="fin-list-sum-sub">${dueVendors.length} vendor${dueVendors.length === 1 ? "" : "s"}</span>
+            </div>
+            <label class="fin-filter-chip ${showSettled ? "is-on" : ""}">
+              <input type="checkbox" ${showSettled ? "checked" : ""} onchange="Finance.setShowSettled(this.checked)" />
+              Show clear
+            </label>
           </div>
-          <div class="fin-card fin-card-chart">
-            <div class="fin-card-title">Who we owe</div>
-            ${hBarList(vendors.slice(0, 6), "vendor_label", "outstanding")}
-          </div>
+          ${dueVendors.length ? hBarList(dueVendors.slice(0, 5), "vendor_label", "outstanding") : ""}
         </div>`;
     }
-    if (!vendors.length) {
-      el.innerHTML = `<div class="empty-state"><p>No accounts payable yet. Receive stock from vendors to create bills.</p></div>`;
+    if (!list.length) {
+      const q = hubSearch.trim();
+      el.innerHTML = OrdersUI.emptyState({
+        title: q ? "No matches" : (showSettled ? "No vendor accounts" : "No vendors to pay"),
+        sub: q
+          ? "Try business name, contact, alias, phone, or city."
+          : (showSettled ? "Receive stock or set opening to open AP." : "Receive stock from vendors to create bills."),
+      });
       return;
     }
-    el.innerHTML = `<table class="data"><thead><tr>
-      <th>Vendor</th><th>Outstanding</th><th>Bills</th><th>Debit Notes</th><th>Paid</th><th>Txns</th>
-    </tr></thead><tbody>
-      ${vendors.map(v => `<tr class="clickable" onclick="Finance.openVendorAp(${v.vendor_id})">
-        <td><strong>${ctx.esc(v.vendor_label)}</strong></td>
-        <td><strong>${fmtPrice(v.outstanding)}</strong></td>
-        <td>${fmtPrice(v.bill_total)}</td>
-        <td>${fmtPrice(v.debit_note_total)}</td>
-        <td>${fmtPrice(v.payment_total)}</td>
-        <td>${v.transaction_count}</td>
-      </tr>`).join("")}
-    </tbody></table>`;
+    el.innerHTML = `<div class="ord-card-list">${list.map(v => {
+      const due = Number(v.outstanding) || 0;
+      return dueRow({
+        name: v.vendor_label,
+        amount: due,
+        openFn: `Finance.openVendorAp(${v.vendor_id})`,
+        settleFn: `Finance.openVendorAp(${v.vendor_id},{settle:true})`,
+        cta: "Pay",
+        settled: due <= 0,
+      });
+    }).join("")}</div>`;
   }
 
-  async function openVendorAp(vendorId) {
+  function setShowSettled(on) {
+    showSettled = !!on;
+    if (browseSection === "ap") renderApList();
+    else if (browseSection === "ar") renderArList();
+    else if (browseSection === "freight") renderFreightList();
+  }
+
+  async function openVendorAp(vendorId, opts = {}) {
     if (!ctx.isAdmin?.()) return ctx.toast?.("Finance is admin only", "error");
     ctx.showLoading?.();
     try {
@@ -263,6 +633,8 @@ const Finance = (() => {
       document.getElementById("finance-hub")?.classList.add("hidden");
       document.getElementById("finance-ap-detail")?.classList.remove("hidden");
       renderApDetail();
+      if (opts?.settle) openSettle();
+      App.updateGlobalBack?.();
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
   }
@@ -278,11 +650,21 @@ const Finance = (() => {
   }
 
   function renderApDetail() {
-    const title = document.getElementById("finance-ap-title");
+    const hero = document.getElementById("finance-ap-hero");
     const body = document.getElementById("finance-ap-body");
     if (!apDetail || !body) return;
-    if (title) title.textContent = apDetail.vendor_label;
     const outstanding = Number(apDetail.outstanding) || 0;
+    if (hero) {
+      hero.innerHTML = HubUI.pageHero({
+        title: apDetail.vendor_label,
+        sub: `Pay vendors · ${outstanding > 0 ? `${fmtPrice(outstanding)} due` : "Clear"}`,
+        actionsHtml: `
+            ${outstanding > 0 ? `<button class="btn btn-primary" onclick="Finance.openSettle()">Pay</button>` : ""}
+            <button class="btn btn-secondary" onclick="Finance.shareApStatement()">Print / PDF / WA</button>
+            <button class="btn btn-secondary" onclick="Finance.setApOpeningBalance()">Set opening</button>
+            ${typeof Vendors !== "undefined" ? `<button class="btn btn-secondary" onclick="App.showView('people');Vendors.openDetail(${currentVendor})">Open vendor</button>` : ""}`,
+      });
+    }
     const tabs = `
       <div class="fin-tabs">
         <button type="button" class="fin-tab ${apTab === "statement" ? "is-active" : ""}" onclick="Finance.setApTab('statement')">Statement</button>
@@ -296,21 +678,20 @@ const Finance = (() => {
 
     body.innerHTML = `
       <div class="review-grid" style="margin-bottom:20px;">
-        ${ctx.reviewRow("Outstanding", fmtPrice(apDetail.outstanding))}
+        ${ctx.reviewRow("Due", fmtPrice(apDetail.outstanding))}
+        ${ctx.reviewRow("Opening", fmtPrice(apDetail.opening_total || "0"))}
+        ${ctx.reviewRow("Opening as on", apDetail.opening_as_on)}
         ${ctx.reviewRow("Total bills", fmtPrice(apDetail.bill_total))}
-        ${ctx.reviewRow("Debit note adjustments", fmtPrice(apDetail.debit_note_total))}
-        ${ctx.reviewRow("Payments made", fmtPrice(apDetail.payment_total))}
+        ${ctx.reviewRow("Bill corrections", fmtPrice(apDetail.debit_note_total))}
+        ${ctx.reviewRow("Paid", fmtPrice(apDetail.payment_total))}
       </div>
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-        ${tabs}
-        ${outstanding > 0 ? `<button class="btn btn-primary" onclick="Finance.openSettle()">Settle Payment</button>` : ""}
-      </div>
+      <div style="margin-bottom:12px;">${tabs}</div>
       ${content}`;
   }
 
   function renderApStatement() {
     const bills = apDetail.bills || [];
-    if (!bills.length) return `<div class="empty-state"><p>No bills yet.</p></div>`;
+    if (!bills.length) return OrdersUI.emptyState({ title: "No bills yet", sub: "Bills appear after you receive/bill vendor stock." });
     return `<div class="fin-stmt">${bills.map(b => {
       const open = expandedBillId === b.receipt_id;
       const dns = b.debit_notes || [];
@@ -318,7 +699,7 @@ const Finance = (() => {
         <button type="button" class="fin-bill-head" onclick="Finance.toggleBill(${b.receipt_id})">
           <div>
             <div class="fin-bill-title">Bill ${ctx.esc(b.bill_number || `#${b.receipt_id}`)}</div>
-            <div class="fin-bill-meta">${b.created_at ? new Date(b.created_at).toLocaleString() : ""} · ${dns.length} debit note${dns.length === 1 ? "" : "s"}</div>
+            <div class="fin-bill-meta">${b.created_at ? new Date(b.created_at).toLocaleString() : ""} · ${dns.length} correction${dns.length === 1 ? "" : "s"}</div>
           </div>
           <div class="fin-bill-amounts">
             <span>Bill ${fmtPrice(b.bill_amount)}</span>
@@ -330,7 +711,7 @@ const Finance = (() => {
           ${(b.lines || []).length ? `<table class="data fin-mini"><thead><tr><th>Product</th><th>Recv</th><th>Billed</th></tr></thead><tbody>
             ${b.lines.map(l => `<tr><td>${ctx.esc(l.our_product_id)}</td><td>${l.quantity_received}</td><td>${l.quantity_billed}</td></tr>`).join("")}
           </tbody></table>` : ""}
-          ${dns.length ? `<div class="fin-dn-block"><div class="fin-dn-title">Debit notes</div>
+          ${dns.length ? `<div class="fin-dn-block"><div class="fin-dn-title">Bill corrections</div>
             ${dns.map(d => {
               const effect = Number(d.payable_effect ?? d.amount) || 0;
               const title = d.our_product_id
@@ -343,9 +724,28 @@ const Finance = (() => {
               </div>`;
             }).join("")}
           </div>` : `<p class="fin-muted">No debit notes on this bill.</p>`}
+          <div style="margin-top:12px;">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.addDebitNote(${b.receipt_id})">+ Bill correction</button>
+          </div>
         </div>` : ""}
       </div>`;
     }).join("")}</div>`;
+  }
+
+  async function addDebitNote(receiptId) {
+    if (!currentVendor || typeof DebitNotes === "undefined") {
+      return ctx.toast?.("Debit notes module failed — hard refresh", "error");
+    }
+    await DebitNotes.openForReceipt({
+      vendorId: currentVendor,
+      receiptId,
+      receivingLines: [],
+      onDone: async () => {
+        ctx.invalidateCache?.("/accounts-payable");
+        await openVendorAp(currentVendor);
+        loadOverviewSilent();
+      },
+    });
   }
 
   function renderApLedgerFlat() {
@@ -366,18 +766,27 @@ const Finance = (() => {
 
   function renderApPayments() {
     const pays = apDetail.payments || [];
-    if (!pays.length) return `<div class="empty-state"><p>No payments recorded yet.</p></div>`;
+    if (!pays.length) return OrdersUI.emptyState({ title: "No payments yet", sub: "Pay above to record a payment." });
     return `<div class="card table-wrap"><table class="data"><thead><tr>
       <th>When</th><th>Reference</th><th>Comment</th><th>Amount</th><th>Balance after</th><th></th>
     </tr></thead><tbody>
-      ${pays.map(p => `<tr>
+      ${pays.map(p => {
+        const undone = !!p.reversed;
+        return `<tr>
         <td style="font-size:12px;">${new Date(p.created_at).toLocaleString()}</td>
-        <td><strong>${ctx.esc(p.payment_ref || "—")}</strong></td>
+        <td><strong>${ctx.esc(p.payment_ref || "—")}</strong>${undone ? ` <span class="badge badge-amber">Reversed</span>` : ""}</td>
         <td>${ctx.esc(p.payment_comment || "—")}</td>
         <td>${fmtPrice(p.signed_amount)}</td>
         <td>${fmtPrice(p.running_balance_after)}</td>
-        <td>${p.payment_receipt_url ? `<a href="${ctx.esc(p.payment_receipt_url)}" target="_blank" class="btn btn-secondary btn-sm">Receipt</a>` : ""}</td>
-      </tr>`).join("")}
+        <td style="white-space:nowrap;display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
+          ${p.payment_receipt_url ? `<a href="${ctx.esc(p.payment_receipt_url)}" target="_blank" class="btn btn-secondary btn-sm">Receipt</a>` : ""}
+          ${!undone && ctx.isAdmin?.() ? `
+            <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.undoApPayment(${p.id},'reverse')">Reverse</button>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="Finance.undoApPayment(${p.id},'void')">Void</button>
+          ` : ""}
+        </td>
+      </tr>`;
+      }).join("")}
     </tbody></table></div>`;
   }
 
@@ -410,6 +819,16 @@ const Finance = (() => {
       extra = `${ctx.reviewRow("Payment ref", e.payment_ref || "—")}${e.payment_comment ? ctx.reviewRow("Comment", e.payment_comment) : ""}`;
       if (e.payment_receipt_url) extra += `<p style="margin-top:8px;"><a href="${ctx.esc(e.payment_receipt_url)}" target="_blank" class="btn btn-secondary btn-sm">View receipt</a></p>`;
     }
+    if (e.entry_type === "payment_reversal") {
+      extra = `${ctx.reviewRow("Reverses payment #", e.reverses_entry_id || "—")}${e.payment_ref ? ctx.reviewRow("Original ref", e.payment_ref) : ""}`;
+    }
+    const alreadyReversed = e.entry_type === "payment" && (apDetail?.entries || []).some(
+      (x) => x.entry_type === "payment_reversal" && x.reverses_entry_id === e.id
+    );
+    const undoBtns = (e.entry_type === "payment" && !alreadyReversed && ctx.isAdmin?.())
+      ? `<button class="btn btn-secondary" style="flex:1;" onclick="App.closeDetail();Finance.undoApPayment(${e.id},'reverse')">Reverse</button>
+         <button class="btn btn-ghost" style="flex:1;" onclick="App.closeDetail();Finance.undoApPayment(${e.id},'void')">Void</button>`
+      : "";
     ctx.openDetail(e.description, `
       <div class="review-grid">
         ${ctx.reviewRow("Type", e.entry_type)}
@@ -418,26 +837,28 @@ const Finance = (() => {
         ${ctx.reviewRow("When", new Date(e.created_at).toLocaleString())}
         ${ctx.reviewRow("By", e.created_by_name)}
       </div>${extra}`,
-      `<button class="btn btn-primary" style="flex:1;" onclick="App.closeDetail()">Close</button>`, "md");
+      `${undoBtns}<button class="btn btn-primary" style="flex:1;" onclick="App.closeDetail()">Close</button>`, "md");
   }
-
-  let settleFile = null;
 
   function openSettle() {
     if (!apDetail) return;
     const outstanding = Number(apDetail.outstanding) || 0;
+    const title = document.querySelector("#settle-modal h3");
+    if (title) title.textContent = "Pay";
+    const footerBtn = document.querySelector("#settle-modal .btn-primary");
+    if (footerBtn) footerBtn.textContent = "Pay";
     document.getElementById("settle-body").innerHTML = `
       <div class="review-block" style="margin-bottom:16px;">
         ${ctx.reviewRow("Vendor", apDetail.vendor_label)}
-        ${ctx.reviewRow("Outstanding", fmtPrice(outstanding))}
+        ${ctx.reviewRow("Due", fmtPrice(outstanding))}
       </div>
       <label class="label">Payment reference / ID</label>
       <input class="input" id="settle-ref" style="margin-bottom:12px;" placeholder="UTR, cheque #, etc." />
       <label class="label">Amount (₹)</label>
-      <input type="number" step="0.01" class="input" id="settle-amount" value="${outstanding}" style="margin-bottom:12px;" />
+      <input type="number" step="0.01" class="input" id="settle-amount" value="" placeholder="Enter amount" style="margin-bottom:12px;" />
       <label class="label">Comment (optional)</label>
       <input class="input" id="settle-comment" style="margin-bottom:12px;" />
-      <label class="label">Upload payment receipt</label>
+      <label class="label">Upload payment receipt (optional)</label>
       <input type="file" class="input" accept=".pdf,image/*" onchange="Finance.setSettleFile(this.files[0])" />
       <span id="settle-file-label" style="font-size:12px;color:var(--muted);"></span>`;
     document.getElementById("settle-modal").classList.remove("hidden");
@@ -459,6 +880,8 @@ const Finance = (() => {
     const comment = (document.getElementById("settle-comment")?.value || "").trim() || null;
     if (!ref) return ctx.toast("Enter payment reference", "error");
     if (!amount || amount <= 0) return ctx.toast("Enter valid amount", "error");
+    const party = apDetail.vendor_label;
+    const vid = currentVendor;
     ctx.showLoading?.();
     try {
       let key = null;
@@ -467,7 +890,7 @@ const Finance = (() => {
         fd.append("vendor_id", String(currentVendor));
         fd.append("payment_ref", ref);
         fd.append("file", settleFile);
-        const API = ctx.apiBase ? ctx.apiBase() : "http://127.0.0.1:8003/api/v1";
+        const API = ctx.apiBase ? ctx.apiBase() : `${location.origin}/api/v1`;
         const h = {};
         if (sessionStorage.getItem("jc_auth_mode") === "admin") h["X-Admin-Key"] = sessionStorage.getItem("jc_admin_key") || "";
         else h["Authorization"] = `Bearer ${sessionStorage.getItem("jc_staff_token") || ""}`;
@@ -480,19 +903,36 @@ const Finance = (() => {
         body: JSON.stringify({ payment_ref: ref, amount, payment_receipt_key: key, comment }),
       });
       ctx.invalidateCache?.("/accounts-payable");
+      ctx.invalidateCache?.("/finance");
       closeSettle();
-      ctx.toast("Payment recorded", "success");
-      await openVendorAp(currentVendor);
+      ctx.toast("Paid", "success");
+      await openVendorAp(vid);
+      const bal = Number(apDetail?.outstanding) || 0;
+      settleSuccess({
+        title: "Paid",
+        party,
+        amount,
+        balanceAfter: bal,
+        reopenFn: `Finance.openVendorAp(${vid})`,
+      });
       loadApList();
+      loadOverviewSilent();
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
   }
 
   function showApFromVendor(vendorId) {
     if (!ctx.isAdmin?.()) return ctx.toast?.("Finance is admin only", "error");
-    ctx.showView?.("finance");
-    showAp();
+    App.closeDetail?.();
+    ctx.showView?.("money");
     openVendorAp(vendorId);
+  }
+
+  function showArFromCustomer(customerId) {
+    if (!ctx.isAdmin?.()) return ctx.toast?.("Finance is admin only", "error");
+    App.closeDetail?.();
+    ctx.showView?.("money");
+    openCustomerAr(customerId);
   }
 
   /* —— AR —— */
@@ -511,97 +951,367 @@ const Finance = (() => {
     const el = document.getElementById("finance-ar-list");
     const sum = document.getElementById("finance-ar-summary");
     if (!el) return;
-    const totalOut = customers.reduce((s, c) => s + (Number(c.outstanding) || 0), 0);
+    refreshChipCounts();
+    renderHubChrome();
+    let list = rankParties(customers, "customer_label");
+    if (!showSettled) list = list.filter(c => Number(c.outstanding) > 0);
+    const dueCustomers = customers.filter(c => Number(c.outstanding) > 0);
+    const totalOut = dueCustomers.reduce((s, c) => s + (Number(c.outstanding) || 0), 0);
     if (sum) {
       sum.innerHTML = `
-        <div class="fin-summary-grid">
-          <div class="fin-card">
-            <div class="fin-card-title">Total receivable</div>
-            <div class="fin-card-value">${fmtPrice(totalOut)}</div>
-            <div class="fin-card-sub">${customers.length} customer${customers.length === 1 ? "" : "s"}</div>
+        <div class="home-card fin-list-sum">
+          <div class="fin-list-sum-top">
+            <div>
+              <span class="fin-pulse-label">To collect</span>
+              <strong class="fin-list-sum-val">${fmtPriceShort(totalOut)}</strong>
+              <span class="fin-list-sum-sub">${dueCustomers.length} customer${dueCustomers.length === 1 ? "" : "s"}</span>
+            </div>
+            <label class="fin-filter-chip ${showSettled ? "is-on" : ""}">
+              <input type="checkbox" ${showSettled ? "checked" : ""} onchange="Finance.setShowSettled(this.checked)" />
+              Show clear
+            </label>
           </div>
-          <div class="fin-card fin-card-chart">
-            <div class="fin-card-title">Who owes us</div>
-            ${hBarList(customers.slice(0, 6), "customer_label", "outstanding")}
-          </div>
+          ${dueCustomers.length ? hBarList(dueCustomers.slice(0, 5), "customer_label", "outstanding") : ""}
         </div>`;
     }
-    if (!customers.length) {
-      el.innerHTML = `<div class="empty-state"><p>No accounts receivable yet. Process customer orders to create bills.</p></div>`;
+    if (!list.length) {
+      const q = hubSearch.trim();
+      el.innerHTML = OrdersUI.emptyState({
+        title: q ? "No matches" : (showSettled ? "No customer accounts" : "Nothing to collect"),
+        sub: q
+          ? "Try business name, contact, alias, phone, or city."
+          : (showSettled ? "Create bills or set opening to open AR." : "Process customer orders to create bills."),
+      });
       return;
     }
-    el.innerHTML = `<table class="data"><thead><tr>
-      <th>Customer</th><th>Outstanding</th><th>Bills</th><th>Paid</th><th>Txns</th>
-    </tr></thead><tbody>
-      ${customers.map(c => `<tr class="clickable" onclick="Finance.openCustomerAr(${c.customer_id})">
-        <td><strong>${ctx.esc(c.customer_label)}</strong></td>
-        <td><strong>${fmtPrice(c.outstanding)}</strong></td>
-        <td>${fmtPrice(c.bill_total)}</td>
-        <td>${fmtPrice(c.payment_total)}</td>
-        <td>${c.transaction_count}</td>
-      </tr>`).join("")}
-    </tbody></table>`;
+    el.innerHTML = `<div class="ord-card-list">${list.map(c => {
+      const due = Number(c.outstanding) || 0;
+      return dueRow({
+        name: c.customer_label,
+        amount: due,
+        openFn: `Finance.openCustomerAr(${c.customer_id})`,
+        settleFn: `Finance.openCustomerAr(${c.customer_id},{settle:true})`,
+        cta: "Collect",
+        settled: due <= 0,
+      });
+    }).join("")}</div>`;
   }
 
-  async function openCustomerAr(customerId) {
+  async function openCustomerAr(customerId, opts = {}) {
     if (!ctx.isAdmin?.()) return;
     ctx.showLoading?.();
     try {
       arDetail = await ctx.api(`/accounts-receivable/customer/${customerId}`, {}, 0);
       currentCustomer = customerId;
+      arTab = "statement";
       document.getElementById("finance-hub")?.classList.add("hidden");
       document.getElementById("finance-ar-detail")?.classList.remove("hidden");
       renderArDetail();
+      if (opts?.settle) openArSettle();
+      App.updateGlobalBack?.();
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
   }
 
-  function renderArDetail() {
-    const title = document.getElementById("finance-ar-title");
-    const body = document.getElementById("finance-ar-body");
-    if (!arDetail || !body) return;
-    if (title) title.textContent = arDetail.customer_label;
-    const outstanding = Number(arDetail.outstanding) || 0;
-    body.innerHTML = `
-      <div class="review-grid" style="margin-bottom:20px;">
-        ${ctx.reviewRow("Outstanding", fmtPrice(arDetail.outstanding))}
-        ${ctx.reviewRow("Total bills", fmtPrice(arDetail.bill_total))}
-        ${ctx.reviewRow("Payments received", fmtPrice(arDetail.payment_total))}
-      </div>
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-        <h3 style="margin:0;font-size:18px;">AR Ledger</h3>
-        ${outstanding > 0 ? `<button class="btn btn-primary" onclick="Finance.openArSettle()">Record Payment</button>` : ""}
-      </div>
-      <div class="card table-wrap">
-        <table class="data"><thead><tr>
-          <th>When</th><th>Type</th><th>Description</th><th>Amount</th><th>Balance</th>
-        </tr></thead><tbody>
-          ${(arDetail.entries || []).map(e => `<tr>
-            <td style="font-size:12px;">${new Date(e.created_at).toLocaleString()}</td>
-            <td>${ctx.esc(e.entry_type)}</td>
-            <td>${ctx.esc(e.description)}</td>
-            <td>${fmtPrice(e.signed_amount)}</td>
-            <td><strong>${fmtPrice(e.running_balance)}</strong></td>
-          </tr>`).join("")}
-        </tbody></table>
-      </div>`;
+  function setArTab(tab) {
+    arTab = tab;
+    renderArDetail();
   }
 
-  function openArSettle() {
+  function renderArDetail() {
+    const hero = document.getElementById("finance-ar-hero");
+    const body = document.getElementById("finance-ar-body");
+    if (!arDetail || !body) return;
+    const outstanding = Number(arDetail.outstanding) || 0;
+    if (hero) {
+      hero.innerHTML = HubUI.pageHero({
+        title: arDetail.customer_label,
+        sub: `Collect · ${outstanding > 0 ? `${fmtPrice(outstanding)} due` : "Clear"}`,
+        actionsHtml: `
+            ${outstanding > 0 ? `<button class="btn btn-primary" onclick="Finance.openArSettle()">Collect</button>` : ""}
+            <button class="btn btn-secondary" onclick="Finance.shareArStatement()">Print / PDF / WA</button>
+            <button class="btn btn-secondary" onclick="Finance.setArOpeningBalance()">Set opening</button>
+            <button class="btn btn-secondary" onclick="App.openCustomerDetail(${currentCustomer})">Open customer</button>`,
+      });
+    }
+    const tabs = `
+      <div class="fin-tabs">
+        <button type="button" class="fin-tab ${arTab === "statement" ? "is-active" : ""}" onclick="Finance.setArTab('statement')">Statement</button>
+        <button type="button" class="fin-tab ${arTab === "ledger" ? "is-active" : ""}" onclick="Finance.setArTab('ledger')">Ledger</button>
+        <button type="button" class="fin-tab ${arTab === "payments" ? "is-active" : ""}" onclick="Finance.setArTab('payments')">Payments</button>
+      </div>`;
+    let content = "";
+    if (arTab === "statement") content = renderArStatement();
+    else if (arTab === "payments") content = renderArPayments();
+    else content = renderArLedgerFlat();
+    const creditRows = arDetail.credit_unlimited
+      ? ctx.reviewRow("Credit limit", "Unlimited")
+      : `${ctx.reviewRow("Credit limit", fmtPrice(arDetail.credit_limit))}
+         ${ctx.reviewRow("Credit left", fmtPrice(arDetail.credit_left))}
+         ${arDetail.credit_override ? ctx.reviewRow("Override", "Allowed") : ""}`;
+
+    body.innerHTML = `
+      <div class="review-grid" style="margin-bottom:20px;">
+        ${ctx.reviewRow("Due", fmtPrice(arDetail.outstanding))}
+        ${creditRows}
+        ${ctx.reviewRow("Opening", fmtPrice(arDetail.opening_total || "0"))}
+        ${ctx.reviewRow("Opening as on", arDetail.opening_as_on)}
+        ${ctx.reviewRow("Total bills", fmtPrice(arDetail.bill_total))}
+        ${ctx.reviewRow("Collected", fmtPrice(arDetail.payment_total))}
+        ${ctx.reviewRow("Credit notes", fmtPrice(arDetail.credit_total || 0))}
+      </div>
+      <div style="margin-bottom:12px;">${tabs}</div>
+      ${content}`;
+  }
+
+  function shareArStatement() {
+    if (!currentCustomer) return;
+    DocShare.shareFlow({
+      kind: "ar_statement",
+      id: currentCustomer,
+      filename: `ar_${currentCustomer}.pdf`,
+      caption: `Statement — ${arDetail?.customer_label || ""}`,
+    });
+  }
+
+  function shareApStatement() {
+    if (!currentVendor) return;
+    DocShare.shareFlow({
+      kind: "ap_statement",
+      id: currentVendor,
+      filename: `ap_${currentVendor}.pdf`,
+      caption: `Statement — ${apDetail?.vendor_label || ""}`,
+    });
+  }
+
+  async function setArOpeningBalance() {
+    if (!currentCustomer || !arDetail) return;
+    const today = new Date().toISOString().slice(0, 10);
+    const cid = currentCustomer;
+    ctx.openDetail("Opening", `
+      <p style="color:var(--muted);font-size:13px;margin:0 0 16px;">Tally start they owed. Use 0 to clear. Not Due (Due = opening + bills − collected).</p>
+      <label class="label">Opening (₹)</label>
+      <input type="number" step="0.01" min="0" class="input" id="ar-ob-amt" value="${ctx.esc(arDetail.opening_total || "0")}" style="margin-bottom:12px;" />
+      <label class="label">As on date</label>
+      <input type="date" class="input" id="ar-ob-as-on" value="${ctx.esc(arDetail.opening_as_on || today)}" />
+    `, `
+      <button class="btn btn-secondary" onclick="App.closeDetail()">Cancel</button>
+      <button class="btn btn-primary" style="flex:1;" onclick="Finance.saveArOpeningBalance(${cid})">Save</button>
+    `, "sm");
+  }
+
+  async function saveArOpeningBalance(customerId) {
+    const amount = parseFloat(document.getElementById("ar-ob-amt")?.value || "0");
+    const asOn = (document.getElementById("ar-ob-as-on")?.value || "").trim();
+    if (!Number.isFinite(amount) || amount < 0) return ctx.toast("Enter a valid amount", "error");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(asOn)) return ctx.toast("Pick a valid date", "error");
+    ctx.showLoading?.();
+    try {
+      await ctx.api(`/accounts-receivable/customer/${customerId}/opening-balance`, {
+        method: "POST",
+        body: JSON.stringify({ amount, as_on: asOn }),
+      });
+      ctx.invalidateCache?.("/accounts-receivable");
+      ctx.invalidateCache?.("/customers");
+      ctx.toast("Opening saved", "success");
+      App.closeDetail?.();
+      await openCustomerAr(customerId);
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  async function setApOpeningBalance() {
+    if (!currentVendor || !apDetail) return;
+    const today = new Date().toISOString().slice(0, 10);
+    const vid = currentVendor;
+    ctx.openDetail("Opening", `
+      <p style="color:var(--muted);font-size:13px;margin:0 0 16px;">Tally start you owed this vendor. Use 0 to clear. Not Due (Due = opening + bills − paid).</p>
+      <label class="label">Opening (₹)</label>
+      <input type="number" step="0.01" min="0" class="input" id="ap-ob-amt" value="${ctx.esc(apDetail.opening_total || "0")}" style="margin-bottom:12px;" />
+      <label class="label">As on date</label>
+      <input type="date" class="input" id="ap-ob-as-on" value="${ctx.esc(apDetail.opening_as_on || today)}" />
+    `, `
+      <button class="btn btn-secondary" onclick="App.closeDetail()">Cancel</button>
+      <button class="btn btn-primary" style="flex:1;" onclick="Finance.saveApOpeningBalance(${vid})">Save</button>
+    `, "sm");
+  }
+
+  async function saveApOpeningBalance(vendorId) {
+    const amount = parseFloat(document.getElementById("ap-ob-amt")?.value || "0");
+    const asOn = (document.getElementById("ap-ob-as-on")?.value || "").trim();
+    if (!Number.isFinite(amount) || amount < 0) return ctx.toast("Enter a valid amount", "error");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(asOn)) return ctx.toast("Pick a valid date", "error");
+    ctx.showLoading?.();
+    try {
+      await ctx.api(`/accounts-payable/vendor/${vendorId}/opening-balance`, {
+        method: "POST",
+        body: JSON.stringify({ amount, as_on: asOn }),
+      });
+      ctx.invalidateCache?.("/accounts-payable");
+      ctx.invalidateCache?.("/vendors");
+      ctx.toast("Opening saved", "success");
+      App.closeDetail?.();
+      await openVendorAp(vendorId);
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  function renderArStatement() {
+    const bills = (arDetail.entries || []).filter(e => e.entry_type === "bill" || e.entry_type === "credit_note" || e.entry_type === "opening_balance");
+    if (!bills.length) return OrdersUI.emptyState({ title: "No bills yet", sub: "Bills appear after you process customer orders." });
+    return `<div class="card table-wrap"><table class="data"><thead><tr>
+      <th>When</th><th>Type</th><th>Description</th><th>Amount</th><th>Balance</th>
+    </tr></thead><tbody>
+      ${bills.map(e => `<tr>
+        <td style="font-size:12px;">${new Date(e.created_at).toLocaleString()}</td>
+        <td><span class="badge ${e.entry_type === "credit_note" ? "badge-green" : "badge-amber"}">${ctx.esc(e.entry_type)}</span></td>
+        <td>${ctx.esc(e.description)}${e.return_id ? ` <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();Returns.openReturn(${e.return_id})">View</button>` : ""}</td>
+        <td>${fmtPrice(e.signed_amount)}</td>
+        <td><strong>${fmtPrice(e.running_balance)}</strong></td>
+      </tr>`).join("")}
+    </tbody></table></div>`;
+  }
+
+  function renderArLedgerFlat() {
+    return `<div class="card table-wrap">
+      <table class="data"><thead><tr>
+        <th>When</th><th>Type</th><th>Description</th><th>Amount</th><th>Balance</th>
+      </tr></thead><tbody>
+        ${(arDetail.entries || []).map(e => `<tr>
+          <td style="font-size:12px;">${new Date(e.created_at).toLocaleString()}</td>
+          <td><span class="badge ${e.entry_type === "credit_note" ? "badge-green" : e.entry_type === "bill" ? "badge-amber" : "badge-green"}">${ctx.esc(e.entry_type)}</span></td>
+          <td>${ctx.esc(e.description)}${e.return_id ? ` <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();Returns.openReturn(${e.return_id})">View</button>` : ""}</td>
+          <td>${fmtPrice(e.signed_amount)}</td>
+          <td><strong>${fmtPrice(e.running_balance)}</strong></td>
+        </tr>`).join("")}
+      </tbody></table>
+    </div>`;
+  }
+
+  function reversedPaymentIds(entries) {
+    const ids = new Set();
+    for (const e of entries || []) {
+      if (e.entry_type === "payment_reversal" && e.reverses_entry_id) ids.add(e.reverses_entry_id);
+    }
+    return ids;
+  }
+
+  function renderArPayments() {
+    const entries = arDetail.entries || [];
+    const reversed = reversedPaymentIds(entries);
+    const pays = entries.filter(e => e.entry_type === "payment" || e.entry_type === "payment_reversal");
+    if (!pays.length) return OrdersUI.emptyState({ title: "No payments yet", sub: "Collect above when cash comes in." });
+    return `<div class="card table-wrap"><table class="data"><thead><tr>
+      <th>When</th><th>Reference</th><th>Comment</th><th>Amount</th><th>Balance</th><th></th>
+    </tr></thead><tbody>
+      ${pays.map(p => {
+        const isRev = p.entry_type === "payment_reversal";
+        const undone = reversed.has(p.id);
+        return `<tr>
+        <td style="font-size:12px;">${new Date(p.created_at).toLocaleString()}</td>
+        <td><strong>${ctx.esc(p.payment_ref || "—")}</strong>
+          ${isRev ? ` <span class="badge badge-amber">Reversal</span>` : ""}
+          ${undone ? ` <span class="badge badge-amber">Reversed</span>` : ""}
+        </td>
+        <td>${ctx.esc(p.payment_comment || p.description || "—")}</td>
+        <td>${fmtPrice(p.signed_amount)}</td>
+        <td>${fmtPrice(p.running_balance)}</td>
+        <td style="white-space:nowrap;display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
+          ${!isRev && !undone && ctx.isAdmin?.() ? `
+            <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.undoArPayment(${p.id},'reverse')">Reverse</button>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="Finance.undoArPayment(${p.id},'void')">Void</button>
+          ` : ""}
+        </td>
+      </tr>`;
+      }).join("")}
+    </tbody></table></div>`;
+  }
+
+  async function undoArPayment(entryId, mode, customerId) {
+    if (!ctx.isAdmin?.()) return;
+    const cid = customerId || currentCustomer;
+    if (!cid) return;
+    const label = mode === "void" ? "Void" : "Reverse";
+    const reason = prompt(`${label} this payment — reason (required):`);
+    if (reason == null) return;
+    if (!String(reason).trim()) return ctx.toast("Reason required", "error");
+    if (!confirm(`${label} payment #${entryId}? Due will go back up.`)) return;
+    ctx.showLoading?.();
+    try {
+      await ctx.api(`/accounts-receivable/payments/${entryId}/${mode}`, {
+        method: "POST",
+        body: JSON.stringify({ reason: String(reason).trim() }),
+      });
+      ctx.invalidateCache?.("/accounts-receivable");
+      ctx.invalidateCache?.("/finance");
+      ctx.toast(`${label}d`, "success");
+      App.closeDetail?.();
+      ctx.showView?.("money");
+      await openCustomerAr(cid);
+      loadArList();
+      loadOverviewSilent();
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  async function undoApPayment(entryId, mode, vendorId) {
+    if (!ctx.isAdmin?.()) return;
+    const vid = vendorId || currentVendor;
+    if (!vid) return;
+    const label = mode === "void" ? "Void" : "Reverse";
+    const reason = prompt(`${label} this payment — reason (required):`);
+    if (reason == null) return;
+    if (!String(reason).trim()) return ctx.toast("Reason required", "error");
+    if (!confirm(`${label} payment #${entryId}? Due will go back up.`)) return;
+    ctx.showLoading?.();
+    try {
+      await ctx.api(`/accounts-payable/payments/${entryId}/${mode}`, {
+        method: "POST",
+        body: JSON.stringify({ reason: String(reason).trim() }),
+      });
+      ctx.invalidateCache?.("/accounts-payable");
+      ctx.invalidateCache?.("/finance");
+      ctx.toast(`${label}d`, "success");
+      App.closeDetail?.();
+      ctx.showView?.("money");
+      await openVendorAp(vid);
+      loadApList();
+      loadOverviewSilent();
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  async function openArSettle() {
     if (!arDetail) return;
     const outstanding = Number(arDetail.outstanding) || 0;
+    try {
+      paymentModes = await ctx.api("/payment-modes?active_only=true", {}, 30000) || [];
+    } catch (_) { paymentModes = []; }
+    const modeOpts = paymentModes.length
+      ? `<label class="label">Payment mode</label>
+        <select class="input" id="ar-settle-mode" style="margin-bottom:12px;width:100%;">
+          <option value="">— Select mode —</option>
+          ${paymentModes.map(m => `<option value="${m.id}">${ctx.esc(m.name)}</option>`).join("")}
+        </select>
+        <p style="font-size:12px;color:var(--muted);margin:-4px 0 12px;">Add modes in Setup → Payment Modes.</p>`
+      : `<p style="font-size:13px;color:var(--muted);margin:0 0 12px;">No payment modes yet — <button type="button" class="btn btn-ghost btn-sm" onclick="Finance.closeArSettle();App.showView('setup');App.showSetupTab('paymodes')">add in Setup</button></p>`;
     document.getElementById("ar-settle-body").innerHTML = `
       <div class="review-block" style="margin-bottom:16px;">
         ${ctx.reviewRow("Customer", arDetail.customer_label)}
-        ${ctx.reviewRow("Outstanding", fmtPrice(outstanding))}
+        ${ctx.reviewRow("Due", fmtPrice(outstanding))}
       </div>
-      <label class="label">Payment reference</label>
-      <input class="input" id="ar-settle-ref" style="margin-bottom:12px;" />
+      ${modeOpts}
       <label class="label">Amount (₹)</label>
-      <input type="number" step="0.01" class="input" id="ar-settle-amount" value="${outstanding}" style="margin-bottom:12px;" />
+      <input type="number" step="0.01" class="input" id="ar-settle-amount" value="" placeholder="Enter amount" style="margin-bottom:12px;" />
+      <label class="label">Payment reference (optional)</label>
+      <input class="input" id="ar-settle-ref" style="margin-bottom:12px;" placeholder="UTR, cheque #…" />
       <label class="label">Comment (optional)</label>
       <input class="input" id="ar-settle-comment" />`;
     document.getElementById("ar-settle-modal").classList.remove("hidden");
+    const title = document.querySelector("#ar-settle-modal h3");
+    if (title) title.textContent = "Collect";
+    const footerBtn = document.querySelector("#ar-settle-modal .btn-primary");
+    if (footerBtn) footerBtn.textContent = "Collect";
   }
 
   function closeArSettle() { document.getElementById("ar-settle-modal")?.classList.add("hidden"); }
@@ -611,29 +1321,80 @@ const Finance = (() => {
     const ref = (document.getElementById("ar-settle-ref")?.value || "").trim();
     const amount = parseFloat(document.getElementById("ar-settle-amount")?.value || "0");
     const comment = (document.getElementById("ar-settle-comment")?.value || "").trim() || null;
-    if (!ref) return ctx.toast("Enter payment reference", "error");
+    const modeRaw = document.getElementById("ar-settle-mode")?.value || "";
+    const payment_mode_id = modeRaw ? parseInt(modeRaw, 10) : null;
+    if (paymentModes.length && !payment_mode_id) return ctx.toast("Select payment mode", "error");
     if (!amount || amount <= 0) return ctx.toast("Enter valid amount", "error");
+    const party = arDetail.customer_label;
+    const cid = currentCustomer;
     ctx.showLoading?.();
     try {
+      const body = { amount, comment, payment_ref: ref || null };
+      if (payment_mode_id) body.payment_mode_id = payment_mode_id;
       await ctx.api(`/accounts-receivable/customer/${currentCustomer}/settle`, {
         method: "POST",
-        body: JSON.stringify({ payment_ref: ref, amount, comment }),
+        body: JSON.stringify(body),
       });
       ctx.invalidateCache?.("/accounts-receivable");
+      ctx.invalidateCache?.("/finance");
       closeArSettle();
-      ctx.toast("Payment recorded", "success");
-      await openCustomerAr(currentCustomer);
+      ctx.toast("Collected", "success");
+      await openCustomerAr(cid);
+      settleSuccess({
+        title: "Collected",
+        party,
+        amount,
+        balanceAfter: Number(arDetail?.outstanding) || 0,
+        reopenFn: `Finance.openCustomerAr(${cid})`,
+      });
       loadArList();
+      loadOverviewSilent();
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
   }
 
   /* —— Expenses —— */
+  function renderExpenseFilters() {
+    const el = document.getElementById("finance-expense-filters");
+    if (!el) return;
+    el.innerHTML = `
+      <label class="fin-exp-field"><span>From</span>
+        <input type="date" class="input" id="fin-exp-from" value="${ctx.esc(expenseFilters.from_date)}" onchange="Finance.onExpenseFilterChange()" /></label>
+      <label class="fin-exp-field"><span>To</span>
+        <input type="date" class="input" id="fin-exp-to" value="${ctx.esc(expenseFilters.to_date)}" onchange="Finance.onExpenseFilterChange()" /></label>
+      <label class="fin-exp-field"><span>Category</span>
+        <select class="input" id="fin-exp-cat" onchange="Finance.onExpenseFilterChange()">
+          <option value="">All</option>
+          ${["rent", "salary", "electricity", "transport", "misc", "other"].map(c =>
+            `<option value="${c}" ${expenseFilters.category === c ? "selected" : ""}>${c}</option>`).join("")}
+        </select>
+      </label>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.clearExpenseFilters()">Clear</button>`;
+  }
+
+  function onExpenseFilterChange() {
+    expenseFilters.from_date = document.getElementById("fin-exp-from")?.value || "";
+    expenseFilters.to_date = document.getElementById("fin-exp-to")?.value || "";
+    expenseFilters.category = document.getElementById("fin-exp-cat")?.value || "";
+    loadExpenses();
+  }
+
+  function clearExpenseFilters() {
+    expenseFilters = { from_date: "", to_date: "", category: "" };
+    loadExpenses();
+  }
+
   async function loadExpenses() {
     if (!ctx.api) return ctx.toast?.("Finance not ready — hard refresh", "error");
+    renderExpenseFilters();
     ctx.showLoading?.();
     try {
-      expenses = await ctx.api("/expenses", {}, 0);
+      const params = new URLSearchParams();
+      if (expenseFilters.from_date) params.set("from_date", expenseFilters.from_date);
+      if (expenseFilters.to_date) params.set("to_date", expenseFilters.to_date);
+      if (expenseFilters.category) params.set("category", expenseFilters.category);
+      const q = params.toString();
+      expenses = await ctx.api(`/expenses${q ? `?${q}` : ""}`, {}, 0);
       if (!Array.isArray(expenses)) expenses = [];
       renderExpenses();
     } catch (e) { ctx.toast?.(e.message, "error"); }
@@ -644,11 +1405,15 @@ const Finance = (() => {
     const el = document.getElementById("finance-expenses-list");
     if (!el) return;
     if (!expenses.length) {
-      el.innerHTML = `<div class="empty-state"><p>No expenses recorded yet.</p></div>`;
+      el.innerHTML = OrdersUI.emptyState({
+        title: "No expenses",
+        sub: "Add rent, salary, or misc cash outs.",
+        ctaHtml: `<button class="btn btn-primary" onclick="Finance.openExpenseForm()">+ Add expense</button>`,
+      });
       return;
     }
     el.innerHTML = `<table class="data"><thead><tr>
-      <th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Ref</th>
+      <th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Ref</th><th></th>
     </tr></thead><tbody>
       ${expenses.map(e => `<tr>
         <td>${e.expense_date}</td>
@@ -656,8 +1421,25 @@ const Finance = (() => {
         <td>${ctx.esc(e.description || "—")}</td>
         <td>${fmtPrice(e.amount)}</td>
         <td>${ctx.esc(e.reference || "—")}</td>
+        <td>${e.freight_agent_id
+          ? `<span class="fin-muted">Freight</span>`
+          : `<button class="btn btn-ghost btn-sm" onclick="Finance.deleteExpense(${e.id})">Delete</button>`}</td>
       </tr>`).join("")}
     </tbody></table>`;
+  }
+
+  async function deleteExpense(id) {
+    if (!confirm("Delete this expense?")) return;
+    ctx.showLoading?.();
+    try {
+      await ctx.api(`/expenses/${id}`, { method: "DELETE" });
+      ctx.invalidateCache?.("/expenses");
+      ctx.invalidateCache?.("/finance");
+      ctx.toast("Expense deleted", "success");
+      await loadExpenses();
+      loadOverviewSilent();
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
   }
 
   function openExpenseForm() {
@@ -668,7 +1450,7 @@ const Finance = (() => {
       <label class="label">Category</label>
       <select class="input" id="exp-cat" style="margin-bottom:12px;width:100%;">
         <option value="rent">Rent</option><option value="salary">Salary</option>
-        <option value="electricity">Electricity</option><option value="transport">Transport</option>
+        <option value="electricity">Electricity</option><option value="transport">Freight</option>
         <option value="misc">Misc</option><option value="other">Other</option>
       </select>
       <label class="label">Description</label>
@@ -696,22 +1478,52 @@ const Finance = (() => {
         body: JSON.stringify({ expense_date, category, description, amount, reference }),
       });
       ctx.invalidateCache?.("/expenses");
+      ctx.invalidateCache?.("/finance");
       closeExpenseForm();
       ctx.toast("Expense saved", "success");
       loadExpenses();
+      loadOverviewSilent();
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
   }
 
-  /* —— Revenue / Cost / PnL —— */
-  function renderRevenue() {
-    const el = document.getElementById("finance-revenue-body");
-    if (!el || !overview) return;
-    el.innerHTML = `
+  /* —— Reports —— */
+  function renderReportsPanel() {
+    const tabs = document.getElementById("finance-report-tabs");
+    const body = document.getElementById("finance-reports-body");
+    if (!tabs || !body) return;
+    const items = [
+      { id: "revenue", label: "Cash in" },
+      { id: "cost", label: "Cash out" },
+      { id: "pnl", label: "Net cash" },
+    ];
+    tabs.innerHTML = items.map(t =>
+      `<button type="button" class="fin-tab ${reportTab === t.id ? "is-active" : ""}" onclick="Finance.setReportTab('${t.id}')">${t.label}</button>`
+    ).join("")
+      + `<button type="button" class="btn btn-secondary btn-sm" style="margin-left:auto;" onclick="App.showView('reports')">Full Reports →</button>`;
+    tabs.style.display = "flex";
+    tabs.style.flexWrap = "wrap";
+    tabs.style.alignItems = "center";
+    tabs.style.gap = "8px";
+    const note = `<p style="margin:0 0 12px;font-size:13px;color:var(--muted);">Cash snapshot only (collections / payments). Books P&amp;L, daybook, ageing → <button type="button" class="btn btn-ghost btn-sm" onclick="App.showView('reports')">More → Reports</button></p>`;
+    if (reportTab === "revenue") body.innerHTML = note + renderRevenueHtml();
+    else if (reportTab === "cost") body.innerHTML = note + renderCostHtml();
+    else body.innerHTML = note + renderPnlHtml();
+  }
+
+  function setReportTab(tab) {
+    reportTab = tab;
+    renderReportsPanel();
+  }
+
+  function renderRevenueHtml() {
+    if (!overview) return "";
+    return `
       <div class="fin-summary-grid">
-        <div class="fin-card"><div class="fin-card-title">Cash received (AR)</div><div class="fin-card-value">${fmtPrice(overview.revenue)}</div></div>
+        <div class="fin-card"><div class="fin-card-title">Cash collected</div><div class="fin-card-value">${fmtPrice(overview.revenue)}</div>
+          <div class="fin-card-sub">AR payments received</div></div>
         <div class="fin-card"><div class="fin-card-title">Billed to customers</div><div class="fin-card-value">${fmtPrice(overview.revenue_billed)}</div></div>
-        <div class="fin-card"><div class="fin-card-title">Still pending</div><div class="fin-card-value">${fmtPrice(overview.ar_outstanding)}</div></div>
+        <div class="fin-card"><div class="fin-card-title">Still to collect</div><div class="fin-card-value">${fmtPrice(overview.ar_outstanding)}</div></div>
       </div>
       <div class="fin-summary-grid" style="margin-top:16px;">
         <div class="fin-card fin-card-chart"><div class="fin-card-title">Monthly collections</div>
@@ -723,22 +1535,21 @@ const Finance = (() => {
       </div>`;
   }
 
-  function renderCost() {
-    const el = document.getElementById("finance-cost-body");
-    if (!el || !overview) return;
-    el.innerHTML = `
+  function renderCostHtml() {
+    if (!overview) return "";
+    return `
       <div class="fin-summary-grid">
-        <div class="fin-card"><div class="fin-card-title">Total cost (paid)</div><div class="fin-card-value">${fmtPrice(overview.cost)}</div>
+        <div class="fin-card"><div class="fin-card-title">Total cash out</div><div class="fin-card-value">${fmtPrice(overview.cost)}</div>
           <div class="fin-card-sub">Expenses + vendor payments</div></div>
         <div class="fin-card"><div class="fin-card-title">Expenses</div><div class="fin-card-value">${fmtPrice(overview.expense_total)}</div></div>
-        <div class="fin-card"><div class="fin-card-title">Vendor payments</div><div class="fin-card-value">${fmtPrice(overview.ap_paid)}</div>
-          <div class="fin-card-sub">AP still due ${fmtPrice(overview.ap_outstanding)}</div></div>
+        <div class="fin-card"><div class="fin-card-title">Paid to vendors</div><div class="fin-card-value">${fmtPrice(overview.ap_paid)}</div>
+          <div class="fin-card-sub">Still to pay ${fmtPrice(overview.ap_outstanding)}</div></div>
       </div>
       <div class="fin-summary-grid" style="margin-top:16px;">
         <div class="fin-card fin-card-chart"><div class="fin-card-title">Cost mix</div>
           ${donutChart(overview.cost_mix, ["#d97706", "#0d9488"])}
         </div>
-        <div class="fin-card fin-card-chart"><div class="fin-card-title">Monthly cost</div>
+        <div class="fin-card fin-card-chart"><div class="fin-card-title">Monthly cash out</div>
           ${barChart(overview.month_series, ["expenses", "ap_paid"], ["#d97706", "#0d9488"])}
         </div>
       </div>
@@ -746,21 +1557,33 @@ const Finance = (() => {
         ${hBarList(overview.expense_breakdown, "category", "amount")}</div>` : ""}`;
   }
 
-  function renderPnl() {
-    const el = document.getElementById("finance-pnl-body");
-    if (!el || !overview) return;
-    const profit = Number(overview.profit) || 0;
-    el.innerHTML = `
+  function renderPnlHtml() {
+    if (!overview) return "";
+    const netCash = Number(overview.cash_pulse?.net_cash ?? overview.net_cash ?? overview.profit) || 0;
+    const books = overview.books_snapshot || {};
+    return `
       <div class="fin-summary-grid">
-        <div class="fin-card"><div class="fin-card-title">Revenue</div><div class="fin-card-value">${fmtPrice(overview.revenue)}</div></div>
-        <div class="fin-card"><div class="fin-card-title">Cost</div><div class="fin-card-value">${fmtPrice(overview.cost)}</div></div>
+        <div class="fin-card"><div class="fin-card-title">Cash in</div><div class="fin-card-value">${fmtPrice(overview.cash_pulse?.cash_in ?? overview.revenue)}</div>
+          <div class="fin-card-sub">Collections only</div></div>
+        <div class="fin-card"><div class="fin-card-title">Cash out</div><div class="fin-card-value">${fmtPrice(overview.cash_pulse?.cash_out ?? overview.cost)}</div>
+          <div class="fin-card-sub">Expenses + vendor payments</div></div>
         <div class="fin-card"><div class="fin-card-title">Manual losses</div><div class="fin-card-value">${fmtPrice(overview.manual_loss_total)}</div></div>
-        <div class="fin-card"><div class="fin-card-title">Profit</div>
-          <div class="fin-card-value ${profit >= 0 ? "is-pos" : "is-neg"}">${fmtPrice(overview.profit)}</div>
-          <div class="fin-card-sub">Revenue − Cost − Losses</div></div>
+        <div class="fin-card"><div class="fin-card-title">Net cash</div>
+          <div class="fin-card-value ${netCash >= 0 ? "is-pos" : "is-neg"}">${fmtPrice(netCash)}</div>
+          <div class="fin-card-sub">Cash pulse — not books P&amp;L</div></div>
       </div>
       <div class="fin-summary-grid" style="margin-top:16px;">
-        <div class="fin-card fin-card-chart"><div class="fin-card-title">Monthly profit</div>
+        <div class="fin-card">
+          <div class="fin-card-title">Books position</div>
+          <div class="fin-card-sub" style="margin-bottom:10px;">Signed ledgers · due</div>
+          <div style="display:grid;gap:8px;font-size:13px;">
+            <div style="display:flex;justify-content:space-between;"><span>Collect</span><strong>${fmtPrice(books.ar_outstanding ?? overview.ar_outstanding)}</strong></div>
+            <div style="display:flex;justify-content:space-between;"><span>Pay</span><strong>${fmtPrice(books.ap_outstanding ?? overview.ap_outstanding)}</strong></div>
+            <div style="display:flex;justify-content:space-between;"><span>Freight</span><strong>${fmtPrice(books.freight_outstanding ?? overview.freight_outstanding)}</strong></div>
+            <div style="display:flex;justify-content:space-between;"><span>Opening</span><strong>${fmtPrice(books.ar_opening || 0)}</strong></div>
+          </div>
+        </div>
+        <div class="fin-card fin-card-chart"><div class="fin-card-title">Monthly net cash</div>
           ${barChart(overview.month_series, ["revenue", "cost", "profit"], ["#2563eb", "#d97706", "#16a34a"])}
         </div>
         <div class="fin-card">
@@ -777,6 +1600,10 @@ const Finance = (() => {
         </div>
       </div>`;
   }
+
+  function renderRevenue() { reportTab = "revenue"; renderReportsPanel(); }
+  function renderCost() { reportTab = "cost"; renderReportsPanel(); }
+  function renderPnl() { reportTab = "pnl"; renderReportsPanel(); }
 
   function openLossForm() {
     const today = new Date().toISOString().slice(0, 10);
@@ -803,7 +1630,7 @@ const Finance = (() => {
       closeLossForm();
       ctx.toast("Loss recorded", "success");
       await loadOverview();
-      renderPnl();
+      renderReportsPanel();
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
   }
@@ -814,12 +1641,12 @@ const Finance = (() => {
     try {
       await ctx.api(`/finance/losses/${id}`, { method: "DELETE" });
       await loadOverview();
-      renderPnl();
+      renderReportsPanel();
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
   }
 
-  /* —— Freight agents —— */
+  /* —— Freight —— */
   async function loadFreightList() {
     freightAgentId = null;
     document.getElementById("finance-freight-detail")?.classList.add("hidden");
@@ -835,79 +1662,222 @@ const Finance = (() => {
   function renderFreightList() {
     const el = document.getElementById("finance-freight-list");
     if (!el) return;
-    const totalDue = freightAgents.reduce((s, a) => s + Number(a.balance_due || 0), 0);
+    refreshChipCounts();
+    renderHubChrome();
+    let list = freightAgents.filter(a => matchSearch(a.name));
+    if (!showSettled) list = list.filter(a => Number(a.balance_due) > 0);
+    const dueAgents = freightAgents.filter(a => Number(a.balance_due) > 0);
+    const totalDue = dueAgents.reduce((s, a) => s + Number(a.balance_due || 0), 0);
     const sum = document.getElementById("finance-freight-summary");
-    if (sum) sum.innerHTML = `<div class="fin-stat"><span class="fin-stat-label">Total outstanding</span><strong>${fmtPrice(totalDue)}</strong></div>`;
-    el.innerHTML = `<table class="data"><thead><tr>
-      <th>Agent</th><th>Outstanding</th><th>Notes</th>
-    </tr></thead><tbody>
-      ${freightAgents.map(a => `<tr class="clickable" onclick="Finance.openFreightAgent(${a.id})">
-        <td><strong>${ctx.esc(a.name)}</strong></td>
-        <td>${fmtPrice(a.balance_due)}</td>
-        <td style="color:var(--muted);">${ctx.esc(a.notes || "—")}</td>
-      </tr>`).join("")}
-      ${!freightAgents.length ? `<tr><td colspan="3" style="text-align:center;padding:32px;color:var(--muted);">No freight agents. Create one in Setup.</td></tr>` : ""}
-    </tbody></table>`;
+    if (sum) {
+      sum.innerHTML = `
+        <div class="home-card fin-list-sum">
+          <div class="fin-list-sum-top">
+            <div>
+              <span class="fin-pulse-label">Freight due</span>
+              <strong class="fin-list-sum-val">${fmtPriceShort(totalDue)}</strong>
+              <span class="fin-list-sum-sub">${dueAgents.length} agent${dueAgents.length === 1 ? "" : "s"}</span>
+            </div>
+            <label class="fin-filter-chip ${showSettled ? "is-on" : ""}">
+              <input type="checkbox" ${showSettled ? "checked" : ""} onchange="Finance.setShowSettled(this.checked)" />
+              Show clear
+            </label>
+          </div>
+        </div>`;
+    }
+    if (!freightAgents.length) {
+      el.innerHTML = OrdersUI.emptyState({
+        title: "No freight agents",
+        sub: "Create agents in Setup. Pick ops under Customer orders → Dispatch; settle here.",
+        ctaHtml: `<button class="btn btn-primary" onclick="App.showView('setup');App.showSetupTab('freight')">Open Setup → Freight agents</button>`,
+      });
+      return;
+    }
+    if (!list.length) {
+      el.innerHTML = OrdersUI.emptyState({ title: "No matches", sub: "Clear search or show clear." });
+      return;
+    }
+    el.innerHTML = `<div class="ord-card-list">${list.map(a => {
+      const due = Number(a.balance_due) || 0;
+      const adv = Number(a.advance_left) || 0;
+      const label = adv > 0 && due <= 0 ? `${a.name} · Adv ${fmtPriceShort(adv)}` : a.name;
+      // Settled agents: Advance is next money step (not a dead OK card)
+      if (due <= 0) {
+        return HubUI.partyCard({
+          title: label,
+          meta: adv > 0 ? `${fmtPriceShort(adv)} advance left` : "Clear",
+          pillHtml: HubUI.pill(adv > 0 ? "Advance" : "OK", "muted"),
+          primaryLabel: "Advance",
+          primaryOnclick: `Finance.openFreightAgent(${a.id},{advance:true})`,
+          moreItems: [{ label: "Open", onclick: `Finance.openFreightAgent(${a.id})` }],
+          rowOnclick: `Finance.openFreightAgent(${a.id})`,
+          canWrite: true,
+        });
+      }
+      return dueRow({
+        name: label,
+        amount: due,
+        openFn: `Finance.openFreightAgent(${a.id})`,
+        settleFn: `Finance.openFreightAgent(${a.id},{settle:true})`,
+        cta: "Settle",
+        settled: false,
+      });
+    }).join("")}</div>`;
   }
 
-  async function openFreightAgent(id) {
+  async function openFreightAgent(id, opts = {}) {
     freightAgentId = id;
-    const agent = freightAgents.find(a => a.id === id);
+    const agent = freightAgents.find(a => a.id === id) || { id, name: "Freight agent", balance_due: 0 };
     ctx.showLoading?.();
     try {
-      freightLedger = await ctx.api(`/freight-agents/${id}/ledger`, {}, 0);
+      const [ledger, agents] = await Promise.all([
+        ctx.api(`/freight-agents/${id}/ledger`, {}, 0),
+        ctx.api("/freight-agents", {}, 0),
+      ]);
+      freightLedger = Array.isArray(ledger) ? ledger : [];
+      freightAgents = Array.isArray(agents) ? agents : [];
+      const a = freightAgents.find(x => x.id === id) || agent;
       document.getElementById("finance-panel-freight")?.classList.add("hidden");
       document.getElementById("finance-hub")?.classList.add("hidden");
       document.getElementById("finance-freight-detail")?.classList.remove("hidden");
-      document.getElementById("finance-freight-title").textContent = agent?.name || "Freight agent";
-      renderFreightDetail(agent);
+      renderFreightDetail(a);
+      if (opts?.settle) openFreightSettle();
+      else if (opts?.advance) openFreightAdvance();
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
   }
 
   function renderFreightDetail(agent) {
+    const hero = document.getElementById("finance-freight-hero");
     const el = document.getElementById("finance-freight-body");
     if (!el) return;
     const due = Number(agent?.balance_due || 0);
+    const adv = Number(agent?.advance_left || 0);
+    const bits = [];
+    if (due > 0) bits.push(`${fmtPrice(due)} due`);
+    if (adv > 0) bits.push(`${fmtPrice(adv)} advance left`);
+    if (!bits.length) bits.push("No dues yet");
+    const actions = [];
+    if (due > 0) actions.push(`<button class="btn btn-primary" onclick="Finance.openFreightSettle()">Settle</button>`);
+    actions.push(`<button class="btn btn-secondary" onclick="Finance.openFreightAdvance()">Pay advance</button>`);
+    actions.push(`<button class="btn btn-secondary" onclick="Finance.shareFreightStatement()">Print / PDF</button>`);
+    if (hero) {
+      hero.innerHTML = HubUI.pageHero({
+        title: agent?.name || "Freight agent",
+        sub: `Freight pay · ${bits.join(" · ")}`,
+        actionsHtml: actions.join(""),
+      });
+    }
+    if (!freightLedger.length) {
+      el.innerHTML = HubUI.emptyState({
+        title: "No ledger entries yet",
+        sub: "Mark parcels picked under Customer orders → Dispatch. Settle / advance payments here.",
+        ctaHtml: `<button class="btn btn-secondary" onclick="App.showView('selling');CustomerOrders.goToDispatch()">Open Dispatch</button>`,
+      });
+      return;
+    }
     el.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:12px;">
-        <div class="fin-stat"><span class="fin-stat-label">Balance due</span><strong>${fmtPrice(due)}</strong></div>
-        ${due > 0 ? `<button class="btn btn-primary" onclick="Finance.openFreightSettle()">Settle</button>` : ""}
-      </div>
       <div class="card table-wrap">
         <table class="data"><thead><tr>
-          <th>Date</th><th>Type</th><th>Amount</th><th>Txn / Bill</th><th>Notes</th><th>By</th>
+          <th>Date</th><th>Type</th><th>Party</th><th>Amount</th><th>Ref</th><th></th>
         </tr></thead><tbody>
-          ${freightLedger.map(r => `<tr>
-            <td>${ctx.fmtDate?.(r.created_at) || r.created_at?.slice(0, 10) || "—"}</td>
-            <td><span class="badge ${r.entry_type === "charge" ? "badge-amber" : "badge-green"}">${ctx.esc(r.entry_type)}</span></td>
-            <td>${fmtPrice(r.amount)}</td>
-            <td style="font-family:monospace;font-size:12px;">${ctx.esc(r.transaction_ref || (r.customer_bill_id ? `Bill #${r.customer_bill_id}` : "—"))}</td>
-            <td style="color:var(--muted);">${ctx.esc(r.notes || "—")}</td>
-            <td>${ctx.esc(r.created_by_name || "—")}</td>
-          </tr>`).join("")}
-          ${!freightLedger.length ? `<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--muted);">No ledger entries yet.</td></tr>` : ""}
+          ${freightLedger.map(r => {
+            const isCharge = r.entry_type === "charge";
+            const party = isCharge
+              ? (r.party_label || r.notes || "—")
+              : (r.transaction_ref || "—");
+            const badge = r.entry_type === "charge" ? "badge-amber"
+              : r.entry_type === "advance" ? "badge-blue" : "badge-green";
+            const links = [];
+            if (r.has_document) links.push(`<button type="button" class="btn btn-secondary btn-sm" onclick="Finance.printFreightPayment(${r.id})">Print</button>`);
+            if (r.payment_receipt_url) links.push(`<a href="${ctx.esc(r.payment_receipt_url)}" target="_blank" class="btn btn-secondary btn-sm">Receipt</a>`);
+            return `<tr>
+              <td>${ctx.fmtDate?.(r.created_at) || r.created_at?.slice(0, 10) || "—"}</td>
+              <td><span class="badge ${badge}">${ctx.esc(r.entry_type)}</span></td>
+              <td><strong>${ctx.esc(party)}</strong>${r.bill_number && isCharge ? `<div style="font-size:11px;color:var(--muted);">${ctx.esc(r.bill_number)}</div>` : ""}</td>
+              <td>${fmtPrice(r.amount)}</td>
+              <td style="font-size:12px;color:var(--muted);">${ctx.esc(isCharge ? (r.transaction_ref || "—") : (r.notes || "—"))}</td>
+              <td style="white-space:nowrap;">${links.join(" ")}</td>
+            </tr>`;
+          }).join("")}
         </tbody></table>
       </div>`;
   }
 
   function openFreightSettle() {
+    freightPayMode = "settle";
+    freightSettleFile = null;
     const agent = freightAgents.find(a => a.id === freightAgentId);
     if (!agent) return;
-    const outstanding = Number(agent.balance_due || 0);
+    const due = Number(agent.balance_due || 0);
+    if (!(due > 0)) return ctx.toast("Nothing due — use Pay advance", "error");
+    const title = document.querySelector("#freight-settle-modal .modal-header h3");
+    if (title) title.textContent = "Settle freight";
+    const footerBtn = document.querySelector("#freight-settle-modal .modal-footer .btn-primary");
+    if (footerBtn) footerBtn.textContent = "Settle";
     document.getElementById("freight-settle-body").innerHTML = `
-      <p style="margin:0 0 12px;color:var(--muted);">Pay ${ctx.esc(agent.name)}. Saves as transport expense (hits Cost / PnL).</p>
+      <p style="margin:0 0 12px;color:var(--muted);">Pay ${ctx.esc(agent.name)} against due ${fmtPrice(due)}. Party names print on the voucher.</p>
       <label class="label">Transaction ID *</label>
       <input class="input" id="freight-settle-ref" style="margin-bottom:12px;" placeholder="UTR, cheque #, etc." />
       <label class="label">Amount (₹) *</label>
-      <input type="number" step="0.01" class="input" id="freight-settle-amount" value="${outstanding}" style="margin-bottom:12px;" />
+      <input type="number" step="0.01" class="input" id="freight-settle-amount" value="" placeholder="Enter amount" style="margin-bottom:12px;" />
       <label class="label">Notes</label>
-      <input class="input" id="freight-settle-notes" />`;
+      <input class="input" id="freight-settle-notes" style="margin-bottom:12px;" />
+      <label class="label">Upload receipt (optional)</label>
+      <input type="file" class="input" accept=".pdf,image/*" onchange="Finance.setFreightSettleFile(this.files[0])" />`;
     document.getElementById("freight-settle-modal")?.classList.remove("hidden");
+  }
+
+  function openFreightAdvance() {
+    freightPayMode = "advance";
+    freightSettleFile = null;
+    const agent = freightAgents.find(a => a.id === freightAgentId);
+    if (!agent) return;
+    const adv = Number(agent.advance_left || 0);
+    const title = document.querySelector("#freight-settle-modal .modal-header h3");
+    if (title) title.textContent = "Pay advance";
+    const footerBtn = document.querySelector("#freight-settle-modal .modal-footer .btn-primary");
+    if (footerBtn) footerBtn.textContent = "Pay advance";
+    document.getElementById("freight-settle-body").innerHTML = `
+      <p style="margin:0 0 12px;color:var(--muted);">Prepaid to ${ctx.esc(agent.name)}. Future freight charges adjust against this${adv > 0 ? ` (now ${fmtPrice(adv)} left)` : ""}.</p>
+      <label class="label">Transaction ID *</label>
+      <input class="input" id="freight-settle-ref" style="margin-bottom:12px;" placeholder="UTR, cheque #, etc." />
+      <label class="label">Advance amount (₹) *</label>
+      <input type="number" step="0.01" class="input" id="freight-settle-amount" value="" placeholder="e.g. 5000" style="margin-bottom:12px;" />
+      <label class="label">Notes</label>
+      <input class="input" id="freight-settle-notes" style="margin-bottom:12px;" />
+      <label class="label">Upload receipt (optional)</label>
+      <input type="file" class="input" accept=".pdf,image/*" onchange="Finance.setFreightSettleFile(this.files[0])" />`;
+    document.getElementById("freight-settle-modal")?.classList.remove("hidden");
+  }
+
+  function setFreightSettleFile(file) {
+    freightSettleFile = file || null;
   }
 
   function closeFreightSettle() {
     document.getElementById("freight-settle-modal")?.classList.add("hidden");
+    freightSettleFile = null;
+  }
+
+  function shareFreightStatement() {
+    if (!freightAgentId) return;
+    const agent = freightAgents.find(a => a.id === freightAgentId);
+    DocShare.shareFlow({
+      kind: "freight_statement",
+      id: freightAgentId,
+      filename: `freight_${freightAgentId}.pdf`,
+      caption: `Freight — ${agent?.name || ""}`,
+    });
+  }
+
+  function printFreightPayment(entryId) {
+    DocShare.shareFlow({
+      kind: "freight_payment",
+      id: entryId,
+      filename: `freight_pay_${entryId}.pdf`,
+      caption: "Freight payment",
+    });
   }
 
   async function submitFreightSettle() {
@@ -917,41 +1887,99 @@ const Finance = (() => {
     const notes = (document.getElementById("freight-settle-notes")?.value || "").trim() || null;
     if (!ref) return ctx.toast("Transaction ID required", "error");
     if (!(amount > 0)) return ctx.toast("Enter amount", "error");
+    const agent = freightAgents.find(a => a.id === freightAgentId);
+    const party = agent?.name || "Freight";
+    const fid = freightAgentId;
+    const asAdvance = freightPayMode === "advance";
+    const path = asAdvance ? "advance" : "settle";
     ctx.showLoading?.();
     try {
-      await ctx.api(`/freight-agents/${freightAgentId}/settle`, {
+      let key = null;
+      if (freightSettleFile) {
+        const API = (ctx.apiBase?.() || "").replace(/\/$/, "");
+        const h = { ...(ctx.headers?.() || {}) };
+        delete h["Content-Type"];
+        const fd = new FormData();
+        fd.append("agent_id", String(fid));
+        fd.append("payment_ref", ref);
+        fd.append("file", freightSettleFile);
+        const res = await fetch(`${API}/freight-agents/upload-payment-receipt`, { method: "POST", headers: h, body: fd });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || "Receipt upload failed");
+        }
+        const up = await res.json();
+        key = up.key;
+      }
+      const result = await ctx.api(`/freight-agents/${fid}/${path}`, {
         method: "POST",
-        body: JSON.stringify({ amount, transaction_ref: ref, notes }),
+        body: JSON.stringify({ amount, transaction_ref: ref, notes, payment_receipt_key: key }),
       });
-      ctx.toast("Freight payment recorded", "success");
+      ctx.toast(asAdvance ? "Advance paid" : "Settled", "success");
       closeFreightSettle();
+      ctx.invalidateCache?.("/freight-agents");
       freightAgents = await ctx.api("/freight-agents", {}, 0);
-      await openFreightAgent(freightAgentId);
+      await openFreightAgent(fid);
+      const bal = Number(freightAgents.find(a => a.id === fid)?.balance_due || 0);
+      const entryId = result?.entry_id;
+      settleSuccess({
+        title: asAdvance ? "Advance paid" : "Settled",
+        party,
+        amount,
+        balanceAfter: bal,
+        reopenFn: `Finance.openFreightAgent(${fid})`,
+      });
+      if (entryId) {
+        setTimeout(() => {
+          DocShare.shareFlow({
+            kind: "freight_payment",
+            id: entryId,
+            filename: `freight_pay_${entryId}.pdf`,
+            caption: `${asAdvance ? "Advance" : "Freight pay"} — ${party}`,
+          });
+        }, 200);
+      }
       loadOverviewSilent();
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
   }
 
+  /* —— Routes —— */
   async function loadRouteCollections() {
     const el = document.getElementById("finance-routes-list");
     if (!el) return;
     ctx.showLoading?.();
     try {
       routeCollections = await ctx.api("/finance/route-collections", {}, 0);
-      if (!routeCollections.length) {
-        el.innerHTML = `<div class="empty-state"><p>No routes yet. Add routes under Setup.</p></div>`;
-        return;
-      }
-      el.innerHTML = routeCollections.map(r => `
-        <div class="rc-card" onclick="Finance.openRouteCollection(${r.route_id})">
-          <div>
-            <strong>${ctx.esc(r.route_name)}</strong>
-            <div class="rc-meta">${r.city_count} cities · ${r.customer_count} customers · ${r.customers_with_outstanding} with dues</div>
-          </div>
-          <div class="rc-amt">${fmtPrice(r.total_outstanding)}</div>
-        </div>`).join("");
+      renderRouteListFiltered();
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
+  }
+
+  function renderRouteListFiltered() {
+    const el = document.getElementById("finance-routes-list");
+    if (!el) return;
+    const list = (routeCollections || []).filter(r => matchSearch(r.route_name));
+    if (!routeCollections.length) {
+      el.innerHTML = OrdersUI.emptyState({
+        title: "No routes yet",
+        sub: "Add routes under Setup.",
+        ctaHtml: `<button class="btn btn-secondary" onclick="App.showView('setup');App.showSetupTab('routes')">Open Setup → Routes</button>`,
+      });
+      return;
+    }
+    if (!list.length) {
+      el.innerHTML = OrdersUI.emptyState({ title: "No matches", sub: "Clear search." });
+      return;
+    }
+    el.innerHTML = list.map(r => `
+      <div class="rc-card" onclick="Finance.openRouteCollection(${r.route_id})">
+        <div>
+          <strong>${ctx.esc(r.route_name)}</strong>
+          <div class="rc-meta">${r.city_count} cities · ${r.customer_count} customers · ${r.customers_with_outstanding} with dues</div>
+        </div>
+        <div class="rc-amt">${fmtPrice(r.total_outstanding)}</div>
+      </div>`).join("");
   }
 
   async function openRouteCollection(routeId) {
@@ -961,9 +1989,14 @@ const Finance = (() => {
       routeCustomerDetail = null;
       document.getElementById("finance-hub")?.classList.add("hidden");
       document.getElementById("finance-routes-detail")?.classList.remove("hidden");
-      document.getElementById("finance-routes-title").textContent = routeDetail.route_name;
-      document.getElementById("finance-routes-sub").textContent =
-        `Total outstanding ${fmtPrice(routeDetail.total_outstanding)} · ${(routeDetail.cities || []).map(c => c.name).join(", ") || "No cities"}`;
+      const routesHero = document.getElementById("finance-routes-hero");
+      if (routesHero) {
+        routesHero.innerHTML = HubUI.pageHero({
+          title: routeDetail.route_name,
+          sub: `Total outstanding ${fmtPrice(routeDetail.total_outstanding)} · ${(routeDetail.cities || []).map(c => c.name).join(", ") || "No cities"}`,
+          actionsHtml: `<button class="btn btn-secondary" onclick="Finance.printRouteCollection()">Print / PDF</button>`,
+        });
+      }
       renderRouteDetail();
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
@@ -974,20 +2007,22 @@ const Finance = (() => {
     if (!el || !routeDetail) return;
     if (routeCustomerDetail) {
       const c = routeCustomerDetail;
+      const due = Number(c.outstanding) || 0;
       el.innerHTML = `
         <button class="btn btn-secondary btn-sm" style="margin-bottom:14px;" onclick="Finance.backRouteCustomers()">← Customers</button>
-        <div class="fin-card" style="margin-bottom:16px;">
-          <strong style="font-size:18px;">${ctx.esc(c.business_name)}</strong>
-          <div style="font-size:13px;color:var(--muted);margin-top:4px;">
-            ${ctx.esc(c.person_name || "")}${c.person_name ? " · " : ""}${ctx.esc(c.city_name || "—")} · ${ctx.esc(c.phone || "")}
-          </div>
-          <div style="display:flex;gap:16px;margin-top:12px;flex-wrap:wrap;">
-            <div><div style="font-size:12px;color:var(--muted);">Outstanding</div><strong style="font-size:20px;color:#1d4ed8;">${fmtPrice(c.outstanding)}</strong></div>
-            <div><div style="font-size:12px;color:var(--muted);">Billed</div><strong>${fmtPrice(c.bill_total)}</strong></div>
-            <div><div style="font-size:12px;color:var(--muted);">Paid</div><strong>${fmtPrice(c.payment_total)}</strong></div>
-          </div>
+        ${HubUI.pageHero({
+          title: c.business_name,
+          sub: `${c.person_name || ""}${c.person_name ? " · " : ""}${c.city_name || "—"} · ${c.phone || ""} · Due ${fmtPrice(c.outstanding)}`,
+          actionsHtml: due > 0 ? `<button class="btn btn-primary" onclick="Finance.openCustomerAr(${c.customer_id}, {settle:true})">Collect</button>` : "",
+        })}
+        <div class="review-grid" style="margin-bottom:12px;">
+          ${ctx.reviewRow("Due", fmtPrice(c.outstanding))}
+          ${ctx.reviewRow("Bills", fmtPrice(c.bill_total))}
+          ${ctx.reviewRow("Collected", fmtPrice(c.payment_total))}
         </div>
-        <div class="card table-wrap">
+        ${!(c.ledger || []).length
+          ? HubUI.emptyState({ title: "No ledger entries", sub: "Bills and payments for this customer show here." })
+          : `<div class="card table-wrap">
           <table class="data"><thead><tr>
             <th>When</th><th>Type</th><th>Detail</th><th>Amount</th><th>Balance</th>
           </tr></thead><tbody>
@@ -998,9 +2033,8 @@ const Finance = (() => {
               <td>${fmtPrice(e.signed_amount || e.amount)}</td>
               <td><strong>${fmtPrice(e.running_balance)}</strong></td>
             </tr>`).join("")}
-            ${!(c.ledger || []).length ? `<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--muted);">No ledger entries</td></tr>` : ""}
           </tbody></table>
-        </div>`;
+        </div>`}`;
       return;
     }
 
@@ -1012,7 +2046,7 @@ const Finance = (() => {
           <div class="rc-meta">${ctx.esc(c.city_name || "—")} · ${ctx.esc(c.phone || "")}${c.person_name ? ` · ${ctx.esc(c.person_name)}` : ""}</div>
         </div>
         <div class="rc-amt">${fmtPrice(c.outstanding)}</div>
-      </div>`).join("") : `<div class="empty-state"><p>No outstanding on this route.</p></div>`;
+      </div>`).join("") : OrdersUI.emptyState({ title: "No outstanding on this route", sub: "" });
   }
 
   function backRouteCustomers() {
@@ -1052,13 +2086,18 @@ const Finance = (() => {
   }
 
   return {
-    init, showHub, showAp, showAr, showExpenses, showRevenue, showCost, showPnl, showFreight,
+    init, showHub, setHubMode, setChip, setHubSearch, setBrowseSection, setShowSettled, setReportTab,
+    showAp, showAr, showExpenses, showRevenue, showCost, showPnl, showFreight,
     showRouteCollections, openRouteCollection, openRouteCustomer, backRouteCustomers, printRouteCollection,
-    showApFromVendor, openVendorAp, openEntry, openSettle, closeSettle, submitSettle, setSettleFile,
-    setApTab, toggleBill,
-    openCustomerAr, openArSettle, closeArSettle, submitArSettle,
-    openExpenseForm, closeExpenseForm, submitExpense,
+    showApFromVendor, showArFromCustomer, openVendorAp, openEntry, openSettle, closeSettle, submitSettle, setSettleFile,
+    setApTab, toggleBill, addDebitNote,
+    openCustomerAr, setArTab, openArSettle, closeArSettle, submitArSettle,
+    undoArPayment, undoApPayment,
+    shareArStatement, shareApStatement,
+    setArOpeningBalance, setApOpeningBalance, saveArOpeningBalance, saveApOpeningBalance,
+    openExpenseForm, closeExpenseForm, submitExpense, deleteExpense, onExpenseFilterChange, clearExpenseFilters,
     openLossForm, closeLossForm, submitLoss, deleteLoss,
-    openFreightAgent, openFreightSettle, closeFreightSettle, submitFreightSettle,
+    openFreightAgent, openFreightSettle, openFreightAdvance, closeFreightSettle, submitFreightSettle,
+    setFreightSettleFile, shareFreightStatement, printFreightPayment,
   };
 })();

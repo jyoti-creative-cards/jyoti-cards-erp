@@ -14,7 +14,8 @@ from app.models.customer_order import CustomerOrder, CustomerOrderLine, Customer
 from app.models.stock import StockReceipt, StockReceiptLine
 from app.models.vendor import Vendor
 from app.models.vendor_order import VendorOrderLine, VendorOrderPlacement
-from app.services.catalog_addons import addon_snapshots_for_product, addon_snapshots_map
+from app.services.biz_date import bill_invoice_date
+from app.services.catalog_addons import addon_snapshots_for_product, attach_addons_to_totals
 from app.services.customer_bill_pdf import render_customer_bill_pdf
 from app.services.pdf_documents import render_customer_order_pdf, render_vendor_placement_pdf, render_vendor_receipt_pdf
 from app.services.storage import (
@@ -95,12 +96,46 @@ def generate_customer_bill_document(db: Session, bill_id: int) -> str | None:
         return None
     customer, city_name = _customer_ctx(db, bill.customer_id)
     slug = customer_folder_slug(customer.business_name)
-    totals = dict(bill.totals_json or {})
+    from app.models.customer_bill import CustomerBillLine
+    from app.services.customer_bill_math import prepare_totals_for_pdf
+    from sqlalchemy.orm.attributes import flag_modified
+
+    totals = attach_addons_to_totals(db, dict(bill.totals_json or {}))
+    blines = db.query(CustomerBillLine).filter(CustomerBillLine.bill_id == bill.id).all()
+    line_pcts = {
+        int(ln.catalog_product_id): ln.discount_percent
+        for ln in blines
+        if ln.discount_percent is not None
+    }
+    totals = prepare_totals_for_pdf(
+        totals,
+        overall_percent=bill.discount_percent,
+        line_percent_by_cid=line_pcts or None,
+    )
+    from app.models.freight_agent import FreightAgent
+    from app.services.transport_mode import stamp_transport_on_totals
+
+    mode = bill.transport_mode or ("bus" if bill.freight_agent_id else "self_pickup")
+    agent_name = None
+    if bill.freight_agent_id:
+        agent = db.get(FreightAgent, bill.freight_agent_id)
+        agent_name = agent.name if agent else None
+    totals = stamp_transport_on_totals(
+        totals,
+        {
+            "transport_mode": mode,
+            "transport_receipt_number": bill.transport_receipt_number,
+            "freight_agent_id": bill.freight_agent_id,
+            "freight_charges": bill.freight_charges,
+        },
+        agent_name=agent_name,
+    )
+    bill.totals_json = totals
+    flag_modified(bill, "totals_json")
     lines = totals.get("lines") or []
     if not lines:
         return None
     cids = [int(ln.get("catalog_product_id") or 0) for ln in lines if isinstance(ln, dict)]
-    addon_map = addon_snapshots_map(db, [c for c in cids if c])
     image_urls: dict[int, str | None] = {}
     for cid in cids:
         if not cid:
@@ -108,17 +143,14 @@ def generate_customer_bill_document(db: Session, bill_id: int) -> str | None:
         prod = db.get(CatalogProduct, cid)
         urls = presigned_urls(prod.image_keys or []) if prod else []
         image_urls[cid] = urls[0] if urls else None
-    enriched = []
-    for ln in lines:
-        if not isinstance(ln, dict):
-            continue
-        row = dict(ln)
-        cid = int(row.get("catalog_product_id") or 0)
-        if cid and cid in addon_map:
-            row["addons"] = addon_map[cid]
-        enriched.append(row)
-    totals = {**totals, "lines": enriched}
+    totals = {**totals, "lines": [dict(ln) for ln in lines if isinstance(ln, dict)]}
     placement = db.get(CustomerOrderPlacement, bill.placement_id) if bill.placement_id else None
+    from app.services.ar_ledger import customer_ar_totals
+
+    ar = customer_ar_totals(db, bill.customer_id)
+    # outstanding already includes this bill; show limit + current due on PDF
+    credit_limit = float(customer.credit_limit) if customer.credit_limit is not None else None
+    outstanding = float(ar["outstanding"])
     pdf = render_customer_bill_pdf(
         bill_id=bill.id,
         order_id=bill.placement_id or bill.id,
@@ -130,10 +162,13 @@ def generate_customer_bill_document(db: Session, bill_id: int) -> str | None:
         customer_city=city_name,
         totals=totals,
         generated_at=bill.created_at or datetime.now(timezone.utc),
+        invoice_date=bill_invoice_date(bill),
         customer_notes=placement.customer_notes if placement else None,
         narration=bill.narration,
         item_image_urls=image_urls,
         order_created_at=placement.placed_at if placement else bill.created_at,
+        credit_limit=credit_limit,
+        outstanding=outstanding,
     )
     key = customer_bill_key(slug, bill.bill_number)
     upload_bytes(key, pdf, "application/pdf")

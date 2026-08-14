@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Generator
 
@@ -8,7 +9,29 @@ from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 from app.config import get_settings
 
+log = logging.getLogger(__name__)
+
 Base = declarative_base()
+
+_DB_READY = False
+
+
+def is_db_ready() -> bool:
+    return _DB_READY
+
+
+def _exec_sql(conn, stmt: str, *, critical: bool = False, params: dict | None = None) -> None:
+    """Run migration SQL. Critical money migrations raise; schema ones log."""
+    try:
+        if params:
+            conn.execute(text(stmt), params)
+        else:
+            conn.execute(text(stmt))
+    except Exception:
+        if critical:
+            log.exception("Critical migration failed: %s", stmt[:160].replace("\n", " "))
+            raise
+        log.warning("Migration skipped: %s", stmt[:160].replace("\n", " "), exc_info=True)
 
 _settings = get_settings()
 _db_url = _settings.database_url.strip()
@@ -59,30 +82,367 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def init_db() -> None:
+    global _DB_READY
     from app.models import (  # noqa: F401
         ActivityLog, AddonProduct, CatalogAddonLink, CatalogAlternative, CatalogLookup,
         CatalogProduct, City, Customer, EntityHistory, PriceHistory, Route, Staff, Vendor,
         VendorOrder, VendorOrderLine, VendorOrderPlacement, VendorOpenLine,
         CustomerOrder, CustomerOrderLine, CustomerOrderPlacement, CustomerOpenLine,
         CustomerBill, CustomerBillLine, BillSeries, FreightAgent, FreightLedgerEntry, Expense,
-        CustomerArAccount, ArLedgerEntry,
+        CustomerArAccount, ArLedgerEntry, PaymentMode,
         StockBalance, StockLedger, StockReceipt, StockReceiptLine,
         DebitNote, VendorApAccount, ApLedgerEntry, ManualLoss,
+        CustomerReturn, CustomerReturnLine,
     )
 
-    Base.metadata.create_all(bind=engine)
-    _migrate_deleted_at()
-    _migrate_vendor_orders_stock()
-    _migrate_finance()
-    _migrate_debit_note_direction()
-    _migrate_orders_v2()
-    _migrate_orders_v3_reasons()
-    _migrate_customer_orders_v3()
-    _migrate_customer_orders_v5_fix()
-    _migrate_documents_v4()
-    _migrate_indexes()
+    try:
+        Base.metadata.create_all(bind=engine)
+        _migrate_deleted_at()
+        _migrate_vendor_orders_stock()
+        _migrate_finance()
+        _migrate_opening_balances()
+        _migrate_debit_note_direction()
+        _migrate_orders_v2()
+        _migrate_orders_v3_reasons()
+        _migrate_customer_orders_v3()
+        _migrate_customer_orders_v5_fix()
+        _migrate_documents_v4()
+        _migrate_indexes()
+        _migrate_catalog_year_unique()
+        _migrate_vendor_receive_split()
+        _migrate_customer_returns()
+        _migrate_customer_additional_details()
+        _migrate_ledger_reverses()
+        _migrate_signed_ledgers()
+        _migrate_money_uniques()
+        _migrate_vendor_city_optional()
+        _migrate_payment_modes()
+        _migrate_freight_docs()
+        _migrate_bill_cancel()
+        _migrate_bill_date()
+        _migrate_bill_transport()
+        with engine.begin() as conn:
+            conn.execute(text("SELECT 1"))
+        _DB_READY = True
+        log.info("init_db complete — DB ready")
+    except Exception:
+        _DB_READY = False
+        log.exception("init_db FAILED")
+        raise
+
+
+def _migrate_vendor_city_optional() -> None:
+    """Vendor city is optional — only customers need city for route collection."""
     with engine.begin() as conn:
-        conn.execute(text("SELECT 1"))
+        try:
+            conn.execute(text("ALTER TABLE jc_vendors ALTER COLUMN city_id DROP NOT NULL"))
+        except Exception:
+            pass
+
+
+def _migrate_bill_transport() -> None:
+    """Mode of transport on customer bills. Backfill from freight agent."""
+    stmts = [
+        "ALTER TABLE jc_customer_bills ADD COLUMN IF NOT EXISTS transport_mode VARCHAR(20)",
+        "ALTER TABLE jc_customer_bills ADD COLUMN IF NOT EXISTS transport_receipt_number VARCHAR(120)",
+        """
+        UPDATE jc_customer_bills
+        SET transport_mode = 'bus'
+        WHERE freight_agent_id IS NOT NULL AND transport_mode IS NULL
+        """,
+    ]
+    for stmt in stmts:
+        try:
+            with engine.begin() as conn:
+                if _is_sqlite:
+                    stmt = stmt.replace(" ADD COLUMN IF NOT EXISTS ", " ADD COLUMN ")
+                conn.execute(text(stmt))
+        except Exception:
+            log.warning("Migration step skipped", exc_info=True)
+
+
+def _migrate_bill_date() -> None:
+    """Invoice date ≠ created_at. Backfill invoice day from the old stamped created_at."""
+    with engine.begin() as conn:
+        if _is_sqlite:
+            _exec_sql(conn, "ALTER TABLE jc_customer_bills ADD COLUMN bill_date DATE")
+            _exec_sql(conn, "UPDATE jc_customer_bills SET bill_date = date(created_at) WHERE bill_date IS NULL")
+        else:
+            _exec_sql(conn, "ALTER TABLE jc_customer_bills ADD COLUMN IF NOT EXISTS bill_date DATE")
+            _exec_sql(
+                conn,
+                """
+                UPDATE jc_customer_bills
+                SET bill_date = ((created_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Kolkata')::date
+                WHERE bill_date IS NULL AND created_at IS NOT NULL
+                """,
+            )
+
+
+def _migrate_bill_cancel() -> None:
+    for stmt in (
+        "ALTER TABLE jc_customer_bills ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ",
+        "ALTER TABLE jc_customer_bills ADD COLUMN IF NOT EXISTS cancel_reason TEXT",
+    ):
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(stmt))
+        except Exception:
+            log.warning("Migration step skipped", exc_info=True)
+
+
+def _migrate_freight_docs() -> None:
+    # Each statement in its own transaction — Postgres aborts the whole txn after one error.
+    stmts = [
+        "ALTER TABLE jc_freight_ledger_entries ADD COLUMN IF NOT EXISTS payment_receipt_key VARCHAR(500)",
+        "ALTER TABLE jc_freight_ledger_entries ADD COLUMN IF NOT EXISTS document_key VARCHAR(500)",
+        "ALTER TABLE jc_customer_bills ADD COLUMN IF NOT EXISTS freight_picked_at TIMESTAMPTZ",
+        "ALTER TABLE jc_customer_bills ADD COLUMN IF NOT EXISTS freight_picked_by VARCHAR(200)",
+        "ALTER TABLE jc_customer_bills ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ",
+        "ALTER TABLE jc_customer_bills ADD COLUMN IF NOT EXISTS cancel_reason TEXT",
+        # Existing charged bills were already "picked" under old flow
+        """
+        UPDATE jc_customer_bills b
+        SET freight_picked_at = e.created_at,
+            freight_picked_by = COALESCE(e.created_by_name, 'migration')
+        FROM jc_freight_ledger_entries e
+        WHERE e.customer_bill_id = b.id
+          AND e.entry_type = 'charge'
+          AND b.freight_picked_at IS NULL
+        """,
+    ]
+    for stmt in stmts:
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(stmt))
+        except Exception:
+            log.warning("Migration step skipped", exc_info=True)
+
+
+def _migrate_payment_modes() -> None:
+    """Payment modes setup + AR payment_mode column."""
+    with engine.begin() as conn:
+        if _is_sqlite:
+            _exec_sql(conn, "ALTER TABLE jc_ar_ledger_entries ADD COLUMN payment_mode VARCHAR(80)", critical=False)
+        else:
+            _exec_sql(
+                conn,
+                "ALTER TABLE jc_ar_ledger_entries ADD COLUMN IF NOT EXISTS payment_mode VARCHAR(80)",
+                critical=False,
+            )
+
+
+def _migrate_ledger_reverses() -> None:
+    """Columns for reverse/void payment + receipt-edit adjustments."""
+    with engine.begin() as conn:
+        if _is_sqlite:
+            for table in ("jc_ar_ledger_entries", "jc_ap_ledger_entries"):
+                _exec_sql(conn, f"ALTER TABLE {table} ADD COLUMN reverses_entry_id INTEGER", critical=False)
+        else:
+            _exec_sql(
+                conn,
+                "ALTER TABLE jc_ar_ledger_entries ADD COLUMN IF NOT EXISTS reverses_entry_id INTEGER",
+                critical=True,
+            )
+            _exec_sql(
+                conn,
+                "ALTER TABLE jc_ap_ledger_entries ADD COLUMN IF NOT EXISTS reverses_entry_id INTEGER",
+                critical=True,
+            )
+        _exec_sql(
+            conn,
+            "CREATE INDEX IF NOT EXISTS ix_ar_reverses_entry_id ON jc_ar_ledger_entries (reverses_entry_id)",
+            critical=False,
+        )
+        _exec_sql(
+            conn,
+            "CREATE INDEX IF NOT EXISTS ix_ap_reverses_entry_id ON jc_ap_ledger_entries (reverses_entry_id)",
+            critical=False,
+        )
+
+
+def _migrate_signed_ledgers() -> None:
+    """One convention: amount is signed. + increases outstanding, − decreases.
+
+    Idempotent: only flips still-positive reducing entries (legacy unsigned storage).
+    Then reconciles freight balance_due from ledger; seeds opening if ledger empty.
+    """
+    with engine.begin() as conn:
+        _exec_sql(
+            conn,
+            """
+            UPDATE jc_ar_ledger_entries
+            SET amount = -amount
+            WHERE entry_type IN ('payment', 'credit_note') AND amount > 0
+            """,
+            critical=True,
+        )
+        _exec_sql(
+            conn,
+            """
+            UPDATE jc_freight_ledger_entries
+            SET amount = -amount
+            WHERE entry_type = 'settlement' AND amount > 0
+            """,
+            critical=True,
+        )
+        _exec_sql(
+            conn,
+            """
+            UPDATE jc_ap_ledger_entries
+            SET amount = -amount
+            WHERE entry_type = 'payment' AND amount > 0
+            """,
+            critical=True,
+        )
+        # Reconcile freight cache from ledger; if no rows but balance_due > 0, seed opening
+        try:
+            agents = conn.execute(text(
+                "SELECT id, COALESCE(balance_due, 0) FROM jc_freight_agents"
+            )).fetchall()
+            for agent_id, bal in agents:
+                ledger_sum = conn.execute(text(
+                    "SELECT COALESCE(SUM(amount), 0) FROM jc_freight_ledger_entries WHERE freight_agent_id = :id"
+                ), {"id": agent_id}).scalar()
+                ledger_sum = ledger_sum or 0
+                bal = bal or 0
+                cnt = conn.execute(text(
+                    "SELECT COUNT(*) FROM jc_freight_ledger_entries WHERE freight_agent_id = :id"
+                ), {"id": agent_id}).scalar() or 0
+                if cnt == 0 and float(bal) > 0.009:
+                    conn.execute(text(
+                        """
+                        INSERT INTO jc_freight_ledger_entries
+                          (freight_agent_id, entry_type, amount, notes, created_by_name)
+                        VALUES
+                          (:id, 'opening_balance', :amt, 'Migrated opening from balance_due', 'system')
+                        """
+                    ), {"id": agent_id, "amt": bal})
+                    ledger_sum = bal
+                if abs(float(ledger_sum) - float(bal)) > 0.009:
+                    conn.execute(text(
+                        "UPDATE jc_freight_agents SET balance_due = :amt WHERE id = :id"
+                    ), {"id": agent_id, "amt": ledger_sum})
+        except Exception:
+            log.exception("Freight ledger reconcile during signed migration FAILED")
+            raise
+
+
+def _migrate_money_uniques() -> None:
+    """Prevent double-post of bills / credits / openings / freight charges."""
+    stmts = [
+        # One AR bill row per customer bill
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_ar_bill_id
+        ON jc_ar_ledger_entries (bill_id)
+        WHERE entry_type = 'bill' AND bill_id IS NOT NULL
+        """,
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_ar_return_id
+        ON jc_ar_ledger_entries (return_id)
+        WHERE entry_type = 'credit_note' AND return_id IS NOT NULL
+        """,
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_ar_opening_per_customer
+        ON jc_ar_ledger_entries (customer_id)
+        WHERE entry_type = 'opening_balance'
+        """,
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_ap_receipt_bill
+        ON jc_ap_ledger_entries (receipt_id)
+        WHERE entry_type = 'bill' AND receipt_id IS NOT NULL
+        """,
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_ap_debit_note_id
+        ON jc_ap_ledger_entries (debit_note_id)
+        WHERE entry_type = 'debit_note' AND debit_note_id IS NOT NULL
+        """,
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_ap_opening_per_vendor
+        ON jc_ap_ledger_entries (vendor_id)
+        WHERE entry_type = 'opening_balance'
+        """,
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_freight_charge_bill
+        ON jc_freight_ledger_entries (customer_bill_id)
+        WHERE entry_type = 'charge' AND customer_bill_id IS NOT NULL
+        """,
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_freight_opening_per_agent
+        ON jc_freight_ledger_entries (freight_agent_id)
+        WHERE entry_type = 'opening_balance'
+        """,
+    ]
+    with engine.begin() as conn:
+        for s in stmts:
+            _exec_sql(conn, s, critical=True)
+
+
+def _migrate_customer_additional_details() -> None:
+    with engine.begin() as conn:
+        try:
+            conn.execute(text("ALTER TABLE jc_customers ADD COLUMN IF NOT EXISTS additional_details TEXT"))
+        except Exception:
+            log.warning("Migration step skipped", exc_info=True)
+
+
+def _migrate_customer_returns() -> None:
+    """AR ledger return_id for credit notes."""
+    stmts = [
+        "ALTER TABLE jc_ar_ledger_entries ADD COLUMN IF NOT EXISTS return_id INTEGER",
+    ]
+    with engine.begin() as conn:
+        for stmt in stmts:
+            try:
+                conn.execute(text(stmt))
+            except Exception:
+                log.warning("Migration step skipped", exc_info=True)
+
+
+def _migrate_vendor_receive_split() -> None:
+    """Receive-then-bill: notes + received_placement_id + order receipt number."""
+    stmts = [
+        "ALTER TABLE jc_stock_receipts ADD COLUMN IF NOT EXISTS notes TEXT",
+        "ALTER TABLE jc_stock_receipts ADD COLUMN IF NOT EXISTS received_placement_id INTEGER",
+        "ALTER TABLE jc_stock_receipts ADD COLUMN IF NOT EXISTS order_receipt_number VARCHAR(120)",
+    ]
+    with engine.begin() as conn:
+        for stmt in stmts:
+            try:
+                conn.execute(text(stmt))
+            except Exception:
+                log.warning("Migration step skipped", exc_info=True)
+
+
+def _migrate_catalog_year_unique() -> None:
+    """Allow same our_product_id across different year_group values.
+
+    Never DROP the year unique index on boot — that takes an AccessExclusiveLock
+    and deadlocks live traffic (admin /cities spinner, etc.).
+    """
+    if _is_sqlite:
+        # SQLite cannot easily drop named unique constraints; skip if recreate needed.
+        return
+    with engine.begin() as conn:
+        # One-time cleanup of legacy unique on our_product_id only.
+        for stmt in (
+            "ALTER TABLE jc_catalog_products DROP CONSTRAINT IF EXISTS uq_jc_catalog_our_product_id",
+            "DROP INDEX IF EXISTS uq_jc_catalog_our_product_id",
+        ):
+            try:
+                conn.execute(text(stmt))
+            except Exception:
+                log.warning("Migration step skipped", exc_info=True)
+        try:
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_jc_catalog_our_year_group "
+                    "ON jc_catalog_products (lower(our_product_id), COALESCE(year_group, '')) "
+                    "WHERE is_active IS TRUE AND deleted_at IS NULL"
+                )
+            )
+        except Exception:
+            log.warning("Migration step skipped", exc_info=True)
 
 
 def _migrate_debit_note_direction() -> None:
@@ -106,7 +466,7 @@ def _migrate_debit_note_direction() -> None:
             try:
                 conn.execute(text(stmt))
             except Exception:
-                pass
+                log.warning("Migration step skipped", exc_info=True)
 
 
 def _migrate_vendor_orders_stock() -> None:
@@ -122,7 +482,20 @@ def _migrate_vendor_orders_stock() -> None:
             try:
                 conn.execute(text(stmt))
             except Exception:
-                pass
+                log.warning("Migration step skipped", exc_info=True)
+
+
+def _migrate_opening_balances() -> None:
+    stmts = [
+        "ALTER TABLE jc_ar_ledger_entries ADD COLUMN IF NOT EXISTS value_date DATE",
+        "ALTER TABLE jc_ap_ledger_entries ADD COLUMN IF NOT EXISTS value_date DATE",
+    ]
+    with engine.begin() as conn:
+        for stmt in stmts:
+            try:
+                conn.execute(text(stmt))
+            except Exception:
+                log.warning("Migration step skipped", exc_info=True)
 
 
 def _migrate_finance() -> None:
@@ -135,7 +508,7 @@ def _migrate_finance() -> None:
             try:
                 conn.execute(text(stmt))
             except Exception:
-                pass
+                log.warning("Migration step skipped", exc_info=True)
 
     from app.models.stock import StockReceipt, StockReceiptLine
     from app.models.accounts_payable import ApLedgerEntry
@@ -224,7 +597,7 @@ def _migrate_orders_v2() -> None:
             try:
                 conn.execute(text(stmt))
             except Exception:
-                pass
+                log.warning("Migration step skipped", exc_info=True)
     from app.models.vendor import Vendor
     from app.models.vendor_open_line import VendorOpenLine
     from app.services.order_summary import placed_qty_by_product, received_qty_by_product
@@ -261,7 +634,7 @@ def _migrate_orders_v3_reasons() -> None:
             try:
                 conn.execute(text(stmt))
             except Exception:
-                pass
+                log.warning("Migration step skipped", exc_info=True)
 
 
 def _migrate_customer_orders_v3() -> None:
@@ -274,7 +647,7 @@ def _migrate_customer_orders_v3() -> None:
             try:
                 conn.execute(text(stmt))
             except Exception:
-                pass
+                log.warning("Migration step skipped", exc_info=True)
 
     db = SessionLocal()
     try:
@@ -332,7 +705,7 @@ def _migrate_customer_orders_v3() -> None:
                 try:
                     conn.execute(text(stmt))
                 except Exception:
-                    pass
+                    log.warning("Migration step skipped", exc_info=True)
     except Exception:
         db.rollback()
     finally:
@@ -401,14 +774,14 @@ def _migrate_customer_orders_v5_fix() -> None:
                 try:
                     conn.execute(text(f"ALTER TABLE jc_customer_orders ALTER COLUMN {col} DROP NOT NULL"))
                 except Exception:
-                    pass
+                    log.warning("Migration step skipped", exc_info=True)
         try:
             conn.execute(text(
                 "UPDATE jc_customer_orders SET bucket = COALESCE(bucket, 'received'), "
                 "is_open = COALESCE(is_open, true) WHERE bucket IS NULL OR is_open IS NULL"
             ))
         except Exception:
-            pass
+            log.warning("Migration step skipped", exc_info=True)
 
 
 def _migrate_documents_v4() -> None:
@@ -428,33 +801,35 @@ def _migrate_documents_v4() -> None:
                 else:
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {coldef}"))
             except Exception:
-                pass
+                log.warning("Migration step skipped", exc_info=True)
 
 
 def _migrate_indexes() -> None:
+    # CREATE IF NOT EXISTS only — never DROP/rebuild on boot (locks live traffic).
     stmts = [
         "CREATE INDEX IF NOT EXISTS ix_jc_entity_history_lookup ON jc_entity_history (entity_type, entity_id)",
         "CREATE INDEX IF NOT EXISTS ix_jc_activity_entity ON jc_activity_logs (entity_type, created_at)",
         "CREATE INDEX IF NOT EXISTS ix_jc_vendor_orders_vendor_open ON jc_vendor_orders (vendor_id, bucket, is_open)",
+        "CREATE INDEX IF NOT EXISTS ix_jc_ar_ledger_customer_type ON jc_ar_ledger_entries (customer_id, entry_type)",
+        "CREATE INDEX IF NOT EXISTS ix_jc_ap_ledger_vendor_type ON jc_ap_ledger_entries (vendor_id, entry_type)",
+        "CREATE INDEX IF NOT EXISTS ix_jc_customers_active_list ON jc_customers (is_active) WHERE deleted_at IS NULL",
     ]
     if not _is_sqlite:
         stmts.append(
-            "DROP INDEX IF EXISTS uq_jc_vendor_orders_one_open"
-        )
-        stmts.append(
-            "DROP INDEX IF EXISTS ix_jc_vendor_orders_vendor_open"
-        )
-        stmts.extend([
-            "CREATE INDEX IF NOT EXISTS ix_jc_vendor_orders_vendor_open ON jc_vendor_orders (vendor_id, bucket, is_open)",
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_jc_vendor_orders_one_open "
-            "ON jc_vendor_orders (vendor_id, bucket) WHERE is_open = true",
-        ])
+            "ON jc_vendor_orders (vendor_id, bucket) WHERE is_open = true"
+        )
     with engine.begin() as conn:
+        try:
+            conn.execute(text("SET LOCAL lock_timeout = '3s'"))
+            conn.execute(text("SET LOCAL statement_timeout = '30s'"))
+        except Exception:
+            log.warning("Migration step skipped", exc_info=True)
         for stmt in stmts:
             try:
                 conn.execute(text(stmt))
             except Exception:
-                pass
+                log.warning("Migration step skipped", exc_info=True)
 
 
 def _migrate_deleted_at() -> None:
@@ -472,4 +847,4 @@ def _migrate_deleted_at() -> None:
             try:
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {coldef}"))
             except Exception:
-                pass
+                log.warning("Migration step skipped", exc_info=True)

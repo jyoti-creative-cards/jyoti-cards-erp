@@ -82,6 +82,17 @@ def require_permission(permission: str) -> Callable:
     return _dep
 
 
+def require_any_permission(*permissions: str) -> Callable:
+    def _dep(auth: AuthContext = Depends(get_auth_context)) -> AuthContext:
+        if auth.is_admin or any(auth.has(p) for p in permissions):
+            return auth
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail=f"permission denied: one of {', '.join(permissions)}",
+        )
+    return _dep
+
+
 def require_admin(auth: AuthContext = Depends(get_auth_context)) -> AuthContext:
     if not auth.is_admin:
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="admin only")

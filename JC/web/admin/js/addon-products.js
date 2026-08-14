@@ -44,11 +44,20 @@ const AddonProducts = (() => {
   }
 
   async function load() {
+    // Live hub is Products (addons tab)
+    if (typeof Products !== "undefined" && Products.refreshHub) {
+      await Products.refreshHub();
+      return;
+    }
     await Promise.all([ensureLookups(), ensureVendors()]);
-    const q = document.getElementById("addon-search-input")?.value.trim() || "";
-    addons = await ctx.api(`/addons${q ? "?search=" + encodeURIComponent(q) : ""}`);
-    renderView();
+    addons = await ctx.api("/addons");
     if (ctx.onCountChange) ctx.onCountChange(addons.length);
+  }
+
+  async function refreshAfterMutation() {
+    ctx.invalidateCache?.("/addons");
+    if (typeof Products !== "undefined" && Products.refreshHub) await Products.refreshHub();
+    else await load();
   }
 
   function fmtPrice(val) {
@@ -73,72 +82,19 @@ const AddonProducts = (() => {
     renderView();
   }
 
-  function renderView() {
-    if (viewMode === "grid") renderGrid();
-    else renderTable();
-  }
-
-  function renderToolbar() {
-    const el = document.getElementById("addons-toolbar");
-    if (!el) return;
-    el.innerHTML = `
-      <div style="display:flex;gap:8px;">
-        <button class="btn btn-sm ${viewMode === "list" ? "btn-primary" : "btn-secondary"}" onclick="AddonProducts.setViewMode('list')">List</button>
-        <button class="btn btn-sm ${viewMode === "grid" ? "btn-primary" : "btn-secondary"}" onclick="AddonProducts.setViewMode('grid')">Grid</button>
-      </div>`;
-  }
-
+  function renderView() { /* legacy — Products hub owns list */ }
+  function renderToolbar() { /* legacy */ }
   function addonEmptyHtml() {
-    return ctx.canWrite?.("addons")
-      ? '<div class="empty-state"><p style="font-size:15px;font-weight:600;color:var(--text);">No addon products yet</p><p>Add your first addon to track vendor buying prices.</p><button class="btn btn-primary btn-lg" style="margin-top:16px;" onclick="AddonProducts.openWizard()">Add Addon Product</button></div>'
-      : '<div class="empty-state"><p>No addon products yet.</p></div>';
+    return HubUI.emptyState({
+      title: "No addon products yet",
+      sub: "Add your first addon to track vendor buying prices.",
+      ctaHtml: ctx.canWrite?.("addons")
+        ? `<button class="btn btn-primary btn-lg" onclick="AddonProducts.openWizard()">Add Addon Product</button>`
+        : "",
+    });
   }
-
-  function renderTable() {
-    renderToolbar();
-    const el = document.getElementById("addons-table");
-    if (!el) return;
-    if (!addons.length) {
-      el.innerHTML = addonEmptyHtml();
-      return;
-    }
-    const rows = TableUtils.apply(addons, "addons", ADDON_COLS);
-    el.innerHTML = `<table class="data">${TableUtils.headerHtml("addons", ADDON_COLS)}<tbody>
-      ${rows.map(a => `<tr class="clickable" onclick="AddonProducts.openDetail(${a.id})">
-        <td><div style="display:flex;align-items:center;gap:12px;">
-          ${thumbHtml(a, 44)}
-          <div><strong>${ctx.esc(a.our_product_id)}</strong>${a.name ? `<br><span style="font-size:12px;color:var(--muted);">${ctx.esc(a.name)}</span>` : ""}</div>
-        </div></td>
-        <td>${ctx.esc(a.vendor_name || "—")}</td>
-        <td><span class="badge badge-gray">${ctx.esc(a.unit)}</span></td>
-        <td><strong>${fmtPrice(a.buying_price)}</strong></td>
-        <td onclick="event.stopPropagation()"><button class="btn btn-ghost btn-sm" onclick="AddonProducts.openDetail(${a.id})">Open</button></td>
-      </tr>`).join("")}
-    </tbody></table>`;
-  }
-
-  function renderGrid() {
-    renderToolbar();
-    const el = document.getElementById("addons-table");
-    if (!el) return;
-    if (!addons.length) {
-      el.innerHTML = addonEmptyHtml();
-      return;
-    }
-    const rows = TableUtils.apply(addons, "addons", ADDON_COLS);
-    el.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px;">
-      ${rows.map(a => `<div class="card clickable" style="padding:16px;cursor:pointer;" onclick="AddonProducts.openDetail(${a.id})">
-        <div style="display:flex;justify-content:center;margin-bottom:12px;">${thumbHtml(a, 72)}</div>
-        <div style="font-weight:700;font-size:15px;margin-bottom:4px;">${ctx.esc(a.our_product_id)}</div>
-        ${a.name ? `<div style="font-size:13px;color:var(--muted);margin-bottom:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${ctx.esc(a.name)}</div>` : ""}
-        <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;">
-          <span style="color:var(--muted);">${ctx.esc(a.vendor_name || "—")}</span>
-          <span class="badge badge-gray">${ctx.esc(a.unit)}</span>
-        </div>
-        <div style="margin-top:10px;font-size:16px;font-weight:700;color:var(--brand);">${fmtPrice(a.buying_price)}</div>
-      </div>`).join("")}
-    </div>`;
-  }
+  function renderTable() { /* legacy — Products hub owns list */ }
+  function renderGrid() { /* legacy — Products hub owns list */ }
 
   async function uploadImage(vendorId, ourProductId, file) {
     if (ctx.uploadImage) return ctx.uploadImage(vendorId, ourProductId, file);
@@ -427,8 +383,7 @@ const AddonProducts = (() => {
       wizardForm._result = result;
       wizardStep = 4;
       renderWizard();
-      await load();
-      ctx.invalidateCache?.("/addons");
+      await refreshAfterMutation();
       ctx.invalidateCache?.("/stats");
       if (ctx.refreshStats) await ctx.refreshStats();
       ctx.toast("Addon product created", "success");
@@ -525,7 +480,7 @@ const AddonProducts = (() => {
       const id = editingId;
       closeEdit();
       App.closeDetail();
-      await load();
+      await refreshAfterMutation();
       ctx.toast("Addon updated", "success");
       openDetail(id);
     } catch (e) {
@@ -538,8 +493,7 @@ const AddonProducts = (() => {
     try {
       await ctx.api(`/addons/${id}`, { method: "DELETE" });
       App.closeDetail();
-      await load();
-      ctx.invalidateCache?.("/addons");
+      await refreshAfterMutation();
       ctx.invalidateCache?.("/stats");
       if (ctx.refreshStats) await ctx.refreshStats();
       ctx.toast("Addon moved to recycle bin", "success");

@@ -14,6 +14,7 @@ from app.models.city import City
 from app.schemas.debit_note import DebitNoteIn
 from app.services.activity import log_from_auth
 from app.services.ap_ledger import post_debit_note_entry
+from app.services.stock_receipt import add_stock
 
 
 def _vendor_label(vendor: Vendor, city_name: Optional[str]) -> str:
@@ -140,6 +141,21 @@ def create_debit_note(
         actor_id=auth.actor_id,
         actor_name=auth.actor_name,
     )
+    if note.note_type == "item" and note.catalog_product_id and note.quantity:
+        # short (+) → stock down; extra (−) → stock up
+        vendor_tmp = db.get(Vendor, vendor_id)
+        party = vendor_tmp.business_name if vendor_tmp else f"Vendor #{vendor_id}"
+        add_stock(
+            db,
+            catalog_product_id=int(note.catalog_product_id),
+            our_product_id=note.our_product_id or "",
+            quantity=-int(note.quantity),
+            entry_type="debit_note",
+            reference_type="debit_note",
+            reference_id=note.id,
+            party=party,
+            notes=f"Item DN {direction}: qty {note.quantity}",
+        )
     vendor = db.get(Vendor, vendor_id)
     city_name = None
     if vendor and vendor.city_id:
@@ -156,3 +172,44 @@ def create_debit_note(
         detail=detail,
     )
     return note
+
+
+def reverse_debit_note_effects(
+    db: Session,
+    auth: AuthContext,
+    note: DebitNote,
+    *,
+    reason: str,
+) -> None:
+    """Reverse AP + stock for a DN; leave ledger history; caller deletes DebitNote row."""
+    from app.models.accounts_payable import ApLedgerEntry
+    from app.services.ap_ledger import reverse_ap_ledger_row
+
+    ap = (
+        db.query(ApLedgerEntry)
+        .filter(ApLedgerEntry.debit_note_id == note.id, ApLedgerEntry.entry_type == "debit_note")
+        .first()
+    )
+    if ap:
+        reverse_ap_ledger_row(
+            db,
+            orig=ap,
+            reason=reason,
+            actor_type=auth.actor_type,
+            actor_id=auth.actor_id,
+            actor_name=auth.actor_name,
+        )
+    if note.note_type == "item" and note.catalog_product_id and note.quantity:
+        vendor = db.get(Vendor, note.vendor_id)
+        party = vendor.business_name if vendor else f"Vendor #{note.vendor_id}"
+        add_stock(
+            db,
+            catalog_product_id=int(note.catalog_product_id),
+            our_product_id=note.our_product_id or "",
+            quantity=int(note.quantity),  # undo create's -quantity
+            entry_type="debit_note_reverse",
+            reference_type="debit_note",
+            reference_id=note.id,
+            party=party,
+            notes=f"Reverse item DN #{note.id}: {reason}"[:500],
+        )

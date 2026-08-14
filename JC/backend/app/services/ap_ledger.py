@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
@@ -11,6 +12,7 @@ from app.models.debit_note import DebitNote
 from app.models.stock import StockReceipt, StockReceiptLine
 from app.models.vendor import Vendor
 from app.models.city import City
+from app.services.money import as_signed_decrease, as_signed_increase, mag
 from app.services.storage import presigned_url
 
 
@@ -35,6 +37,28 @@ def get_or_create_ap_account(db: Session, vendor_id: int) -> VendorApAccount:
     return row
 
 
+def lock_ap_account(db: Session, vendor_id: int) -> VendorApAccount:
+    """Row lock for settle / payment races."""
+    row = (
+        db.query(VendorApAccount)
+        .filter(VendorApAccount.vendor_id == vendor_id)
+        .with_for_update()
+        .first()
+    )
+    if row:
+        return row
+    get_or_create_ap_account(db, vendor_id)
+    row = (
+        db.query(VendorApAccount)
+        .filter(VendorApAccount.vendor_id == vendor_id)
+        .with_for_update()
+        .first()
+    )
+    if not row:
+        raise RuntimeError(f"AP account missing for vendor {vendor_id}")
+    return row
+
+
 def receipt_bill_amount(db: Session, receipt_id: int) -> Decimal:
     """Bill amount for AP. Prefer total_billed_amount (full bill). Do not add additional_charges on top."""
     receipt = db.get(StockReceipt, receipt_id)
@@ -43,7 +67,7 @@ def receipt_bill_amount(db: Session, receipt_id: int) -> Decimal:
     if receipt.total_billed_amount is not None:
         return receipt.total_billed_amount.quantize(Decimal("0.01"))
     lines = db.query(StockReceiptLine).filter(StockReceiptLine.receipt_id == receipt_id).all()
-    line_total = sum((ln.billed_amount or Decimal("0")) for ln in lines)
+    line_total = sum((ln.billed_amount or Decimal("0") for ln in lines), Decimal("0"))
     # Legacy: only fold additional_charges when no total override was stored
     extra = receipt.additional_charges if receipt.additional_charges else Decimal("0")
     return (line_total + extra).quantize(Decimal("0.01"))
@@ -73,18 +97,23 @@ def post_bill_entry(
     actor_type: str,
     actor_id: Optional[int],
     actor_name: str,
+    value_date: Optional[date] = None,
+    created_at: Optional[datetime] = None,
 ) -> ApLedgerEntry:
     get_or_create_ap_account(db, vendor_id)
     entry = ApLedgerEntry(
         vendor_id=vendor_id,
         entry_type="bill",
-        amount=amount.quantize(Decimal("0.01")),
+        amount=as_signed_increase(amount),
         receipt_id=receipt_id,
         description=description,
         created_by_type=actor_type,
         created_by_id=actor_id,
         created_by_name=actor_name,
+        value_date=value_date,
     )
+    if created_at is not None:
+        entry.created_at = created_at
     db.add(entry)
     db.flush()
     return entry
@@ -121,6 +150,130 @@ def post_debit_note_entry(
     return entry
 
 
+def post_ap_adjustment(
+    db: Session,
+    *,
+    vendor_id: int,
+    amount: Decimal,
+    description: str,
+    actor_type: str,
+    actor_id: Optional[int],
+    actor_name: str,
+    receipt_id: Optional[int] = None,
+    reverses_entry_id: Optional[int] = None,
+) -> ApLedgerEntry:
+    """Compensating AP row — never mutate / delete prior money history."""
+    get_or_create_ap_account(db, vendor_id)
+    entry = ApLedgerEntry(
+        vendor_id=vendor_id,
+        entry_type="adjustment",
+        amount=Decimal(str(amount)).quantize(Decimal("0.01")),
+        receipt_id=receipt_id,
+        description=description[:500],
+        reverses_entry_id=reverses_entry_id,
+        created_by_type=actor_type,
+        created_by_id=actor_id,
+        created_by_name=actor_name,
+    )
+    db.add(entry)
+    db.flush()
+    return entry
+
+
+def reverse_ap_ledger_row(
+    db: Session,
+    *,
+    orig: ApLedgerEntry,
+    reason: str,
+    actor_type: str,
+    actor_id: Optional[int],
+    actor_name: str,
+) -> ApLedgerEntry:
+    """Post opposite signed amount; leave `orig` untouched."""
+    opp = (-Decimal(str(orig.amount))).quantize(Decimal("0.01"))
+    return post_ap_adjustment(
+        db,
+        vendor_id=orig.vendor_id,
+        amount=opp,
+        receipt_id=orig.receipt_id,
+        reverses_entry_id=orig.id,
+        description=f"Reverse {orig.entry_type} #{orig.id} — {reason}",
+        actor_type=actor_type,
+        actor_id=actor_id,
+        actor_name=actor_name,
+    )
+
+
+def receipt_bill_ledger_net(db: Session, receipt_id: int) -> tuple[Decimal, Optional[ApLedgerEntry]]:
+    """Net bill effect for a receipt (bill + chained adjustments). Never mutates."""
+    rows = (
+        db.query(ApLedgerEntry)
+        .filter(ApLedgerEntry.receipt_id == receipt_id)
+        .order_by(ApLedgerEntry.id.asc())
+        .all()
+    )
+    bill = next((r for r in rows if r.entry_type == "bill"), None)
+    if not bill:
+        return Decimal("0.00"), None
+    included = {bill.id}
+    changed = True
+    while changed:
+        changed = False
+        for r in rows:
+            if (
+                r.entry_type == "adjustment"
+                and r.reverses_entry_id in included
+                and r.id not in included
+            ):
+                included.add(r.id)
+                changed = True
+    net = sum((Decimal(str(r.amount)) for r in rows if r.id in included), Decimal("0"))
+    return net.quantize(Decimal("0.01")), bill
+
+
+def sync_receipt_bill_ledger(
+    db: Session,
+    *,
+    vendor_id: int,
+    receipt_id: int,
+    bill_total: Decimal,
+    bill_label: str,
+    actor_type: str,
+    actor_id: Optional[int],
+    actor_name: str,
+) -> None:
+    """Bring AP bill net to `bill_total` via new bill/adjustment rows only."""
+    target = as_signed_increase(bill_total) if bill_total > 0 else Decimal("0.00")
+    net, bill = receipt_bill_ledger_net(db, receipt_id)
+    if bill is None:
+        if target > 0:
+            post_bill_entry(
+                db,
+                vendor_id=vendor_id,
+                receipt_id=receipt_id,
+                amount=target,
+                description=f"Bill {bill_label} — ₹{target}",
+                actor_type=actor_type,
+                actor_id=actor_id,
+                actor_name=actor_name,
+            )
+        return
+    delta = (target - net).quantize(Decimal("0.01"))
+    if abs(delta) < Decimal("0.01"):
+        return
+    post_ap_adjustment(
+        db,
+        vendor_id=vendor_id,
+        amount=delta,
+        receipt_id=receipt_id,
+        reverses_entry_id=bill.id,
+        description=f"Bill adjust {bill_label} — Δ₹{delta}",
+        actor_type=actor_type,
+        actor_id=actor_id,
+        actor_name=actor_name,
+    )
+
+
 def post_payment_entry(
     db: Session,
     *,
@@ -138,7 +291,7 @@ def post_payment_entry(
     entry = ApLedgerEntry(
         vendor_id=vendor_id,
         entry_type="payment",
-        amount=(-amount).quantize(Decimal("0.01")),
+        amount=as_signed_decrease(amount),
         payment_ref=payment_ref,
         payment_receipt_key=payment_receipt_key,
         payment_comment=payment_comment,
@@ -159,16 +312,84 @@ def post_payment_entry(
 def vendor_ap_totals(db: Session, vendor_id: int) -> dict:
     rows = db.query(ApLedgerEntry).filter(ApLedgerEntry.vendor_id == vendor_id).all()
     outstanding = sum((r.amount for r in rows), Decimal("0")).quantize(Decimal("0.01"))
+    opening_total = sum((r.amount for r in rows if r.entry_type == "opening_balance"), Decimal("0")).quantize(Decimal("0.01"))
     bill_total = sum((r.amount for r in rows if r.entry_type == "bill"), Decimal("0")).quantize(Decimal("0.01"))
-    payment_total = sum((abs(r.amount) for r in rows if r.entry_type == "payment"), Decimal("0")).quantize(Decimal("0.01"))
-    debit_note_net = sum((r.amount for r in rows if r.entry_type == "debit_note"), Decimal("0")).quantize(Decimal("0.01"))
+    payment_total = Decimal("0")
+    for r in rows:
+        if r.entry_type == "payment":
+            payment_total += mag(r.amount)
+        elif r.entry_type == "payment_reversal":
+            payment_total -= mag(r.amount)
+    payment_total = payment_total.quantize(Decimal("0.01"))
+    dn_ids = {r.id for r in rows if r.entry_type == "debit_note"}
+    debit_note_net = sum((r.amount for r in rows if r.entry_type == "debit_note"), Decimal("0"))
+    debit_note_net += sum(
+        (
+            r.amount
+            for r in rows
+            if r.entry_type == "adjustment" and r.reverses_entry_id in dn_ids
+        ),
+        Decimal("0"),
+    )
+    debit_note_net = debit_note_net.quantize(Decimal("0.01"))
     return {
+        "opening_total": opening_total,
         "bill_total": bill_total,
         "debit_note_total": debit_note_net,
         "payment_total": payment_total,
         "outstanding": outstanding,
         "transaction_count": len(rows),
     }
+
+
+def get_opening_balance(db: Session, vendor_id: int) -> Optional[ApLedgerEntry]:
+    return (
+        db.query(ApLedgerEntry)
+        .filter(ApLedgerEntry.vendor_id == vendor_id, ApLedgerEntry.entry_type == "opening_balance")
+        .order_by(ApLedgerEntry.id.desc())
+        .first()
+    )
+
+
+def set_opening_balance(
+    db: Session,
+    *,
+    vendor_id: int,
+    amount: Decimal,
+    as_on: date,
+    actor_type: str,
+    actor_id: Optional[int],
+    actor_name: str,
+) -> Optional[ApLedgerEntry]:
+    get_or_create_ap_account(db, vendor_id)
+    existing = (
+        db.query(ApLedgerEntry)
+        .filter(ApLedgerEntry.vendor_id == vendor_id, ApLedgerEntry.entry_type == "opening_balance")
+        .all()
+    )
+    for row in existing:
+        db.delete(row)
+    db.flush()
+    amt = amount.quantize(Decimal("0.01"))
+    if amt <= 0:
+        return None
+    entry = ApLedgerEntry(
+        vendor_id=vendor_id,
+        entry_type="opening_balance",
+        amount=amt,
+        description=f"Opening balance (as on {as_on.isoformat()}) — ₹{amt}",
+        value_date=as_on,
+        created_by_type=actor_type,
+        created_by_id=actor_id,
+        created_by_name=actor_name,
+        created_at=datetime(as_on.year, as_on.month, as_on.day, tzinfo=timezone.utc),
+    )
+    db.add(entry)
+    db.flush()
+    account = db.query(VendorApAccount).filter(VendorApAccount.vendor_id == vendor_id).first()
+    if account:
+        account.updated_at = datetime.now(timezone.utc)
+    return entry
 
 
 def build_ap_ledger(db: Session, vendor_id: int) -> list[dict]:
@@ -253,6 +474,8 @@ def build_ap_ledger(db: Session, vendor_id: int) -> list[dict]:
                 "net_payable": format(net_payable, "f") if net_payable is not None else None,
                 "created_by_name": e.created_by_name,
                 "created_at": e.created_at,
+                "value_date": e.value_date.isoformat() if e.value_date else None,
+                "reverses_entry_id": e.reverses_entry_id,
                 "details": details,
             }
         )
@@ -261,29 +484,147 @@ def build_ap_ledger(db: Session, vendor_id: int) -> list[dict]:
 
 
 def list_ap_vendors(db: Session) -> list[dict]:
-    vendor_ids = {vid for (vid,) in db.query(ApLedgerEntry.vendor_id).distinct().all()}
-    if not vendor_ids:
+    """One aggregate query + vendor/city joins — no per-vendor N+1."""
+    from sqlalchemy import case, func
+
+    opening_sum = func.coalesce(
+        func.sum(case((ApLedgerEntry.entry_type == "opening_balance", ApLedgerEntry.amount), else_=0)),
+        0,
+    )
+    bill_sum = func.coalesce(
+        func.sum(case((ApLedgerEntry.entry_type == "bill", ApLedgerEntry.amount), else_=0)),
+        0,
+    )
+    dn_sum = func.coalesce(
+        func.sum(case((ApLedgerEntry.entry_type == "debit_note", ApLedgerEntry.amount), else_=0)),
+        0,
+    )
+    payment_sum = func.coalesce(
+        func.sum(
+            case(
+                (ApLedgerEntry.entry_type.in_(("payment", "payment_reversal")), ApLedgerEntry.amount),
+                else_=0,
+            )
+        ),
+        0,
+    )
+    outstanding_sum = func.coalesce(func.sum(ApLedgerEntry.amount), 0)
+    agg_rows = (
+        db.query(
+            ApLedgerEntry.vendor_id,
+            func.count(ApLedgerEntry.id),
+            opening_sum,
+            bill_sum,
+            dn_sum,
+            payment_sum,
+            outstanding_sum,
+        )
+        .group_by(ApLedgerEntry.vendor_id)
+        .all()
+    )
+    if not agg_rows:
         return []
+
+    by_id = {
+        int(vid): {
+            "txn_count": int(txn or 0),
+            "opening_total": Decimal(str(op or 0)).quantize(Decimal("0.01")),
+            "bill_total": Decimal(str(bill or 0)).quantize(Decimal("0.01")),
+            "debit_note_total": Decimal(str(dn or 0)).quantize(Decimal("0.01")),
+            "payment_total": mag(pay),
+            "outstanding": Decimal(str(out or 0)).quantize(Decimal("0.01")),
+        }
+        for vid, txn, op, bill, dn, pay, out in agg_rows
+    }
+    vendors = (
+        db.query(Vendor)
+        .filter(Vendor.id.in_(list(by_id.keys())), Vendor.deleted_at.is_(None))
+        .all()
+    )
+    city_ids = {v.city_id for v in vendors if v.city_id}
+    cities = {
+        c.id: c.name
+        for c in (db.query(City).filter(City.id.in_(city_ids)).all() if city_ids else [])
+    }
+    accounts = {
+        a.vendor_id: a
+        for a in db.query(VendorApAccount).filter(VendorApAccount.vendor_id.in_(list(by_id.keys()))).all()
+    }
+    latest_opening: dict[int, ApLedgerEntry] = {}
+    for e in (
+        db.query(ApLedgerEntry)
+        .filter(
+            ApLedgerEntry.vendor_id.in_(list(by_id.keys())),
+            ApLedgerEntry.entry_type == "opening_balance",
+        )
+        .all()
+    ):
+        prev = latest_opening.get(e.vendor_id)
+        if prev is None or e.id > prev.id:
+            latest_opening[e.vendor_id] = e
+
     result = []
-    for vid in vendor_ids:
-        totals = vendor_ap_totals(db, vid)
-        if totals["transaction_count"] == 0:
+    for vendor in vendors:
+        t = by_id.get(vendor.id)
+        if not t or t["txn_count"] == 0:
             continue
-        account = db.query(VendorApAccount).filter(VendorApAccount.vendor_id == vid).first()
+        city_name = cities.get(vendor.city_id) if vendor.city_id else None
+        label = f"{vendor.business_name} — {city_name}" if city_name else vendor.business_name
+        opening = latest_opening.get(vendor.id)
+        account = accounts.get(vendor.id)
         result.append(
             {
-                "vendor_id": vid,
-                "vendor_label": _vendor_label(db, vid),
-                "outstanding": format(totals["outstanding"], "f"),
-                "bill_total": format(totals["bill_total"], "f"),
-                "debit_note_total": format(totals["debit_note_total"], "f"),
-                "payment_total": format(totals["payment_total"], "f"),
-                "transaction_count": totals["transaction_count"],
+                "vendor_id": vendor.id,
+                "vendor_label": label,
+                "business_name": vendor.business_name,
+                "person_name": vendor.person_name,
+                "alias": vendor.alias,
+                "phone": vendor.phone,
+                "city_name": city_name,
+                "outstanding": format(t["outstanding"], "f"),
+                "opening_total": format(t["opening_total"], "f"),
+                "opening_as_on": opening.value_date.isoformat() if opening and opening.value_date else None,
+                "bill_total": format(t["bill_total"], "f"),
+                "debit_note_total": format(t["debit_note_total"], "f"),
+                "payment_total": format(t["payment_total"], "f"),
+                "transaction_count": t["txn_count"],
                 "updated_at": account.updated_at if account else None,
             }
         )
     result.sort(key=lambda x: Decimal(x["outstanding"]), reverse=True)
     return result
+
+
+def ap_dues_total(db: Session) -> dict:
+    """Canonical Pay-vendors total — same number Home, Finance pulse, and Pay tab must show.
+
+    One SQL join+group — outstanding > 0 only.
+    """
+    from sqlalchemy import text
+
+    rows = db.execute(
+        text(
+            """
+            SELECT v.id, v.business_name, ci.name AS city_name, SUM(e.amount) AS outstanding
+            FROM jc_ap_ledger_entries e
+            JOIN jc_vendors v ON v.id = e.vendor_id AND v.deleted_at IS NULL
+            LEFT JOIN jc_cities ci ON ci.id = v.city_id
+            GROUP BY v.id, v.business_name, ci.name
+            HAVING SUM(e.amount) > 0
+            ORDER BY SUM(e.amount) DESC
+            """
+        )
+    ).all()
+    due = [
+        {
+            "vendor_id": int(r.id),
+            "vendor_label": f"{r.business_name} — {r.city_name}" if r.city_name else r.business_name,
+            "outstanding": format(Decimal(str(r.outstanding or 0)).quantize(Decimal("0.01")), "f"),
+        }
+        for r in rows
+    ]
+    total = sum((Decimal(v["outstanding"]) for v in due), Decimal("0")).quantize(Decimal("0.01"))
+    return {"total": total, "count": len(due), "parties": due}
 
 
 def build_ap_statement(db: Session, vendor_id: int) -> dict:
@@ -292,6 +633,11 @@ def build_ap_statement(db: Session, vendor_id: int) -> dict:
     chronological = list(reversed(entries))
     bills_by_receipt: dict[int, dict] = {}
     payments: list[dict] = []
+    reversed_ids = {
+        e["reverses_entry_id"]
+        for e in chronological
+        if e.get("entry_type") == "payment_reversal" and e.get("reverses_entry_id")
+    }
     for e in chronological:
         if e["entry_type"] == "bill" and e.get("receipt_id"):
             rid = e["receipt_id"]
@@ -371,13 +717,18 @@ def build_ap_statement(db: Session, vendor_id: int) -> dict:
                 "created_at": e["created_at"],
                 "created_by_name": e["created_by_name"],
                 "running_balance_after": e["running_balance"],
+                "reversed": e["id"] in reversed_ids,
             })
 
     # Refresh DN totals / net from nested notes
     for bill in bills_by_receipt.values():
-        dn_sum = sum(Decimal(d.get("payable_effect") or "0") for d in bill["debit_notes"])
+        # sum() of empty iterable returns 0 (int) — keep Decimal for .quantize
+        dn_sum = sum(
+            (Decimal(str(d.get("payable_effect") or "0")) for d in bill["debit_notes"]),
+            Decimal("0"),
+        )
         bill["debit_note_total"] = format(dn_sum.quantize(Decimal("0.01")), "f")
-        bill_amt = Decimal(bill.get("bill_amount") or "0")
+        bill_amt = Decimal(str(bill.get("bill_amount") or "0"))
         bill["net_payable"] = format((bill_amt + dn_sum).quantize(Decimal("0.01")), "f")
 
     bills = sorted(bills_by_receipt.values(), key=lambda b: b["created_at"] or "", reverse=True)

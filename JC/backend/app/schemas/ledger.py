@@ -14,6 +14,8 @@ class LedgerLineDetail(BaseModel):
     quantity_billed: Optional[int] = None
     billed_amount: Optional[str] = None
     buying_price: Optional[str] = None
+    unit_price: Optional[str] = None
+    selling_price: Optional[str] = None
 
 
 class EntityLedgerEntry(BaseModel):

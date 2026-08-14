@@ -28,12 +28,12 @@ def get_or_create_open_order(db: Session, vendor_id: int, bucket: str, status: s
     order = get_open_order(db, vendor_id, bucket)
     if order:
         return order
-    order = VendorOrder(vendor_id=vendor_id, bucket=bucket, status=status, is_open=True)
-    db.add(order)
     try:
-        db.flush()
+        with db.begin_nested():
+            order = VendorOrder(vendor_id=vendor_id, bucket=bucket, status=status, is_open=True)
+            db.add(order)
+            db.flush()
     except IntegrityError:
-        db.rollback()
         order = get_open_order(db, vendor_id, bucket)
         if not order:
             raise
@@ -52,7 +52,12 @@ def add_stock(
     party: str | None = None,
     notes: str | None = None,
 ) -> StockBalance:
-    balance = db.query(StockBalance).filter(StockBalance.catalog_product_id == catalog_product_id).first()
+    balance = (
+        db.query(StockBalance)
+        .filter(StockBalance.catalog_product_id == catalog_product_id)
+        .with_for_update()
+        .first()
+    )
     if not balance:
         balance = StockBalance(catalog_product_id=catalog_product_id, quantity_on_hand=0)
         db.add(balance)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import List, Optional
 
@@ -23,6 +23,8 @@ class ApLedgerEntryOut(BaseModel):
     bill_amount: Optional[str] = None
     debit_note_total: Optional[str] = None
     net_payable: Optional[str] = None
+    value_date: Optional[str] = None
+    reverses_entry_id: Optional[int] = None
     created_by_name: str
     created_at: datetime
     details: dict = {}
@@ -31,7 +33,14 @@ class ApLedgerEntryOut(BaseModel):
 class ApVendorSummary(BaseModel):
     vendor_id: int
     vendor_label: str
+    business_name: str = ""
+    person_name: Optional[str] = None
+    alias: Optional[str] = None
+    phone: Optional[str] = None
+    city_name: Optional[str] = None
     outstanding: str
+    opening_total: str = "0.00"
+    opening_as_on: Optional[str] = None
     bill_total: str
     debit_note_total: str
     payment_total: str
@@ -43,6 +52,8 @@ class ApVendorDetail(BaseModel):
     vendor_id: int
     vendor_label: str
     outstanding: str
+    opening_total: str = "0.00"
+    opening_as_on: Optional[str] = None
     bill_total: str
     debit_note_total: str
     payment_total: str
@@ -56,3 +67,8 @@ class ApSettlementIn(BaseModel):
     amount: Decimal = Field(..., gt=0)
     payment_receipt_key: Optional[str] = None
     comment: Optional[str] = None
+
+
+class OpeningBalanceIn(BaseModel):
+    amount: Decimal = Field(..., ge=0)
+    as_on: date

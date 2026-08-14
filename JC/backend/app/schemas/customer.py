@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
@@ -13,10 +13,13 @@ class CustomerCreate(BaseModel):
     secondary_phone: Optional[str] = Field(None, max_length=32)
     alias: Optional[str] = Field(None, max_length=200)
     address: Optional[str] = None
+    additional_details: Optional[str] = None
     city_id: Optional[int] = None
     credit_limit: Optional[float] = None
     credit_override: bool = False
     gst_number: Optional[str] = Field(None, max_length=20)
+    opening_balance_due: Optional[float] = Field(None, ge=0)
+    opening_balance_as_on: Optional[date] = None
 
 
 class CustomerUpdate(BaseModel):
@@ -26,11 +29,14 @@ class CustomerUpdate(BaseModel):
     secondary_phone: Optional[str] = Field(None, max_length=32)
     alias: Optional[str] = Field(None, max_length=200)
     address: Optional[str] = None
+    additional_details: Optional[str] = None
     city_id: Optional[int] = None
     credit_limit: Optional[float] = None
     credit_override: Optional[bool] = None
     gst_number: Optional[str] = Field(None, max_length=20)
     is_active: Optional[bool] = None
+    opening_balance_due: Optional[float] = Field(None, ge=0)  # TEMP correction
+    opening_balance_as_on: Optional[date] = None  # TEMP correction
 
 
 class CustomerPublic(BaseModel):
@@ -41,6 +47,7 @@ class CustomerPublic(BaseModel):
     secondary_phone: Optional[str]
     alias: Optional[str]
     address: Optional[str]
+    additional_details: Optional[str] = None
     city_id: Optional[int]
     route_id: Optional[int]
     city_name: Optional[str] = None
@@ -49,6 +56,8 @@ class CustomerPublic(BaseModel):
     credit_override: bool
     gst_number: Optional[str]
     is_active: bool
+    opening_balance_due: Optional[str] = None
+    opening_balance_as_on: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     deleted_at: Optional[datetime] = None
@@ -68,6 +77,7 @@ class CityUpdate(BaseModel):
 class CustomerCreateResponse(CustomerPublic):
     whatsapp_sent: bool = False
     whatsapp_error: Optional[str] = None
+    portal_password: Optional[str] = None  # plain password only at create/reset time
 
 
 class LoginRequest(BaseModel):

@@ -18,8 +18,8 @@ class CatalogProductPublic(BaseModel):
     series: Optional[str]
     unit: Optional[str]
     year_group: Optional[str]
-    buying_price: str
-    selling_price: Optional[str]
+    buying_price: Optional[str] = None
+    selling_price: Optional[str] = None
     image_keys: List[str]
     image_urls: List[str] = []
     is_active: bool
@@ -98,12 +98,20 @@ class VendorOption(BaseModel):
     is_active: bool
 
 
+class CheckDuplicateItem(BaseModel):
+    our_product_id: str
+    year_group: Optional[str] = None
+
+
 class CheckDuplicatesRequest(BaseModel):
-    our_product_ids: List[str] = Field(..., min_length=1)
+    """Pass items (SKU + year) preferred. our_product_ids kept for older clients."""
+    items: List[CheckDuplicateItem] = Field(default_factory=list)
+    our_product_ids: List[str] = Field(default_factory=list)
 
 
 class CheckDuplicatesResponse(BaseModel):
-    duplicates: List[str] = []
+    duplicates: List[str] = []  # "SKU" or "SKU|year_group"
+
 
 
 class CatalogUpdate(BaseModel):

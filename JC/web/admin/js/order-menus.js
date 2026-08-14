@@ -42,7 +42,10 @@ const OrderMenus = (() => {
     const footer = document.getElementById("close-order-footer");
     if (!body || !footer) return;
     if (!closeItems.length) {
-      body.innerHTML = `<div class="empty-state"><p>Nothing to close in this view.</p></div>`;
+      body.innerHTML = (typeof HubUI !== "undefined" ? HubUI.emptyState : OrdersUI.emptyState)({
+        title: "Nothing to close",
+        sub: "Nothing to close in this view.",
+      });
       footer.innerHTML = `<button class="btn btn-secondary" onclick="OrderMenus.closeBatch()">Close</button>`;
       return;
     }

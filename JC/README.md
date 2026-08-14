@@ -20,7 +20,7 @@ cd JC && chmod +x run-local.sh && ./run-local.sh
 - Full CRUD: Routes, Cities, Customers (create/edit/delete)
 - City → Route mapping (one city, one route; route has many cities)
 - Customer wizard: 3-step flow with review + success screen
-- Password = last 4 digits of phone
+- Password = unique code sent on WhatsApp (not phone last-4)
 - WhatsApp via `account_creation_confirmation_3` template
 - Admin can reset password / resend WhatsApp
 - Customer portal login (no self-registration)

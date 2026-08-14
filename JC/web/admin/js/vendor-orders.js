@@ -1,17 +1,18 @@
-/** Vendor orders — summary / open / placed / billed / cancelled / closed */
+/** Vendor orders — Today/Past date scope + same stage chips */
 const VendorOrders = (() => {
   let ctx = {};
   let orders = [];
   let currentOrder = null;
   let openOrder = null;
   let closedLines = [];
-  let currentBucket = "summary";
+  let currentBucket = "placed"; // same stages for Today + Past
+  let hubMode = "queue"; // queue (Today) | past — date scope only
+  let hubSearch = "";
   let showSummary = false;
   let orderSummary = null;
   let summaryDrill = null;
   let detailVendorId = null;
   let expandedProductId = null;
-  let expandedOrderProductId = null;
   let expandedPlacementId = null;
   let expandedClosedId = null;
   let hubExpandedVendorId = null;
@@ -24,54 +25,144 @@ const VendorOrders = (() => {
   let wizardProductSearch = "";
   let wizardVendorSearch = "";
   let wizardVendorsCache = [];
+  let wizardPlacedOn = "";
   let editingOpenLine = null;
   let vendorProductsCache = [];
 
+  function localToday() {
+    const n = new Date();
+    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
+  }
+
   const STEP_LABELS = ["Vendor", "Products", "Review"];
   const PLACEMENT_COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#06b6d4", "#84cc16"];
-  const BUCKETS = ["summary", "open", "placed", "billed", "cancelled", "closed"];
+  const PAST_BUCKETS = ["placed", "received", "billed", "cancelled", "closed"];
+  const BROWSE_BUCKETS = PAST_BUCKETS; // legacy alias
   const BUCKET_LABELS = {
-    summary: "Order Summary",
-    open: "Open",
-    placed: "Placed",
+    needs_action: "Today",
+    queue: "Today",
+    open: "To receive",
+    placed: "To receive",
+    received: "To bill",
     billed: "Billed",
     cancelled: "Cancelled",
     closed: "Closed",
   };
-  const ACTION_LABELS = { open: "Bill Order", billed: "Close Order" };
+
+  function isTodayMode() {
+    return hubMode === "queue" || hubMode === "needs_action" || hubMode === "today";
+  }
+
+  function dayParam() {
+    return isTodayMode() ? "today" : "all";
+  }
+
+  function isQueueMode() {
+    return isTodayMode();
+  }
+
+  function openKindOf(o) {
+    return o.open_kind || (o.status === "to_bill" ? "to_bill" : "to_receive");
+  }
 
   function init(context) { ctx = context; }
 
   function syncBucketButtons(bucket, barId) {
-    const bar = document.getElementById(barId);
-    if (!bar) return;
-    bar.querySelectorAll("[data-bucket]").forEach(btn => {
-      const on = btn.getAttribute("data-bucket") === bucket;
-      btn.classList.toggle("active", on);
-      btn.classList.toggle("prod-tab", btn.classList.contains("prod-tab") || bar.classList.contains("prod-tabs"));
-    });
+    OrdersUI.syncStageChips(`#${barId}`, bucket);
   }
 
   function updateBucketTabs(active, prefix = "vo-bucket") {
     syncBucketButtons(active, prefix === "vo-detail-bucket" ? "vo-detail-buckets" : "vo-hub-buckets");
   }
 
+  function syncHubChrome() {
+    const chips = document.getElementById("vo-hub-buckets");
+    const actionHost = document.getElementById("vo-action-chips");
+    const today = isTodayMode();
+    chips?.classList.remove("hidden");
+    OrdersUI.syncModeButtons("#vo-hub-mode", today ? "queue" : "past");
+    OrdersUI.syncStageChips("#vo-hub-buckets", currentBucket);
+    if (actionHost) {
+      actionHost.innerHTML = "";
+      actionHost.classList.add("hidden");
+    }
+    const title = document.getElementById("orders-list-title");
+    if (title) {
+      const stage = BUCKET_LABELS[currentBucket] || "Orders";
+      title.textContent = today ? `Today · ${stage}` : stage;
+    }
+    const searchSlot = document.getElementById("vo-hub-search-slot");
+    if (searchSlot) {
+      searchSlot.innerHTML = HubUI.searchBar({
+        id: "vo-hub-search",
+        value: hubSearch,
+        placeholder: "Search vendor…",
+        oninput: "VendorOrders.setHubSearch(this.value)",
+      });
+    }
+  }
+
+  function updateDetailPrimary() {
+    const btn = document.getElementById("vo-detail-primary-btn");
+    if (!btn) return;
+    const can = !!ctx.canWrite?.("vendor_orders");
+    let label = "";
+    let onclick = "";
+    if (currentBucket === "placed" || currentBucket === "open") {
+      label = "Receive";
+      onclick = "VendorOrders.receiveOrder()";
+    } else if (currentBucket === "received") {
+      label = "Bill";
+      onclick = "VendorOrders.billOrder()";
+    } else if (currentBucket === "billed") {
+      label = "Close";
+      onclick = "VendorOrders.openCloseBatch(VendorOrders._detailVendorId())";
+    }
+    const show = can && !!label;
+    btn.classList.toggle("hidden", !show);
+    if (show) {
+      btn.textContent = label;
+      btn.setAttribute("onclick", onclick);
+    }
+  }
+
   function updateActionButtons(view) {
-    const isDetail = view === "detail";
-    const hubBtn = document.getElementById("vo-hub-action-btn");
-    const detailBtn = document.getElementById("vo-detail-action-btn");
-    const label = ACTION_LABELS[currentBucket];
-    const hideHubOpen = currentBucket === "open" && !isDetail;
-    [hubBtn, detailBtn].forEach(btn => {
-      if (!btn) return;
-      const show = !!label && ctx.canWrite?.("vendor_orders") && !(hideHubOpen && btn === hubBtn);
-      btn.classList.toggle("hidden", !show || (isDetail ? btn !== detailBtn : btn !== hubBtn));
-      if (show && ((isDetail && btn === detailBtn) || (!isDetail && btn === hubBtn))) {
-        btn.textContent = label;
-      }
-    });
-    if (isDetail) hubBtn?.classList.add("hidden");
-    else detailBtn?.classList.add("hidden");
+    if (view === "detail") updateDetailPrimary();
+  }
+
+  function setHubMode(mode) {
+    if (mode === "browse" || mode === "past") hubMode = "past";
+    else hubMode = "queue";
+    if (!PAST_BUCKETS.includes(currentBucket)) currentBucket = "placed";
+    hubExpandedVendorId = null;
+    hubExpandedPlacementId = null;
+    hubExpandCache = {};
+    hubSearch = "";
+    syncHubChrome();
+    loadList();
+  }
+
+  function setQueueFilter() {
+    /* removed — Today/Past share stage chips */
+  }
+
+  function setHubSearch(val) {
+    hubSearch = val || "";
+    hubExpandedVendorId = null;
+    renderList();
+  }
+
+  function filterHubOrders(list) {
+    return OrdersUI.filterAndRankParties(
+      (list || []).map(o => ({
+        ...o,
+        business_name: o.vendor_name || String(o.vendor_label || "").split("—")[0].trim() || o.vendor_label || "",
+        city_name: o.city_name || (String(o.vendor_label || "").includes("—")
+          ? String(o.vendor_label).split("—").slice(1).join("—").trim()
+          : ""),
+      })),
+      hubSearch,
+    );
   }
 
   function vendorLabel(v) {
@@ -142,119 +233,29 @@ const VendorOrders = (() => {
     return `<div class="${cls}"><span>${kind === "cancel" ? "Cancel note" : "Close note"}</span>${ctx.esc(text)}</div>`;
   }
 
-  function updateBucketTabs(active, prefix = "vo-bucket") {
-    syncBucketButtons(active, prefix === "vo-detail-bucket" ? "vo-detail-buckets" : "vo-hub-buckets");
-  }
-
   function setBucket(bucket) {
-    currentBucket = bucket;
-    showSummary = bucket === "summary";
+    // Stage only — do not flip Today/Past
+    currentBucket = PAST_BUCKETS.includes(bucket) ? bucket : "placed";
+    showSummary = false;
     hubExpandedVendorId = null;
     hubExpandedPlacementId = null;
     hubExpandCache = {};
-    syncBucketButtons(bucket, "vo-hub-buckets");
-    const title = document.getElementById("orders-list-title");
-    if (title) title.textContent = BUCKET_LABELS[bucket] || "Orders";
-    updateActionButtons("hub");
+    hubSearch = "";
+    syncHubChrome();
     loadList();
   }
 
   async function loadList() {
     ctx.showLoading?.();
     try {
-      if (currentBucket === "summary") {
-        const [openRows, placedRows, billedRows] = await Promise.all([
-          ctx.api("/vendor-orders?bucket=open", {}, 0).catch(() => []),
-          ctx.api("/vendor-orders?bucket=placed", {}, 0).catch(() => []),
-          ctx.api("/vendor-orders?bucket=billed", {}, 0).catch(() => []),
-        ]);
-        const byVendor = new Map();
-        const touch = (row, key) => {
-          if (!row?.vendor_id) return;
-          const cur = byVendor.get(row.vendor_id) || {
-            vendor_id: row.vendor_id,
-            vendor_label: row.vendor_label,
-            open_qty: 0,
-            open_lines: 0,
-            placed_qty: 0,
-            placed_lines: 0,
-            placed_placements: 0,
-            billed_placements: 0,
-            billed_qty: 0,
-            updated_at: row.updated_at,
-            placed_order_id: 0,
-          };
-          cur.vendor_label = row.vendor_label || cur.vendor_label;
-          if (key === "open") {
-            cur.open_qty = row.total_quantity || 0;
-            cur.open_lines = row.line_count || 0;
-            if (row.id) cur.placed_order_id = row.id;
-          } else if (key === "placed") {
-            cur.placed_qty = row.total_quantity || 0;
-            cur.placed_lines = row.line_count || 0;
-            cur.placed_placements = row.placement_count || 0;
-            cur.placed_order_id = row.id || cur.placed_order_id;
-          } else if (key === "billed") {
-            cur.billed_placements = row.placement_count || 0;
-            cur.billed_qty = row.total_quantity || 0;
-          }
-          if (row.updated_at && (!cur.updated_at || new Date(row.updated_at) > new Date(cur.updated_at))) {
-            cur.updated_at = row.updated_at;
-          }
-          byVendor.set(row.vendor_id, cur);
-        };
-        (openRows || []).forEach(r => touch(r, "open"));
-        (placedRows || []).forEach(r => touch(r, "placed"));
-        (billedRows || []).forEach(r => touch(r, "billed"));
-        orders = [...byVendor.values()].sort((a, b) => String(a.vendor_label || "").localeCompare(String(b.vendor_label || "")));
-        renderSummaryHub();
-        return;
-      }
-      orders = await ctx.api(`/vendor-orders?bucket=${currentBucket}`, {}, 0);
+      if (!PAST_BUCKETS.includes(currentBucket)) currentBucket = "placed";
+      const day = dayParam();
+      orders = await ctx.api(`/vendor-orders?bucket=${currentBucket}&day=${day}`, {}, 0);
+      if (!Array.isArray(orders)) orders = [];
+      syncHubChrome();
       renderList();
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
-  }
-
-  function renderSummaryHub() {
-    const el = document.getElementById("orders-list");
-    if (!el) return;
-    if (!orders.length) {
-      el.innerHTML = `<div class="empty-state prod-empty">
-        <p class="prod-empty-title">No vendor orders yet</p>
-        <p class="prod-empty-sub">Place an order to see the live picture here.</p>
-        ${ctx.canWrite?.("vendor_orders") ? `<button class="btn btn-primary btn-lg" onclick="VendorOrders.showCreateMenu()">+ Create Order</button>` : ""}
-      </div>`;
-      return;
-    }
-    const canWrite = ctx.canWrite?.("vendor_orders");
-    el.innerHTML = `
-      <p class="vo-list-hint">Live picture across Open, Placed, and Billed — tap a vendor for product-level detail.</p>
-      <table class="data"><thead><tr>
-        <th>Vendor</th>
-        <th>Pending (Open)</th>
-        <th>Placed</th>
-        <th>Billed</th>
-        <th>Updated</th>
-        ${canWrite ? "<th></th>" : ""}
-      </tr></thead><tbody>
-        ${orders.map(o => {
-          const pending = o.open_qty || 0;
-          const placed = o.placed_qty || 0;
-          const billed = o.billed_placements || 0;
-          return `<tr class="clickable" onclick="VendorOrders.openDetail(${o.placed_order_id || 0}, 'summary', ${o.vendor_id})">
-            <td><strong>${ctx.esc(o.vendor_label)}</strong></td>
-            <td>${pending ? `<strong>${pending}</strong> <span class="vo-muted">· ${o.open_lines || 0} lines</span>` : `<span class="vo-muted">—</span>`}</td>
-            <td>${placed ? `<strong>${placed}</strong> <span class="vo-muted">· ${o.placed_placements || 0} drops</span>` : `<span class="vo-muted">—</span>`}</td>
-            <td>${billed ? `<strong>${billed}</strong> <span class="vo-muted">bills · ${o.billed_qty || 0} qty</span>` : `<span class="vo-muted">—</span>`}</td>
-            <td class="vo-muted">${o.updated_at ? new Date(o.updated_at).toLocaleString() : "—"}</td>
-            ${canWrite ? `<td class="vo-row-actions" onclick="event.stopPropagation()">
-              ${pending ? `<button class="btn btn-primary btn-sm" onclick="VendorOrders.billVendor(${o.vendor_id})">Bill</button>` : ""}
-              <button class="btn btn-secondary btn-sm" onclick="VendorOrders.openDetail(${o.placed_order_id || 0}, 'summary', ${o.vendor_id})">View</button>
-            </td>` : ""}
-          </tr>`;
-        }).join("")}
-      </tbody></table>`;
   }
 
   function showHub() {
@@ -265,56 +266,64 @@ const VendorOrders = (() => {
     closedLines = [];
     detailVendorId = null;
     expandedProductId = null;
-    expandedOrderProductId = null;
     expandedPlacementId = null;
     expandedClosedId = null;
     hubExpandedVendorId = null;
     hubExpandedPlacementId = null;
     hubExpandCache = {};
     orderSummary = null;
-    setBucket(currentBucket);
+    if (!PAST_BUCKETS.includes(currentBucket)) currentBucket = "placed";
+    syncHubChrome();
+    loadList();
+    App.updateGlobalBack?.();
+  }
+
+  function filterQueueList(list) {
+    return list;
   }
 
   function renderList() {
     const el = document.getElementById("orders-list");
     if (!el) return;
-    const canWrite = ctx.canWrite?.("vendor_orders");
-    if (!orders.length) {
-      el.innerHTML = `<div class="vo-empty"><div class="vo-empty-icon">◇</div><p>No ${BUCKET_LABELS[currentBucket] || currentBucket} yet.</p>
-        ${canWrite && currentBucket === "open" ? `<button class="btn btn-primary" onclick="VendorOrders.showCreateMenu()">+ Create Order</button>` : ""}</div>`;
+    const canWrite = !!ctx.canWrite?.("vendor_orders");
+    const list = filterQueueList(filterHubOrders(orders));
+    const stage = BUCKET_LABELS[currentBucket] || "orders";
+    const today = isTodayMode();
+
+    if (!list.length) {
+      el.innerHTML = OrdersUI.emptyState({
+        title: today ? `No ${stage} today` : `No ${stage}`,
+        sub: today
+          ? "Switch to Past for older dates. Same stages there."
+          : "Try another stage, or create an order.",
+        ctaHtml: canWrite
+          ? `<button class="btn btn-primary" onclick="VendorOrders.showCreateMenu()">+ New vendor order</button>`
+          : "",
+      });
       return;
     }
-    if (currentBucket === "open") {
-      el.innerHTML = `
-        <p class="vo-list-hint">Yet to bill — expand a vendor for items, then Bill or Cancel.</p>
-        <div class="vo-hub-list">${orders.map(o => renderOpenHubCard(o, canWrite)).join("")}</div>`;
-      return;
-    }
+
     if (currentBucket === "placed") {
-      el.innerHTML = `
-        <p class="vo-list-hint">Record of what you placed with each vendor. Quantities stay fixed — even after billing or cancel.</p>
-        <div class="vo-hub-list">${orders.map(o => renderPlacedHubCard(o, canWrite)).join("")}</div>`;
+      el.innerHTML = `<div class="ord-hub-list">${list.map(o => renderPlacedHubCard(o, canWrite)).join("")}</div>`;
+      return;
+    }
+    if (currentBucket === "received") {
+      el.innerHTML = `<div class="ord-hub-list">${list.map(o => renderReceivedHubCard(o, canWrite)).join("")}</div>`;
       return;
     }
     if (currentBucket === "billed") {
-      el.innerHTML = `
-        <p class="vo-list-hint">Billed shipments — expand for amounts, receipt, vendor bill, debit notes. Close after payment.</p>
-        <div class="vo-hub-list">${orders.map(o => renderBilledHubCard(o, canWrite)).join("")}</div>`;
+      el.innerHTML = `<div class="ord-hub-list">${list.map(o => renderBilledHubCard(o, canWrite)).join("")}</div>`;
       return;
     }
     if (currentBucket === "cancelled") {
-      el.innerHTML = `
-        <p class="vo-list-hint">Cancelled history with notes — expand for placement details.</p>
-        <div class="vo-hub-list">${orders.map(o => renderNoteHubCard(o, "cancelled", canWrite)).join("")}</div>`;
+      el.innerHTML = `<div class="ord-hub-list">${list.map(o => renderNoteHubCard(o, "cancelled", canWrite)).join("")}</div>`;
       return;
     }
     if (currentBucket === "closed") {
-      el.innerHTML = `
-        <p class="vo-list-hint">Manually closed after payment — expand to see close notes.</p>
-        <div class="vo-hub-list">${orders.map(o => renderNoteHubCard(o, "closed", canWrite)).join("")}</div>`;
+      el.innerHTML = `<div class="ord-hub-list">${list.map(o => renderNoteHubCard(o, "closed", canWrite)).join("")}</div>`;
       return;
     }
-    el.innerHTML = `<div class="empty-state"><p>Unknown bucket.</p></div>`;
+    el.innerHTML = OrdersUI.emptyState({ title: "Unknown stage", sub: "Pick a stage above." });
   }
 
   function hubChevron(open) {
@@ -322,26 +331,34 @@ const VendorOrders = (() => {
   }
 
   function renderOpenHubCard(o, canWrite) {
-    const open = hubExpandedVendorId === o.vendor_id;
-    const cache = hubExpandCache[`open-${o.vendor_id}`];
-    return `<div class="vo-hub-card ${open ? "is-open" : ""}">
-      <div class="vo-hub-row" onclick="VendorOrders.toggleHubVendor(${o.vendor_id}, 'open')">
-        <div class="vo-hub-main">
-          ${hubChevron(open)}
-          <div>
-            <div class="vo-hub-title">${ctx.esc(o.vendor_label)}</div>
-            <div class="vo-hub-meta">${o.line_count} products · <strong>${o.total_quantity}</strong> pending</div>
-          </div>
-        </div>
-        ${canWrite ? `<div class="vo-hub-actions" onclick="event.stopPropagation()">
-          <button class="btn btn-primary btn-sm" onclick="VendorOrders.billVendor(${o.vendor_id})">Bill Order</button>
-          <button class="btn btn-danger btn-sm" onclick="VendorOrders.cancelVendorOpen(${o.vendor_id})">Cancel</button>
-        </div>` : ""}
-      </div>
-      ${open ? `<div class="vo-hub-expand" id="vo-hub-expand-${o.vendor_id}">
-        ${cache ? renderOpenExpand(cache, canWrite) : `<p class="vo-muted" style="margin:0;padding:8px 0;">Loading…</p>`}
-      </div>` : ""}
-    </div>`;
+    const kind = openKindOf(o);
+    const isBill = kind === "to_bill";
+    const expandKey = isBill ? `open-bill-${o.vendor_id}` : `open-${o.vendor_id}`;
+    const open = hubExpandedVendorId === `${kind}-${o.vendor_id}`;
+    const cache = hubExpandCache[expandKey];
+    const primaryOnclick = isBill ? `VendorOrders.billVendor(${o.vendor_id})` : `VendorOrders.receiveVendor(${o.vendor_id})`;
+    const more = [
+      { label: open ? "Hide lines" : "Show lines", onclick: `VendorOrders.toggleHubVendor(${o.vendor_id}, '${isBill ? "open-bill" : "open"}', ${o.id || 0})` },
+      { label: "Open vendor", onclick: `VendorOrders.openDetail(${o.id || 0}, '${isBill ? "received" : "placed"}', ${o.vendor_id})` },
+    ];
+    if (!isBill && canWrite) {
+      more.push({ label: "Cancel Order", onclick: `VendorOrders.cancelVendorOpen(${o.vendor_id})`, danger: true });
+    }
+    return OrdersUI.partyCard({
+      title: o.vendor_label,
+      meta: `${o.line_count} products · <strong>${o.total_quantity}</strong> ${isBill ? "to bill" : "to receive"}`,
+      pillHtml: OrdersUI.pill(isBill ? "To bill" : "To receive", isBill ? "info" : "warn"),
+      primaryLabel: isBill ? "Bill vendor" : "Receive goods",
+      primaryOnclick,
+      moreItems: more,
+      open,
+      // One click: row runs the next action; lines via More → Show lines
+      rowOnclick: canWrite ? primaryOnclick : `VendorOrders.openDetail(${o.id || 0}, '${isBill ? "received" : "placed"}', ${o.vendor_id})`,
+      canWrite,
+      expandHtml: open
+        ? `<div id="vo-hub-expand-${kind}-${o.vendor_id}">${cache ? (isBill ? renderOpenBillExpand(cache, canWrite) : renderOpenExpand(cache, canWrite)) : `<p class="vo-muted" style="margin:0;padding:8px 0;">Loading…</p>`}</div>`
+        : "",
+    });
   }
 
   function renderOpenExpand(detail, canWrite) {
@@ -361,31 +378,99 @@ const VendorOrders = (() => {
       }).join("")}
     </tbody></table>
     ${canWrite ? `<div class="vo-hub-expand-actions">
-      <button class="btn btn-primary" onclick="VendorOrders.billVendor(${detail.vendor_id})">Bill Order</button>
+      <button class="btn btn-primary" onclick="VendorOrders.receiveVendor(${detail.vendor_id})">Receive Order</button>
       <button class="btn btn-danger" onclick="VendorOrders.cancelVendorOpen(${detail.vendor_id})">Cancel Order</button>
+    </div>` : ""}`;
+  }
+
+  function renderOpenBillExpand(detail, canWrite) {
+    const lines = detail.lines || [];
+    if (!lines.length) return `<p class="vo-muted" style="margin:0;">Nothing to bill.</p>`;
+    return `<table class="data vo-hub-table"><thead><tr>
+      <th></th><th>Product</th><th>Unbilled</th><th>Price</th>
+    </tr></thead><tbody>
+      ${lines.map(l => {
+        const img = (l.image_urls && l.image_urls[0]) || "";
+        return `<tr>
+          <td>${thumb(img, "vo-thumb-sm")}</td>
+          <td><strong>${ctx.esc(l.our_product_id)}</strong></td>
+          <td><strong>${l.quantity_unbilled ?? l.quantity}</strong></td>
+          <td>${fmtPrice(l.buying_price)}</td>
+        </tr>`;
+      }).join("")}
+    </tbody></table>
+    ${canWrite ? `<div class="vo-hub-expand-actions">
+      <button class="btn btn-primary" onclick="VendorOrders.billVendor(${detail.vendor_id})">Bill Order</button>
     </div>` : ""}`;
   }
 
   function renderPlacedHubCard(o, canWrite) {
     const open = hubExpandedVendorId === o.vendor_id;
     const cache = hubExpandCache[`placed-${o.vendor_id}`];
-    return `<div class="vo-hub-card ${open ? "is-open" : ""}">
-      <div class="vo-hub-row" onclick="VendorOrders.toggleHubVendor(${o.vendor_id}, 'placed', ${o.id})">
-        <div class="vo-hub-main">
-          ${hubChevron(open)}
+    return OrdersUI.partyCard({
+      title: o.vendor_label,
+      meta: `${o.placement_count} placements · ${o.line_count} lines · <strong>${o.total_quantity}</strong> placed`,
+      pillHtml: OrdersUI.pill("Placed", "muted"),
+      primaryLabel: "Receive",
+      primaryOnclick: `VendorOrders.receiveVendor(${o.vendor_id})`,
+      moreItems: [
+        { label: "View vendor", onclick: `VendorOrders.openDetail(${o.id || 0}, 'placed', ${o.vendor_id})` },
+      ],
+      open,
+      rowOnclick: `VendorOrders.toggleHubVendor(${o.vendor_id}, 'placed', ${o.id})`,
+      canWrite,
+      expandHtml: open
+        ? `<div id="vo-hub-expand-${o.vendor_id}">${cache ? renderPlacedExpand(cache, canWrite) : `<p class="vo-muted" style="margin:0;padding:8px 0;">Loading…</p>`}</div>`
+        : "",
+    });
+  }
+
+  function renderReceivedHubCard(o, canWrite) {
+    const open = hubExpandedVendorId === o.vendor_id;
+    const cache = hubExpandCache[`received-${o.vendor_id}`];
+    return OrdersUI.partyCard({
+      title: o.vendor_label,
+      meta: `${o.placement_count} receives · ${o.line_count} lines · <strong>${o.total_quantity}</strong> received`,
+      pillHtml: OrdersUI.pill("Unbilled", "info"),
+      primaryLabel: "Bill",
+      primaryOnclick: `VendorOrders.billVendor(${o.vendor_id})`,
+      moreItems: [
+        { label: "View vendor", onclick: `VendorOrders.openDetail(${o.id || 0}, 'received', ${o.vendor_id})` },
+      ],
+      open,
+      rowOnclick: `VendorOrders.toggleHubVendor(${o.vendor_id}, 'received', ${o.id})`,
+      canWrite,
+      expandHtml: open
+        ? `<div id="vo-hub-expand-${o.vendor_id}">${cache ? renderReceivedExpand(cache, canWrite) : `<p class="vo-muted" style="margin:0;padding:8px 0;">Loading…</p>`}</div>`
+        : "",
+    });
+  }
+
+  function renderReceivedExpand(order, canWrite) {
+    const placements = (order.placements || []).slice().sort((a, b) => new Date(b.placed_at) - new Date(a.placed_at));
+    if (!placements.length) return `<p class="vo-muted" style="margin:0;">No receives yet.</p>`;
+    return placements.map(p => {
+      const lines = (order.aggregated_lines || [])
+        .flatMap(al => (al.breakdown || []).filter(b => b.placement_id === p.id).map(b => ({ ...b, our_product_id: al.our_product_id })));
+      const plines = lines.length ? lines : [];
+      return `<div class="vo-nested-card" style="margin-bottom:10px;">
+        <div class="vo-hub-main" style="justify-content:space-between;width:100%;">
           <div>
-            <div class="vo-hub-title">${ctx.esc(o.vendor_label)}</div>
-            <div class="vo-hub-meta">${o.placement_count} placements · ${o.line_count} lines · <strong>${o.total_quantity}</strong> placed</div>
+            <div class="vo-hub-title" style="font-size:14px;">${p.order_receipt_number ? `Receipt ${ctx.esc(p.order_receipt_number)}` : "Receive"} · ${new Date(p.placed_at).toLocaleString()}</div>
+            <div class="vo-hub-meta">${p.line_count} lines · ${p.total_quantity || "—"} qty${p.notes ? ` · ${ctx.esc(p.notes)}` : ""}</div>
           </div>
+          ${canWrite && p.receipt_id ? `<div class="vo-hub-actions" onclick="event.stopPropagation()">
+            <button class="btn btn-secondary btn-sm" onclick="Stock.openEditReceipt(${p.receipt_id})">Edit</button>
+          </div>` : ""}
         </div>
-        <div class="vo-hub-actions" onclick="event.stopPropagation()">
-          <span class="vo-muted">${new Date(o.updated_at).toLocaleDateString()}</span>
-        </div>
-      </div>
-      ${open ? `<div class="vo-hub-expand" id="vo-hub-expand-${o.vendor_id}">
-        ${cache ? renderPlacedExpand(cache, canWrite) : `<p class="vo-muted" style="margin:0;padding:8px 0;">Loading…</p>`}
-      </div>` : ""}
-    </div>`;
+        ${plines.length ? `<table class="data vo-hub-table"><thead><tr><th>Product</th><th>Qty</th><th>Unbilled</th></tr></thead><tbody>
+          ${plines.map(l => `<tr><td>${ctx.esc(l.our_product_id)}</td><td>${l.quantity}</td><td>${l.quantity_remaining != null ? l.quantity_remaining : "—"}</td></tr>`).join("")}
+        </tbody></table>` : ""}
+        ${p.bill_file_url ? `<p style="margin:8px 0 0;"><a class="btn btn-secondary btn-sm" href="${ctx.esc(p.bill_file_url)}" target="_blank" rel="noopener">View receipt file</a></p>` : ""}
+      </div>`;
+    }).join("") + (canWrite ? `<div class="vo-hub-expand-actions">
+      <button class="btn btn-primary" onclick="VendorOrders.billVendor(${order.vendor_id})">Bill Order</button>
+    </div>` : "");
   }
 
   function renderPlacedExpand(order, canWrite) {
@@ -407,15 +492,15 @@ const VendorOrders = (() => {
           </div>
           <div class="vo-hub-actions" onclick="event.stopPropagation()">
             <button class="btn btn-secondary btn-sm" onclick="VendorOrders.openPlacementDoc(${p.id})">Order PDF</button>
-            ${canWrite && !cancelled ? `<button class="btn btn-danger btn-sm" onclick="VendorOrders.cancelPlacement(${p.id})">Cancel</button>` : ""}
+            ${canWrite && !cancelled ? `<button class="btn btn-danger btn-sm" onclick="VendorOrders.cancelPlacement(${p.id})">Cancel Order</button>` : ""}
           </div>
         </div>
-        ${pOpen ? `<div class="vo-nested-expand">${renderPlacementLines(order, p.id)}</div>` : ""}
+        ${pOpen ? `<div class="vo-nested-expand">${renderPlacementLines(order, p.id, canWrite && !cancelled)}</div>` : ""}
       </div>`;
     }).join("")}</div>`;
   }
 
-  function renderPlacementLines(order, placementId) {
+  function renderPlacementLines(order, placementId, canEdit = false) {
     const lines = [];
     for (const agg of order.aggregated_lines || []) {
       for (const b of agg.breakdown || []) {
@@ -425,12 +510,16 @@ const VendorOrders = (() => {
       }
     }
     if (!lines.length) return `<p class="vo-muted" style="margin:0;">No lines.</p>`;
-    return `<table class="data vo-hub-table"><thead><tr><th></th><th>Product</th><th>Qty</th><th>Price</th></tr></thead><tbody>
+    return `<table class="data vo-hub-table"><thead><tr><th></th><th>Product</th><th>Qty</th><th>Price</th>${canEdit ? "<th></th>" : ""}</tr></thead><tbody>
       ${lines.map(l => `<tr>
         <td>${thumb((l.image_urls && l.image_urls[0]) || "", "vo-thumb-sm")}</td>
         <td><strong>${ctx.esc(l.our_product_id)}</strong></td>
         <td><strong>${l.quantity}</strong></td>
         <td>${fmtPrice(l.buying_price)}</td>
+        ${canEdit ? `<td style="white-space:nowrap;">
+          <button class="btn btn-ghost btn-sm" onclick="VendorOrders.editPlacedLine(${l.line_id}, ${l.quantity}, ${order.id})">Edit qty</button>
+          <button class="btn btn-ghost btn-sm" style="color:var(--danger);" onclick="VendorOrders.deletePlacedLine(${l.line_id}, ${order.id})">Remove</button>
+        </td>` : ""}
       </tr>`).join("")}
     </tbody></table>`;
   }
@@ -438,20 +527,22 @@ const VendorOrders = (() => {
   function renderBilledHubCard(o, canWrite) {
     const open = hubExpandedVendorId === o.vendor_id;
     const cache = hubExpandCache[`billed-${o.vendor_id}`];
-    return `<div class="vo-hub-card ${open ? "is-open" : ""}">
-      <div class="vo-hub-row" onclick="VendorOrders.toggleHubVendor(${o.vendor_id}, 'billed', ${o.id})">
-        <div class="vo-hub-main">
-          ${hubChevron(open)}
-          <div>
-            <div class="vo-hub-title">${ctx.esc(o.vendor_label)}</div>
-            <div class="vo-hub-meta">${o.placement_count} bills · ${o.line_count} products · <strong>${o.total_quantity}</strong> received</div>
-          </div>
-        </div>
-      </div>
-      ${open ? `<div class="vo-hub-expand" id="vo-hub-expand-${o.vendor_id}">
-        ${cache ? renderBilledExpand(cache, canWrite) : `<p class="vo-muted" style="margin:0;padding:8px 0;">Loading…</p>`}
-      </div>` : ""}
-    </div>`;
+    return OrdersUI.partyCard({
+      title: o.vendor_label,
+      meta: `${o.placement_count} bills · ${o.line_count} products · <strong>${o.total_quantity}</strong> qty`,
+      pillHtml: OrdersUI.pill("Billed", "ok"),
+      primaryLabel: "Close",
+      primaryOnclick: `VendorOrders.openCloseBatch(${o.vendor_id})`,
+      moreItems: [
+        { label: "View vendor", onclick: `VendorOrders.openDetail(${o.id || 0}, 'billed', ${o.vendor_id})` },
+      ],
+      open,
+      rowOnclick: `VendorOrders.toggleHubVendor(${o.vendor_id}, 'billed', ${o.id})`,
+      canWrite,
+      expandHtml: open
+        ? `<div id="vo-hub-expand-${o.vendor_id}">${cache ? renderBilledExpand(cache, canWrite) : `<p class="vo-muted" style="margin:0;padding:8px 0;">Loading…</p>`}</div>`
+        : "",
+    });
   }
 
   function renderBilledExpand(order, canWrite) {
@@ -505,7 +596,8 @@ const VendorOrders = (() => {
       ${p.net_payable != null ? `<div class="is-total"><span>Net payable</span><strong>${fmtPrice(p.net_payable)}</strong></div>` : ""}
     </div>
     <div class="vo-hub-expand-actions">
-      ${p.receipt_id ? `<button class="btn btn-primary btn-sm" onclick="VendorOrders.openReceiptDoc(${p.receipt_id})">Bill Receipt</button>` : ""}
+      ${p.receipt_id && ctx.canWrite?.("vendor_orders") && !p.closed_at ? `<button class="btn btn-primary btn-sm" onclick="Stock.openEditReceipt(${p.receipt_id})">Edit bill</button>` : ""}
+      ${p.receipt_id ? `<button class="btn btn-secondary btn-sm" onclick="VendorOrders.openReceiptDoc(${p.receipt_id})">Bill Receipt</button>` : ""}
       ${p.bill_file_url ? `<button class="btn btn-secondary btn-sm" onclick="window.open('${ctx.esc(p.bill_file_url)}','_blank')">Vendor Bill</button>` : ""}
       ${p.receipt_id && ctx.canWrite?.("vendor_orders") ? `<button class="btn btn-secondary btn-sm" onclick="VendorOrders.openDebitNotes(${p.receipt_id})">Debit Note</button>` : ""}
       ${ctx.canWrite?.("vendor_orders") && !p.closed_at ? `<button class="btn btn-secondary btn-sm" onclick="VendorOrders.closeBilledPlacement(${p.id})">Close</button>` : ""}
@@ -519,20 +611,20 @@ const VendorOrders = (() => {
     const meta = bucket === "cancelled"
       ? `${o.placement_count} placements · ${o.total_quantity} qty`
       : `${o.placement_count || 0} bills · ${o.line_count || 0} lines · ${o.total_quantity || 0} qty`;
-    return `<div class="vo-hub-card ${open ? "is-open" : ""}">
-      <div class="vo-hub-row" onclick="VendorOrders.toggleHubVendor(${o.vendor_id}, '${bucket}', ${o.id || 0})">
-        <div class="vo-hub-main">
-          ${hubChevron(open)}
-          <div>
-            <div class="vo-hub-title">${ctx.esc(o.vendor_label)}</div>
-            <div class="vo-hub-meta">${meta}</div>
-          </div>
-        </div>
-      </div>
-      ${open ? `<div class="vo-hub-expand" id="vo-hub-expand-${o.vendor_id}">
-        ${cache ? (bucket === "cancelled" ? renderCancelledExpand(cache) : renderClosedExpand(cache)) : `<p class="vo-muted" style="margin:0;padding:8px 0;">Loading…</p>`}
-      </div>` : ""}
-    </div>`;
+    return OrdersUI.partyCard({
+      title: o.vendor_label,
+      meta,
+      pillHtml: OrdersUI.pill(bucket === "cancelled" ? "Cancelled" : "Closed", "muted"),
+      primaryLabel: "View",
+      primaryOnclick: `VendorOrders.openDetail(${o.id || 0}, '${bucket}', ${o.vendor_id})`,
+      moreItems: [],
+      open,
+      rowOnclick: `VendorOrders.toggleHubVendor(${o.vendor_id}, '${bucket}', ${o.id || 0})`,
+      canWrite: true,
+      expandHtml: open
+        ? `<div id="vo-hub-expand-${o.vendor_id}">${cache ? (bucket === "cancelled" ? renderCancelledExpand(cache) : renderClosedExpand(cache)) : `<p class="vo-muted" style="margin:0;padding:8px 0;">Loading…</p>`}</div>`
+        : "",
+    });
   }
 
   function renderCancelledExpand(order) {
@@ -629,31 +721,44 @@ const VendorOrders = (() => {
   }
 
   async function toggleHubVendor(vendorId, bucket, orderId) {
-    if (hubExpandedVendorId === vendorId) {
+    const expandId = (bucket === "open" || bucket === "open-bill")
+      ? `${bucket === "open-bill" ? "to_bill" : "to_receive"}-${vendorId}`
+      : vendorId;
+    if (hubExpandedVendorId === expandId) {
       hubExpandedVendorId = null;
       hubExpandedPlacementId = null;
       renderList();
       return;
     }
-    hubExpandedVendorId = vendorId;
+    hubExpandedVendorId = expandId;
     hubExpandedPlacementId = null;
     renderList();
-    const key = `${bucket}-${vendorId}`;
+    const key = bucket === "open-bill" ? `open-bill-${vendorId}` : `${bucket}-${vendorId}`;
     try {
       if (bucket === "open") {
         hubExpandCache[key] = await ctx.api(`/vendor-orders/vendor/${vendorId}/open`, {}, 0);
+      } else if (bucket === "open-bill") {
+        const recv = await ctx.api(`/stock/vendor-order/${vendorId}/received`, {}, 0);
+        hubExpandCache[key] = {
+          vendor_id: vendorId,
+          lines: (recv.lines || []).map(l => ({
+            ...l,
+            quantity: l.quantity_unbilled,
+            quantity_unbilled: l.quantity_unbilled,
+          })),
+        };
       } else if (bucket === "closed") {
         hubExpandCache[key] = { lines: await ctx.api(`/vendor-orders/vendor/${vendorId}/closed`, {}, 0) };
       } else {
         let id = orderId;
         if (!id || id <= 0) {
-          const match = orders.find(o => o.vendor_id === vendorId);
+          const match = orders.find(o => o.vendor_id === vendorId && (!o.open_kind || o.bucket === bucket));
           id = match?.id || 0;
         }
         if (id > 0) hubExpandCache[key] = await ctx.api(`/vendor-orders/${id}?view=default`, {}, 0);
-        else hubExpandCache[key] = { placements: [], aggregated_lines: [] };
+        else hubExpandCache[key] = { placements: [], aggregated_lines: [], vendor_id: vendorId };
       }
-      if (hubExpandedVendorId === vendorId) renderList();
+      if (hubExpandedVendorId === expandId) renderList();
     } catch (e) {
       ctx.toast(e.message, "error");
     }
@@ -667,43 +772,42 @@ const VendorOrders = (() => {
   async function openDetail(orderId, bucket, vendorId) {
     ctx.showLoading?.();
     try {
-      currentBucket = bucket;
+      // Map queue/legacy buckets to past stages
+      let b = bucket || "placed";
+      if (b === "summary" || b === "needs_action" || b === "queue") b = "placed";
+      if (b === "open") b = "placed";
+      if (!PAST_BUCKETS.includes(b)) b = "placed";
+      currentBucket = b;
       detailVendorId = vendorId || null;
-      showSummary = bucket === "summary";
+      showSummary = false;
       openOrder = null;
       closedLines = [];
       currentOrder = null;
+      orderSummary = null;
       expandedProductId = null;
-      expandedOrderProductId = null;
-      expandedPlacementId = null;
+        expandedPlacementId = null;
       expandedClosedId = null;
 
-      // Resolve vendor from order id when caller omitted vendorId (activity / ledger links)
       if ((!detailVendorId || detailVendorId <= 0) && orderId > 0) {
         currentOrder = await ctx.api(`/vendor-orders/${orderId}?view=default`, {}, 0);
         detailVendorId = currentOrder.vendor_id;
-        // If activity asked for open/summary/closed, keep that bucket; else prefer order's bucket
-        if (!bucket || bucket === "default") currentBucket = currentOrder.bucket || bucket;
+        if (currentOrder.bucket && BROWSE_BUCKETS.includes(currentOrder.bucket)) {
+          currentBucket = currentOrder.bucket;
+          b = currentBucket;
+        }
       }
 
       if (!detailVendorId) {
         throw new Error("Vendor not found for this order");
       }
 
-      if (bucket === "open") {
-        openOrder = await ctx.api(`/vendor-orders/vendor/${detailVendorId}/open`, {}, 0);
-        currentOrder = null;
-      } else if (bucket === "closed") {
+      if (b === "closed") {
         closedLines = await ctx.api(`/vendor-orders/vendor/${detailVendorId}/closed`, {}, 0);
         currentOrder = null;
-      } else if (bucket === "summary") {
-        orderSummary = await ctx.api(`/vendor-orders/vendor/${detailVendorId}/order-summary`, {}, 0);
-        currentOrder = null;
-      } else if (currentOrder && currentOrder.bucket === bucket) {
-        // already loaded above and matches requested bucket
+      } else if (currentOrder && currentOrder.bucket === b) {
+        // already loaded
       } else {
-        // Prefer vendor+bucket match (activity may pass an order id from a different bucket)
-        const match = (await ctx.api(`/vendor-orders?bucket=${bucket}`, {}, 0)).find(o => o.vendor_id === detailVendorId);
+        const match = (await ctx.api(`/vendor-orders?bucket=${b}`, {}, 0)).find(o => o.vendor_id === detailVendorId);
         if (match?.id) {
           currentOrder = await ctx.api(`/vendor-orders/${match.id}?view=default`, {}, 0);
         } else if (orderId > 0) {
@@ -717,16 +821,16 @@ const VendorOrders = (() => {
       document.getElementById("orders-hub")?.classList.add("hidden");
       document.getElementById("orders-detail")?.classList.remove("hidden");
       syncBucketButtons(currentBucket, "vo-detail-buckets");
-      updateActionButtons("detail");
+      updateDetailPrimary();
       renderDetail();
+      App.updateGlobalBack?.();
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
   }
 
   async function switchDetailBucket(bucket) {
     if (!detailVendorId) return;
-    const effective = bucket === "summary" ? "summary" : bucket;
-    await openDetail(0, effective, detailVendorId);
+    await openDetail(0, bucket, detailVendorId);
   }
 
   function detailVendorLabel() {
@@ -772,70 +876,58 @@ const VendorOrders = (() => {
           ["Received", String(lines.reduce((s, l) => s + (l.total_received || 0), 0))],
         ])}
         <p class="vo-list-hint" style="border-radius:12px;margin-bottom:12px;">Tap a product for history. Bill or cancel only affects Open pending.</p>
-        <div class="vo-hub-list">${lines.length ? lines.map(line => {
+        <div class="ord-hub-list">${lines.length ? lines.map(line => {
           const expanded = expandedProductId === line.catalog_product_id;
           const img = (line.image_urls && line.image_urls[0]) || "";
-          return `<div class="vo-hub-card ${expanded ? "is-open" : ""}">
-            <div class="vo-hub-row" onclick="VendorOrders.toggleSummaryRow(${line.catalog_product_id})">
-              <div class="vo-hub-main">
-                ${hubChevron(expanded)}
-                ${thumb(img)}
-                <div>
-                  <div class="vo-hub-title">${ctx.esc(line.our_product_id)}</div>
-                  <div class="vo-hub-meta">Placed ${line.total_placed} · Recv ${line.total_received} · <strong>Pending ${line.total_pending}</strong>
-                    · Cancelled ${line.total_cancelled} · Closed ${line.total_closed || 0}</div>
-                </div>
-              </div>
-              ${canWrite && line.total_pending > 0 ? `<div class="vo-hub-actions" onclick="event.stopPropagation()">
-                <button class="btn btn-primary btn-sm" onclick="VendorOrders.billSummaryLine(${line.catalog_product_id}, ${line.total_pending})">Bill</button>
-                <button class="btn btn-danger btn-sm" onclick="VendorOrders.cancelSummaryLine(${line.catalog_product_id})">Cancel</button>
-              </div>` : `<div class="vo-hub-actions"><span class="vo-muted">${fmtPrice(line.buying_price)}</span></div>`}
-            </div>
-            ${expanded ? `<div class="vo-hub-expand" id="vo-summary-drill-${line.catalog_product_id}">
-              <p class="vo-muted" style="margin:0;">Loading history…</p>
-            </div>` : ""}
-          </div>`;
-        }).join("") : `<div class="vo-empty"><div class="vo-empty-icon">◇</div><p>No order activity for this vendor yet.</p></div>`}</div>`;
+          return HubUI.partyCard({
+            title: line.our_product_id,
+            meta: `${thumb(img)} Placed ${line.total_placed} · Recv ${line.total_received} · <strong>Pending ${line.total_pending}</strong> · Cancelled ${line.total_cancelled} · Closed ${line.total_closed || 0}`,
+            pillHtml: line.total_pending > 0 ? HubUI.pill("Pending", "warn") : HubUI.pill(fmtPrice(line.buying_price), "muted"),
+            primaryLabel: canWrite && line.total_pending > 0 ? "Receive" : null,
+            primaryOnclick: `VendorOrders.billSummaryLine(${line.catalog_product_id}, ${line.total_pending})`,
+            moreItems: canWrite && line.total_pending > 0
+              ? [{ label: "Cancel", onclick: `VendorOrders.cancelSummaryLine(${line.catalog_product_id})`, danger: true }]
+              : [],
+            open: expanded,
+            rowOnclick: `VendorOrders.toggleSummaryRow(${line.catalog_product_id})`,
+            canWrite: !!canWrite,
+            expandHtml: expanded
+              ? `<div id="vo-summary-drill-${line.catalog_product_id}"><p class="vo-muted" style="margin:0;">Loading history…</p></div>`
+              : "",
+          });
+        }).join("") : HubUI.emptyState({ title: "No order activity", sub: "No order activity for this vendor yet." })}</div>`;
       return;
     }
 
     if (currentBucket === "open" && openOrder) {
       const lines = openOrder.lines || [];
       const totalPending = lines.reduce((s, l) => s + (l.quantity || 0), 0);
-      setDetailHeader(openOrder.vendor_label, "Yet to bill — bill when goods arrive, or cancel with a note", "Open");
+      setDetailHeader(openOrder.vendor_label, "Yet to receive — receive goods when they arrive, or cancel with a note", "Open");
       el.innerHTML = `
         ${detailStatPills([
           ["Products", String(lines.length)],
           ["Pending qty", String(totalPending)],
         ])}
-        ${canWrite && lines.length ? `<div class="vo-detail-toolbar">
-          <div class="vo-detail-toolbar-copy"><strong>${lines.length}</strong> products ready to bill</div>
-          <div class="vo-hub-actions">
-            <button class="btn btn-primary" onclick="VendorOrders.billOrder()">Bill Order (${totalPending})</button>
-            <button class="btn btn-danger" onclick="VendorOrders.cancelAllOpenLines()">Cancel All</button>
-          </div>
+        ${canWrite && lines.length ? `<div class="ui-toolbar vo-detail-toolbar">
+          <div class="vo-detail-toolbar-copy"><strong>${lines.length}</strong> products · <strong>${totalPending}</strong> pending — use Receive above</div>
+          <button class="btn btn-danger btn-sm" onclick="VendorOrders.cancelAllOpenLines()">Cancel Order</button>
         </div>` : ""}
-        <div class="vo-hub-list">${lines.length ? lines.map(line => {
+        <div class="ord-hub-list">${lines.length ? lines.map(line => {
           const img = (line.image_urls && line.image_urls[0]) || "";
-          return `<div class="vo-hub-card">
-            <div class="vo-hub-row" style="cursor:default;">
-              <div class="vo-hub-main">
-                ${thumb(img)}
-                <div>
-                  <div class="vo-hub-title">${ctx.esc(line.our_product_id)}</div>
-                  <div class="vo-hub-meta">${fmtPrice(line.buying_price)}${line.unit ? ` / ${ctx.esc(line.unit)}` : ""}</div>
-                </div>
-              </div>
-              <div class="vo-qty-chip"><span>Pending</span><strong>${line.quantity}</strong></div>
-              ${canWrite ? `<div class="vo-hub-actions">
-                <button class="btn btn-primary btn-sm" onclick="VendorOrders.billOpenLine(${line.catalog_product_id}, ${line.quantity})">Bill</button>
-                <button class="btn btn-secondary btn-sm" onclick="VendorOrders.openEditOpenLine(${line.id})">Edit</button>
-                <button class="btn btn-danger btn-sm" onclick="VendorOrders.cancelOpenLine(${line.id})">Cancel</button>
-              </div>` : ""}
-            </div>
-          </div>`;
-        }).join("") : `<div class="vo-empty"><div class="vo-empty-icon">✓</div><p>Nothing pending. All billed, cancelled, or closed.</p>
-          ${canWrite ? `<button class="btn btn-primary" onclick="VendorOrders.showCreateMenu()">+ Create Order</button>` : ""}</div>`}</div>`;
+          return HubUI.partyCard({
+            title: line.our_product_id,
+            meta: `${thumb(img)} ${fmtPrice(line.buying_price)}${line.unit ? ` / ${ctx.esc(line.unit)}` : ""} · Pending <strong>${line.quantity}</strong>`,
+            pillHtml: HubUI.pill(String(line.quantity), "warn"),
+            primaryLabel: canWrite ? "Edit" : null,
+            primaryOnclick: `VendorOrders.openEditOpenLine(${line.id})`,
+            moreItems: canWrite ? [{ label: "Cancel", onclick: `VendorOrders.cancelOpenLine(${line.id})`, danger: true }] : [],
+            canWrite: !!canWrite,
+          });
+        }).join("") : HubUI.emptyState({
+          title: "Nothing pending",
+          sub: "All billed, cancelled, or closed.",
+          ctaHtml: canWrite ? `<button class="btn btn-primary" onclick="VendorOrders.showCreateMenu()">+ Create Order</button>` : "",
+        })}</div>`;
       return;
     }
 
@@ -848,45 +940,71 @@ const VendorOrders = (() => {
           ["Items", String(lines.length)],
           ["Qty", String(lines.reduce((s, l) => s + (l.quantity || 0), 0))],
         ])}
-        <div class="vo-hub-list">${lines.length ? lines.map(line => {
+        <div class="ord-hub-list">${lines.length ? lines.map(line => {
           const expanded = expandedClosedId === line.id;
-          return `<div class="vo-hub-card ${expanded ? "is-open" : ""}">
-            <div class="vo-hub-row" onclick="VendorOrders.toggleClosedRow(${line.id})">
-              <div class="vo-hub-main">
-                ${hubChevron(expanded)}
-                <div>
-                  <div class="vo-hub-title">${ctx.esc(line.our_product_id)}</div>
-                  <div class="vo-hub-meta">${line.quantity} qty · ${ctx.esc(line.source)}${line.bill_number ? ` · Bill ${ctx.esc(line.bill_number)}` : ""}
-                    · ${line.closed_at ? new Date(line.closed_at).toLocaleString() : "—"}</div>
-                  ${line.close_reason ? noteChip(line.close_reason, "close") : ""}
-                </div>
-              </div>
-              <div class="vo-qty-chip"><span>Qty</span><strong>${line.quantity}</strong></div>
-            </div>
-            ${expanded ? `<div class="vo-hub-expand" id="vo-closed-drill-${line.id}">
-              <p class="vo-muted" style="margin:0;">Loading…</p>
-            </div>` : ""}
-          </div>`;
-        }).join("") : `<div class="vo-empty"><div class="vo-empty-icon">◇</div><p>No closed items yet.</p></div>`}</div>`;
+          return HubUI.partyCard({
+            title: line.our_product_id,
+            meta: `${line.quantity} qty · ${ctx.esc(line.source)}${line.bill_number ? ` · Bill ${ctx.esc(line.bill_number)}` : ""} · ${line.closed_at ? new Date(line.closed_at).toLocaleString() : "—"}${line.close_reason ? noteChip(line.close_reason, "close") : ""}`,
+            pillHtml: HubUI.pill(String(line.quantity), "muted"),
+            open: expanded,
+            rowOnclick: `VendorOrders.toggleClosedRow(${line.id})`,
+            canWrite: true,
+            expandHtml: expanded
+              ? `<div id="vo-closed-drill-${line.id}"><p class="vo-muted" style="margin:0;">Loading…</p></div>`
+              : "",
+          });
+        }).join("") : HubUI.emptyState({ title: "No closed items yet", sub: "Closed bills show up here." })}</div>`;
       return;
     }
 
     if (!currentOrder) {
       setDetailHeader(detailVendorLabel(), "Nothing in this bucket yet", BUCKET_LABELS[currentBucket] || "Orders");
-      el.innerHTML = `<div class="vo-empty"><div class="vo-empty-icon">◇</div><p>No ${BUCKET_LABELS[currentBucket] || currentBucket} for this vendor.</p></div>`;
+      el.innerHTML = HubUI.emptyState({
+        title: `No ${BUCKET_LABELS[currentBucket] || currentBucket}`,
+        sub: "Nothing for this vendor in this stage.",
+      });
       return;
     }
 
     const isPlaced = currentBucket === "placed";
+    const isReceived = currentBucket === "received";
     const isBilled = currentBucket === "billed";
     const isCancelled = currentBucket === "cancelled";
     setDetailHeader(
       currentOrder.vendor_label,
       isPlaced ? "Record of what you placed — quantities stay fixed"
+        : isReceived ? "Goods received — bill when vendor invoice arrives"
         : isBilled ? "Billed shipments — expand for amounts, receipt, vendor bill"
         : "Cancelled history with notes",
-      isPlaced ? "Placed" : isBilled ? "Billed" : "Cancelled"
+      isPlaced ? "Placed" : isReceived ? "Received" : isBilled ? "Billed" : "Cancelled"
     );
+
+    if (isReceived) {
+      const placements = (currentOrder.placements || []).slice().sort((a, b) => new Date(b.placed_at) - new Date(a.placed_at));
+      const unbilled = (currentOrder.aggregated_lines || []).reduce((s, l) => s + (l.total_pending || 0), 0);
+      const totalRecv = (currentOrder.aggregated_lines || []).reduce((s, l) => s + (l.total_quantity || 0), 0);
+      el.innerHTML = `
+        ${detailStatPills([
+          ["Receives", String(placements.length)],
+          ["Received qty", String(totalRecv)],
+          ["Unbilled", String(unbilled)],
+        ])}
+        <div class="ord-hub-list">${placements.length ? placements.map(p => {
+          const lines = linesForPlacement(p.id);
+          return HubUI.partyCard({
+            title: p.order_receipt_number ? `Receipt ${p.order_receipt_number}` : `Receive #${p.id}`,
+            meta: `${lines.length} products · ${p.total_quantity || 0} qty · ${new Date(p.placed_at).toLocaleString()}${p.notes ? ` · ${ctx.esc(p.notes)}` : ""}`,
+            primaryLabel: canWrite && p.receipt_id ? "Edit" : null,
+            primaryOnclick: `Stock.openEditReceipt(${p.receipt_id})`,
+            open: !!lines.length,
+            canWrite: !!canWrite,
+            expandHtml: lines.length ? `<table class="data vo-hub-table"><thead><tr><th>Product</th><th>Qty</th><th>Unbilled</th></tr></thead><tbody>
+              ${lines.map(l => `<tr><td>${ctx.esc(l.our_product_id)}</td><td>${l.quantity}</td><td>${l.quantity_remaining != null ? l.quantity_remaining : "—"}</td></tr>`).join("")}
+            </tbody></table>` : "",
+          });
+        }).join("") : HubUI.emptyState({ title: "No receives yet", sub: "Receive goods from the Open or Placed stage." })}</div>`;
+      return;
+    }
 
     if (isBilled) {
       const placements = (currentOrder.placements || []).slice().sort((a, b) => new Date(b.placed_at) - new Date(a.placed_at));
@@ -900,33 +1018,28 @@ const VendorOrders = (() => {
           ["Received qty", String(currentOrder.aggregated_lines?.reduce((s, l) => s + (l.total_quantity || 0), 0) || 0)],
         ])}
         <p class="vo-list-hint" style="border-radius:12px;margin-bottom:12px;">Expand a bill for payable, debit notes, receipt, and vendor bill. Close after payment.</p>
-        <div class="vo-hub-list">${placements.length ? placements.map(p => {
+        <div class="ord-hub-list">${placements.length ? placements.map(p => {
           const lines = linesForPlacement(p.id);
           const totalRecv = lines.reduce((s, l) => s + (l.quantity || 0), 0);
           const expanded = expandedPlacementId === p.id;
           const closed = !!p.closed_at;
-          return `<div class="vo-hub-card ${expanded ? "is-open" : ""} ${closed ? "is-closed" : ""}">
-            <div class="vo-hub-row" onclick="VendorOrders.togglePlacementRow(${p.id})">
-              <div class="vo-hub-main">
-                ${hubChevron(expanded)}
-                ${placementBadge(p.color_index)}
-                <div>
-                  <div class="vo-hub-title">${ctx.esc(p.bill_number || `Bill #${p.id}`)}${closed ? ` <span class="vo-pill-muted">Closed</span>` : ""}</div>
-                  <div class="vo-hub-meta">${lines.length} products · ${totalRecv} received · ${new Date(p.placed_at).toLocaleString()}
-                    ${p.net_payable != null ? ` · Net ${fmtPrice(p.net_payable)}` : ""}</div>
-                  ${closed && p.close_reason ? noteChip(p.close_reason, "close") : ""}
-                </div>
-              </div>
-              ${canWrite && !closed ? `<div class="vo-hub-actions" onclick="event.stopPropagation()">
-                ${p.receipt_id ? `<button class="btn btn-secondary btn-sm" onclick="VendorOrders.openDebitNotes(${p.receipt_id})">Debit Note</button>` : ""}
-                <button class="btn btn-secondary btn-sm" onclick="VendorOrders.closeBilledPlacement(${p.id})">Close</button>
-              </div>` : ""}
-            </div>
-            ${expanded ? `<div class="vo-hub-expand" id="vo-placement-drill-${p.id}">
-              <p class="vo-muted" style="margin:0;">Loading bill details…</p>
-            </div>` : ""}
-          </div>`;
-        }).join("") : `<div class="vo-empty"><div class="vo-empty-icon">◇</div><p>No billed shipments yet.</p></div>`}</div>`;
+          return HubUI.partyCard({
+            title: p.bill_number || `Bill #${p.id}`,
+            meta: `${placementBadge(p.color_index)} ${lines.length} products · ${totalRecv} received · ${new Date(p.placed_at).toLocaleString()}${p.net_payable != null ? ` · Net ${fmtPrice(p.net_payable)}` : ""}${closed && p.close_reason ? noteChip(p.close_reason, "close") : ""}`,
+            pillHtml: closed ? HubUI.pill("Closed", "muted") : HubUI.pill("Open", "info"),
+            primaryLabel: canWrite && !closed ? "Close" : null,
+            primaryOnclick: `VendorOrders.closeBilledPlacement(${p.id})`,
+            moreItems: canWrite && !closed && p.receipt_id
+              ? [{ label: "Debit Note", onclick: `VendorOrders.openDebitNotes(${p.receipt_id})` }]
+              : [],
+            open: expanded,
+            rowOnclick: `VendorOrders.togglePlacementRow(${p.id})`,
+            canWrite: !!canWrite,
+            expandHtml: expanded
+              ? `<div id="vo-placement-drill-${p.id}"><p class="vo-muted" style="margin:0;">Loading bill details…</p></div>`
+              : "",
+          });
+        }).join("") : HubUI.emptyState({ title: "No billed shipments yet", sub: "Bill received goods to see them here." })}</div>`;
       return;
     }
 
@@ -945,33 +1058,27 @@ const VendorOrders = (() => {
           ? "Expand a placement for line items. Cancel clears Open; placed qty stays."
           : "Cancelled placements with notes. Expand for line details."
       }</p>
-      <div class="vo-hub-list">${placements.length ? placements.map(p => {
+      <div class="ord-hub-list">${placements.length ? placements.map(p => {
         const expanded = expandedPlacementId === p.id;
         const cancelled = !!p.cancel_reason || p.status === "cancelled" || isCancelled;
-        return `<div class="vo-hub-card ${expanded ? "is-open" : ""} ${cancelled && isPlaced ? "is-cancelled" : ""}">
-          <div class="vo-hub-row" onclick="VendorOrders.togglePlacementRow(${p.id})">
-            <div class="vo-hub-main">
-              ${hubChevron(expanded)}
-              ${placementBadge(p.color_index)}
-              <div>
-                <div class="vo-hub-title">${isCancelled ? "Cancelled" : "Placement"} · ${new Date(p.placed_at).toLocaleString()}</div>
-                <div class="vo-hub-meta">${p.line_count} lines · ${p.total_quantity || "—"} qty
-                  ${showWho ? ` · ${ctx.esc(p.placed_by_name)}` : ""}
-                  ${cancelled && isPlaced ? " · cancelled" : ""}</div>
-                ${p.cancel_reason ? noteChip(p.cancel_reason, "cancel") : ""}
-              </div>
-            </div>
-            ${canWrite && isPlaced && !cancelled ? `<div class="vo-hub-actions" onclick="event.stopPropagation()">
-              <button class="btn btn-danger btn-sm" onclick="VendorOrders.cancelPlacement(${p.id})">Cancel</button>
-            </div>` : ""}
-          </div>
-          ${expanded ? `<div class="vo-hub-expand" id="vo-placement-drill-${p.id}">
-            <p class="vo-muted" style="margin:0;">Loading…</p>
-          </div>` : ""}
-        </div>`;
-      }).join("") : `<div class="vo-empty"><div class="vo-empty-icon">◇</div><p>No placements here.</p></div>`}</div>`;
+        return HubUI.partyCard({
+          title: `${isCancelled ? "Cancelled" : "Placement"} · ${new Date(p.placed_at).toLocaleString()}`,
+          meta: `${placementBadge(p.color_index)} ${p.line_count} lines · ${p.total_quantity || "—"} qty${showWho ? ` · ${ctx.esc(p.placed_by_name)}` : ""}${p.cancel_reason ? noteChip(p.cancel_reason, "cancel") : ""}`,
+          pillHtml: cancelled ? HubUI.pill("Cancelled", "danger") : HubUI.pill("Placed", "muted"),
+          primaryLabel: canWrite && isPlaced && !cancelled ? "Receive" : null,
+          primaryOnclick: `VendorOrders.receiveOrder()`,
+          moreItems: canWrite && isPlaced && !cancelled
+            ? [{ label: "Cancel", onclick: `VendorOrders.cancelPlacement(${p.id})`, danger: true }]
+            : [],
+          open: expanded,
+          rowOnclick: `VendorOrders.togglePlacementRow(${p.id})`,
+          canWrite: !!canWrite,
+          expandHtml: expanded
+            ? `<div id="vo-placement-drill-${p.id}"><p class="vo-muted" style="margin:0;">Loading…</p></div>`
+            : "",
+        });
+      }).join("") : HubUI.emptyState({ title: "No placements here", sub: "Place a vendor order to see history." })}</div>`;
   }
-
 
   function isDetailVisible() {
     return !document.getElementById("orders-detail")?.classList.contains("hidden");
@@ -1083,11 +1190,12 @@ const VendorOrders = (() => {
 
     if (currentBucket === "placed" || currentBucket === "cancelled") {
       const cancelled = !!placement.cancel_reason || placement.status === "cancelled" || currentBucket === "cancelled";
-      let html = renderPlacementLines(currentOrder, placementId);
+      const canEdit = !!ctx.canWrite?.("vendor_orders") && !cancelled && currentBucket === "placed";
+      let html = renderPlacementLines(currentOrder, placementId, canEdit);
       if (currentBucket === "placed") {
         html += `<div class="vo-hub-expand-actions">
           <button class="btn btn-secondary btn-sm" onclick="VendorOrders.openPlacementDoc(${placementId})">Order PDF</button>
-          ${ctx.canWrite?.("vendor_orders") && !cancelled ? `<button class="btn btn-danger btn-sm" onclick="VendorOrders.cancelPlacement(${placementId})">Cancel Placement</button>` : ""}
+          ${canEdit ? `<button class="btn btn-danger btn-sm" onclick="VendorOrders.cancelPlacement(${placementId})">Cancel Order</button>` : ""}
         </div>`;
         if (cancelled) html = noteChip(placement.cancel_reason, "cancel") + html;
       } else if (placement.cancel_reason) {
@@ -1223,7 +1331,7 @@ const VendorOrders = (() => {
       await openDetail(0, bucket, vendorId);
       return;
     }
-    if (["summary", "open", "placed", "billed"].includes(currentBucket)) {
+    if (["summary", "open", "placed", "received", "billed"].includes(currentBucket)) {
       const wasExpanded = hubExpandedVendorId === vendorId;
       const keepBucket = currentBucket;
       hubExpandedVendorId = null;
@@ -1326,17 +1434,17 @@ const VendorOrders = (() => {
       const lines = detail.lines || [];
       if (!lines.length) return ctx.toast("No open lines", "error");
       openConfirmAction({
-        title: "Cancel all open lines",
-        message: "Removed from Open. Recorded in Cancelled. Placed record stays unchanged.",
+        title: "Cancel Order",
+        message: "Removes open qty. Recorded in Cancelled. Placed record stays.",
         rows: openLinesConfirmRows(lines, vendorLabel || detail.vendor_label),
-        confirmLabel: "Cancel all",
+        confirmLabel: "Cancel Order",
         danger: true,
         requireReason: true,
         reasonLabel: "Cancel note",
         onConfirm: async (reason) => {
           const result = await runOpenLineBatch(lines, "cancel", reason);
           if (result.failed) ctx.toast(`Cancelled ${result.ok}, failed ${result.failed}`, "error");
-          else ctx.toast(`Cancelled ${result.ok} line(s)`, "success");
+          else ctx.toast(`Order cancelled (${result.ok})`, "success");
           await reloadAfterVendorChange(vendorId, "open");
         },
       });
@@ -1367,17 +1475,17 @@ const VendorOrders = (() => {
     const lines = openOrder?.lines || [];
     if (!lines.length) return ctx.toast("No open lines", "error");
     openConfirmAction({
-      title: "Cancel all open lines",
-      message: "Removed from Open. Recorded in Cancelled. Placed record stays unchanged.",
+      title: "Cancel Order",
+      message: "Removes open qty. Recorded in Cancelled. Placed record stays.",
       rows: openLinesConfirmRows(lines, openOrder?.vendor_label),
-      confirmLabel: "Cancel all",
+      confirmLabel: "Cancel Order",
       danger: true,
       requireReason: true,
       reasonLabel: "Cancel note",
       onConfirm: async (reason) => {
         const result = await runOpenLineBatch(lines, "cancel", reason);
         if (result.failed) ctx.toast(`Cancelled ${result.ok}, failed ${result.failed}`, "error");
-        else ctx.toast(`Cancelled ${result.ok} line(s)`, "success");
+        else ctx.toast(`Order cancelled (${result.ok})`, "success");
         await reloadAfterVendorChange(detailVendorId, "open");
       },
     });
@@ -1409,8 +1517,8 @@ const VendorOrders = (() => {
     const line = (openOrder?.lines || []).find(l => l.id === lineId);
     if (!line) return;
     openConfirmAction({
-      title: "Cancel open line",
-      message: "Removed from Open. Recorded in Cancelled.",
+      title: "Cancel line",
+      message: "Removes open qty. Recorded in Cancelled.",
       rows: [
         ["Product", ctx.esc(line.our_product_id)],
         ["Qty", String(line.quantity)],
@@ -1530,21 +1638,21 @@ const VendorOrders = (() => {
       (l.breakdown || []).filter(b => b.placement_id === placementId).map(b => [l.our_product_id, `${b.quantity} @ ${fmtPrice(b.buying_price)}`])
     );
     openConfirmAction({
-      title: "Cancel placement",
+      title: "Cancel Order",
       message: "Clears Open for these items. Placed record stays. History goes to Cancelled.",
       rows: [
         ["Placement", placement ? `#${placement.color_index + 1}` : String(placementId)],
         ["Placed", placement ? new Date(placement.placed_at).toLocaleString() : "—"],
         ...lineRows.map(([prod, detail]) => ["Product", `${prod} — ${detail}`]),
       ],
-      confirmLabel: "Cancel placement",
+      confirmLabel: "Cancel Order",
       danger: true,
       requireReason: true,
       reasonLabel: "Cancel note",
       onConfirm: async (reason) => {
         const result = await ctx.api(`/vendor-orders/placements/${placementId}/cancel`, { method: "POST", body: reasonBody(reason) });
         currentOrder = result;
-        ctx.toast("Placement cancelled", "success");
+        ctx.toast("Order cancelled", "success");
         await reloadAfterVendorChange(result.vendor_id, isDetailVisible() ? "placed" : currentBucket);
         if (isDetailVisible()) await rerenderDetailKeepExpand();
       },
@@ -1566,15 +1674,21 @@ const VendorOrders = (() => {
   }
 
   function runHubAction() {
-    if (currentBucket === "open") {
-      ctx.toast("Open a vendor first to bill", "error");
+    if (currentBucket === "placed") {
+      Stock.openReceiveForVendor(null);
+      return;
+    }
+    if (currentBucket === "received" || currentBucket === "open") {
+      if (currentBucket === "received") Stock.openBillForVendor(null);
+      else ctx.toast("Use Receive Order or Bill Order on a row", "error");
       return;
     }
     if (currentBucket === "billed") openCloseBatch(null);
   }
 
   function runDetailAction() {
-    if (currentBucket === "open") billOrder();
+    if (currentBucket === "placed" || currentBucket === "open") receiveOrder();
+    else if (currentBucket === "received") billOrder();
     else if (currentBucket === "billed") openCloseBatch(detailVendorId);
   }
 
@@ -1613,13 +1727,31 @@ const VendorOrders = (() => {
     wizardProductSearch = "";
     wizardVendorSearch = "";
     wizardVendorsCache = [];
+    wizardPlacedOn = localToday();
     document.getElementById("vo-wizard")?.classList.remove("hidden");
     renderWizard();
   }
 
+  function primeVendors(list) {
+    wizardVendorsCache = Array.isArray(list) ? list : [];
+  }
+
   async function ensureWizardVendors() {
-    if (wizardVendorsCache.length) return wizardVendorsCache;
-    try { wizardVendorsCache = await ctx.api("/vendors", {}, 30000); } catch (_) { wizardVendorsCache = []; }
+    // Always refetch when opening place-order — avoids stale cache after vendor create.
+    try {
+      ctx.invalidateCache?.("/vendors");
+      wizardVendorsCache = await ctx.api("/vendors", {}, 0);
+    } catch (_) {
+      if (!wizardVendorsCache.length) wizardVendorsCache = [];
+    }
+    // If preset vendor missing from list (race), inject from App / single fetch.
+    if (wizardVendorId && !(wizardVendorsCache || []).some(v => v.id === wizardVendorId)) {
+      let injected = (ctx.getVendors?.() || []).find(v => v.id === wizardVendorId);
+      if (!injected) {
+        try { injected = await ctx.api(`/vendors/${wizardVendorId}`, {}, 0); } catch (_) { injected = null; }
+      }
+      if (injected) wizardVendorsCache = [injected, ...(wizardVendorsCache || [])];
+    }
     return wizardVendorsCache;
   }
 
@@ -1632,13 +1764,23 @@ const VendorOrders = (() => {
   function filterWizardProducts() {
     const q = wizardProductSearch.trim().toLowerCase();
     if (!q) return wizardProducts;
-    return wizardProducts.filter(p => {
+    const scored = [];
+    for (const p of wizardProducts) {
       const id = String(p.our_product_id || "").toLowerCase();
       const vid = String(p.vendor_product_id || "").toLowerCase();
       const cat = String(p.category || "").toLowerCase();
       const series = String(p.series || "").toLowerCase();
-      return id.includes(q) || vid.includes(q) || cat.includes(q) || series.includes(q);
-    });
+      let score = 0;
+      if (id === q || vid === q) score = 100;
+      else if (id.startsWith(q) || vid.startsWith(q)) score = 80;
+      else if (id.includes(q) || vid.includes(q)) score = 40;
+      else if (cat.startsWith(q) || series.startsWith(q)) score = 30;
+      else if (cat.includes(q) || series.includes(q)) score = 10;
+      else continue;
+      scored.push({ p, score, id });
+    }
+    scored.sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
+    return scored.map(x => x.p);
   }
 
   function wizardCartTotal() {
@@ -1672,10 +1814,7 @@ const VendorOrders = (() => {
       if (subEl) subEl.textContent = "Step 1 — choose who you are ordering from";
       const vendors = await ensureWizardVendors();
       const active = vendors.filter(v => v.is_active && !v.deleted_at).sort((a, b) => vendorLabel(a).localeCompare(vendorLabel(b)));
-      const vq = wizardVendorSearch.trim().toLowerCase();
-      const filtered = vq
-        ? active.filter(v => vendorLabel(v).toLowerCase().includes(vq) || String(v.phone || "").includes(vq))
-        : active;
+      const filtered = OrdersUI.filterAndRankParties(active, wizardVendorSearch);
       const selected = wizardSelectedVendor(active);
       bodyEl.innerHTML = `
         <div class="vo-wiz-step-head">
@@ -1706,7 +1845,7 @@ const VendorOrders = (() => {
               </span>
               <span class="vo-wiz-vendor-check">${wizardVendorId === v.id ? "✓" : ""}</span>
             </button>`;
-          }).join("") : `<div class="vo-wiz-empty">No vendors match “${ctx.esc(wizardVendorSearch)}”.</div>`}
+          }).join("") : HubUI.emptyState({ title: "No matches", sub: `No vendors match “${wizardVendorSearch}”.` })}
         </div>`;
       footerEl.innerHTML = `
         <button class="btn btn-secondary" onclick="VendorOrders.closeWizard()">Cancel</button>
@@ -1742,7 +1881,7 @@ const VendorOrders = (() => {
             ${wizardLines.map(l => {
               const p = wizardProducts.find(x => x.id === l.catalog_product_id);
               return `<span class="vo-wiz-cart-chip">
-                <span>${ctx.esc(p ? p.our_product_id : l.catalog_product_id)} × ${l.quantity}</span>
+                <span>${ctx.esc(p ? (p.vendor_product_id ? `${p.our_product_id} / (${p.vendor_product_id})` : p.our_product_id) : l.catalog_product_id)} × ${l.quantity}</span>
                 <button type="button" title="Remove" onclick="VendorOrders.toggleWizardProduct(${l.catalog_product_id}, false)">×</button>
               </span>`;
             }).join("")}
@@ -1781,7 +1920,7 @@ const VendorOrders = (() => {
                 <input type="checkbox" ${checked ? "checked" : ""} onclick="event.stopPropagation();VendorOrders.toggleWizardProduct(${p.id}, this.checked)" />
                 ${thumb(img)}
                 <div class="vo-wiz-product-info">
-                  <strong>${ctx.esc(p.our_product_id)}</strong>
+                  <strong>${ctx.esc(p.our_product_id)}${p.vendor_product_id ? ` / (${ctx.esc(p.vendor_product_id)})` : ""}</strong>
                   <span class="vo-wiz-product-sub">${p.category ? ctx.esc(p.category) : "Product"}${p.series ? ` · ${ctx.esc(p.series)}` : ""}</span>
                   <span class="vo-wiz-product-price">${fmtPrice(p.buying_price)}</span>
                   ${alts ? `<div class="vo-alt-row" onclick="event.stopPropagation()">${alts}</div>` : ""}
@@ -1796,10 +1935,15 @@ const VendorOrders = (() => {
                 </div>
               </div>
             </div>`;
-          }).join("") : `<div class="vo-wiz-empty">
-            <p>No products match “${ctx.esc(wizardProductSearch)}”.</p>
-            <button type="button" class="btn btn-secondary" onclick="VendorOrders.onProductSearch('')">Clear search</button>
-          </div>`}
+          }).join("") : HubUI.emptyState({
+            title: !wizardProducts.length ? "No products yet" : "No matches",
+            sub: !wizardProducts.length
+              ? "No products for this vendor yet."
+              : `No products match “${wizardProductSearch}”.`,
+            ctaHtml: wizardProductSearch
+              ? `<button type="button" class="btn btn-secondary" onclick="VendorOrders.onProductSearch('')">Clear search</button>`
+              : "",
+          })}
         </div>`;
       footerEl.innerHTML = `
         <button class="btn btn-secondary" onclick="VendorOrders.wizardBack()">← Back</button>
@@ -1831,7 +1975,7 @@ const VendorOrders = (() => {
                 const lineTotal = p ? (Number(p.buying_price) || 0) * l.quantity : 0;
                 return `<tr>
                   <td>${thumb(img)}</td>
-                  <td><strong>${ctx.esc(p ? p.our_product_id : "")}</strong>${p?.category ? `<div class="vo-wiz-product-sub">${ctx.esc(p.category)}</div>` : ""}</td>
+                  <td><strong>${ctx.esc(p ? (p.vendor_product_id ? `${p.our_product_id} / (${p.vendor_product_id})` : p.our_product_id) : "")}</strong>${p?.category ? `<div class="vo-wiz-product-sub">${ctx.esc(p.category)}</div>` : ""}</td>
                   <td><strong>${l.quantity}</strong></td>
                   <td>${p ? fmtPrice(p.buying_price) : "—"}</td>
                   <td><strong>${fmtPrice(lineTotal)}</strong></td>
@@ -1843,13 +1987,17 @@ const VendorOrders = (() => {
             <span>Estimated buy total</span>
             <strong>${fmtPrice(total)}</strong>
           </div>
-          <p class="vo-wiz-review-note">This creates an open vendor order. You can bill/receive stock later.</p>
+          <label class="label" style="margin-top:16px;">Order date</label>
+          <input type="date" class="input" style="width:100%;max-width:220px;margin-bottom:4px;" value="${ctx.esc(wizardPlacedOn || localToday())}" onchange="VendorOrders.setWizardPlacedOn(this.value)" />
+          <p class="vo-wiz-review-note">Day you placed with vendor (backdate OK). Goes to <strong>Placed</strong>. Next: Receive, then Bill.</p>
         </div>`;
       footerEl.innerHTML = `
         <button class="btn btn-secondary" onclick="VendorOrders.wizardBack()">← Back</button>
-        <button class="btn btn-primary btn-lg" onclick="VendorOrders.placeOrder()">Place Order</button>`;
+        <button class="btn btn-primary btn-lg" onclick="VendorOrders.placeOrder()">Place with vendor</button>`;
     }
   }
+
+  function setWizardPlacedOn(v) { wizardPlacedOn = v || localToday(); }
 
   function onVendorSearch(val) {
     const prev = document.getElementById("vo-vendor-search");
@@ -1964,7 +2112,11 @@ const VendorOrders = (() => {
     try {
       const result = await ctx.api("/vendor-orders/placements", {
         method: "POST",
-        body: JSON.stringify({ vendor_id: wizardVendorId, lines: wizardLines }),
+        body: JSON.stringify({
+          vendor_id: wizardVendorId,
+          lines: wizardLines,
+          placed_on: wizardPlacedOn || localToday(),
+        }),
       });
       ctx.invalidateCache?.("/vendor-orders");
       closeWizard();
@@ -1980,7 +2132,7 @@ const VendorOrders = (() => {
       }
       const lineRows = wizardLines.map(l => {
         const p = wizardProducts.find(x => x.id === l.catalog_product_id);
-        return `<tr><td>${ctx.esc(p ? p.our_product_id : l.catalog_product_id)}</td><td>${l.quantity}</td><td>${p ? fmtPrice(p.buying_price) : "—"}</td></tr>`;
+        return `<tr><td>${ctx.esc(p ? (p.vendor_product_id ? `${p.our_product_id} / (${p.vendor_product_id})` : p.our_product_id) : l.catalog_product_id)}</td><td>${l.quantity}</td><td>${p ? fmtPrice(p.buying_price) : "—"}</td></tr>`;
       }).join("");
       const pdfBtns = latest?.id
         ? (docUrl
@@ -1996,17 +2148,20 @@ const VendorOrders = (() => {
         : "";
       ctx.openDetail?.("Order placed", `
         <div class="doc-success-banner">
-          <strong>Order placed</strong>
+          <strong>Placed with vendor</strong>
           <span>${latest?.id ? `Placement #${latest.id}` : "Saved"} · ${wizardLines.length} product${wizardLines.length === 1 ? "" : "s"}</span>
         </div>
+        <p style="margin:0 0 12px;font-size:14px;color:var(--muted);">In <strong>Placed</strong>. Next: <strong>Receive</strong> when goods arrive.</p>
         <table class="data" style="font-size:13px;margin-top:12px;"><thead><tr><th>Product</th><th>Qty</th><th>Price</th></tr></thead><tbody>
           ${lineRows}
         </tbody></table>
         ${pdfBtns}`,
-        `<button class="btn btn-secondary" style="flex:1;" onclick="App.closeDetail();VendorOrders.openDetail(${result.id || 0}, 'placed', ${wizardVendorId})">View order</button>
-         <button class="btn btn-primary" style="flex:1;" onclick="App.closeDetail()">Done</button>`, "md");
-      // Stay on success screen so Print / Save PDF are usable
+        `<button class="btn btn-primary" style="flex:1;" onclick="App.closeDetail();Stock.openReceiveForVendor(${wizardVendorId})">Receive</button>
+         <button class="btn btn-secondary" style="flex:1;" onclick="App.closeDetail();VendorOrders.billVendor(${wizardVendorId})">Bill</button>
+         <button class="btn btn-secondary" style="flex:1;" onclick="App.closeDetail();VendorOrders.openDetail(${result.id || 0}, 'placed', ${wizardVendorId})">View</button>`, "md");
       currentBucket = "placed";
+      hubMode = "browse";
+      syncHubChrome();
       loadList();
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
@@ -2059,6 +2214,10 @@ const VendorOrders = (() => {
     Stock.openReceiveForVendor(detailVendorId, { catalog_product_id: catalogProductId, quantity: pendingQty });
   }
 
+  function receiveSummaryLine(catalogProductId, pendingQty) {
+    return billSummaryLine(catalogProductId, pendingQty);
+  }
+
   function cancelSummaryLine(catalogProductId) {
     const line = (orderSummary?.lines || []).find(l => l.catalog_product_id === catalogProductId);
     if (!line || line.total_pending <= 0) return;
@@ -2106,46 +2265,6 @@ const VendorOrders = (() => {
     });
   }
 
-
-  async function toggleOrderRow(catId) {
-    expandedOrderProductId = expandedOrderProductId === catId ? null : catId;
-    renderDetail();
-    if (expandedOrderProductId) await loadOrderRowExpand(catId);
-  }
-
-  async function loadOrderRowExpand(catId) {
-    const wrap = document.getElementById(`vo-order-drill-${catId}`);
-    const line = (currentOrder?.aggregated_lines || []).find(l => l.catalog_product_id === catId);
-    if (!wrap || !line) return;
-    const breakdown = line.breakdown || [];
-    const placementMap = Object.fromEntries((currentOrder?.placements || []).map(p => [p.id, p]));
-    let html = `<div style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--muted);">Breakdown — ${ctx.esc(line.our_product_id)}</div>
-      <table class="data" style="margin:0 0 12px;font-size:13px;"><thead><tr>
-        <th>Placement</th><th>Qty</th><th>Billed</th><th>Amount</th><th>When</th><th></th>
-      </tr></thead><tbody>
-        ${breakdown.map(b => {
-          const p = placementMap[b.placement_id];
-          const badge = placementBadge(b.placement_color_index);
-          const docBtns = currentBucket === "placed" && p
-            ? `<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();VendorOrders.openPlacementDoc(${b.placement_id})">Order PDF</button>`
-            : "";
-          return `<tr>
-            <td>${badge}</td>
-            <td>${b.quantity}</td>
-            <td>${b.quantity_billed ?? "—"}</td>
-            <td>${fmtAmtOrDash(b.billed_amount)}</td>
-            <td style="font-size:12px;">${new Date(b.placed_at).toLocaleString()}</td>
-            <td style="white-space:nowrap;">${docBtns}</td>
-          </tr>`;
-        }).join("")}
-      </tbody></table>`;
-
-    if (currentBucket === "cancelled") {
-      html += `<p style="font-size:12px;color:var(--muted);margin:0;">Cancelled placement history for this product.</p>`;
-    }
-
-    wrap.innerHTML = html;
-  }
 
   async function toggleClosedRow(lineId) {
     expandedClosedId = expandedClosedId === lineId ? null : lineId;
@@ -2207,34 +2326,90 @@ const VendorOrders = (() => {
     finally { ctx.hideLoading?.(); }
   }
 
-  function billVendor(vendorId) {
+  async function _refreshAfterPlacedLineEdit(orderId) {
+    ctx.invalidateCache?.("/vendor-orders");
+    if (hubExpandedVendorId) {
+      const vid = typeof hubExpandedVendorId === "number" ? hubExpandedVendorId : null;
+      if (vid) {
+        hubExpandCache[`placed-${vid}`] = await ctx.api(`/vendor-orders/${orderId}?view=default`, {}, 0);
+      } else if (orderId) {
+        const detail = await ctx.api(`/vendor-orders/${orderId}?view=default`, {}, 0);
+        hubExpandCache[`placed-${detail.vendor_id}`] = detail;
+      }
+    }
+    await loadList();
+    if (detailVendorId) await openDetail(orderId || 0, "placed", detailVendorId);
+  }
+
+  async function editPlacedLine(lineId, currentQty, orderId) {
+    const raw = prompt("Edit placed quantity:", String(currentQty ?? 1));
+    if (raw == null) return;
+    const qty = Math.max(1, parseInt(String(raw), 10) || 0);
+    if (!qty) return ctx.toast("Enter a valid quantity", "error");
+    ctx.showLoading?.();
+    try {
+      await ctx.api(`/vendor-orders/lines/${lineId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ quantity: qty }),
+      });
+      ctx.toast("Placed line updated", "success");
+      await _refreshAfterPlacedLineEdit(orderId);
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  async function deletePlacedLine(lineId, orderId) {
+    if (!confirm("Remove this product line from the placed order?")) return;
+    ctx.showLoading?.();
+    try {
+      await ctx.api(`/vendor-orders/lines/${lineId}`, { method: "DELETE" });
+      ctx.toast("Line removed", "success");
+      await _refreshAfterPlacedLineEdit(orderId);
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  function receiveVendor(vendorId) {
     if (!vendorId) return;
     Stock.openReceiveForVendor(vendorId);
   }
 
-  function billOpenLine(catalogProductId, qty) {
-    if (!detailVendorId) return;
-    Stock.openReceiveForVendor(detailVendorId, { catalog_product_id: catalogProductId, quantity: qty });
+  function billVendor(vendorId) {
+    if (!vendorId) return;
+    Stock.openBillForVendor(vendorId);
   }
 
-  function billOrder() {
+  function billOpenLine(catalogProductId, qty) {
+    if (!detailVendorId) return;
+    Stock.openBillForVendor(detailVendorId, { catalog_product_id: catalogProductId, quantity: qty });
+  }
+
+  function receiveOrder() {
     if (!detailVendorId) return;
     Stock.openReceiveForVendor(detailVendorId);
   }
 
+  function billOrder() {
+    if (!detailVendorId) return;
+    Stock.openBillForVendor(detailVendorId);
+  }
+
+  function _detailVendorId() { return detailVendorId; }
+
   return {
-    init, showHub, setBucket, loadList, openDetail, switchDetailBucket, refreshIfOpen,
-    toggleSummaryRow, toggleOrderRow, togglePlacementRow, toggleClosedRow,
+    init, showHub, setBucket, setHubMode, setQueueFilter, setHubSearch, loadList, openDetail, switchDetailBucket, refreshIfOpen,
+    toggleSummaryRow, togglePlacementRow, toggleClosedRow,
     showCreateMenu, showCreateMenuFromVendor, runHubAction, runDetailAction, openCloseBatch,
-    openWizard, closeWizard, pickVendor, toggleWizardProduct, setWizardQty, bumpWizardQty, swapProduct,
+    openWizard, closeWizard, primeVendors, pickVendor, toggleWizardProduct, setWizardQty, bumpWizardQty, swapProduct,
     onVendorSearch, onProductSearch,
-    billOrder, billVendor, billOpenLine, closePlacedLine, cancelPlacedLine,
+    billOrder, receiveOrder, billVendor, receiveVendor, billOpenLine, editPlacedLine, deletePlacedLine, closePlacedLine, cancelPlacedLine,
     closeVendorOpen, cancelVendorOpen, closeAllOpenLines, cancelAllOpenLines,
     billSummaryLine, cancelSummaryLine, closeSummaryLine,
-    wizardBack, wizardNext, placeOrder, openOrderPdf, fetchPlacementPdf,
+    wizardBack, wizardNext, placeOrder, setWizardPlacedOn, openOrderPdf, fetchPlacementPdf,
     openEditOpenLine, closeEdit, saveEdit,
     cancelPlacement, addDebitNote, openDebitNotes, closeOpenLine, cancelOpenLine, closeBilledPlacement,
     openPlacementDoc, openReceiptDoc,
     toggleHubVendor, toggleHubPlacement, toggleHubClosedBill,
+    _detailVendorId,
   };
 })();

@@ -16,6 +16,8 @@ from app.models.manual_loss import ManualLoss
 from app.models.route import Route
 from app.services.ar_ledger import build_ar_ledger, customer_ar_totals
 from app.services.finance_overview import finance_overview
+from app.services.money import assert_dues_consistent, dues_snapshot
+from app.services.activity import log_from_auth
 from app.services.route_collection_pdf import render_route_collection_pdf
 
 router = APIRouter(prefix="/finance", tags=["finance"])
@@ -36,9 +38,42 @@ class ManualLossOut(BaseModel):
     created_at: object
 
 
+@router.get("/dues")
+def get_finance_dues(db: Session = Depends(get_db), auth: AuthContext = Depends(require_admin)):
+    """Single money API for Collect / Pay / Freight dues. UI must not re-sum ledgers."""
+    return dues_snapshot(db)
+
+
+@router.get("/dues/integrity")
+def get_finance_dues_integrity(db: Session = Depends(get_db), auth: AuthContext = Depends(require_admin)):
+    """CI / ops: verify dues snapshot matches overview and list sums."""
+    return assert_dues_consistent(db)
+
+
+@router.get("/reconcile")
+def get_finance_reconcile(
+    repair_freight: bool = False,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    """Ops job: money + stock + freight cache consistency."""
+    from app.services.reconcile import run_reconcile
+
+    result = run_reconcile(db, repair_freight=repair_freight)
+    if repair_freight and result.get("freight_repaired"):
+        db.commit()
+    return result
+
+
 @router.get("/overview")
 def get_finance_overview(db: Session = Depends(get_db), auth: AuthContext = Depends(require_admin)):
-    return finance_overview(db)
+    from app.services import response_cache
+    hit = response_cache.get("finance_overview")
+    if hit is not None:
+        return hit
+    data = finance_overview(db)
+    response_cache.set("finance_overview", data, ttl_seconds=15.0)
+    return data
 
 
 @router.get("/route-collections")
@@ -222,6 +257,15 @@ def create_loss(body: ManualLossIn, db: Session = Depends(get_db), auth: AuthCon
         created_by_name=auth.actor_name,
     )
     db.add(row)
+    log_from_auth(
+        db,
+        auth,
+        action="create",
+        entity_type="manual_loss",
+        entity_id=row.id,
+        entity_label=format(row.amount, "f"),
+        detail=(body.description or "")[:200] or None,
+    )
     db.commit()
     db.refresh(row)
     return ManualLossOut(
@@ -239,5 +283,14 @@ def delete_loss(loss_id: int, db: Session = Depends(get_db), auth: AuthContext =
     row = db.get(ManualLoss, loss_id)
     if not row:
         raise HTTPException(404, "loss not found")
+    log_from_auth(
+        db,
+        auth,
+        action="delete",
+        entity_type="manual_loss",
+        entity_id=row.id,
+        entity_label=format(row.amount, "f"),
+        detail=(row.description or "")[:200] or None,
+    )
     db.delete(row)
     db.commit()

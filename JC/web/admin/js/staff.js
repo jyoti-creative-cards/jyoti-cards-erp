@@ -4,6 +4,7 @@ const StaffMgmt = (() => {
   let staff = [];
   let permGroups = [];
   let editingId = null;
+  let searchQ = "";
 
   function init(context) { ctx = context; }
 
@@ -12,27 +13,67 @@ const StaffMgmt = (() => {
       ctx.api("/staff"),
       ctx.api("/staff/permissions"),
     ]);
+    if (!Array.isArray(staff)) staff = [];
+    const count = document.getElementById("hub-staff-count");
+    if (count) count.textContent = `${staff.length} staff`;
+    renderSearch();
     render();
+  }
+
+  function setSearch(val) {
+    searchQ = val || "";
+    render();
+  }
+
+  function renderSearch() {
+    const slot = document.getElementById("staff-search-slot");
+    if (!slot) return;
+    slot.innerHTML = HubUI.searchBar({
+      id: "staff-search",
+      value: searchQ,
+      placeholder: "Search name or phone…",
+      oninput: "StaffMgmt.setSearch(this.value)",
+    });
+  }
+
+  function filtered() {
+    const q = searchQ.trim().toLowerCase();
+    if (!q) return staff;
+    return staff.filter(s =>
+      String(s.name || "").toLowerCase().includes(q)
+      || String(s.phone || "").includes(q)
+    );
   }
 
   function render() {
     const el = document.getElementById("staff-table");
     if (!el) return;
+    const list = filtered();
     if (!staff.length) {
-      el.innerHTML = '<div class="empty-state"><p>No staff yet.</p><button class="btn btn-primary btn-lg" style="margin-top:16px;" onclick="StaffMgmt.openWizard()">+ Add Staff</button></div>';
+      el.innerHTML = HubUI.emptyState({
+        title: "No staff yet",
+        sub: "Add a team member to share logins.",
+        ctaHtml: `<button class="btn btn-primary btn-lg" onclick="StaffMgmt.openWizard()">+ Add Staff</button>`,
+      });
       return;
     }
-    el.innerHTML = `<table class="data"><thead><tr><th>Name</th><th>Phone (Login ID)</th><th>Permissions</th><th></th></tr></thead><tbody>
-      ${staff.map(s => `<tr class="clickable" onclick="StaffMgmt.openDetail(${s.id})">
-        <td><strong>${ctx.esc(s.name)}</strong></td>
-        <td>${ctx.esc(s.phone)}</td>
-        <td style="font-size:12px;color:var(--muted);">${s.permissions.length ? s.permissions.map(p => `<span class="badge badge-gray" style="margin:2px;">${ctx.esc(p.replace('.', ' '))}</span>`).join("") : "—"}</td>
-        <td onclick="event.stopPropagation()"><div class="actions">
-          <button class="btn btn-ghost btn-sm" onclick="StaffMgmt.openEdit(${s.id})">Edit</button>
-          <button class="btn btn-danger btn-sm" onclick="StaffMgmt.deleteStaff(${s.id},${JSON.stringify(s.name)})">Remove</button>
-        </div></td>
-      </tr>`).join("")}
-    </tbody></table>`;
+    if (!list.length) {
+      el.innerHTML = HubUI.emptyState({ title: "No matches", sub: "Clear search." });
+      return;
+    }
+    el.innerHTML = `<div class="ord-card-list">${list.map(s => HubUI.partyCard({
+      title: s.name,
+      meta: `${ctx.esc(s.phone)}${s.permissions.length ? ` · ${s.permissions.length} permission${s.permissions.length === 1 ? "" : "s"}` : " · No permissions"}`,
+      pillHtml: s.is_active === false ? HubUI.pill("Inactive", "muted") : HubUI.pill("Active", "ok"),
+      primaryLabel: "Edit",
+      primaryOnclick: `StaffMgmt.openEdit(${s.id})`,
+      moreItems: [
+        { label: "Open", onclick: `StaffMgmt.openDetail(${s.id})` },
+        { label: "Remove", onclick: `StaffMgmt.deleteStaff(${s.id},${JSON.stringify(s.name)})`, danger: true },
+      ],
+      rowOnclick: `StaffMgmt.openDetail(${s.id})`,
+      canWrite: true,
+    })).join("")}</div>`;
   }
 
   async function openDetail(id) {
@@ -60,9 +101,58 @@ const StaffMgmt = (() => {
     finally { ctx.hideLoading?.(); }
   }
 
+  const ROLE_PRESETS = [
+    {
+      id: "sell",
+      label: "Sell",
+      hint: "Customers + selling orders",
+      keys: ["customers.read", "customers.write", "vendor_orders.read", "vendor_orders.write", "catalog.read", "addons.read"],
+    },
+    {
+      id: "buy",
+      label: "Buy",
+      hint: "Vendors + buying orders + stock",
+      keys: ["vendors.read", "vendors.write", "vendor_orders.read", "vendor_orders.write", "catalog.read", "catalog.write", "addons.read", "addons.write"],
+    },
+    {
+      id: "stock",
+      label: "Stock",
+      hint: "Catalog + on-hand",
+      keys: ["catalog.read", "catalog.write", "addons.read", "addons.write"],
+    },
+    {
+      id: "people",
+      label: "People",
+      hint: "Customers + vendors only",
+      keys: ["customers.read", "customers.write", "vendors.read", "vendors.write"],
+    },
+    {
+      id: "setup",
+      label: "Setup",
+      hint: "Routes, cities, lookups",
+      keys: ["setup.read", "setup.write", "recycle.read", "recycle.write"],
+    },
+  ];
+
+  function applyRolePreset(roleId) {
+    const role = ROLE_PRESETS.find(r => r.id === roleId);
+    if (!role) return;
+    const want = new Set(role.keys);
+    document.querySelectorAll(".staff-perm-cb").forEach(cb => {
+      cb.checked = want.has(cb.value);
+    });
+  }
+
   function permCheckboxes(selected) {
     const sel = new Set(selected || []);
-    return permGroups.map(g => `
+    const presets = `<div style="margin-bottom:14px;">
+      <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:8px;">Quick roles</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;">
+        ${ROLE_PRESETS.map(r => `<button type="button" class="btn btn-secondary btn-sm" title="${ctx.esc(r.hint)}" onclick="StaffMgmt.applyRolePreset('${r.id}')">${ctx.esc(r.label)}</button>`).join("")}
+      </div>
+      <p style="margin:8px 0 0;font-size:12px;color:var(--muted);">Tap a role to tick the common permissions, then fine-tune below.</p>
+    </div>`;
+    const groups = permGroups.map(g => `
       <div style="margin-bottom:12px;">
         <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:6px;">${ctx.esc(g.label)}</div>
         ${g.permissions.map(p => `<label style="display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:13px;">
@@ -70,6 +160,7 @@ const StaffMgmt = (() => {
           ${ctx.esc(p.label)}
         </label>`).join("")}
       </div>`).join("");
+    return presets + groups;
   }
 
   function collectPerms() {
@@ -140,5 +231,5 @@ const StaffMgmt = (() => {
     } catch (e) { ctx.toast(e.message, "error"); }
   }
 
-  return { init, load, openDetail, openWizard, openEdit, closeModal, save, deleteStaff };
+  return { init, load, openDetail, openWizard, openEdit, closeModal, save, deleteStaff, setSearch, applyRolePreset };
 })();

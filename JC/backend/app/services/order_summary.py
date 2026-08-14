@@ -9,13 +9,17 @@ from app.models.vendor_order import VendorOrder, VendorOrderLine, VendorOrderPla
 
 
 def received_qty_by_product(db: Session, vendor_id: int) -> dict[int, int]:
+    """Goods received into stock — exclude bill-only receipts (they copy qty for AP lines)."""
     rows = (
         db.query(
             StockReceiptLine.catalog_product_id,
             func.coalesce(func.sum(StockReceiptLine.quantity_received), 0),
         )
         .join(StockReceipt, StockReceiptLine.receipt_id == StockReceipt.id)
-        .filter(StockReceipt.vendor_id == vendor_id)
+        .filter(
+            StockReceipt.vendor_id == vendor_id,
+            StockReceipt.receipt_type != "vendor_bill",
+        )
         .group_by(StockReceiptLine.catalog_product_id)
         .all()
     )
@@ -63,5 +67,5 @@ def open_qty_by_product(db: Session, vendor_id: int) -> dict[int, int]:
 
 
 def pending_qty_by_product(db: Session, vendor_id: int) -> dict[int, int]:
-    """Yet-to-bill quantity — driven by open lines, not placed−received."""
+    """Yet-to-receive quantity — driven by open lines."""
     return open_qty_by_product(db, vendor_id)

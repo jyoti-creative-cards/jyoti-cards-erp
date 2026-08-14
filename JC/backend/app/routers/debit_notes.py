@@ -19,6 +19,7 @@ from app.services.debit_notes import (
     infer_direction,
     normalize_signed_values,
 )
+from app.services.activity import log_from_auth
 from app.services.ap_ledger import debit_note_payable_effect
 
 router = APIRouter(prefix="/debit-notes", tags=["debit-notes"])
@@ -165,6 +166,20 @@ def update_debit_note(
             actor_name=auth.actor_name,
         )
 
+    vendor = db.get(Vendor, note.vendor_id)
+    city_name = None
+    if vendor and vendor.city_id:
+        city = db.get(City, vendor.city_id)
+        city_name = city.name if city else None
+    log_from_auth(
+        db,
+        auth,
+        action="update",
+        entity_type="debit_note",
+        entity_id=note.id,
+        entity_label=_vendor_label(vendor, city_name) if vendor else None,
+        detail=f"{note.note_type} ₹{note.amount}",
+    )
     db.commit()
     db.refresh(note)
     return _debit_note_out(db, note)

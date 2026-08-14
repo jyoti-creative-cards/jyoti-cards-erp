@@ -14,6 +14,7 @@ from app.deps import AuthContext, get_auth_context, require_permission
 from app.models.addon_product import AddonProduct
 from app.models.vendor import Vendor
 from app.schemas.addon import AddonCreate, AddonDetail, AddonPublic, AddonUpdate
+from app.services.activity import log_from_auth
 from app.services.history import TRACKED_FIELDS, diff_summary, list_entity_history, list_price_history, record_entity_history, record_price_change, row_snapshot
 from app.services.storage import presigned_urls
 
@@ -74,7 +75,7 @@ def get_addon(addon_id: int, db: Session = Depends(get_db)) -> AddonDetail:
 
 
 @router.post("", response_model=AddonPublic, status_code=201, dependencies=[Depends(require_permission("addons.write"))])
-def create_addon(body: AddonCreate, db: Session = Depends(get_db)) -> AddonPublic:
+def create_addon(body: AddonCreate, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("addons.write"))) -> AddonPublic:
     if not db.get(Vendor, body.vendor_id):
         raise HTTPException(400, "vendor not found")
     clash = db.query(AddonProduct).filter(
@@ -101,12 +102,13 @@ def create_addon(body: AddonCreate, db: Session = Depends(get_db)) -> AddonPubli
         raise HTTPException(409, "duplicate our_product_id") from None
     db.refresh(row)
     record_price_change(db, "addon_product", row.id, row.buying_price)
+    log_from_auth(db, auth, action="create", entity_type="addon", entity_id=row.id, entity_label=row.our_product_id)
     db.commit()
     return _to_public(row, db)
 
 
 @router.patch("/{addon_id}", response_model=AddonPublic, dependencies=[Depends(require_permission("addons.write"))])
-def update_addon(addon_id: int, body: AddonUpdate, db: Session = Depends(get_db)) -> AddonPublic:
+def update_addon(addon_id: int, body: AddonUpdate, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("addons.write"))) -> AddonPublic:
     row = db.get(AddonProduct, addon_id)
     if not row or not row.is_active:
         raise HTTPException(404, "addon not found")
@@ -125,16 +127,26 @@ def update_addon(addon_id: int, body: AddonUpdate, db: Session = Depends(get_db)
     summary = diff_summary("addon_product", before, after)
     if summary != "updated":
         record_entity_history(db, "addon_product", row.id, before, summary)
+    log_from_auth(
+        db,
+        auth,
+        action="update",
+        entity_type="addon",
+        entity_id=row.id,
+        entity_label=row.our_product_id,
+        detail=summary if summary != "updated" else None,
+    )
     db.commit()
     db.refresh(row)
     return _to_public(row, db)
 
 
 @router.delete("/{addon_id}", status_code=204, dependencies=[Depends(require_permission("addons.write"))])
-def delete_addon(addon_id: int, db: Session = Depends(get_db)) -> None:
+def delete_addon(addon_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("addons.write"))) -> None:
     row = db.get(AddonProduct, addon_id)
     if not row or not row.is_active:
         raise HTTPException(404, "addon not found")
     row.is_active = False
     row.deleted_at = datetime.now(timezone.utc)
+    log_from_auth(db, auth, action="delete", entity_type="addon", entity_id=row.id, entity_label=row.our_product_id)
     db.commit()

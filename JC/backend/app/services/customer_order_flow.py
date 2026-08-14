@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy.orm import Session
@@ -37,7 +37,14 @@ def get_or_create_customer_order(db: Session, customer_id: int, bucket: str, sta
     return order
 
 
-def _get_or_create_open_line(db: Session, customer_id: int, catalog_product_id: int, unit_price: Decimal) -> CustomerOpenLine:
+def _get_or_create_open_line(
+    db: Session,
+    customer_id: int,
+    catalog_product_id: int,
+    unit_price: Decimal,
+    *,
+    as_of: datetime | None = None,
+) -> CustomerOpenLine:
     prod = db.get(CatalogProduct, catalog_product_id)
     if not prod:
         raise ValueError("product not found")
@@ -62,22 +69,39 @@ def _get_or_create_open_line(db: Session, customer_id: int, catalog_product_id: 
         unit_price=unit_price,
         status="open",
     )
+    if as_of is not None:
+        row.created_at = as_of
     db.add(row)
     db.flush()
     return row
 
 
-def add_to_customer_open(db: Session, customer_id: int, lines: list[tuple[int, int, Decimal]]) -> None:
+def add_to_customer_open(
+    db: Session,
+    customer_id: int,
+    lines: list[tuple[int, int, Decimal]],
+    *,
+    as_of: datetime | None = None,
+) -> None:
     for catalog_product_id, qty, price in lines:
         if qty <= 0:
             continue
-        row = _get_or_create_open_line(db, customer_id, catalog_product_id, price)
+        row = _get_or_create_open_line(db, customer_id, catalog_product_id, price, as_of=as_of)
         row.quantity_received += qty
         row.quantity_open += qty
         row.status = "open"
 
 
-def reserve_stock(db: Session, *, catalog_product_id: int, our_product_id: str, quantity: int, reference_id: int, party: str) -> None:
+def reserve_stock(
+    db: Session,
+    *,
+    catalog_product_id: int,
+    our_product_id: str,
+    quantity: int,
+    reference_id: int,
+    party: str,
+    allow_negative: bool = False,
+) -> None:
     balance = (
         db.query(StockBalance)
         .filter(StockBalance.catalog_product_id == catalog_product_id)
@@ -88,8 +112,14 @@ def reserve_stock(db: Session, *, catalog_product_id: int, our_product_id: str, 
         balance = StockBalance(catalog_product_id=catalog_product_id, quantity_on_hand=0)
         db.add(balance)
         db.flush()
-    if balance.quantity_on_hand < quantity:
-        raise ValueError("insufficient stock")
+    on_hand = int(balance.quantity_on_hand or 0)
+    if on_hand < quantity and not allow_negative:
+        raise ValueError(
+            f"insufficient stock for {our_product_id} (need {quantity}, have {on_hand})"
+        )
+    note = f"Customer order reserved {quantity}"
+    if allow_negative and on_hand < quantity:
+        note = f"Customer order reserved {quantity} (oversell; had {on_hand})"
     add_stock(
         db,
         catalog_product_id=catalog_product_id,
@@ -99,7 +129,7 @@ def reserve_stock(db: Session, *, catalog_product_id: int, our_product_id: str, 
         reference_type="customer_placement",
         reference_id=reference_id,
         party=party,
-        notes=f"Customer order reserved {quantity}",
+        notes=note,
     )
 
 
@@ -158,7 +188,14 @@ def edit_customer_open_qty(db: Session, line_id: int, new_qty: int, customer_nam
     return row
 
 
-def edit_customer_placement_line_qty(db: Session, line_id: int, new_qty: int, customer_name: str) -> CustomerOrderLine:
+def edit_customer_placement_line_qty(
+    db: Session,
+    line_id: int,
+    new_qty: int,
+    customer_name: str,
+    *,
+    allow_negative_stock: bool = False,
+) -> CustomerOrderLine:
     line = db.get(CustomerOrderLine, line_id)
     if not line or line.status != "active":
         raise ValueError("line not found")
@@ -182,6 +219,7 @@ def edit_customer_placement_line_qty(db: Session, line_id: int, new_qty: int, cu
             quantity=delta,
             reference_id=placement.id,
             party=customer_name,
+            allow_negative=allow_negative_stock,
         )
         add_to_customer_open(db, order.customer_id, [(line.catalog_product_id, delta, line.unit_price)])
     else:
@@ -212,6 +250,123 @@ def edit_customer_placement_line_qty(db: Session, line_id: int, new_qty: int, cu
     return line
 
 
+def cancel_customer_placement(
+    db: Session,
+    *,
+    placement_id: int,
+    reason: str,
+    customer_name: str,
+) -> CustomerOrderPlacement:
+    """Cancel unbilled qty on a received placement. Billed qty is never cancelled."""
+    reason = (reason or "").strip()
+    if not reason:
+        raise ValueError("cancel reason required")
+
+    placement = db.get(CustomerOrderPlacement, placement_id)
+    if not placement:
+        raise ValueError("placement not found")
+    if placement.status != "received":
+        raise ValueError("only received placements can be cancelled")
+
+    order = db.get(CustomerOrder, placement.customer_order_id)
+    if not order or order.bucket != "received":
+        raise ValueError("cannot cancel — not a received order")
+
+    lines = (
+        db.query(CustomerOrderLine)
+        .filter(
+            CustomerOrderLine.placement_id == placement.id,
+            CustomerOrderLine.status == "active",
+        )
+        .all()
+    )
+    cancellable = []
+    for ln in lines:
+        billed = int(ln.quantity_billed or 0)
+        unbilled = int(ln.quantity) - billed
+        if unbilled > 0:
+            cancellable.append((ln, unbilled, billed))
+    if not cancellable:
+        raise ValueError("nothing left to cancel — already billed")
+
+    cancelled_order = get_or_create_customer_order(db, order.customer_id, "cancelled", "cancelled")
+    hist = CustomerOrderPlacement(
+        customer_order_id=cancelled_order.id,
+        status="cancelled",
+        cancel_reason=reason,
+        customer_notes=placement.customer_notes,
+        placed_at=placement.placed_at,
+    )
+    db.add(hist)
+    db.flush()
+
+    now = datetime.now(timezone.utc)
+    for ln, unbilled, billed in cancellable:
+        restore_stock(
+            db,
+            catalog_product_id=ln.catalog_product_id,
+            our_product_id=ln.our_product_id,
+            quantity=unbilled,
+            reference_id=placement.id,
+            party=customer_name,
+            notes=f"Cancelled placement open: {reason}",
+        )
+        open_row = (
+            db.query(CustomerOpenLine)
+            .filter(
+                CustomerOpenLine.customer_id == order.customer_id,
+                CustomerOpenLine.catalog_product_id == ln.catalog_product_id,
+            )
+            .first()
+        )
+        if open_row and open_row.status == "open":
+            reduce = min(unbilled, int(open_row.quantity_open))
+            open_row.quantity_open = max(0, int(open_row.quantity_open) - reduce)
+            open_row.quantity_received = max(
+                int(open_row.quantity_billed),
+                int(open_row.quantity_received) - reduce,
+            )
+            if open_row.quantity_open <= 0 and int(open_row.quantity_billed) <= 0:
+                open_row.status = "cancelled"
+                open_row.cancel_reason = reason
+
+        if billed > 0:
+            ln.quantity = billed
+        else:
+            ln.status = "cancelled"
+            ln.cancel_reason = reason
+
+        db.add(
+            CustomerOrderLine(
+                placement_id=hist.id,
+                catalog_product_id=ln.catalog_product_id,
+                our_product_id=ln.our_product_id,
+                quantity=unbilled,
+                quantity_billed=0,
+                unit_price=ln.unit_price,
+                addons_json=ln.addons_json,
+                status="cancelled",
+                cancel_reason=reason,
+            )
+        )
+
+    still_active = (
+        db.query(CustomerOrderLine)
+        .filter(
+            CustomerOrderLine.placement_id == placement.id,
+            CustomerOrderLine.status == "active",
+        )
+        .count()
+    )
+    if still_active == 0:
+        placement.status = "cancelled"
+        placement.cancel_reason = reason
+        placement.closed_at = now
+    order.updated_at = now
+    cancelled_order.updated_at = now
+    return placement
+
+
 def replace_received_placement(
     db: Session,
     *,
@@ -219,8 +374,13 @@ def replace_received_placement(
     lines: list[dict],
     customer_notes: str | None,
     customer_name: str,
+    allow_negative_stock: bool = False,
 ) -> CustomerOrderPlacement:
-    """Full replace of an unbilled received placement (add / change qty / remove)."""
+    """Replace received placement lines (add / change qty / remove).
+
+    Already-billed qty is locked: cannot go below quantity_billed; removing a
+    partly-billed product keeps the billed remainder.
+    """
     placement = db.get(CustomerOrderPlacement, placement_id)
     if not placement or placement.status != "received":
         raise ValueError("placement not found or not editable")
@@ -234,9 +394,6 @@ def replace_received_placement(
         .all()
     )
     by_cat = {int(ln.catalog_product_id): ln for ln in existing if ln.status == "active"}
-    for ln in existing:
-        if int(ln.quantity_billed or 0) > 0:
-            raise ValueError(f"{ln.our_product_id} already billed — cannot full-edit")
 
     desired: dict[int, int] = {}
     for raw in lines:
@@ -246,10 +403,18 @@ def replace_received_placement(
         cid = int(raw["catalog_product_id"])
         desired[cid] = desired.get(cid, 0) + qty
 
-    if not desired:
-        raise ValueError("enter quantity on at least one line")
+    # Keep billed floor for products omitted from desired
+    for cid, ln in by_cat.items():
+        billed = int(ln.quantity_billed or 0)
+        if cid not in desired and billed > 0:
+            desired[cid] = billed
 
-    # Remove lines not in desired
+    if not desired and not by_cat:
+        raise ValueError("enter quantity on at least one line")
+    if not desired:
+        raise ValueError("nothing left to keep — cancel the order instead")
+
+    # Remove / shrink lines not wanted (unbilled only)
     for cid, ln in list(by_cat.items()):
         if cid not in desired:
             edit_customer_placement_line_qty(db, ln.id, 0, customer_name)
@@ -267,8 +432,21 @@ def replace_received_placement(
         if unit_price <= 0:
             raise ValueError(f"sell price not set for {prod.our_product_id}")
         if cid in by_cat:
-            edit_customer_placement_line_qty(db, by_cat[cid].id, qty, customer_name)
+            billed = int(by_cat[cid].quantity_billed or 0)
+            if qty < billed:
+                raise ValueError(f"{prod.our_product_id}: cannot go below billed qty ({billed})")
+            edit_customer_placement_line_qty(
+                db, by_cat[cid].id, qty, customer_name, allow_negative_stock=allow_negative_stock
+            )
+            # Backfill linked addons if older lines were saved without them
+            existing_ln = by_cat[cid]
+            if not existing_ln.addons_json:
+                from app.services.catalog_addons import addon_snapshots_for_product
+
+                existing_ln.addons_json = addon_snapshots_for_product(db, prod.id) or None
         else:
+            from app.services.catalog_addons import addon_snapshots_for_product
+
             db.add(
                 CustomerOrderLine(
                     placement_id=placement.id,
@@ -278,6 +456,7 @@ def replace_received_placement(
                     quantity_billed=0,
                     unit_price=unit_price,
                     status="active",
+                    addons_json=addon_snapshots_for_product(db, prod.id) or None,
                 )
             )
             reserve_stock(
@@ -287,6 +466,7 @@ def replace_received_placement(
                 quantity=qty,
                 reference_id=placement.id,
                 party=customer_name,
+                allow_negative=allow_negative_stock,
             )
             add_to_customer_open(db, order.customer_id, [(prod.id, qty, unit_price)])
 
@@ -436,10 +616,18 @@ def create_received_placement(
     customer_name: str,
     lines: list[dict],
     customer_notes: str | None = None,
+    placed_on: date | None = None,
+    allow_negative_stock: bool = False,
 ) -> CustomerOrderPlacement:
-    """Create a received placement (portal or admin offline) — same path to bill later."""
+    """Create a received placement (portal or admin offline) — same path to bill later.
+
+    allow_negative_stock: admin offline only — oversell goes through; on-hand may go negative.
+    Portal must keep allow_negative_stock=False.
+    """
+    from app.services.biz_date import resolve_biz_dt
     from app.services.catalog_addons import addon_snapshots_for_product
 
+    when = resolve_biz_dt(placed_on)
     cleaned: list[dict] = []
     for raw in lines:
         qty = int(raw.get("quantity") or 0)
@@ -471,12 +659,28 @@ def create_received_placement(
     if not cleaned:
         raise ValueError("enter quantity on at least one line")
 
+    # Pre-check stock — portal blocks; offline may proceed (on-hand can go negative)
+    short: list[str] = []
+    for item in cleaned:
+        prod = item["prod"]
+        qty = item["quantity"]
+        bal = (
+            db.query(StockBalance)
+            .filter(StockBalance.catalog_product_id == prod.id)
+            .first()
+        )
+        on_hand = int(bal.quantity_on_hand or 0) if bal else 0
+        if on_hand < qty:
+            short.append(f"{prod.our_product_id} (need {qty}, have {on_hand})")
+    if short and not allow_negative_stock:
+        raise ValueError("insufficient stock for " + "; ".join(short))
+
     received = get_or_create_customer_order(db, customer_id, "received", "received")
     placement = CustomerOrderPlacement(
         customer_order_id=received.id,
         status="received",
         customer_notes=customer_notes,
-        placed_at=datetime.now(timezone.utc),
+        placed_at=when,
     )
     db.add(placement)
     db.flush()
@@ -504,9 +708,10 @@ def create_received_placement(
             quantity=qty,
             reference_id=placement.id,
             party=customer_name,
+            allow_negative=allow_negative_stock,
         )
         open_lines.append((prod.id, qty, item["unit_price"]))
 
-    add_to_customer_open(db, customer_id, open_lines)
-    received.updated_at = datetime.now(timezone.utc)
+    add_to_customer_open(db, customer_id, open_lines, as_of=when)
+    received.updated_at = when
     return placement

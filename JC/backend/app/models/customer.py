@@ -21,6 +21,7 @@ class Customer(Base):
     secondary_phone: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     alias: Mapped[Optional[str]] = mapped_column(String(200), nullable=True, index=True)
     address: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    additional_details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     city_id: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("jc_cities.id", ondelete="SET NULL"), nullable=True, index=True
     )

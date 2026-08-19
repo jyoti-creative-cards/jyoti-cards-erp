@@ -48,10 +48,13 @@ const OrdersUI = (() => {
   function filterAndRankParties(list, q) {
     const tokens = partySearchTokens(q);
     if (!tokens.length) {
-      return [...(list || [])].sort((a, b) =>
-        String(a.business_name || a.customer_name || a.vendor_label || "")
-          .localeCompare(String(b.business_name || b.customer_name || b.vendor_label || ""), undefined, { sensitivity: "base" })
-      );
+      return [...(list || [])].sort((a, b) => {
+        const pnA = a.party_number ?? Infinity;
+        const pnB = b.party_number ?? Infinity;
+        if (pnA !== pnB) return pnA - pnB;
+        return String(a.business_name || a.customer_name || a.vendor_label || "")
+          .localeCompare(String(b.business_name || b.customer_name || b.vendor_label || ""), undefined, { sensitivity: "base" });
+      });
     }
     const scored = [];
     for (const p of list || []) {
@@ -96,6 +99,7 @@ const OrdersUI = (() => {
 
   function partyCard({
     title,
+    titleIsHtml = false,
     meta,
     pillHtml = "",
     primaryLabel,
@@ -111,12 +115,13 @@ const OrdersUI = (() => {
       ? `<button type="button" class="btn btn-primary btn-sm" onclick="event.stopPropagation();${primaryOnclick}">${esc(primaryLabel)}</button>`
       : "";
     const more = moreMenu(moreItems);
+    const titleHtml = titleIsHtml ? title : esc(title);
     return `<div class="ord-card${open ? " is-open" : ""}">
       <div class="ord-card-row"${rowOnclick ? ` onclick="${rowOnclick}"` : ""}>
         <div class="ord-card-main">
           ${rowOnclick ? `<span class="vo-chevron${open ? " is-open" : ""}" aria-hidden="true"></span>` : ""}
           <div class="ord-card-text">
-            <div class="ord-card-title">${esc(title)} ${pillHtml}</div>
+            <div class="ord-card-title">${titleHtml} ${pillHtml}</div>
             <div class="ord-card-meta">${meta || ""}</div>
           </div>
         </div>

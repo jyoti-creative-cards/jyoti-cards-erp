@@ -14,6 +14,8 @@ const App = (() => {
   let permissions = new Set((staffUser && staffUser.permissions) || []);
   let routes = [], cities = [], customers = [], vendors = [], lookups = [];
   let peopleTab = null;
+  let customerStatusTab = "active"; // "active" | "inactive"
+  let customerMissingPhone = false; // filter: only show placeholder-phone customers
   let ordersType = "vendor";
   let setupTab = null;
   let recycleData = { routes: [], cities: [], customers: [], total: 0 };
@@ -1022,11 +1024,30 @@ const App = (() => {
     });
   }
 
+  function setCustomerStatusTab(tab) {
+    customerStatusTab = tab;
+    customerMissingPhone = false; // reset missing-phone filter on tab change
+    document.getElementById("cst-tab-active")?.classList.toggle("active", tab === "active");
+    document.getElementById("cst-tab-inactive")?.classList.toggle("active", tab === "inactive");
+    document.getElementById("cst-tab-missing")?.classList.toggle("active", false);
+    const btnNew = document.getElementById("btn-new-customer");
+    if (btnNew) btnNew.classList.toggle("hidden", tab !== "active");
+    invalidateCache("/customers");
+    loadCustomers();
+  }
+
+  function toggleMissingPhoneFilter() {
+    customerMissingPhone = !customerMissingPhone;
+    document.getElementById("cst-tab-missing")?.classList.toggle("active", customerMissingPhone);
+    renderCustomersTable();
+  }
+
   async function loadCustomers() {
     renderPeopleCustomerSearch();
     const q = document.getElementById("search-input")?.value.trim() || "";
-    // Cache full list; always refresh when searching.
-    customers = await api(`/customers${q ? "?search=" + encodeURIComponent(q) : ""}`, {}, q ? 0 : 120000);
+    const statusParam = `status=${customerStatusTab}`;
+    const searchParam = q ? `&search=${encodeURIComponent(q)}` : "";
+    customers = await api(`/customers?${statusParam}${searchParam}`, {}, q ? 0 : 120000);
     renderCustomersTable();
   }
 
@@ -1252,9 +1273,60 @@ const App = (() => {
     { key: "phone", label: "Phone", get: c => c.phone },
     { key: "alias", label: "Alias", get: c => c.alias || "" },
     { key: "city", label: "City / Route", get: c => `${c.city_name || ""} ${c.route_name || ""}` },
-    { key: "credit", label: "Credit", get: c => c.credit_limit ? String(c.credit_limit) : "" },
+    { key: "financials", label: "Financials", filterable: false, sortable: false },
     { key: "_actions", label: "", filterable: false, sortable: false },
   ];
+
+  function renderFinancialsCell(c) {
+    const limit = c.credit_limit !== null && c.credit_limit !== undefined ? Number(c.credit_limit) : null;
+    const outstanding = c.outstanding_balance !== null && c.outstanding_balance !== undefined ? Number(c.outstanding_balance) : null;
+    const available = c.available_credit !== null && c.available_credit !== undefined ? Number(c.available_credit) : null;
+    const trackOnly = limit !== null && limit === 0;
+    const hasLimit = limit !== null && limit > 0;
+    const fmt = n => "₹" + Math.abs(n).toLocaleString("en-IN", { maximumFractionDigits: 0 });
+
+    if (outstanding === null && !hasLimit) return '<span style="color:var(--muted);">—</span>';
+
+    if (trackOnly) {
+      if (outstanding === null) return '<span style="color:var(--muted);">—</span>';
+      const outColor = outstanding > 0 ? "var(--red,#dc2626)" : outstanding < 0 ? "var(--green,#16a34a)" : "var(--muted)";
+      return `<span style="font-size:12px;color:var(--muted);">Due</span>
+        <span style="font-weight:600;color:${outColor};margin-left:4px;">${fmt(outstanding)}</span>`;
+    }
+
+    const parts = [];
+    if (hasLimit) {
+      parts.push(`<span style="font-size:11px;color:var(--muted);">Limit</span> <span style="font-size:12px;">₹${limit.toLocaleString("en-IN", { maximumFractionDigits: 0 })}${c.credit_override ? ' <span class="badge badge-amber" style="font-size:10px;">OVR</span>' : ""}</span>`);
+    }
+    if (outstanding !== null) {
+      const outColor = outstanding > 0 ? "var(--red,#dc2626)" : outstanding < 0 ? "var(--green,#16a34a)" : "var(--muted)";
+      parts.push(`<span style="font-size:11px;color:var(--muted);">Due</span> <span style="font-size:12px;font-weight:600;color:${outColor};">${fmt(outstanding)}</span>`);
+    }
+    if (available !== null) {
+      const avColor = available >= 0 ? "var(--green,#16a34a)" : "var(--red,#dc2626)";
+      parts.push(`<span style="font-size:11px;color:var(--muted);">Avail</span> <span style="font-size:12px;color:${avColor};">${fmt(available)}</span>`);
+    }
+    return parts.join('<br>');
+  }
+
+  // Party badges: #number + marker_1 + marker_2 + payment_type(CASH only if not already in marker_1)
+  function partyBadgesHtml(c, opts) {
+    const parts = [];
+    if (c.party_number) {
+      parts.push(`<span style="font-size:11px;color:var(--muted);font-weight:600;">#${c.party_number}</span>`);
+    }
+    if (c.marker_1) {
+      parts.push(`<span class="badge badge-blue" style="font-size:10px;padding:2px 5px;">${esc(c.marker_1)}</span>`);
+    }
+    if (c.marker_2) {
+      parts.push(`<span class="badge badge-amber" style="font-size:10px;padding:2px 5px;">${esc(c.marker_2)}</span>`);
+    }
+    const m1upper = (c.marker_1 || "").toUpperCase();
+    if (c.payment_type === "CASH" && !m1upper.includes("CASH")) {
+      parts.push(`<span class="badge badge-amber" style="font-size:10px;padding:2px 5px;">CASH</span>`);
+    }
+    return parts.join(" ");
+  }
 
   function renderCustomersTable() {
     const el = document.getElementById("customers-table");
@@ -1268,16 +1340,28 @@ const App = (() => {
       });
       return;
     }
-    const rows = TableUtils.apply(customers, "customers", CUSTOMER_COLS);
+    const visibleCustomers = customerMissingPhone
+      ? customers.filter(c => c.phone && c.phone.startsWith("000"))
+      : customers;
+    const rows = TableUtils.apply(visibleCustomers, "customers", CUSTOMER_COLS);
     el.innerHTML = `<table class="data">${TableUtils.headerHtml("customers", CUSTOMER_COLS)}<tbody>
-      ${rows.map(c => `<tr class="clickable" onclick="App.openCustomerDetail(${c.id})">
-        <td><strong>${esc(c.business_name)}</strong>${c.person_name ? `<br><span style="font-size:12px;color:var(--muted);">${esc(c.person_name)}</span>` : ""}</td>
-        <td>${esc(c.phone)}</td>
+      ${rows.map(c => {
+        const missingPh = c.phone && c.phone.startsWith("000");
+        const badges = partyBadgesHtml(c);
+        return `<tr class="clickable" onclick="App.openCustomerDetail(${c.id})">
+        <td><div style="display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;">
+            <strong>${esc(c.business_name)}</strong>
+            ${badges ? `<span style="display:inline-flex;gap:3px;align-items:center;">${badges}</span>` : ""}
+          </div>
+          ${c.person_name ? `<span style="font-size:12px;color:var(--muted);">${esc(c.person_name)}</span>` : ""}
+          ${!c.is_active && !c.deleted_at ? '<span class="badge badge-amber" style="margin-left:4px;">Inactive</span>' : ""}
+          ${missingPh ? '<span class="badge badge-red" style="margin-left:4px;">No phone</span>' : ""}</td>
+        <td>${missingPh ? '<span style="color:var(--muted);font-style:italic;">—</span>' : esc(c.phone)}</td>
         <td>${c.alias ? esc(c.alias) : "—"}</td>
         <td>${esc(c.city_name || "—")}${c.route_name ? `<br><span style="font-size:12px;color:var(--muted);">${esc(c.route_name)}</span>` : ""}</td>
-        <td>${c.credit_limit ? "₹" + esc(c.credit_limit) : "—"}${c.credit_override ? ' <span class="badge badge-amber">override</span>' : ""}</td>
+        <td style="white-space:nowrap;">${renderFinancialsCell(c)}</td>
         <td onclick="event.stopPropagation()"></td>
-      </tr>`).join("")}
+      </tr>`}).join("")}
     </tbody></table>`;
   }
 
@@ -1299,14 +1383,23 @@ const App = (() => {
     if (tab === "orders" || tab === "money" || tab === "returns") tab = "activity";
     const body = `
       <div class="profile-hero" style="margin:-24px -24px 16px;border-radius:0;">
-        <h2>${esc(c.business_name)}</h2>
+        <h2>${c.party_number ? `<span style="color:var(--muted);font-size:16px;font-weight:600;margin-right:6px;">#${c.party_number}</span>` : ""}${esc(c.business_name)}${!c.is_active && !c.deleted_at ? ' <span class="badge badge-amber" style="font-size:13px;vertical-align:middle;">Inactive</span>' : ""}${c.deleted_at ? ' <span class="badge badge-red" style="font-size:13px;vertical-align:middle;">Deleted</span>' : ""}</h2>
         <p>${esc(c.person_name || "No contact person")}</p>
         <div class="profile-meta">
           <span class="badge badge-blue">${esc(c.phone)}</span>
           ${c.alias ? `<span class="badge badge-gray">${esc(c.alias)}</span>` : ""}
           ${c.city_name ? `<span class="badge badge-green">${esc(c.city_name)}</span>` : ""}
           ${c.route_name ? `<span class="badge badge-gray">${esc(c.route_name)}</span>` : ""}
+          ${c.marker_1 ? `<span class="badge badge-blue">${esc(c.marker_1)}</span>` : ""}
+          ${c.marker_2 ? `<span class="badge badge-amber">${esc(c.marker_2)}</span>` : ""}
+          ${c.payment_type === "CASH" && !(c.marker_1 || "").toUpperCase().includes("CASH") ? `<span class="badge badge-amber">CASH</span>` : ""}
         </div>
+        ${(c.outstanding_balance !== null && c.outstanding_balance !== undefined) ? `
+        <div class="credit-summary" style="margin-top:12px;display:flex;gap:16px;flex-wrap:wrap;">
+          <div class="credit-stat"><span class="credit-label">Outstanding</span><span class="credit-val ${Number(c.outstanding_balance)>0?'text-danger':Number(c.outstanding_balance)<0?'text-success':''}">${fmtPersonMoney(c.outstanding_balance)}</span></div>
+          <div class="credit-stat"><span class="credit-label">Credit Limit</span><span class="credit-val">${c.credit_limit !== null && c.credit_limit !== undefined ? "₹" + Number(c.credit_limit).toLocaleString("en-IN") : "₹0"}</span></div>
+          <div class="credit-stat"><span class="credit-label">Available</span><span class="credit-val ${Number(c.available_credit)<0?'text-danger':'text-success'}">${fmtPersonMoney(c.available_credit)}</span></div>
+        </div>` : ""}
       </div>
       <div class="ord-mode-toggle" role="tablist" style="margin-bottom:16px;">
         <button type="button" class="ord-mode-btn ${tab === "activity" ? "active" : ""}" onclick="App.openCustomerDetail(${c.id},{tab:'activity'})">Activity</button>
@@ -1324,10 +1417,13 @@ const App = (() => {
             ${reviewRow("GST Number", c.gst_number)}
             ${reviewRow("Address", c.address)}
             ${reviewRow("Additional details", c.additional_details)}
-            ${reviewRow("Credit Limit", c.credit_limit ? "₹" + c.credit_limit : "Unlimited")}
+            ${reviewRow("Credit Limit", c.credit_limit !== null && c.credit_limit !== undefined ? "₹" + Number(c.credit_limit).toLocaleString("en-IN") : "₹0")}
+            ${reviewRow("Available Credit", c.available_credit !== null && c.available_credit !== undefined ? fmtPersonMoney(c.available_credit) : "—")}
+            ${reviewRow("Outstanding (AR)", c.outstanding_balance !== null && c.outstanding_balance !== undefined ? fmtPersonMoney(c.outstanding_balance) : "—")}
             ${reviewRow("Credit Override", c.credit_override ? "Allowed" : "Not allowed")}
-            ${reviewRow("Opening", c.opening_balance_due ? "₹" + c.opening_balance_due : "—")}
+            ${reviewRow("Opening", c.opening_balance_due ? fmtPersonMoney(c.opening_balance_due) : "—")}
             ${reviewRow("Opening as on", c.opening_balance_as_on || "—")}
+            ${reviewRow("Status", c.deleted_at ? "Deleted" : c.is_active ? "Active" : "Inactive")}
             ${reviewRow("Password", "Unique — sent on WhatsApp")}
             ${reviewRow("Created", fmtDate(c.created_at))}
             ${reviewRow("Last Updated", fmtDate(c.updated_at))}
@@ -1335,13 +1431,25 @@ const App = (() => {
           ${changeHistoryTable(c.change_history)}
         ` : ""}
       </div>`;
-    openDetail(c.business_name, body,
-      `${canWrite("customers") ? `<button class="btn btn-danger btn-sm" onclick="App.deleteCustomer(${c.id})">Delete</button>
-       <button class="btn btn-secondary btn-sm" onclick="App.openCustomerEdit(${c.id})">Edit</button>
-       <button class="btn btn-secondary" onclick="App.sendCredentials(${c.id})">Send login</button>` : ""}
-       <button class="btn btn-primary" style="flex:1;" onclick="App.closeDetail()">Close</button>`,
-      "lg"
-    );
+    const footerBtns = [];
+    if (canWrite("customers")) {
+      if (c.deleted_at) {
+        // In recycle bin → restore only
+        footerBtns.push(`<button class="btn btn-primary btn-sm" onclick="App.restoreCustomer(${c.id})">Restore</button>`);
+      } else if (!c.is_active) {
+        // Inactive → restore to active + delete
+        footerBtns.push(`<button class="btn btn-primary btn-sm" onclick="App.toggleCustomerActive(${c.id}, true)">Make Active</button>`);
+        footerBtns.push(`<button class="btn btn-danger btn-sm" onclick="App.deleteCustomer(${c.id})">Delete</button>`);
+      } else {
+        // Active → mark inactive + delete + edit
+        footerBtns.push(`<button class="btn btn-secondary btn-sm" onclick="App.toggleCustomerActive(${c.id}, false)">Mark Inactive</button>`);
+        footerBtns.push(`<button class="btn btn-danger btn-sm" onclick="App.deleteCustomer(${c.id})">Delete</button>`);
+        footerBtns.push(`<button class="btn btn-secondary btn-sm" onclick="App.openCustomerEdit(${c.id})">Edit</button>`);
+        footerBtns.push(`<button class="btn btn-secondary" onclick="App.sendCredentials(${c.id})">Send login</button>`);
+      }
+    }
+    footerBtns.push(`<button class="btn btn-primary" style="flex:1;" onclick="App.closeDetail()">Close</button>`);
+    openDetail(c.business_name, body, footerBtns.join(""), "lg");
     if (tab === "activity") await refreshCustomerLedger(id);
   }
 
@@ -1725,6 +1833,31 @@ const App = (() => {
       await loadCustomers();
       toast("Customer updated", "success");
       openCustomerDetail(id);
+    } catch (e) { toast(e.message, "error"); }
+  }
+
+  async function toggleCustomerActive(id, makeActive) {
+    const label = makeActive ? "restore to active" : "mark as inactive";
+    if (!confirm(`${makeActive ? "Restore" : "Mark inactive"} this customer?`)) return;
+    try {
+      await api(`/customers/${id}`, { method: "PATCH", body: JSON.stringify({ is_active: makeActive }) });
+      closeDetail();
+      invalidateCache("/customers");
+      invalidateCache("/stats");
+      await loadCustomers();
+      toast(`Customer ${makeActive ? "restored to active" : "marked inactive"}`, "success");
+    } catch (e) { toast(e.message, "error"); }
+  }
+
+  async function restoreCustomer(id) {
+    if (!confirm("Restore customer from recycle bin?")) return;
+    try {
+      await api(`/customers/${id}/restore`, { method: "POST" });
+      closeDetail();
+      invalidateCache("/customers");
+      invalidateCache("/stats");
+      await loadCustomers();
+      toast("Customer restored", "success");
     } catch (e) { toast(e.message, "error"); }
   }
 
@@ -2321,7 +2454,9 @@ const App = (() => {
     openCityDetail, openCityModal, saveCity, deleteCity,
     openCustomerWizard, closeWizard, wizardBack, wizardNext, createCustomer,
     onCustomerWizardCityChange, onCustomerEditCityChange, finishCustomerOpen, finishCustomerPlace, resendWhatsApp,
-    openCustomerDetail, closeDetail, openCustomerEdit, closeEditModal, saveCustomer, deleteCustomer, sendCredentials, setCustomerOpeningBalance, saveCustomerOpeningBalance,
+    openCustomerDetail, closeDetail, openCustomerEdit, closeEditModal, saveCustomer,
+    deleteCustomer, toggleCustomerActive, restoreCustomer, sendCredentials,
+    setCustomerStatusTab, toggleMissingPhoneFilter, setCustomerOpeningBalance, saveCustomerOpeningBalance,
     toggleCustomerLedgerRow, openSelling, billCustomer, collectCustomer, openCustomerMoney,
     loadRecycleBin, setRecycleTab, openRecycleDetail, restoreItem, purgeItem,
     addLookup, submitLookup, editLookup, deleteLookup, openCustomerLedgerEntry, createCustomerOrder,

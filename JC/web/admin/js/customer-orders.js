@@ -50,12 +50,20 @@ const CustomerOrders = (() => {
     needs_action: "Today",
     queue: "Today",
     summary: "Today",
-    received: "Orders",
-    open: "To bill",
+    received: "New",
+    open: "Confirmed",
     billed: "Billed",
     dispatch: "Dispatch",
     cancelled: "Cancelled",
-    closed: "Closed",
+    closed: "Done",
+  };
+
+  const BUCKET_HINTS = {
+    received: "Review each order, edit if needed, then confirm →",
+    open: "Goods being picked — create bill when ready. Edit if quantities change.",
+    billed: "Bill sent — dispatch or collect payment first, then close.",
+    dispatch: "Track parcels and agent pickups.",
+    closed: "All settled.",
   };
 
   function isTodayMode() {
@@ -103,6 +111,7 @@ const CustomerOrders = (() => {
   let offlineBusy = false;
   let offlineCustomers = [];
   let offlineEditPlacementId = null;
+  let offlineSelectedDetail = null; // full customer detail with outstanding/credit
   let billDate = "";
 
   function localToday() {
@@ -136,13 +145,16 @@ const CustomerOrders = (() => {
       actionHost.classList.add("hidden");
     }
     const title = document.getElementById("co-list-title");
+    const hint = document.getElementById("co-list-hint");
     if (title) {
       const stage = BUCKET_LABELS[currentBucket] || "Orders";
       if (dispatch) {
         const sub = dispatchStatus === "picked" ? "Picked" : dispatchStatus === "all" ? "All parcels" : "Pending pick";
         title.textContent = today ? `Today · ${sub}` : sub;
+        if (hint) hint.textContent = BUCKET_HINTS["dispatch"] || "";
       } else {
         title.textContent = today ? `Today · ${stage}` : stage;
+        if (hint) hint.textContent = today ? (BUCKET_HINTS[currentBucket] || "") : "";
       }
     }
     const searchSlot = document.getElementById("co-hub-search-slot");
@@ -191,7 +203,7 @@ const CustomerOrders = (() => {
     let onclick = "";
     // Next-step hero CTA by stage
     if (currentBucket === "open" && canOrders) {
-      label = "Bill";
+      label = "Create Bill";
       onclick = "CustomerOrders.processOrder()";
     } else if (currentBucket === "billed" && canOrders) {
       label = "Dispatch";
@@ -521,7 +533,7 @@ const CustomerOrders = (() => {
       }).join("")}
     </tbody></table>
     ${canWrite ? `<div class="vo-hub-expand-actions">
-      <button class="btn btn-primary" onclick="CustomerOrders.processFromHub(${customerId}, 'open')">Bill</button>
+      <button class="btn btn-primary" onclick="CustomerOrders.processFromHub(${customerId}, 'open')">Create Bill</button>
       <button class="btn btn-danger" onclick="CustomerOrders.cancelCustomerOpen(${customerId})">Cancel order</button>
     </div>` : ""}`;
   }
@@ -539,16 +551,16 @@ const CustomerOrders = (() => {
     const open = hubExpandedCustomerId === expandKey;
     const cache = hubExpandCache[expandKey];
     const viewFn = `CustomerOrders.openDetail(${o.customer_id}, '${bucket}')`;
-    const canMoney = !!ctx.isAdmin?.();
+    const canMoney = !!ctx.isAdmin?.() || !!ctx.canWrite?.("accounts_receivable") || !!ctx.canWrite?.("finance");
 
     // Primary = next step in flow. More = secondary / danger.
     if (currentBucket === "open") {
-      primaryLabel = "Bill";
+      primaryLabel = "Create Bill";
       primaryOnclick = `CustomerOrders.processFromHub(${o.customer_id}, 'open')`;
       metaBits = [`${o.line_count || 0} lines`, `<strong>${openQty}</strong> to bill`];
     } else if (currentBucket === "received") {
-      primaryLabel = "View";
-      primaryOnclick = viewFn;
+      primaryLabel = canWrite ? "Confirm" : "View";
+      primaryOnclick = canWrite ? `CustomerOrders.confirmOrder(${o.customer_id})` : viewFn;
       metaBits = [`${o.placement_count || 0} placements`, `${o.total_quantity || 0} qty`];
     } else if (currentBucket === "billed") {
       primaryLabel = "Dispatch";
@@ -584,21 +596,22 @@ const CustomerOrders = (() => {
         onclick: `CustomerOrders.cancelCustomerOpen(${o.customer_id})`,
       });
     }
-    if (currentBucket === "billed") {
-      if (canWrite) {
-        more.push({ label: "Edit bill", onclick: `CustomerOrders.editLatestBill(${o.customer_id})` });
-      }
-      if (canMoney) {
-        more.push({ label: "Collect payment", onclick: `CustomerOrders.goCollectPayment(${o.customer_id})` });
-      }
+    if (currentBucket === "received") {
+      more.push({ label: "View order", onclick: viewFn });
+      if (canWrite) more.push({ label: "Edit / add items", onclick: `CustomerOrders.openOfflineWizard(${o.customer_id})` });
+      if (canWrite) more.push({ label: "Cancel order", onclick: `CustomerOrders.cancelCustomerOpen(${o.customer_id})`, danger: true });
+    } else if (currentBucket === "billed") {
+      if (canMoney) more.push({ label: "Collect payment", onclick: `CustomerOrders.goCollectPayment(${o.customer_id})` });
       more.push({ label: "View bills", onclick: `CustomerOrders.openDetail(${o.customer_id}, 'billed')` });
-      if (canWrite) {
-        more.push({ label: "Close", onclick: `CustomerOrders.openCloseBatch(${o.customer_id})` });
-      }
+      if (canWrite) more.push({ label: "Edit bill", onclick: `CustomerOrders.editLatestBill(${o.customer_id})` });
+      if (canWrite) more.push({ label: "Close", onclick: `CustomerOrders.openCloseBatch(${o.customer_id})`, danger: false });
     }
 
+    const _m1Upper = (o.marker_1 || "").toUpperCase();
+    const partyLabel = (o.party_number ? `<span style="color:var(--muted);font-size:12px;font-weight:600;margin-right:4px;">#${o.party_number}</span>` : "") + ctx.esc(o.customer_name) + (o.marker_1 ? ` <span class="badge badge-blue" style="font-size:10px;padding:2px 4px;vertical-align:middle;">${ctx.esc(o.marker_1)}</span>` : "") + (o.marker_2 ? ` <span class="badge badge-amber" style="font-size:10px;padding:2px 4px;vertical-align:middle;">${ctx.esc(o.marker_2)}</span>` : "") + (o.payment_type === "CASH" && !_m1Upper.includes("CASH") ? ` <span class="badge badge-amber" style="font-size:10px;padding:2px 4px;vertical-align:middle;">CASH</span>` : "");
     return OrdersUI.partyCard({
-      title: o.customer_name,
+      title: partyLabel,
+      titleIsHtml: true,
       meta,
       pillHtml: "",
       primaryLabel: canWrite || currentBucket === "billed" || currentBucket === "cancelled" || currentBucket === "closed"
@@ -698,23 +711,31 @@ const CustomerOrders = (() => {
     const title = document.getElementById("co-detail-title");
     const sub = document.getElementById("co-detail-sub");
     if (!el || !currentOrder) return;
-    if (title) title.textContent = currentOrder.customer_name;
+    if (title) {
+      const o = currentOrder;
+      const _m1u = (o.marker_1 || "").toUpperCase();
+      const pn = o.party_number ? `<span style="color:var(--muted);font-size:14px;font-weight:600;margin-right:6px;">#${o.party_number}</span>` : "";
+      const m1 = o.marker_1 ? ` <span class="badge badge-blue" style="font-size:10px;vertical-align:middle;">${ctx.esc(o.marker_1)}</span>` : "";
+      const m2 = o.marker_2 ? ` <span class="badge badge-amber" style="font-size:10px;vertical-align:middle;">${ctx.esc(o.marker_2)}</span>` : "";
+      const pt = (o.payment_type === "CASH" && !_m1u.includes("CASH")) ? ` <span class="badge badge-amber" style="font-size:10px;vertical-align:middle;">CASH</span>` : "";
+      title.innerHTML = pn + ctx.esc(o.customer_name) + m1 + m2 + pt;
+    }
     if (sub) {
-      sub.textContent = currentBucket === "received" ? "Waiting stock. Then To bill."
-        : currentBucket === "open" ? "Next: Bill"
-          : currentBucket === "billed" ? "Next: Dispatch · Collect · then Close"
-            : currentBucket === "closed" ? "Closed"
+      sub.textContent = currentBucket === "received" ? "Review order, edit if needed, then Confirm →"
+        : currentBucket === "open" ? "Goods being picked — Create Bill when ready"
+          : currentBucket === "billed" ? "Bill created — Dispatch or Collect payment, then Close"
+            : currentBucket === "closed" ? "Done"
               : "Cancelled";
     }
     updateDetailPrimary();
     const canWrite = !!ctx.canWrite?.("customer_orders");
-    const canMoney = !!ctx.isAdmin?.();
+    const canMoney = !!ctx.isAdmin?.() || !!ctx.canWrite?.("accounts_receivable") || !!ctx.canWrite?.("finance");
 
     if (currentBucket === "open") {
       const lines = currentOrder.open_lines || [];
       el.innerHTML = `
         ${canWrite && lines.length ? `<div class="ui-toolbar" style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn btn-primary btn-sm" onclick="CustomerOrders.processOrder()">Bill</button>
+          <button class="btn btn-primary btn-sm" onclick="CustomerOrders.processOrder()">Create Bill</button>
           <button class="btn btn-secondary btn-sm" onclick="CustomerOrders.openEditFromOpen()">Edit order</button>
           <button class="btn btn-danger btn-sm" onclick="CustomerOrders.cancelCustomerOpen(${detailCustomerId})">Cancel order</button>
         </div>` : ""}
@@ -743,8 +764,8 @@ const CustomerOrders = (() => {
       el.innerHTML = `
         <div class="ui-toolbar" style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">
           ${canWrite ? `<button class="btn btn-primary btn-sm" onclick="CustomerOrders.goToDispatch()">Dispatch</button>` : ""}
-          ${canMoney ? `<button class="btn btn-secondary btn-sm" onclick="CustomerOrders.goCollectPayment(${detailCustomerId})">Collect payment</button>` : ""}
-          ${canWrite ? `<button class="btn btn-secondary btn-sm" onclick="CustomerOrders.openCloseBatch(${detailCustomerId})">Close</button>` : ""}
+          ${canMoney ? `<button class="btn btn-primary btn-sm" onclick="CustomerOrders.goCollectPayment(${detailCustomerId})">Collect payment</button>` : ""}
+          ${canWrite ? `<button class="btn btn-secondary btn-sm" onclick="CustomerOrders.openCloseBatch(${detailCustomerId})">Close order</button>` : ""}
         </div>
         <div class="ord-hub-list">${(currentOrder.bills || []).map(b => {
         const openKey = `bill-${b.id}`;
@@ -805,7 +826,8 @@ const CustomerOrders = (() => {
       const placements = currentOrder.placements || [];
       el.innerHTML = `
         ${canWrite && placements.length ? `<div class="ui-toolbar" style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn btn-secondary btn-sm" onclick="CustomerOrders.openOfflineWizard(${detailCustomerId})">Edit / place more</button>
+          <button class="btn btn-primary btn-sm" onclick="CustomerOrders.confirmOrder(${detailCustomerId})">✓ Confirm order</button>
+          <button class="btn btn-secondary btn-sm" onclick="CustomerOrders.openOfflineWizard(${detailCustomerId})">Edit / add items</button>
           <button class="btn btn-danger btn-sm" onclick="CustomerOrders.cancelCustomerOpen(${detailCustomerId})">Cancel order</button>
         </div>` : ""}
         <div class="ord-hub-list">${placements.length ? placements.map(p => {
@@ -1068,6 +1090,77 @@ const CustomerOrders = (() => {
   }
 
   /** Re-fetch open lines by customer id — never use stale currentOrder from another party. */
+  async function confirmOrder(customerId) {
+    const cid = customerId || detailCustomerId;
+    if (!cid) return ctx.toast("No customer", "error");
+    ctx.showLoading?.();
+    let detail;
+    try {
+      detail = await ctx.api(`/customer-orders/customer/${cid}?bucket=received`, {}, 0);
+    } catch (e) {
+      ctx.toast(e.message, "error");
+      return;
+    } finally {
+      ctx.hideLoading?.();
+    }
+
+    // Build a flat list of all active lines across all received placements
+    const allLines = [];
+    for (const p of (detail.placements || [])) {
+      for (const ln of (p.lines || [])) {
+        if (ln.status === "active") {
+          const existing = allLines.find(x => x.our_product_id === ln.our_product_id);
+          if (existing) existing.quantity += Number(ln.quantity || 0);
+          else allLines.push({ our_product_id: ln.our_product_id, quantity: Number(ln.quantity || 0), unit_price: ln.unit_price });
+        }
+      }
+    }
+    if (!allLines.length) return ctx.toast("No items in this order", "error");
+
+    const linesHtml = allLines.map(ln =>
+      `<tr>
+        <td style="padding:6px 0;">${ctx.esc(ln.our_product_id)}</td>
+        <td style="padding:6px 8px;text-align:right;font-weight:600;">${ln.quantity}</td>
+        <td style="padding:6px 0;text-align:right;color:var(--muted);font-size:13px;">${fmtPrice(ln.unit_price)}</td>
+      </tr>`
+    ).join("");
+
+    ctx.openDetail?.(
+      `Confirm order — ${ctx.esc(detail.customer_name)}`,
+      `<p style="margin:0 0 12px;font-size:13px;color:var(--muted);">Review the items below and confirm.</p>
+      <table style="width:100%;border-collapse:collapse;">
+        <thead><tr>
+          <th style="text-align:left;font-size:12px;color:var(--muted);padding-bottom:6px;border-bottom:1px solid var(--border);">Item</th>
+          <th style="text-align:right;font-size:12px;color:var(--muted);padding-bottom:6px;border-bottom:1px solid var(--border);">Qty</th>
+          <th style="text-align:right;font-size:12px;color:var(--muted);padding-bottom:6px;border-bottom:1px solid var(--border);">Rate</th>
+        </tr></thead>
+        <tbody>${linesHtml}</tbody>
+      </table>
+      <div style="margin-top:16px;display:flex;flex-direction:column;gap:8px;">
+        <button class="btn btn-primary" onclick="CustomerOrders._doConfirm(${cid});App.closeDetail?.()">✓ Confirm order</button>
+        <button class="btn btn-secondary" onclick="App.closeDetail?.()">Close</button>
+      </div>`,
+      `<button class="btn btn-secondary" style="flex:1;" onclick="App.closeDetail?.()">Cancel</button>`,
+      "sm"
+    );
+  }
+
+  async function _doConfirm(cid) {
+    ctx.showLoading?.();
+    try {
+      await ctx.api(`/customer-orders/customer/${cid}/confirm`, { method: "POST" }, 0);
+      ctx.toast("Order confirmed", "success");
+      currentBucket = "open";
+      syncHubChrome();
+      await loadList();
+      await openDetail(cid, "open");
+    } catch (e) {
+      ctx.toast(e.message, "error");
+    } finally {
+      ctx.hideLoading?.();
+    }
+  }
+
   async function cancelCustomerOpen(customerId) {
     const cid = customerId || detailCustomerId;
     if (!cid) return ctx.toast("No customer", "error");
@@ -1194,22 +1287,49 @@ const CustomerOrders = (() => {
     return body;
   }
 
+  function partyMarkerBadgesHtml(pctx) {
+    if (!pctx) return "";
+    let h = "";
+    if (pctx.marker_1) h += ` <span class="badge badge-blue" style="font-size:11px;">${ctx.esc(pctx.marker_1)}</span>`;
+    if (pctx.marker_2) h += ` <span class="badge badge-amber" style="font-size:11px;">${ctx.esc(pctx.marker_2)}</span>`;
+    if (pctx.payment_type === "CASH") h += ` <span class="badge badge-amber" style="font-size:11px;">CASH</span>`;
+    return h;
+  }
+
   function creditBannerHtml(cr, { afterBill = false } = {}) {
     if (!cr) return "";
-    if (cr.unlimited) {
-      return `<div class="card" style="padding:12px 14px;margin-bottom:12px;background:#f8fafc;">
-        <strong>Credit</strong> — unlimited · outstanding ₹${ctx.esc(cr.used || "0")}
+    // CASH customer warning strip
+    const cashNote = processContext?.payment_type === "CASH"
+      ? `<div style="padding:8px 14px;margin-bottom:8px;background:#fef3c7;border:1px solid #fde68a;border-radius:6px;font-size:13px;">⚠ <strong>CASH customer</strong> — collect payment at time of billing.</div>`
+      : "";
+    const fmtMoney = v => Math.abs(Number(v)).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const colorMoney = v => {
+      const n = Number(v);
+      const color = n > 0 ? "#dc2626" : n < 0 ? "#16a34a" : "inherit";
+      const label = n > 0 ? `₹${fmtMoney(n)} due` : n < 0 ? `₹${fmtMoney(n)} credit` : "₹0";
+      return `<span style="color:${color};">${label}</span>`;
+    };
+    // track_only = credit_limit is 0 (informational, never enforced)
+    if (cr.track_only || cr.unlimited) {
+      const currentOut = Number(cr.outstanding || cr.used || 0);
+      const afterOut = Number(cr.used_after_bill || currentOut);
+      const showAfter = afterBill && Math.abs(afterOut - currentOut) > 0.001;
+      return cashNote + `<div class="card" style="padding:10px 14px;margin-bottom:12px;background:#f8fafc;border:1px solid var(--border);display:flex;gap:20px;flex-wrap:wrap;align-items:center;font-size:13px;">
+        <span><strong>Outstanding:</strong> ${colorMoney(currentOut)}</span>
+        ${showAfter ? `<span><strong>After this bill:</strong> ${colorMoney(afterOut)}</span>` : ""}
+        <span style="color:var(--muted);">Credit limit: ${cr.track_only ? "₹0 (tracking only)" : "Unlimited"}</span>
       </div>`;
     }
+    const outstandingN = Number(cr.outstanding || cr.used || 0);
     const left = afterBill ? cr.left_after_bill : cr.left;
     const used = afterBill ? cr.used_after_bill : cr.used;
     const over = afterBill ? cr.would_exceed : (Number(left) < 0);
     const bg = over ? "#fef2f2" : "#f0fdf4";
     const border = over ? "#fecaca" : "#bbf7d0";
-    return `<div class="card" style="padding:12px 14px;margin-bottom:12px;background:${bg};border:1px solid ${border};">
+    return cashNote + `<div class="card" style="padding:12px 14px;margin-bottom:12px;background:${bg};border:1px solid ${border};">
       <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;">
-        <div><strong>Credit limit</strong> ₹${ctx.esc(cr.credit_limit)}</div>
-        <div>Used ₹${ctx.esc(used)} · Left ₹${ctx.esc(left)}</div>
+        <div><strong>Outstanding</strong> ₹${ctx.esc(used)}</div>
+        <div>Credit limit ₹${ctx.esc(cr.credit_limit)} · Available ₹${ctx.esc(left)}</div>
       </div>
       ${over ? `<p style="margin:8px 0 0;font-size:13px;color:#b91c1c;">${cr.credit_override ? "Over limit — override allowed if you confirm." : "Over limit — enable credit override on customer to bill."}</p>` : ""}
     </div>`;
@@ -1520,7 +1640,7 @@ const CustomerOrders = (() => {
       })() : "";
       bodyEl.innerHTML = `
         ${!editBillId ? creditBannerHtml(processContext?.credit) : ""}
-        <p style="margin:0 0 12px;color:var(--muted);font-size:14px;">Customer: <strong>${ctx.esc(processContext?.customer_name || "")}</strong>${editBillId ? " · editing bill (order syncs on save)" : ""}</p>
+        <p style="margin:0 0 12px;color:var(--muted);font-size:14px;">Customer: <strong>${processContext?.party_number ? `#${processContext.party_number} ` : ""}${ctx.esc(processContext?.customer_name || "")}</strong>${partyMarkerBadgesHtml(processContext)}${editBillId ? " · editing bill (order syncs on save)" : ""}</p>
         <div style="margin-bottom:12px;">${discPanel}</div>
         <table class="data"><thead><tr>
           <th></th><th>Product</th>${editBillId ? "" : "<th>Stock</th><th>To bill</th>"}<th>Rate</th><th>${editBillId ? "Qty" : "Ship"}</th><th>Disc %</th><th>Net rate</th>${editBillId ? "<th></th>" : ""}
@@ -1890,10 +2010,11 @@ const CustomerOrders = (() => {
             <p style="margin:0 0 16px;color:var(--muted);">Bill created — ${fmtPrice(res.grand_total)}. AR posted. ${nextHint}</p>
             <div style="display:flex;flex-direction:column;gap:8px;">
               <button class="btn btn-primary" onclick="App.closeDetail();CustomerOrders.goToDispatch()">Dispatch</button>
-              ${ctx.isAdmin?.() ? `<button class="btn btn-secondary" onclick="App.closeDetail();CustomerOrders.goCollectPayment(${cid})">Collect payment</button>` : ""}
+              ${(ctx.isAdmin?.() || ctx.canWrite?.("accounts_receivable") || ctx.canWrite?.("finance")) ? `<button class="btn btn-secondary" onclick="App.closeDetail();CustomerOrders.goCollectPayment(${cid})">Collect payment</button>` : ""}
+              <button class="btn btn-secondary" onclick="CustomerOrders.openBillDoc(${res.bill_id}, false)">Download PDF</button>
               <button class="btn btn-secondary" onclick="CustomerOrders.openBillDoc(${res.bill_id}, true)">Print</button>
               <button class="btn btn-secondary" onclick="CustomerOrders.shareBillWhatsApp(${res.bill_id})">WhatsApp</button>
-              <button class="btn btn-secondary" onclick="App.closeDetail();CustomerOrders.openCloseBatch(${cid})">Close</button>
+              <button class="btn btn-secondary" onclick="App.closeDetail();CustomerOrders.openCloseBatch(${cid})">Close order</button>
             </div>`,
           `<button class="btn btn-secondary" style="flex:1;" onclick="App.closeDetail()">Done</button>`, "sm");
         ctx.toast(`Bill ${res.bill_number} — ${fmtPrice(res.grand_total)}`, "success");
@@ -1995,6 +2116,7 @@ const CustomerOrders = (() => {
     offlineCustomerId = cid || null;
     offlineCustomerName = "";
     offlineCustomerSearch = "";
+    offlineSelectedDetail = null;
     offlineLines = [];
     offlineSearchQuery = "";
     offlineSearchResults = [];
@@ -2005,13 +2127,10 @@ const CustomerOrders = (() => {
     ctx.showLoading?.();
     try {
       offlineCustomers = await ctx.api("/customers", {}, 30000) || [];
-      if (cid) {
-        const c = offlineCustomers.find(x => x.id === cid) || await ctx.api(`/customers/${cid}`, {}, 30000);
-        offlineCustomerName = c?.business_name || "";
-        offlineCustomerId = c?.id || cid;
-      }
       document.getElementById("co-offline-wizard")?.classList.remove("hidden");
       renderOfflineWizard();
+      // preset customer: fetch detail for credit summary (same path as manual pick)
+      if (cid) await pickOfflineCustomer(cid);
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
   }
@@ -2032,17 +2151,24 @@ const CustomerOrders = (() => {
     }, 0);
   }
 
-  function pickOfflineCustomer(id) {
+  async function pickOfflineCustomer(id) {
     if (!id) {
       offlineCustomerId = null;
       offlineCustomerName = "";
+      offlineSelectedDetail = null;
       renderOfflineWizard();
       return;
     }
     const c = (offlineCustomers || []).find(x => x.id === id);
     offlineCustomerId = id;
     offlineCustomerName = c?.business_name || "";
+    offlineSelectedDetail = c || null;
     renderOfflineWizard();
+    // fetch full detail (has outstanding_balance + available_credit)
+    try {
+      offlineSelectedDetail = await ctx.api(`/customers/${id}`, {}, 0);
+      renderOfflineWizard();
+    } catch (_) {}
   }
 
   function closeOfflineWizard() {
@@ -2129,18 +2255,36 @@ const CustomerOrders = (() => {
         ${selected ? `<div class="vo-wiz-selected-banner">
           <div>
             <span class="vo-wiz-selected-label">Selected</span>
-            <strong>${ctx.esc(selected.business_name || offlineCustomerName)}</strong>
+            ${selected.party_number ? `<span style="font-size:11px;color:var(--muted);font-weight:600;margin-right:4px;">#${selected.party_number}</span>` : ""}<strong>${ctx.esc(selected.business_name || offlineCustomerName)}</strong>${selected.marker_1 ? ` <span class="badge badge-blue" style="font-size:10px;padding:2px 4px;vertical-align:middle;">${ctx.esc(selected.marker_1)}</span>` : ""}${selected.marker_2 ? ` <span class="badge badge-amber" style="font-size:10px;padding:2px 4px;vertical-align:middle;">${ctx.esc(selected.marker_2)}</span>` : ""}${(selected.payment_type === "CASH" && !(selected.marker_1 || "").toUpperCase().includes("CASH")) ? ` <span class="badge badge-amber" style="font-size:10px;padding:2px 4px;vertical-align:middle;">CASH</span>` : ""}
             ${selected.city_name ? `<span class="vo-muted"> · ${ctx.esc(selected.city_name)}</span>` : ""}
           </div>
           <button type="button" class="btn btn-ghost btn-sm" onclick="CustomerOrders.pickOfflineCustomer(null)">Change</button>
-        </div>` : ""}
+        </div>
+        ${offlineSelectedDetail ? (() => {
+          const d = offlineSelectedDetail;
+          const outstanding = d.outstanding_balance;
+          const avail = d.available_credit;
+          const limit = d.credit_limit;
+          if (outstanding == null && avail == null) return "";
+          const outN = Number(outstanding || 0);
+          const availN = Number(avail || 0);
+          const overLimit = availN < 0;
+          const bg = overLimit ? "#fef2f2" : "#f0fdf4";
+          const border = overLimit ? "#fecaca" : "#bbf7d0";
+          return `<div style="margin:8px 0;padding:10px 14px;border-radius:8px;background:${bg};border:1px solid ${border};display:flex;gap:16px;flex-wrap:wrap;font-size:13px;">
+            <span><strong>Outstanding:</strong> ${outN < 0 ? "<span style='color:#16a34a'>Credit ₹" + Math.abs(outN).toLocaleString("en-IN", {maximumFractionDigits:2}) + "</span>" : outN > 0 ? "<span style='color:#dc2626'>₹" + outN.toLocaleString("en-IN", {maximumFractionDigits:2}) + "</span>" : "₹0"}</span>
+            <span><strong>Credit Limit:</strong> ₹${Number(limit || 0).toLocaleString("en-IN", {maximumFractionDigits:2})}</span>
+            <span><strong>Available:</strong> ${availN < 0 ? "<span style='color:#dc2626'>-₹" + Math.abs(availN).toLocaleString("en-IN", {maximumFractionDigits:2}) + "</span>" : "<span style='color:#16a34a'>₹" + availN.toLocaleString("en-IN", {maximumFractionDigits:2}) + "</span>"}</span>
+          </div>`;
+        })() : (offlineCustomerId ? `<p style="font-size:12px;color:var(--muted);margin:4px 0;">Loading credit info…</p>` : "")}` : ""}
         <div class="vo-wiz-vendor-list">
           ${customers.length ? customers.map(c => {
             const selectedCls = offlineCustomerId === c.id ? " selected" : "";
+            const _cm1u = (c.marker_1 || "").toUpperCase();
             return `<button type="button" class="vo-wiz-vendor-card${selectedCls}" onclick="CustomerOrders.pickOfflineCustomer(${c.id})">
               <span class="vo-wiz-vendor-letter">${ctx.esc((c.business_name || "?").slice(0, 1).toUpperCase())}</span>
               <span class="vo-wiz-vendor-meta">
-                <strong>${ctx.esc(c.business_name || "Customer")}</strong>
+                <strong>${c.party_number ? `<span style="font-size:10px;color:var(--muted);font-weight:600;margin-right:3px;">#${c.party_number}</span>` : ""}${ctx.esc(c.business_name || "Customer")}${c.marker_1 ? ` <span class="badge badge-blue" style="font-size:9px;padding:1px 4px;vertical-align:middle;">${ctx.esc(c.marker_1)}</span>` : ""}${c.marker_2 ? ` <span class="badge badge-amber" style="font-size:9px;padding:1px 4px;vertical-align:middle;">${ctx.esc(c.marker_2)}</span>` : ""}${(c.payment_type === "CASH" && !_cm1u.includes("CASH")) ? ` <span class="badge badge-amber" style="font-size:9px;padding:1px 4px;vertical-align:middle;">CASH</span>` : ""}</strong>
                 <span>${c.city_name ? ctx.esc(c.city_name) : "No city"}${c.phone ? ` · ${ctx.esc(c.phone)}` : ""}</span>
               </span>
               <span class="vo-wiz-vendor-check">${offlineCustomerId === c.id ? "✓" : ""}</span>
@@ -2515,7 +2659,7 @@ const CustomerOrders = (() => {
     setOfflinePlacedOn,
     setForceCredit,
     processNext, processBack, submitProcess,
-    cancelOpenLine, cancelPlacement, cancelCustomerOpen, cancelAllOpen, editOpenLine, editReceivedLine, deleteReceivedLine, openEditPlacement, closeBillLine, cancelBill, openBillDoc, shareBillWhatsApp,
+    confirmOrder, _doConfirm, cancelOpenLine, cancelPlacement, cancelCustomerOpen, cancelAllOpen, editOpenLine, editReceivedLine, deleteReceivedLine, openEditPlacement, closeBillLine, cancelBill, openBillDoc, shareBillWhatsApp,
     openOfflineWizard, closeOfflineWizard, renderOfflineWizard,
     setOfflineCustomer, pickOfflineCustomer, onOfflineCustomerSearch, setOfflineNotes,
     onOfflineSearchInput, onOfflineSearchKey, toggleOfflineProduct, addOfflineProduct, removeOfflineLine,

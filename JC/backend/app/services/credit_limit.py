@@ -19,11 +19,14 @@ def credit_status(db: Session, customer_id: int, *, pending_bill: Decimal | floa
     totals = totals if totals is not None else customer_ar_totals(db, customer_id)
     outstanding = totals["outstanding"]
     limit = Decimal(str(c.credit_limit)) if c.credit_limit is not None else None
+    # credit_limit=0 means "track outstanding only, no enforcement"
+    track_only = limit is not None and limit == Decimal("0")
     pending = Decimal(str(pending_bill or 0)).quantize(Decimal("0.01"))
     used_after = (outstanding + pending).quantize(Decimal("0.01"))
-    left = None if limit is None else (limit - outstanding).quantize(Decimal("0.01"))
-    left_after = None if limit is None else (limit - used_after).quantize(Decimal("0.01"))
-    over = bool(limit is not None and used_after > limit)
+    left = None if (limit is None or track_only) else (limit - outstanding).quantize(Decimal("0.01"))
+    left_after = None if (limit is None or track_only) else (limit - used_after).quantize(Decimal("0.01"))
+    # Only flag would_exceed when a real (>0) credit limit is set
+    over = bool(not track_only and limit is not None and used_after > limit)
     return {
         "customer_id": customer_id,
         "credit_limit": format(limit, "f") if limit is not None else None,
@@ -35,7 +38,8 @@ def credit_status(db: Session, customer_id: int, *, pending_bill: Decimal | floa
         "used_after_bill": format(used_after, "f"),
         "left_after_bill": format(left_after, "f") if left_after is not None else None,
         "would_exceed": over,
-        "unlimited": limit is None,
+        "unlimited": limit is None or track_only,
+        "track_only": track_only,
     }
 
 
@@ -46,29 +50,8 @@ def assert_credit_allows_bill(
     *,
     force: bool = False,
 ) -> dict:
+    """Always allows billing — credit limits are informational warnings only, never blockers."""
     status = credit_status(db, customer_id, pending_bill=bill_amount)
     status["overridden"] = False
     status["can_override"] = bool(status["credit_override"])
-    if status["unlimited"] or not status["would_exceed"]:
-        return status
-    if force and status["credit_override"]:
-        status["overridden"] = True
-        return status
-    raise HTTPException(
-        400,
-        detail={
-            "code": "credit_limit_exceeded",
-            "message": (
-                f"Credit limit ₹{status['credit_limit']} exceeded. "
-                f"Used ₹{status['outstanding']}, this bill ₹{status['pending_bill']}, "
-                f"would be ₹{status['used_after_bill']} "
-                f"(left ₹{status['left'] or '0'}). "
-                + (
-                    "Pass force_credit_override=true to proceed (override allowed on this customer)."
-                    if status["credit_override"]
-                    else "Enable credit override on the customer profile to allow billing over limit."
-                )
-            ),
-            "credit": status,
-        },
-    )
+    return status

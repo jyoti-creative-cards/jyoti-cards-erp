@@ -72,17 +72,29 @@ def create_vendor(body: VendorCreate, db: Session = Depends(get_db)) -> Vendor:
 
     if existing is not None:
         # Soft-deleted vendor — restore and update all fields
+        if body.city_id:
+            from app.models.city import City
+            if db.get(City, body.city_id) is None:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="city not found")
         _apply_fields(existing, body, phone, sec_norm)
         existing.is_active = True
         existing.deleted_at = None
         db.add(existing)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(status.HTTP_409_CONFLICT, detail="phone already registered") from None
         db.refresh(existing)
         return existing
 
     # New vendor
     row = Vendor(is_active=True)
     _apply_fields(row, body, phone, sec_norm)
+    if body.city_id:
+        from app.models.city import City
+        if db.get(City, body.city_id) is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="city not found")
     db.add(row)
     try:
         db.commit()
@@ -107,6 +119,10 @@ def update_vendor(vendor_id: int, body: VendorUpdate, db: Session = Depends(get_
         phone = normalize_e164(str(data.pop("phone")).strip())
         if not phone:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="invalid phone")
+        if phone != row.phone:
+            conflict = db.query(Vendor).filter(Vendor.phone == phone, Vendor.deleted_at.is_(None)).one_or_none()
+            if conflict:
+                raise HTTPException(status.HTTP_409_CONFLICT, detail="phone already registered with another vendor")
         row.phone = phone
     else:
         data.pop("phone", None)
@@ -115,12 +131,20 @@ def update_vendor(vendor_id: int, body: VendorUpdate, db: Session = Depends(get_
         row.person_name = str(data.pop("person_name")).strip() or row.company_name or ""
     if "company_name" in data:
         v = data.pop("company_name")
-        row.company_name = v.strip() if isinstance(v, str) and v.strip() else None
+        new_name = v.strip() if isinstance(v, str) else ""
+        if not new_name:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="company_name cannot be empty")
+        row.company_name = new_name
     if "address" in data:
         v = data.pop("address")
         row.address = v.strip() if isinstance(v, str) and v.strip() else None
     if "city_id" in data:
-        row.city_id = data.pop("city_id")
+        cid = data.pop("city_id")
+        if cid is not None:
+            from app.models.city import City
+            if db.get(City, cid) is None:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="city not found")
+        row.city_id = cid
     if "gst_number" in data:
         v = data.pop("gst_number")
         row.gst_number = v.strip().upper() if isinstance(v, str) and v.strip() else None
@@ -183,7 +207,14 @@ def permanently_delete_vendor(vendor_id: int, db: Session = Depends(get_db)) -> 
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="vendor not found")
     db.delete(row)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="cannot permanently delete: vendor has associated catalog products or orders",
+        ) from None
     return {"ok": True, "id": vendor_id, "permanently_deleted": True}
 
 

@@ -32,6 +32,11 @@ class Customer(Base):
     credit_limit: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 4), nullable=True)
     credit_override: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=sql_true())
+    party_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, unique=True, index=True)
+    marker_1: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    marker_2: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    payment_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # "CASH" or "CREDIT"
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(

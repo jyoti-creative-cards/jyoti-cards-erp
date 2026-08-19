@@ -1275,6 +1275,12 @@ table.data tr.filter-row th { padding: 6px 8px; background: #fff; border-bottom:
 .profile-hero p { margin: 0; font-size: 14px; color: var(--muted); }
 .profile-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .profile-hero .catalog-detail-images { margin-top: 12px; }
+.credit-summary { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(0,0,0,.08); }
+.credit-stat { display: flex; flex-direction: column; gap: 2px; }
+.credit-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.credit-val { font-size: 16px; font-weight: 700; }
+.text-danger { color: #dc2626; }
+.text-success { color: #16a34a; }
 
 /* Wizard steps */
 .steps { display: flex; gap: 0; padding: 16px 24px; border-bottom: 1px solid var(--border); background: #f8fafc; }
@@ -3055,54 +3061,71 @@ table.data tr.filter-row th { padding: 6px 8px; background: #fff; border-bottom:
   cursor: pointer;
   line-height: 1;
 }
-.ord-hub-list, .ord-list { display: flex; flex-direction: column; gap: 10px; }
-.ord-card-list { display: flex; flex-direction: column; gap: 10px; }
+.ord-hub-list, .ord-list { display: flex; flex-direction: column; gap: 6px; }
+.ord-card-list { display: flex; flex-direction: column; gap: 6px; }
 .ord-card {
   border: 1px solid #e2e8f0;
-  border-radius: 14px;
+  border-left: 3px solid #e2e8f0;
+  border-radius: 10px;
   background: #fff;
   overflow: visible;
-  transition: border-color .15s, box-shadow .15s;
+  transition: border-color .15s, box-shadow .12s;
 }
-.ord-card:hover { border-color: #cbd5e1; box-shadow: 0 6px 20px rgba(15, 23, 42, 0.04); }
-.ord-card.is-open { border-color: #93c5fd; }
+.ord-card:hover { border-color: #cbd5e1; border-left-color: inherit; box-shadow: 0 2px 10px rgba(15, 23, 42, 0.06); }
+.ord-card.is-open { border-color: #93c5fd; border-left-color: #3b82f6; }
+
+/* Bucket accent — left border color */
+.ord-card--received { border-left-color: #f59e0b; }
+.ord-card--open     { border-left-color: #3b82f6; }
+.ord-card--billed   { border-left-color: #10b981; }
+.ord-card--closed   { border-left-color: #94a3b8; }
+.ord-card--cancelled { border-left-color: #ef4444; }
+
 .ord-card-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 14px 16px;
+  gap: 10px;
+  padding: 10px 14px;
   cursor: pointer;
 }
 .ord-card-main {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
   flex: 1;
 }
-.ord-card-text { min-width: 0; }
+.ord-card-text { min-width: 0; flex: 1; }
 .ord-card-title {
-  font-weight: 700;
-  font-size: 15px;
+  font-weight: 600;
+  font-size: 14px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  line-height: 1.4;
+}
+.ord-card-time {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 400;
+  white-space: nowrap;
+  margin-left: auto;
 }
 .ord-card-meta {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--muted);
-  margin-top: 3px;
+  margin-top: 2px;
 }
 .ord-card-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-shrink: 0;
 }
 .ord-card-expand {
-  padding: 0 16px 14px;
+  padding: 0 14px 12px;
   border-top: 1px solid #f1f5f9;
 }
 .ord-pill {

@@ -60,6 +60,11 @@ class CustomerOrderSummary(BaseModel):
     total_quantity: int
     updated_at: datetime
     sources: List[str] = []  # portal | phone — intake channels on open received placements
+    party_number: Optional[int] = None
+    marker_1: Optional[str] = None
+    marker_2: Optional[str] = None
+    payment_type: Optional[str] = None
+    city_name: Optional[str] = None
 
 
 class CustomerBillLineOut(BaseModel):
@@ -195,6 +200,10 @@ class ProcessContextOut(BaseModel):
     lines: List[ProcessLineOut]
     default_narration: str = ""
     credit: Optional[dict] = None
+    party_number: Optional[int] = None
+    marker_1: Optional[str] = None
+    marker_2: Optional[str] = None
+    payment_type: Optional[str] = None
 
 
 class OfflineLineIn(BaseModel):

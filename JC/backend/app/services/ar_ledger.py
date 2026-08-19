@@ -96,6 +96,21 @@ def customer_ar_totals(db: Session, customer_id: int) -> dict[str, Decimal]:
     }
 
 
+def batch_customer_outstanding(db: Session, customer_ids: list[int]) -> dict[int, Decimal]:
+    """Return {customer_id: outstanding_balance} for multiple customers in one query."""
+    if not customer_ids:
+        return {}
+    from sqlalchemy import func
+
+    rows = (
+        db.query(ArLedgerEntry.customer_id, func.sum(ArLedgerEntry.amount))
+        .filter(ArLedgerEntry.customer_id.in_(customer_ids))
+        .group_by(ArLedgerEntry.customer_id)
+        .all()
+    )
+    return {cid: Decimal(str(total or 0)).quantize(Decimal("0.01")) for cid, total in rows}
+
+
 def get_opening_balance(db: Session, customer_id: int) -> Optional[ArLedgerEntry]:
     return (
         db.query(ArLedgerEntry)
@@ -126,13 +141,15 @@ def set_opening_balance(
         db.delete(row)
     db.flush()
     amt = amount.quantize(Decimal("0.01"))
-    if amt <= 0:
+    if amt == Decimal("0"):
         return None
+    # Positive amt = customer owes us (debit); negative = we owe customer (credit)
+    direction = "debit" if amt > 0 else "credit"
     entry = ArLedgerEntry(
         customer_id=customer_id,
         entry_type="opening_balance",
-        amount=as_signed_increase(amt),
-        description=f"Opening balance (as on {as_on.isoformat()}) — ₹{amt}",
+        amount=amt,
+        description=f"Opening balance as on {as_on.isoformat()} [{direction} ₹{abs(amt)}]",
         value_date=as_on,
         created_by_type=actor_type,
         created_by_id=actor_id,

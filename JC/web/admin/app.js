@@ -237,6 +237,18 @@ const App = (() => {
     return dt.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" });
   }
 
+  function timeAgo(d) {
+    if (!d) return "";
+    const dt = d instanceof Date ? d : new Date(d);
+    if (Number.isNaN(dt.getTime())) return "";
+    const secs = Math.floor((Date.now() - dt.getTime()) / 1000);
+    if (secs < 60) return "just now";
+    if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
+    if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+    if (secs < 172800) return "yesterday";
+    return fmtDay(dt);
+  }
+
   function fmtDay(d) {
     if (!d) return "—";
     if (typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
@@ -2184,7 +2196,7 @@ const App = (() => {
   function setVendors(list) { vendors = list || []; }
 
   const sharedCtx = () => ({
-    api, toast, esc, fmtDate, fmtDay, reviewRow, changeHistoryTable, openDetail,
+    api, toast, esc, fmtDate, fmtDay, timeAgo, reviewRow, changeHistoryTable, openDetail,
     closeDetail: () => closeDetail(), detailBack, detailFooterChild, ledgerDetailCard, bindLedgerRowClicks,
     entityLedgerTableHtml, activityTableHtml, loadActivity,
     getCities: () => cities,

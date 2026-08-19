@@ -109,6 +109,7 @@ const OrdersUI = (() => {
     open = false,
     rowOnclick = "",
     canWrite = true,
+    extraClass = "",
   }) {
     // Primary = write action only. More menu stays for read-only (Show lines / Open / Print).
     const primary = canWrite && primaryLabel && primaryOnclick
@@ -116,13 +117,14 @@ const OrdersUI = (() => {
       : "";
     const more = moreMenu(moreItems);
     const titleHtml = titleIsHtml ? title : esc(title);
-    return `<div class="ord-card${open ? " is-open" : ""}">
+    const cls = ["ord-card", open ? "is-open" : "", extraClass].filter(Boolean).join(" ");
+    return `<div class="${cls}">
       <div class="ord-card-row"${rowOnclick ? ` onclick="${rowOnclick}"` : ""}>
         <div class="ord-card-main">
           ${rowOnclick ? `<span class="vo-chevron${open ? " is-open" : ""}" aria-hidden="true"></span>` : ""}
           <div class="ord-card-text">
-            <div class="ord-card-title">${titleHtml} ${pillHtml}</div>
-            <div class="ord-card-meta">${meta || ""}</div>
+            <div class="ord-card-title">${titleHtml}${pillHtml ? ` ${pillHtml}` : ""}</div>
+            ${meta ? `<div class="ord-card-meta">${meta}</div>` : ""}
           </div>
         </div>
         <div class="ord-card-actions" onclick="event.stopPropagation()">

@@ -345,29 +345,73 @@ def pay_ap(
 
 @router.get("/ap/{ap_id}/receipt-details", response_model=dict, dependencies=[Depends(require_admin)])
 def ap_receipt_details(ap_id: int, db: Session = Depends(get_db)) -> dict:
-    """Return stock receipts for an AP bill."""
-    from app.models.stock_receipt import StockReceipt
+    """Return receipt lines and PO items for an AP bill."""
+    from app.models.vendor_receipt_line import VendorReceiptLine
+    from app.models.vendor_bill import VendorBill
 
     ap = db.get(APBill, ap_id)
     if ap is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="AP not found")
 
-    receipts = []
-    raw_receipts = db.query(StockReceipt).filter(StockReceipt.vendor_id == ap.vendor_id).order_by(StockReceipt.id.asc()).all()
-    for r in raw_receipts:
-        receipts.append({
+    # Get receipt lines via vendor_bill_id
+    receipt_lines: list[VendorReceiptLine] = []
+    if ap.vendor_bill_id:
+        receipt_lines = (
+            db.query(VendorReceiptLine)
+            .filter(VendorReceiptLine.vendor_bill_id == ap.vendor_bill_id)
+            .order_by(VendorReceiptLine.id.asc())
+            .all()
+        )
+    else:
+        # Fallback: get all receipt lines for vendor order
+        if ap.purchase_order_id:
+            receipt_lines = (
+                db.query(VendorReceiptLine)
+                .filter(VendorReceiptLine.vendor_order_id == ap.purchase_order_id)
+                .order_by(VendorReceiptLine.id.asc())
+                .all()
+            )
+
+    # Build po_items from the vendor order
+    po_items = []
+    if ap.purchase_order_id:
+        from app.models.vendor_order import VendorOrder
+        vo = db.get(VendorOrder, ap.purchase_order_id)
+        if vo and vo.items:
+            po_items = [
+                {
+                    "product_name": item.get("product_name", ""),
+                    "our_product_id": item.get("our_product_id", ""),
+                    "qty_ordered": item.get("qty_ordered", 0),
+                    "unit_price": item.get("unit_price", 0),
+                    "date_ordered": item.get("date_ordered", ""),
+                }
+                for item in vo.items
+            ]
+
+    receipts = [
+        {
             "id": r.id,
-            "vendor_bill_no": r.vendor_bill_no,
-            "receipt_number": r.receipt_number,
-            "is_partial": r.is_partial,
-            "line_items": r.line_items or [],
-            "note": r.note,
-            "created_at": r.created_at.isoformat() if r.created_at else None,
-            "bill_photo_key": r.bill_photo_key,
-        })
+            "product_name": r.product_name,
+            "qty_received": r.qty_received,
+            "qty_billed": r.qty_billed,
+            "order_price": float(r.order_price) if r.order_price is not None else None,
+            "billed_price": float(r.billed_price) if r.billed_price is not None else None,
+            "qty_discrepancy": r.qty_discrepancy,
+            "price_discrepancy": float(r.price_discrepancy) if r.price_discrepancy is not None else None,
+            "receipt_date": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in receipt_lines
+    ]
 
     return {
         "ap_id": ap_id,
+        "vendor_id": ap.vendor_id,
+        "purchase_order_id": ap.purchase_order_id,
+        "vendor_bill_id": ap.vendor_bill_id,
+        "amount": float(ap.amount),
+        "status": ap.status,
+        "po_items": po_items,
         "receipts": receipts,
     }
 

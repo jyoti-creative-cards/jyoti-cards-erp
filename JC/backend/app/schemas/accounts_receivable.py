@@ -66,5 +66,5 @@ class ArSettlementIn(BaseModel):
 
 
 class OpeningBalanceIn(BaseModel):
-    amount: Decimal = Field(..., ge=0)
+    amount: Decimal  # signed: positive = customer owes us; negative = we owe customer (credit)
     as_on: date

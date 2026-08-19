@@ -32,7 +32,7 @@ class CatalogProduct(Base):
     unit: Mapped[str] = mapped_column(String(50), nullable=False, server_default="pcs")
 
     buying_price: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False, server_default="0")
-    selling_price: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False, server_default="0")
+    selling_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 4), nullable=True)
 
     image_keys: Mapped[list] = mapped_column(JSON, nullable=False)
     is_active: Mapped[bool] = mapped_column(

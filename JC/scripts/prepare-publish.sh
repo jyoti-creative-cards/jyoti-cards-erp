@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${ROOT}/_publish"
 rm -rf "$OUT"
-mkdir -p "$OUT/jc-api" "$OUT/jc-admin" "$OUT/jc-portal"
+mkdir -p "$OUT/jc-api" "$OUT/jc-admin"
 
 # API (Railway)
 rsync -a --delete \
@@ -16,24 +16,23 @@ rsync -a --delete \
 # Admin (Vercel static)
 rsync -a --delete --exclude '.DS_Store' "$ROOT/web/admin/" "$OUT/jc-admin/"
 
-# Portal (Vercel static)
-rsync -a --delete --exclude '.DS_Store' "$ROOT/web/portal/" "$OUT/jc-portal/"
-
 # Seed git repos
-for d in jc-api jc-admin jc-portal; do
+for d in jc-api jc-admin; do
   (
     cd "$OUT/$d"
     git init -b main >/dev/null
     git add -A
-    git -c user.email="deploy@jyoticreativecards.local" -c user.name="JC Deploy" commit -m "Initial JC deploy" >/dev/null
+    # Author must be a Vercel team member email or Hobby blocks the deploy.
+    git -c user.email="sourabh18agrawal@gmail.com" -c user.name="Sourabh" commit -m "Publish JC $(date -u +%Y-%m-%dT%H:%MZ)" >/dev/null
   )
 done
 
 cat <<EOF
 Prepared:
   $OUT/jc-api      → Railway (repo root)
-  $OUT/jc-admin    → Vercel (static + /api rewrite)
-  $OUT/jc-portal   → Vercel (static + /api rewrite)
+  $OUT/jc-admin    → Vercel → https://jc-admin-two.vercel.app
+
+Customer app is separate Vercel project (customer-app) → https://jyoticards.vercel.app
 
 Next: set GitHub remotes under jyoti-creative-cards and push.
 EOF

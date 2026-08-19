@@ -18,8 +18,13 @@ class CustomerCreate(BaseModel):
     credit_limit: Optional[float] = None
     credit_override: bool = False
     gst_number: Optional[str] = Field(None, max_length=20)
-    opening_balance_due: Optional[float] = Field(None, ge=0)
+    opening_balance_due: Optional[float] = None  # signed: positive=they owe us, negative=we owe them
     opening_balance_as_on: Optional[date] = None
+    party_number: Optional[int] = None
+    marker_1: Optional[str] = Field(None, max_length=100)
+    marker_2: Optional[str] = Field(None, max_length=100)
+    payment_type: Optional[str] = Field(None, max_length=20)  # "CASH" or "CREDIT"
+    notes: Optional[str] = None
 
 
 class CustomerUpdate(BaseModel):
@@ -35,8 +40,12 @@ class CustomerUpdate(BaseModel):
     credit_override: Optional[bool] = None
     gst_number: Optional[str] = Field(None, max_length=20)
     is_active: Optional[bool] = None
-    opening_balance_due: Optional[float] = Field(None, ge=0)  # TEMP correction
-    opening_balance_as_on: Optional[date] = None  # TEMP correction
+    opening_balance_due: Optional[float] = None  # signed: positive=they owe us, negative=we owe them
+    opening_balance_as_on: Optional[date] = None
+    marker_1: Optional[str] = Field(None, max_length=100)
+    marker_2: Optional[str] = Field(None, max_length=100)
+    payment_type: Optional[str] = Field(None, max_length=20)
+    notes: Optional[str] = None
 
 
 class CustomerPublic(BaseModel):
@@ -58,6 +67,14 @@ class CustomerPublic(BaseModel):
     is_active: bool
     opening_balance_due: Optional[str] = None
     opening_balance_as_on: Optional[str] = None
+    # credit summary (populated on single-customer fetch; None in list view for perf)
+    outstanding_balance: Optional[str] = None   # live AR outstanding (signed)
+    available_credit: Optional[str] = None      # credit_limit - outstanding
+    party_number: Optional[int] = None
+    marker_1: Optional[str] = None
+    marker_2: Optional[str] = None
+    payment_type: Optional[str] = None
+    notes: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     deleted_at: Optional[datetime] = None

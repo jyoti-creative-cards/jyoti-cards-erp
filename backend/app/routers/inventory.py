@@ -22,6 +22,7 @@ from app.models.stock_adjustment import StockAdjustment
 from app.models.stock_balance import StockBalance
 from app.models.stock_receipt import StockReceipt
 from app.models.vendor_order import VendorOrder as VendorOrderModel
+from app.models.vendor_order_line import VendorOrderLine
 from app.schemas.inventory import (
     BalanceThresholdBody,
     InventoryRowPublic,
@@ -220,10 +221,11 @@ def list_inventory(
         )).fetchall()
         invoice_counts: dict[int, int] = {int(r[0]): int(r[1]) for r in inv_rows if r[0]}
 
+        # vendor orders now use normalized rows table
         vo_rows = db.execute(text(
-            "SELECT items_elem->>'catalog_product_id' AS pid, COUNT(*) AS cnt "
-            "FROM portal_vendor_orders, jsonb_array_elements(items::jsonb) AS items_elem "
-            "GROUP BY 1"
+            "SELECT catalog_product_id::text AS pid, COUNT(*) AS cnt "
+            "FROM portal_vendor_order_lines "
+            "WHERE catalog_product_id IS NOT NULL GROUP BY 1"
         )).fetchall()
         vo_counts: dict[int, int] = {int(r[0]): int(r[1]) for r in vo_rows if r[0]}
     else:
@@ -235,11 +237,9 @@ def list_inventory(
                     pid = int(item["catalog_product_id"])
                     invoice_counts[pid] = invoice_counts.get(pid, 0) + 1
         vo_counts = {}
-        for vo in db.query(VendorOrderModel).all():
-            for item in (vo.items if isinstance(vo.items, list) else []):
-                if isinstance(item, dict) and item.get("catalog_product_id"):
-                    pid = int(item["catalog_product_id"])
-                    vo_counts[pid] = vo_counts.get(pid, 0) + 1
+        for line in db.query(VendorOrderLine).all():
+            if line.catalog_product_id:
+                vo_counts[line.catalog_product_id] = vo_counts.get(line.catalog_product_id, 0) + 1
 
     if all_catalog:
         qry = db.query(CatalogProduct)
@@ -487,7 +487,7 @@ def adhoc_receipt(body: AdhocReceiptBody, db: Session = Depends(get_db)) -> dict
     import uuid as _uuid
     vo = db.query(VendorOrderModel).filter(
         VendorOrderModel.vendor_id == body.vendor_id,
-        VendorOrderModel.status == "open",
+        VendorOrderModel.status.in_(["placed", "open"]),
     ).first()
 
     now_iso = datetime.now(timezone.utc).isoformat()

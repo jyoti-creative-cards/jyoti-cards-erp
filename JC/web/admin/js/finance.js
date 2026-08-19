@@ -1162,13 +1162,16 @@ const Finance = (() => {
     return `<div class="card table-wrap"><table class="data"><thead><tr>
       <th>When</th><th>Type</th><th>Description</th><th>Amount</th><th>Balance</th>
     </tr></thead><tbody>
-      ${bills.map(e => `<tr>
-        <td style="font-size:12px;">${new Date(e.created_at).toLocaleString()}</td>
-        <td><span class="badge ${e.entry_type === "credit_note" ? "badge-green" : "badge-amber"}">${ctx.esc(e.entry_type)}</span></td>
+      ${bills.map(e => {
+        const badgeCls = e.entry_type === "credit_note" ? "badge-green" : e.entry_type === "opening_balance" ? "badge-blue" : "badge-amber";
+        const typeLabel = e.entry_type === "opening_balance" ? "Opening" : e.entry_type === "credit_note" ? "Credit Note" : "Bill";
+        return `<tr>
+        <td style="font-size:12px;">${e.value_date ? new Date(e.value_date).toLocaleDateString("en-IN") : new Date(e.created_at).toLocaleString()}</td>
+        <td><span class="badge ${badgeCls}">${typeLabel}</span></td>
         <td>${ctx.esc(e.description)}${e.return_id ? ` <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();Returns.openReturn(${e.return_id})">View</button>` : ""}</td>
         <td>${fmtPrice(e.signed_amount)}</td>
         <td><strong>${fmtPrice(e.running_balance)}</strong></td>
-      </tr>`).join("")}
+      </tr>`;}).join("")}
     </tbody></table></div>`;
   }
 
@@ -1177,13 +1180,16 @@ const Finance = (() => {
       <table class="data"><thead><tr>
         <th>When</th><th>Type</th><th>Description</th><th>Amount</th><th>Balance</th>
       </tr></thead><tbody>
-        ${(arDetail.entries || []).map(e => `<tr>
-          <td style="font-size:12px;">${new Date(e.created_at).toLocaleString()}</td>
-          <td><span class="badge ${e.entry_type === "credit_note" ? "badge-green" : e.entry_type === "bill" ? "badge-amber" : "badge-green"}">${ctx.esc(e.entry_type)}</span></td>
+        ${(arDetail.entries || []).map(e => {
+          const badgeCls = e.entry_type === "credit_note" ? "badge-green" : e.entry_type === "opening_balance" ? "badge-blue" : e.entry_type === "bill" ? "badge-amber" : e.entry_type === "payment_reversal" ? "badge-red" : "badge-green";
+          const typeLabel = { bill: "Bill", credit_note: "Credit Note", opening_balance: "Opening", payment: "Payment", payment_reversal: "Reversal" }[e.entry_type] || e.entry_type;
+          return `<tr>
+          <td style="font-size:12px;">${e.value_date ? new Date(e.value_date).toLocaleDateString("en-IN") : new Date(e.created_at).toLocaleString()}</td>
+          <td><span class="badge ${badgeCls}">${typeLabel}</span></td>
           <td>${ctx.esc(e.description)}${e.return_id ? ` <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();Returns.openReturn(${e.return_id})">View</button>` : ""}</td>
           <td>${fmtPrice(e.signed_amount)}</td>
           <td><strong>${fmtPrice(e.running_balance)}</strong></td>
-        </tr>`).join("")}
+        </tr>`;}).join("")}
       </tbody></table>
     </div>`;
   }

@@ -475,6 +475,60 @@ def replace_received_placement(
     return placement
 
 
+def confirm_received_order(db: Session, customer_id: int) -> bool:
+    """Move a customer's received (portal) order to the open (confirmed) bucket.
+
+    Returns True if something was confirmed, False if there was nothing to confirm.
+    The open lines are already in CustomerOpenLine (added during placement creation),
+    so we just update the bucket and placement statuses.
+    """
+    received = get_open_customer_order(db, customer_id, "received")
+    if not received:
+        return False
+
+    # Check there are any active lines worth confirming
+    placements = (
+        db.query(CustomerOrderPlacement)
+        .filter(
+            CustomerOrderPlacement.customer_order_id == received.id,
+            CustomerOrderPlacement.status == "received",
+        )
+        .all()
+    )
+    active_lines = (
+        db.query(CustomerOrderLine)
+        .filter(
+            CustomerOrderLine.placement_id.in_([p.id for p in placements]),
+            CustomerOrderLine.status == "active",
+        )
+        .all()
+    ) if placements else []
+
+    if not active_lines:
+        return False
+
+    # Move the order bucket from received → open
+    # Get or create the open order for this customer
+    open_order = get_open_customer_order(db, customer_id, "open")
+    if open_order is None:
+        # Repurpose the received order as the open order
+        received.bucket = "open"
+        received.status = "open"
+        received.updated_at = datetime.now(timezone.utc)
+        for p in placements:
+            p.status = "open"
+    else:
+        # Re-parent placements to the existing open order
+        for p in placements:
+            p.customer_order_id = open_order.id
+            p.status = "open"
+        open_order.updated_at = datetime.now(timezone.utc)
+        # Close the (now empty) received order
+        received.is_open = False
+
+    return True
+
+
 def get_open_unbilled_placement(db: Session, customer_id: int) -> CustomerOrderPlacement | None:
     """Latest open received placement with no billed lines — dealer’s one active order."""
     received = get_open_customer_order(db, customer_id, "received")

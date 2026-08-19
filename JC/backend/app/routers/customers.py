@@ -45,7 +45,16 @@ def _row_to_public(
     opening_amount=None,
     opening_as_on=None,
     history: Optional[list] = None,
+    outstanding: Optional[Decimal] = None,
 ) -> CustomerPublic:
+    # available_credit: only meaningful when a real (non-null, non-zero) limit is set
+    if row.credit_limit is not None and row.credit_limit > Decimal("0") and outstanding is not None:
+        available: Optional[Decimal] = row.credit_limit - outstanding
+    elif row.credit_limit is not None and row.credit_limit == Decimal("0") and outstanding is not None:
+        # track-only (limit=0): available = 0 - outstanding (informational, can be negative)
+        available = Decimal("0") - outstanding
+    else:
+        available = None
     return CustomerPublic(
         id=row.id,
         business_name=row.business_name,
@@ -65,6 +74,13 @@ def _row_to_public(
         is_active=row.is_active,
         opening_balance_due=format(opening_amount, "f") if opening_amount is not None else None,
         opening_balance_as_on=opening_as_on.isoformat() if opening_as_on else None,
+        outstanding_balance=format(outstanding, "f") if outstanding is not None else None,
+        available_credit=format(available, "f") if available is not None else None,
+        party_number=getattr(row, "party_number", None),
+        marker_1=getattr(row, "marker_1", None),
+        marker_2=getattr(row, "marker_2", None),
+        payment_type=getattr(row, "payment_type", None),
+        notes=getattr(row, "notes", None),
         created_at=row.created_at,
         updated_at=row.updated_at,
         deleted_at=row.deleted_at,
@@ -98,6 +114,7 @@ def _to_public_many(
     }
 
     from app.models.accounts_receivable import ArLedgerEntry
+    from app.services.ar_ledger import batch_customer_outstanding
 
     cust_ids = [r.id for r in rows]
     openings: dict[int, ArLedgerEntry] = {}
@@ -114,9 +131,16 @@ def _to_public_many(
             if prev is None or e.id > prev.id:
                 openings[e.customer_id] = e
 
+    # Batch-fetch outstanding balances for all customers in one query
+    try:
+        outstanding_map: dict[int, Decimal] = batch_customer_outstanding(db, cust_ids)
+    except Exception:
+        outstanding_map = {}
+
     out: List[CustomerPublic] = []
     for row in rows:
         history = []
+        outstanding_val: Optional[Decimal] = outstanding_map.get(row.id)
         if include_history:
             history = [
                 {
@@ -126,6 +150,13 @@ def _to_public_many(
                 }
                 for h in list_entity_history(db, "customer", row.id)
             ]
+            if outstanding_val is None:
+                # fall back to per-customer totals on detail view
+                from app.services.ar_ledger import customer_ar_totals
+                try:
+                    outstanding_val = customer_ar_totals(db, row.id)["outstanding"]
+                except Exception:
+                    outstanding_val = None
         opening = openings.get(row.id)
         out.append(
             _row_to_public(
@@ -135,6 +166,7 @@ def _to_public_many(
                 opening_amount=opening.amount if opening else None,
                 opening_as_on=opening.value_date if opening else None,
                 history=history,
+                outstanding=outstanding_val,
             )
         )
     return out
@@ -172,11 +204,23 @@ def list_customers(
     search: Optional[str] = Query(None),
     city_id: Optional[int] = Query(None),
     route_id: Optional[int] = Query(None),
-    include_inactive: bool = Query(False),
+    status: Optional[str] = Query(None, description="active (default) | inactive | deleted"),
+    include_inactive: bool = Query(False),  # legacy, kept for compatibility
 ) -> List[CustomerPublic]:
     q = db.query(Customer)
-    if not include_inactive:
-        q = q.filter(Customer.is_active.is_(True))
+    if status == "inactive":
+        q = q.filter(Customer.is_active.is_(False), Customer.deleted_at.is_(None))
+    elif status == "deleted":
+        q = q.filter(Customer.deleted_at.isnot(None))
+    elif status == "all":
+        pass  # no filter
+    else:
+        # default: active only (status="active" or no status)
+        # legacy include_inactive=true returns active+inactive but never deleted
+        if include_inactive:
+            q = q.filter(Customer.deleted_at.is_(None))
+        else:
+            q = q.filter(Customer.is_active.is_(True), Customer.deleted_at.is_(None))
     if city_id is not None:
         q = q.filter(Customer.city_id == city_id)
     if route_id is not None:
@@ -207,7 +251,8 @@ def list_customers(
         }
         rows = sort_parties_by_search(rows, search, city_lookup=city_lookup)
         return _to_public_many(rows, db)
-    rows = q.order_by(Customer.id.desc()).all()
+    from sqlalchemy import nulls_last
+    rows = q.order_by(nulls_last(Customer.party_number.asc()), Customer.business_name.asc()).all()
     return _to_public_many(rows, db)
 
 
@@ -304,6 +349,11 @@ def create_customer(body: CustomerCreate, db: Session = Depends(get_db), auth: A
         credit_limit=Decimal(str(body.credit_limit)) if body.credit_limit is not None else None,
         credit_override=body.credit_override,
         gst_number=(body.gst_number.strip().upper() if body.gst_number else None),
+        party_number=body.party_number,
+        marker_1=(body.marker_1.strip() if body.marker_1 else None),
+        marker_2=(body.marker_2.strip() if body.marker_2 else None),
+        payment_type=(body.payment_type.strip().upper() if body.payment_type else None),
+        notes=(body.notes.strip() if body.notes else None),
     )
     db.add(row)
     try:
@@ -350,8 +400,8 @@ def update_customer(customer_id: int, body: CustomerUpdate, db: Session = Depend
     if "phone" in data and data["phone"] is not None:
         phone = _normalize_phone(data["phone"])
         clash = db.query(Customer).filter(Customer.phone == phone, Customer.id != customer_id).one_or_none()
-        if clash and clash.is_active:
-            raise HTTPException(status.HTTP_409_CONFLICT, detail="phone already registered")
+        if clash and clash.deleted_at is None:
+            raise HTTPException(status.HTTP_409_CONFLICT, detail="phone already registered to another customer")
         row.phone = phone
         del data["phone"]
 
@@ -365,11 +415,14 @@ def update_customer(customer_id: int, body: CustomerUpdate, db: Session = Depend
         row.route_id = _route_from_city(db, data["city_id"])
         del data["city_id"]
 
-    for field in ("business_name", "person_name", "alias", "address", "gst_number"):
+    for field in ("business_name", "person_name", "alias", "address", "gst_number", "additional_details",
+                  "marker_1", "marker_2", "payment_type", "notes"):
         if field in data:
             val = data[field]
             if field == "gst_number":
                 row.gst_number = val.strip().upper() if val else None
+            elif field == "payment_type":
+                row.payment_type = val.strip().upper() if val else None
             elif field in ("business_name",):
                 setattr(row, field, val.strip() if val else val)
             else:
@@ -425,20 +478,26 @@ def update_customer(customer_id: int, body: CustomerUpdate, db: Session = Depend
 @router.delete("/{customer_id}", status_code=204, dependencies=[Depends(require_permission("customers.write"))])
 def delete_customer(customer_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("customers.write"))) -> None:
     row = db.get(Customer, customer_id)
-    if not row or not row.is_active:
+    if not row or row.deleted_at is not None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="customer not found")
-    from decimal import Decimal
-    from app.services.ar_ledger import customer_ar_totals
-    due = customer_ar_totals(db, customer_id)["outstanding"]
-    if due > Decimal("0.009"):
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot delete — ₹{due} still to collect. Settle or write off first.",
-        )
     row.is_active = False
     row.deleted_at = datetime.now(timezone.utc)
     log_from_auth(db, auth, action="delete", entity_type="customer", entity_id=row.id, entity_label=row.business_name)
     db.commit()
+
+
+@router.post("/{customer_id}/restore", response_model=CustomerPublic, dependencies=[Depends(require_permission("customers.write"))])
+def restore_customer(customer_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("customers.write"))) -> CustomerPublic:
+    """Restore a soft-deleted customer from recycle bin → active."""
+    row = db.get(Customer, customer_id)
+    if not row or row.deleted_at is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="customer not in recycle bin")
+    row.is_active = True
+    row.deleted_at = None
+    log_from_auth(db, auth, action="restore", entity_type="customer", entity_id=row.id, entity_label=row.business_name)
+    db.commit()
+    db.refresh(row)
+    return _to_public(row, db)
 
 
 @router.post("/{customer_id}/reset-password", dependencies=[Depends(require_permission("customers.write"))])

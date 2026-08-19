@@ -11,8 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db, legacy_active_value, sql_is_active_true
-from app.deps import get_actor, require_admin
-from app.services.audit import write_audit
+from app.deps import require_admin
 from app.integrations.whatsapp.client import send_account_creation, _e164 as normalize_whatsapp_e164
 from app.models.ar_invoice import ARInvoice
 from app.models.city import City
@@ -199,7 +198,9 @@ def create_customer(
     city_route_id: Optional[int] = None
     if body.city_id:
         _city = db.get(City, body.city_id)
-        city_route_id = _city.route_id if _city else None
+        if _city is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="city not found")
+        city_route_id = _city.route_id
     row = Customer(
         name=display_name,
         phone=phone,
@@ -242,7 +243,7 @@ def update_customer(
     db: Session = Depends(get_db),
 ) -> Customer:
     row = db.get(Customer, customer_id)
-    if row is None:
+    if row is None or row.deleted_at is not None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="customer not found")
 
     data = body.model_dump(exclude_unset=True)
@@ -281,7 +282,10 @@ def update_customer(
 
     if "company_name" in data:
         v = data.pop("company_name")
-        row.company_name = v.strip() if isinstance(v, str) and v.strip() else None
+        new_cn = v.strip() if isinstance(v, str) else ""
+        if not new_cn:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="company_name cannot be empty")
+        row.company_name = new_cn
 
     if "address" in data:
         v = data.pop("address")
@@ -376,7 +380,11 @@ def reactivate_customer(customer_id: int, db: Session = Depends(get_db)) -> dict
     row.is_active = True
     row.deleted_at = None
     db.add(row)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="phone already in use by an active customer") from None
     return {"ok": True, "id": customer_id, "reactivated": True}
 
 
@@ -388,7 +396,11 @@ def restore_customer(customer_id: int, db: Session = Depends(get_db)) -> dict:
     row.deleted_at = None
     row.is_active = True
     db.add(row)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="phone already in use by an active customer") from None
     return {"ok": True, "id": customer_id, "restored": True}
 
 
@@ -398,7 +410,14 @@ def permanently_delete_customer(customer_id: int, db: Session = Depends(get_db))
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="customer not found")
     db.delete(row)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="cannot permanently delete: customer has associated orders or invoices",
+        ) from None
     return {"ok": True, "id": customer_id, "permanently_deleted": True}
 
 

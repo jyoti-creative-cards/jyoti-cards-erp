@@ -22,6 +22,7 @@ def _local_day_bounds_utc(now: datetime | None = None) -> tuple[datetime, dateti
 from app.db.session import get_db
 from app.deps import AuthContext, require_permission
 from app.models.catalog_product import CatalogProduct
+from app.models.city import City
 from app.models.customer import Customer
 from app.models.customer_bill import CustomerBill, CustomerBillLine
 from app.models.customer_order import CustomerOpenLine, CustomerOrder, CustomerOrderLine, CustomerOrderPlacement
@@ -186,16 +187,23 @@ def _summary(db: Session, order: CustomerOrder) -> CustomerOrderSummary:
     else:
         total = sum(ln.quantity for ln in lines)
     sources = _sources_for_received(db, order.id) if order.bucket == "received" else []
+    cust = db.get(Customer, order.customer_id)
+    city = db.get(City, cust.city_id) if cust and cust.city_id else None
     return CustomerOrderSummary(
         id=order.id,
         customer_id=order.customer_id,
-        customer_name=_customer_name(db, order.customer_id),
+        customer_name=cust.business_name if cust else str(order.customer_id),
         bucket=order.bucket,
         placement_count=placements,
         line_count=len(lines),
         total_quantity=total,
         updated_at=order.updated_at,
         sources=sources,
+        party_number=getattr(cust, "party_number", None) if cust else None,
+        marker_1=getattr(cust, "marker_1", None) if cust else None,
+        marker_2=getattr(cust, "marker_2", None) if cust else None,
+        payment_type=getattr(cust, "payment_type", None) if cust else None,
+        city_name=city.name if city else None,
     )
 
 
@@ -284,17 +292,22 @@ def list_customer_orders(
                         CustomerOrderPlacement.placed_at < day_end,
                     )
                 earliest = pq.scalar()
+            cust_obj = db.get(Customer, cid)
             out.append(
                 CustomerOrderSummary(
                     id=received.id if received else 0,
                     customer_id=cid,
-                    customer_name=_customer_name(db, cid),
+                    customer_name=cust_obj.business_name if cust_obj else str(cid),
                     bucket="open",
                     placement_count=0,
                     line_count=int(line_count or 0),
                     total_quantity=int(total_qty or 0),
                     updated_at=earliest or (received.updated_at if received else datetime.now(timezone.utc)),
                     sources=_sources_for_received(db, received.id if received else None),
+                    party_number=getattr(cust_obj, "party_number", None) if cust_obj else None,
+                    marker_1=getattr(cust_obj, "marker_1", None) if cust_obj else None,
+                    marker_2=getattr(cust_obj, "marker_2", None) if cust_obj else None,
+                    payment_type=getattr(cust_obj, "payment_type", None) if cust_obj else None,
                 )
             )
         out.sort(key=lambda x: x.updated_at or datetime.min.replace(tzinfo=timezone.utc))
@@ -544,6 +557,10 @@ def get_process_context(
         lines=lines_out,
         default_narration=ctx.get("default_narration") or "",
         credit=ctx.get("credit"),
+        party_number=getattr(customer, "party_number", None),
+        marker_1=getattr(customer, "marker_1", None),
+        marker_2=getattr(customer, "marker_2", None),
+        payment_type=getattr(customer, "payment_type", None),
     )
 
 
@@ -847,6 +864,33 @@ def cancel_placement_endpoint(
     response_cache.invalidate("shop:")
     response_cache.invalidate("catalog:")
     return {"ok": True, "placement_id": placement_id}
+
+
+@router.post("/customer/{customer_id}/confirm", dependencies=[Depends(require_permission("customer_orders.write"))])
+def confirm_customer_order(
+    customer_id: int,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("customer_orders.write")),
+):
+    """Move a customer's received (New) order to the confirmed (open) bucket."""
+    from app.services.customer_order_flow import confirm_received_order
+
+    customer = db.get(Customer, customer_id)
+    if not customer or customer.deleted_at:
+        raise HTTPException(404, "customer not found")
+    confirmed = confirm_received_order(db, customer_id)
+    if not confirmed:
+        raise HTTPException(400, "no pending received order to confirm")
+    log_from_auth(
+        db, auth,
+        action="confirm",
+        entity_type="customer_order",
+        entity_id=customer_id,
+        entity_label=customer.business_name,
+        detail="Confirmed received order → open",
+    )
+    db.commit()
+    return {"ok": True, "customer_id": customer_id}
 
 
 @router.post("/bill-lines/{line_id}/close")

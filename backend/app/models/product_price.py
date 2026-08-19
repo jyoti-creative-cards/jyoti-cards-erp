@@ -19,7 +19,7 @@ class ProductPrice(Base):
         Integer, ForeignKey("portal_catalog_products.id", ondelete="CASCADE"), nullable=False, index=True
     )
     buying_price: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
-    selling_price: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
+    selling_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 4), nullable=True)
     start_date: Mapped[date] = mapped_column(Date, nullable=False)
     end_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)  # NULL = current price
     is_current: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=sql_true())

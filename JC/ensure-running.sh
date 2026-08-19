@@ -8,6 +8,8 @@ mkdir -p "$ROOT/.logs" "$ROOT/.pids"
 
 ping_api() { curl -sf --max-time 2 "http://127.0.0.1:${BACKEND_PORT}/api/v1/ping" >/dev/null 2>&1; }
 ping_admin() { curl -sf --max-time 2 "http://127.0.0.1:${ADMIN_PORT}/" >/dev/null 2>&1; }
+# Admin also served by API at /admin (stable) — preferred when :3011 dies
+ping_admin_via_api() { curl -sf --max-time 2 "http://127.0.0.1:${BACKEND_PORT}/admin/" >/dev/null 2>&1; }
 
 if ! ping_api; then
   cd "$ROOT/backend"
@@ -35,5 +37,12 @@ else
 fi
 
 echo ""
-echo "  API:   http://127.0.0.1:${BACKEND_PORT}/api/v1"
-echo "  Admin: http://127.0.0.1:${ADMIN_PORT}"
+echo "  API:         http://127.0.0.1:${BACKEND_PORT}/api/v1"
+echo "  Admin (API): http://127.0.0.1:${BACKEND_PORT}/admin/   ← use this if :${ADMIN_PORT} dies"
+if ping_admin; then
+  echo "  Admin (:${ADMIN_PORT}): http://127.0.0.1:${ADMIN_PORT}"
+elif ping_admin_via_api; then
+  echo "  Admin (:${ADMIN_PORT}): down — open the API /admin URL above"
+else
+  echo "  Admin: not reachable"
+fi

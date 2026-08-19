@@ -35,3 +35,7 @@ def write_audit(
         db.flush()
     except Exception:
         pass
+
+
+# Alias used by some routers
+log_action = write_audit

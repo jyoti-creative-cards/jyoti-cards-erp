@@ -576,7 +576,9 @@ const CustomerOrders = (() => {
       metaBits = [`${o.placement_count || 0} placements`, `${o.line_count || 0} lines`];
     }
     if (src) metaBits.push(src);
-    const meta = `${metaBits.join(" · ")}<div style="margin-top:2px;font-size:12px;">${o.updated_at ? new Date(o.updated_at).toLocaleString() : ""}</div>`;
+    // Timestamp shown inline right, city in meta below
+    const timeAgo = o.updated_at ? ctx.timeAgo?.(o.updated_at) || new Date(o.updated_at).toLocaleString() : "";
+    const meta = `${metaBits.join(" · ")}${o.city_name ? ` · <span style="color:var(--muted);">${ctx.esc(o.city_name)}</span>` : ""}`;
 
     const more = [];
     more.push({ label: "View", onclick: viewFn });
@@ -609,11 +611,13 @@ const CustomerOrders = (() => {
 
     const _m1Upper = (o.marker_1 || "").toUpperCase();
     const partyLabel = (o.party_number ? `<span style="color:var(--muted);font-size:12px;font-weight:600;margin-right:4px;">#${o.party_number}</span>` : "") + ctx.esc(o.customer_name) + (o.marker_1 ? ` <span class="badge badge-blue" style="font-size:10px;padding:2px 4px;vertical-align:middle;">${ctx.esc(o.marker_1)}</span>` : "") + (o.marker_2 ? ` <span class="badge badge-amber" style="font-size:10px;padding:2px 4px;vertical-align:middle;">${ctx.esc(o.marker_2)}</span>` : "") + (o.payment_type === "CASH" && !_m1Upper.includes("CASH") ? ` <span class="badge badge-amber" style="font-size:10px;padding:2px 4px;vertical-align:middle;">CASH</span>` : "");
+    const timePill = timeAgo ? `<span class="ord-card-time">${ctx.esc(timeAgo)}</span>` : "";
+    const bucketAccent = { received: "ord-card--received", open: "ord-card--open", billed: "ord-card--billed", closed: "ord-card--closed", cancelled: "ord-card--cancelled" }[currentBucket] || "";
     return OrdersUI.partyCard({
       title: partyLabel,
       titleIsHtml: true,
       meta,
-      pillHtml: "",
+      pillHtml: timePill,
       primaryLabel: canWrite || currentBucket === "billed" || currentBucket === "cancelled" || currentBucket === "closed"
         ? primaryLabel
         : "View",
@@ -624,6 +628,7 @@ const CustomerOrders = (() => {
       canWrite: true,
       open,
       rowOnclick: viewFn,
+      extraClass: bucketAccent,
       expandHtml: open
         ? `<div id="co-hub-expand-${o.customer_id}">${cache ? renderHubExpand(cache, canWrite, o.customer_id) : `<p class="vo-muted" style="margin:0;padding:8px 0;">Loading…</p>`}</div>`
         : "",
@@ -734,6 +739,7 @@ const CustomerOrders = (() => {
     if (currentBucket === "open") {
       const lines = currentOrder.open_lines || [];
       el.innerHTML = `
+        ${cashWarningHtml(currentOrder)}
         ${canWrite && lines.length ? `<div class="ui-toolbar" style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">
           <button class="btn btn-primary btn-sm" onclick="CustomerOrders.processOrder()">Create Bill</button>
           <button class="btn btn-secondary btn-sm" onclick="CustomerOrders.openEditFromOpen()">Edit order</button>
@@ -762,6 +768,7 @@ const CustomerOrders = (() => {
 
     if (currentBucket === "billed" && (currentOrder.bills || []).length) {
       el.innerHTML = `
+        ${cashWarningHtml(currentOrder)}
         <div class="ui-toolbar" style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">
           ${canWrite ? `<button class="btn btn-primary btn-sm" onclick="CustomerOrders.goToDispatch()">Dispatch</button>` : ""}
           ${canMoney ? `<button class="btn btn-primary btn-sm" onclick="CustomerOrders.goCollectPayment(${detailCustomerId})">Collect payment</button>` : ""}
@@ -825,6 +832,7 @@ const CustomerOrders = (() => {
     if (currentBucket === "received") {
       const placements = currentOrder.placements || [];
       el.innerHTML = `
+        ${cashWarningHtml(currentOrder)}
         ${canWrite && placements.length ? `<div class="ui-toolbar" style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">
           <button class="btn btn-primary btn-sm" onclick="CustomerOrders.confirmOrder(${detailCustomerId})">✓ Confirm order</button>
           <button class="btn btn-secondary btn-sm" onclick="CustomerOrders.openOfflineWizard(${detailCustomerId})">Edit / add items</button>
@@ -1296,12 +1304,13 @@ const CustomerOrders = (() => {
     return h;
   }
 
+  function cashWarningHtml(o) {
+    if ((o?.payment_type || "").toUpperCase() !== "CASH") return "";
+    return `<div style="padding:8px 14px;margin-bottom:10px;background:#fef3c7;border:1px solid #fde68a;border-radius:6px;font-size:13px;">⚠ <strong>CASH customer</strong> — collect payment at time of billing.</div>`;
+  }
+
   function creditBannerHtml(cr, { afterBill = false } = {}) {
     if (!cr) return "";
-    // CASH customer warning strip
-    const cashNote = processContext?.payment_type === "CASH"
-      ? `<div style="padding:8px 14px;margin-bottom:8px;background:#fef3c7;border:1px solid #fde68a;border-radius:6px;font-size:13px;">⚠ <strong>CASH customer</strong> — collect payment at time of billing.</div>`
-      : "";
     const fmtMoney = v => Math.abs(Number(v)).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const colorMoney = v => {
       const n = Number(v);
@@ -1314,24 +1323,24 @@ const CustomerOrders = (() => {
       const currentOut = Number(cr.outstanding || cr.used || 0);
       const afterOut = Number(cr.used_after_bill || currentOut);
       const showAfter = afterBill && Math.abs(afterOut - currentOut) > 0.001;
-      return cashNote + `<div class="card" style="padding:10px 14px;margin-bottom:12px;background:#f8fafc;border:1px solid var(--border);display:flex;gap:20px;flex-wrap:wrap;align-items:center;font-size:13px;">
+      return `<div class="card" style="padding:10px 14px;margin-bottom:12px;background:#f8fafc;border:1px solid var(--border);display:flex;gap:20px;flex-wrap:wrap;align-items:center;font-size:13px;">
         <span><strong>Outstanding:</strong> ${colorMoney(currentOut)}</span>
         ${showAfter ? `<span><strong>After this bill:</strong> ${colorMoney(afterOut)}</span>` : ""}
         <span style="color:var(--muted);">Credit limit: ${cr.track_only ? "₹0 (tracking only)" : "Unlimited"}</span>
       </div>`;
     }
-    const outstandingN = Number(cr.outstanding || cr.used || 0);
     const left = afterBill ? cr.left_after_bill : cr.left;
     const used = afterBill ? cr.used_after_bill : cr.used;
-    const over = afterBill ? cr.would_exceed : (Number(left) < 0);
+    // Only show "over limit" warning when a real limit is set and it is truly exceeded
+    const over = !cr.track_only && !cr.unlimited && cr.would_exceed;
     const bg = over ? "#fef2f2" : "#f0fdf4";
     const border = over ? "#fecaca" : "#bbf7d0";
-    return cashNote + `<div class="card" style="padding:12px 14px;margin-bottom:12px;background:${bg};border:1px solid ${border};">
+    return `<div class="card" style="padding:12px 14px;margin-bottom:12px;background:${bg};border:1px solid ${border};">
       <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;">
         <div><strong>Outstanding</strong> ₹${ctx.esc(used)}</div>
         <div>Credit limit ₹${ctx.esc(cr.credit_limit)} · Available ₹${ctx.esc(left)}</div>
       </div>
-      ${over ? `<p style="margin:8px 0 0;font-size:13px;color:#b91c1c;">${cr.credit_override ? "Over limit — override allowed if you confirm." : "Over limit — enable credit override on customer to bill."}</p>` : ""}
+      ${over ? `<p style="margin:8px 0 0;font-size:13px;color:#b91c1c;">⚠ Over limit — outstanding will exceed credit limit. Bill anyway.</p>` : ""}
     </div>`;
   }
 
@@ -1764,8 +1773,6 @@ const CustomerOrders = (() => {
     const tot = previewTotals || {};
     const cr = tot.credit || processContext?.credit;
     const discAmt = Number(tot.discount_amount || 0);
-    const blocked = cr && cr.would_exceed && !cr.credit_override && !forceCreditOverride;
-    const needForce = cr && cr.would_exceed && cr.credit_override;
     const lineRows = (tot.lines || []).map(ln => {
       const disc = Number(ln.line_discount || 0);
       const discPct = ln.item_discount_percent ? ` (${ln.item_discount_percent}%)` : "";
@@ -1783,10 +1790,6 @@ const CustomerOrders = (() => {
     const agentName = (freightAgents.find(a => String(a.id) === String(freightAgentId)) || {}).name;
     bodyEl.innerHTML = `
       ${creditBannerHtml(cr, { afterBill: true })}
-      ${needForce ? `<label style="display:flex;gap:8px;align-items:center;margin:0 0 12px;font-size:13px;">
-        <input type="checkbox" ${forceCreditOverride ? "checked" : ""} onchange="CustomerOrders.setForceCredit(this.checked)" />
-        Force bill over credit limit (override)
-      </label>` : ""}
       <div class="card table-wrap" style="margin-bottom:16px;">
         <table class="data"><thead><tr>
           <th>Item</th><th>Qty</th><th>Rate</th><th>Disc</th><th>Net</th><th>Total</th>
@@ -1816,7 +1819,7 @@ const CustomerOrders = (() => {
       ${editBillId ? `<p style="font-size:12px;color:var(--muted);margin:10px 0 0;">Saving updates the bill and syncs the customer order quantities.</p>` : ""}`;
     footerEl.innerHTML = `
       <button class="btn btn-secondary" onclick="CustomerOrders.processBack()">← Back</button>
-      <button class="btn btn-primary" ${(processBusy || blocked || (needForce && !forceCreditOverride)) ? "disabled" : ""} onclick="CustomerOrders.submitProcess()">${processBusy ? "Saving…" : (editBillId ? "Save bill" : "Submit Bill")}</button>`;
+      <button class="btn btn-primary" ${processBusy ? "disabled" : ""} onclick="CustomerOrders.submitProcess()">${processBusy ? "Saving…" : (editBillId ? "Save bill" : "Submit Bill")}</button>`;
   }
 
   function setForceCredit(v) { forceCreditOverride = !!v; renderProcessWizard(); }
@@ -1966,30 +1969,18 @@ const CustomerOrders = (() => {
     renderProcessWizard();
     ctx.showLoading?.();
     try {
-      let res = null;
+      let res;
       const body = buildProcessBody();
-      while (!res) {
-        try {
-          if (editBillId) {
-            res = await ctx.api(`/customer-orders/bills/${editBillId}`, {
-              method: "PUT",
-              body: JSON.stringify(body),
-            });
-          } else {
-            res = await ctx.api(`/customer-orders/customer/${detailCustomerId}/process`, {
-              method: "POST",
-              body: JSON.stringify(body),
-            });
-          }
-        } catch (e) {
-          if (e.detail?.code === "credit_limit_exceeded" && e.detail?.credit?.credit_override) {
-            if (confirm(e.message + "\n\nForce bill with override?")) {
-              forceCreditOverride = true;
-              continue;
-            }
-          }
-          throw e;
-        }
+      if (editBillId) {
+        res = await ctx.api(`/customer-orders/bills/${editBillId}`, {
+          method: "PUT",
+          body: JSON.stringify(body),
+        });
+      } else {
+        res = await ctx.api(`/customer-orders/customer/${detailCustomerId}/process`, {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
       }
       ctx.invalidateCache?.("/customer-orders");
       ctx.invalidateCache?.("/accounts-receivable");
@@ -2260,6 +2251,7 @@ const CustomerOrders = (() => {
           </div>
           <button type="button" class="btn btn-ghost btn-sm" onclick="CustomerOrders.pickOfflineCustomer(null)">Change</button>
         </div>
+        ${cashWarningHtml(selected)}
         ${offlineSelectedDetail ? (() => {
           const d = offlineSelectedDetail;
           const outstanding = d.outstanding_balance;

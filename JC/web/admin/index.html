@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>JC Admin — Jyoti Creative</title>
-  <link rel="stylesheet" href="styles.css?v=ui44" />
+  <link rel="stylesheet" href="styles.css?v=ui53" />
 </head>
 <body>
   <div id="toasts"></div>
@@ -513,16 +513,17 @@
             <button type="button" class="ord-mode-btn" data-mode="past" onclick="CustomerOrders.setHubMode('past')">Past</button>
           </div>
           <div class="ord-stage-chips" id="co-bucket-bar" role="tablist">
-            <button type="button" class="ord-stage-chip" data-bucket="received" onclick="CustomerOrders.setBucket('received')">Orders</button>
-            <button type="button" class="ord-stage-chip active" data-bucket="open" onclick="CustomerOrders.setBucket('open')">To bill</button>
+            <button type="button" class="ord-stage-chip" data-bucket="received" onclick="CustomerOrders.setBucket('received')">New</button>
+            <button type="button" class="ord-stage-chip active" data-bucket="open" onclick="CustomerOrders.setBucket('open')">Confirmed</button>
             <button type="button" class="ord-stage-chip" data-bucket="billed" onclick="CustomerOrders.setBucket('billed')">Billed</button>
             <button type="button" class="ord-stage-chip" data-bucket="dispatch" onclick="CustomerOrders.setBucket('dispatch')">Dispatch</button>
             <button type="button" class="ord-stage-chip" data-bucket="cancelled" onclick="CustomerOrders.setBucket('cancelled')">Cancelled</button>
-            <button type="button" class="ord-stage-chip" data-bucket="closed" onclick="CustomerOrders.setBucket('closed')">Closed</button>
+            <button type="button" class="ord-stage-chip" data-bucket="closed" onclick="CustomerOrders.setBucket('closed')">Done</button>
           </div>
           <div class="ord-action-chips hidden" id="co-action-chips" role="tablist"></div>
           <div class="ord-toolbar ui-toolbar">
             <h3 id="co-list-title" class="vo-list-title">Today</h3>
+            <p id="co-list-hint" style="margin:2px 0 8px;font-size:12px;color:var(--muted);"></p>
             <div id="co-hub-search-slot"></div>
           </div>
           <div class="ord-list" id="customer-orders-list"></div>
@@ -536,16 +537,9 @@
             </div>
             <div class="ui-hero-actions ord-detail-hero-actions">
               <button class="btn btn-primary btn-lg hidden" data-require-write="customer_orders" id="co-detail-primary-btn">Primary</button>
-              <button class="btn btn-secondary btn-lg" data-require-write="customer_orders" id="co-detail-create-btn" onclick="CustomerOrders.openOfflineWizard()">+ Place for customer</button>
             </div>
           </div>
-          <div class="ord-stage-chips" id="co-detail-bucket-bar" role="tablist">
-            <button type="button" class="ord-stage-chip" data-bucket="received" onclick="CustomerOrders.switchBucket('received')">Orders</button>
-            <button type="button" class="ord-stage-chip" data-bucket="open" onclick="CustomerOrders.switchBucket('open')">To bill</button>
-            <button type="button" class="ord-stage-chip" data-bucket="billed" onclick="CustomerOrders.switchBucket('billed')">Billed</button>
-            <button type="button" class="ord-stage-chip" data-bucket="cancelled" onclick="CustomerOrders.switchBucket('cancelled')">Cancelled</button>
-            <button type="button" class="ord-stage-chip" data-bucket="closed" onclick="CustomerOrders.switchBucket('closed')">Closed</button>
-          </div>
+          <div id="co-detail-bucket-bar" style="display:none;"></div>
           <div id="co-detail-body"></div>
         </div>
       </div>
@@ -721,8 +715,13 @@
             </div>
             <div class="ui-hero-actions">
               <button class="btn btn-secondary btn-lg" onclick="App.reloadCustomers()" title="Reload list">↻ Reload</button>
-              <button class="btn btn-primary btn-lg" data-require-write="customers" onclick="App.openCustomerWizard()">+ New Customer</button>
+              <button class="btn btn-primary btn-lg" data-require-write="customers" id="btn-new-customer" onclick="App.openCustomerWizard()">+ New Customer</button>
             </div>
+          </div>
+          <div class="ord-action-chips ui-toolbar" id="customer-status-tabs" role="tablist">
+            <button class="ord-action-chip active" id="cst-tab-active" onclick="App.setCustomerStatusTab('active')">Active</button>
+            <button class="ord-action-chip" id="cst-tab-inactive" onclick="App.setCustomerStatusTab('inactive')">Inactive</button>
+            <button class="ord-action-chip" id="cst-tab-missing" onclick="App.toggleMissingPhoneFilter()" title="Show active customers with no phone — add manually">📵 Missing Phone</button>
           </div>
           <div class="ui-toolbar setup-search-slot" id="people-customers-search-slot"></div>
           <div class="card table-wrap" id="customers-table"></div>
@@ -1108,29 +1107,29 @@
     <img id="img-lightbox-img" alt="" onclick="event.stopPropagation()" />
   </div>
 
-  <script src="js/order-menus.js?v=ui44"></script>
-  <script src="js/orders-ui.js?v=ui44"></script>
-  <script src="js/ui.js?v=ui44"></script>
-  <script src="js/cache.js?v=ui44"></script>
-  <script src="js/table-utils.js?v=ui44"></script>
-  <script src="js/vendors.js?v=ui44"></script>
-  <script src="js/catalog.js?v=ui44"></script>
-  <script src="js/addon-products.js?v=ui44"></script>
-  <script src="js/products.js?v=ui44"></script>
-  <script src="js/staff.js?v=ui44"></script>
-  <script src="js/vendor-orders.js?v=ui44"></script>
-  <script src="js/share.js?v=ui44"></script>
-  <script src="js/customer-orders.js?v=ui44"></script>
-  <script src="js/returns.js?v=ui44"></script>
-  <script src="js/debit-notes.js?v=ui44"></script>
-  <script src="js/stock.js?v=ui44"></script>
-  <script src="js/finance.js?v=ui44"></script>
-  <script src="js/reports.js?v=ui44"></script>
-  <script src="js/dashboard.js?v=ui44"></script>
-  <script src="js/documents.js?v=ui44"></script>
-  <script src="js/bill-series.js?v=ui44"></script>
-  <script src="js/payment-modes.js?v=ui44"></script>
-  <script src="js/freight-agents.js?v=ui44"></script>
-  <script src="app.js?v=ui44"></script>
+  <script src="js/order-menus.js?v=ui53"></script>
+  <script src="js/orders-ui.js?v=ui53"></script>
+  <script src="js/ui.js?v=ui53"></script>
+  <script src="js/cache.js?v=ui53"></script>
+  <script src="js/table-utils.js?v=ui53"></script>
+  <script src="js/vendors.js?v=ui53"></script>
+  <script src="js/catalog.js?v=ui53"></script>
+  <script src="js/addon-products.js?v=ui53"></script>
+  <script src="js/products.js?v=ui53"></script>
+  <script src="js/staff.js?v=ui53"></script>
+  <script src="js/vendor-orders.js?v=ui53"></script>
+  <script src="js/share.js?v=ui53"></script>
+  <script src="js/customer-orders.js?v=ui53"></script>
+  <script src="js/returns.js?v=ui53"></script>
+  <script src="js/debit-notes.js?v=ui53"></script>
+  <script src="js/stock.js?v=ui53"></script>
+  <script src="js/finance.js?v=ui53"></script>
+  <script src="js/reports.js?v=ui53"></script>
+  <script src="js/dashboard.js?v=ui53"></script>
+  <script src="js/documents.js?v=ui53"></script>
+  <script src="js/bill-series.js?v=ui53"></script>
+  <script src="js/payment-modes.js?v=ui53"></script>
+  <script src="js/freight-agents.js?v=ui53"></script>
+  <script src="app.js?v=ui53"></script>
 </body>
 </html>

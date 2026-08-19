@@ -16,7 +16,7 @@ class Vendor(Base):
     person_name: Mapped[str] = mapped_column(String(500), nullable=False)
     phone: Mapped[str] = mapped_column(String(32), nullable=False, unique=True, index=True)
 
-    company_name: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    company_name: Mapped[str] = mapped_column(String(500), nullable=False)
     alias: Mapped[Optional[str]] = mapped_column(String(200), nullable=True, index=True)
     secondary_phone: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     address: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

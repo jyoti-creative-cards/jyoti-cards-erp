@@ -364,6 +364,152 @@ def _migrate_v13_vendor_company_name_notnull_postgres() -> None:
         ))
 
 
+def _migrate_v14_catalog_lookups_postgres() -> None:
+    """Create portal_catalog_lookups table; make vendor_product_id nullable; seed defaults."""
+    if engine.dialect.name != "postgresql":
+        return
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS portal_catalog_lookups (
+                id SERIAL PRIMARY KEY,
+                lookup_type VARCHAR(20) NOT NULL,
+                value VARCHAR(120) NOT NULL,
+                is_current BOOLEAN NOT NULL DEFAULT false,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                CONSTRAINT uq_catalog_lookup_type_value UNIQUE (lookup_type, value)
+            )
+        """))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_catalog_lookups_type ON portal_catalog_lookups(lookup_type)"
+        ))
+        # Seed default units
+        for u in ["pcs", "bundle", "box", "dozen", "set", "pair", "roll", "sheet"]:
+            conn.execute(text(
+                "INSERT INTO portal_catalog_lookups (lookup_type, value) VALUES ('unit', :v) ON CONFLICT DO NOTHING"
+            ), {"v": u})
+        # Seed current year group — compute dynamically
+        import datetime as _dt
+        _now = _dt.datetime.now()
+        _y1 = _now.year if _now.month >= 4 else _now.year - 1
+        _current_yg = f"{_y1}-{str(_y1 + 1)[-2:]}"
+        conn.execute(text(
+            "INSERT INTO portal_catalog_lookups (lookup_type, value, is_current) VALUES ('year_group', :v, true) ON CONFLICT DO NOTHING"
+        ), {"v": _current_yg})
+        # Make vendor_product_id optional
+        conn.execute(text(
+            "ALTER TABLE portal_catalog_products ALTER COLUMN vendor_product_id DROP NOT NULL"
+        ))
+        # Drop unique constraint on (vendor_id, vendor_product_id) to allow NULL vendor_product_ids
+        conn.execute(text(
+            "ALTER TABLE portal_catalog_products DROP CONSTRAINT IF EXISTS uq_catalog_vendor_product_ext"
+        ))
+
+
+def _migrate_v15_addon_products_and_catalog_fixes_postgres() -> None:
+    """
+    Expand portal_addon_products with vendor identity fields.
+    Restore vendor_product_id NOT NULL on catalog products.
+    Make selling_price nullable on catalog products.
+    """
+    if engine.dialect.name != "postgresql":
+        return
+    with engine.begin() as conn:
+        # ── Expand addon_products ──────────────────────────────────────────────
+        conn.execute(text(
+            "ALTER TABLE portal_addon_products ADD COLUMN IF NOT EXISTS our_product_id VARCHAR(120)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE portal_addon_products ADD COLUMN IF NOT EXISTS vendor_id INTEGER REFERENCES portal_vendors(id) ON DELETE RESTRICT"
+        ))
+        conn.execute(text(
+            "ALTER TABLE portal_addon_products ADD COLUMN IF NOT EXISTS vendor_product_id VARCHAR(255)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE portal_addon_products ADD COLUMN IF NOT EXISTS category VARCHAR(120)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE portal_addon_products ADD COLUMN IF NOT EXISTS buying_price NUMERIC(14,4) NOT NULL DEFAULT 0"
+        ))
+        conn.execute(text(
+            "ALTER TABLE portal_addon_products ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ"
+        ))
+        conn.execute(text(
+            "ALTER TABLE portal_addon_products ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"
+        ))
+        # Unique constraint on our_product_id (only where not null)
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_addon_our_product_id ON portal_addon_products(our_product_id) WHERE our_product_id IS NOT NULL"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_addon_vendor_id ON portal_addon_products(vendor_id) WHERE vendor_id IS NOT NULL"
+        ))
+        # Backfill our_product_id and vendor_product_id for legacy rows that have NULLs
+        conn.execute(text(
+            "UPDATE portal_addon_products SET our_product_id = 'ADDON-' || id::text WHERE our_product_id IS NULL"
+        ))
+        conn.execute(text(
+            "UPDATE portal_addon_products SET vendor_product_id = our_product_id WHERE vendor_product_id IS NULL"
+        ))
+        # After backfill, enforce NOT NULL
+        conn.execute(text(
+            "ALTER TABLE portal_addon_products ALTER COLUMN our_product_id SET NOT NULL"
+        ))
+        conn.execute(text(
+            "ALTER TABLE portal_addon_products ALTER COLUMN vendor_product_id SET NOT NULL"
+        ))
+        # Rename quantity_per_card → quantity_per_unit if old column exists
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'portal_catalog_product_addons' AND column_name = 'quantity_per_card'
+                ) THEN
+                    ALTER TABLE portal_catalog_product_addons RENAME COLUMN quantity_per_card TO quantity_per_unit;
+                END IF;
+            END$$
+        """))
+
+        # ── Catalog fixes ──────────────────────────────────────────────────────
+        # Backfill NULL vendor_product_ids before restoring NOT NULL
+        conn.execute(text(
+            "UPDATE portal_catalog_products SET vendor_product_id = our_product_id WHERE vendor_product_id IS NULL OR vendor_product_id = ''"
+        ))
+        # Restore vendor_product_id NOT NULL
+        conn.execute(text(
+            "ALTER TABLE portal_catalog_products ALTER COLUMN vendor_product_id SET NOT NULL"
+        ))
+        # Re-add unique constraint on (vendor_id, vendor_product_id) - use partial to allow empty strings safely
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint WHERE conname = 'uq_catalog_vendor_product_ext'
+                ) THEN
+                    ALTER TABLE portal_catalog_products
+                    ADD CONSTRAINT uq_catalog_vendor_product_ext UNIQUE (vendor_id, vendor_product_id);
+                END IF;
+            END$$
+        """))
+        # Make selling_price nullable
+        conn.execute(text(
+            "ALTER TABLE portal_catalog_products ALTER COLUMN selling_price DROP NOT NULL"
+        ))
+        conn.execute(text(
+            "ALTER TABLE portal_catalog_products ALTER COLUMN selling_price DROP DEFAULT"
+        ))
+
+
+def _migrate_v16_price_history_fixes_postgres() -> None:
+    """Make selling_price nullable in portal_product_prices."""
+    if engine.dialect.name != "postgresql":
+        return
+    with engine.begin() as conn:
+        conn.execute(text(
+            "ALTER TABLE portal_product_prices ALTER COLUMN selling_price DROP NOT NULL"
+        ))
+
+
 def _migrate_v9_vendor_order_debit_note_postgres() -> None:
     if engine.dialect.name != "postgresql":
         return
@@ -383,6 +529,7 @@ def init_db() -> None:
         bank_reconciliation,
         bill_series,
         catalog_category_label,
+        catalog_lookup,
         catalog_product,
         catalog_product_alternative,
         chart_account,
@@ -404,6 +551,9 @@ def init_db() -> None:
         vendor,
         vendor_bill,
         vendor_order,
+        vendor_order_line,
+        vendor_order_note,
+        vendor_receipt_line,
     )
 
     Base.metadata.create_all(bind=engine)
@@ -432,6 +582,15 @@ def init_db() -> None:
     _migrate_v11_normalize_open_status_postgres()
     _migrate_v12_vendor_bill_columns_postgres()
     _migrate_v13_vendor_company_name_notnull_postgres()
+    _migrate_v14_catalog_lookups_postgres()
+    _migrate_v15_addon_products_and_catalog_fixes_postgres()
+    _migrate_v16_price_history_fixes_postgres()
+    _migrate_v17_addon_link_unique_constraint_postgres()
+    _migrate_v18_vendor_order_placed_status_postgres()
+    _migrate_v19_vendor_receipt_lines_postgres()
+    _migrate_v20_vendor_order_normalization_postgres()
+    _migrate_v21_remove_procured_status_postgres()
+    _migrate_v22_sub_order_no_postgres()
     from app.services.accounting import seed_chart_accounts
 
     s = SessionLocal()
@@ -671,6 +830,278 @@ def _migrate_v6_vendor_orders_postgres() -> None:
         # Add qty_billed to customer order items (tracked in JSON items array — no column needed)
         # Allow customer order status 'open' in addition to existing values
         # (no constraint to alter — status is a plain VARCHAR)
+
+
+def _migrate_v17_addon_link_unique_constraint_postgres() -> None:
+    """Add unique constraint on (catalog_product_id, addon_product_id) for portal_catalog_product_addons."""
+    if engine.dialect.name != "postgresql":
+        return
+    with engine.begin() as conn:
+        # Remove duplicate links keeping only the lowest id per pair
+        conn.execute(text("""
+            DELETE FROM portal_catalog_product_addons
+            WHERE id NOT IN (
+                SELECT MIN(id)
+                FROM portal_catalog_product_addons
+                GROUP BY catalog_product_id, addon_product_id
+            )
+        """))
+        conn.execute(text("""
+            DO $$ BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'uq_catalog_addon_link'
+                ) THEN
+                    ALTER TABLE portal_catalog_product_addons
+                    ADD CONSTRAINT uq_catalog_addon_link
+                    UNIQUE (catalog_product_id, addon_product_id);
+                END IF;
+            END$$
+        """))
+
+
+def _migrate_v19_vendor_receipt_lines_postgres() -> None:
+    """Create portal_vendor_receipt_lines table — one row per item per partial shipment."""
+    if engine.dialect.name != "postgresql":
+        return
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS portal_vendor_receipt_lines (
+                id                  SERIAL PRIMARY KEY,
+                vendor_bill_id      INTEGER REFERENCES portal_vendor_bills(id) ON DELETE SET NULL,
+                vendor_order_id     INTEGER REFERENCES portal_vendor_orders(id) ON DELETE SET NULL,
+                vendor_id           INTEGER REFERENCES portal_vendors(id) ON DELETE SET NULL,
+                catalog_product_id  INTEGER REFERENCES portal_catalog_products(id) ON DELETE SET NULL,
+                product_name        VARCHAR(500),
+                order_line_id       VARCHAR(64),
+                qty_received        INTEGER NOT NULL DEFAULT 0,
+                qty_billed          INTEGER NOT NULL DEFAULT 0,
+                order_price         NUMERIC(14,4),
+                billed_price        NUMERIC(14,4),
+                qty_discrepancy     INTEGER,
+                price_discrepancy   NUMERIC(14,4),
+                receipt_date        TIMESTAMPTZ,
+                notes               TEXT,
+                created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """))
+        # Indexes for common queries
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_vrl_vendor_order_id
+                ON portal_vendor_receipt_lines(vendor_order_id)
+        """))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_vrl_catalog_product_id
+                ON portal_vendor_receipt_lines(catalog_product_id)
+        """))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_vrl_vendor_id
+                ON portal_vendor_receipt_lines(vendor_id)
+        """))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_vrl_receipt_date
+                ON portal_vendor_receipt_lines(receipt_date)
+        """))
+
+
+def _migrate_v18_vendor_order_placed_status_postgres() -> None:
+    """Rename vendor order status 'open' → 'placed' to clarify lifecycle."""
+    if engine.dialect.name != "postgresql":
+        return
+    with engine.begin() as conn:
+        conn.execute(text("""
+            UPDATE portal_vendor_orders
+            SET status = 'placed'
+            WHERE status = 'open'
+        """))
+
+
+def _migrate_v20_vendor_order_normalization_postgres() -> None:
+    """Normalise vendor orders:
+    - Create portal_vendor_order_lines (replaces JSONB items blob)
+    - Create portal_vendor_order_notes (per-stage notes thread)
+    - Migrate existing JSONB items → rows
+    - Migrate existing order-level notes → notes rows (stage='placed')
+    - Drop legacy columns: items, notes, bill_number, bill_amount, bill_key, bill_uploaded_at
+    """
+    if engine.dialect.name != "postgresql":
+        return
+
+    with engine.begin() as conn:
+        # ── 1. Create portal_vendor_order_lines ──────────────────────────────
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS portal_vendor_order_lines (
+                id                  SERIAL PRIMARY KEY,
+                line_id             VARCHAR(64)  NOT NULL UNIQUE,
+                vendor_order_id     INTEGER      NOT NULL
+                    REFERENCES portal_vendor_orders(id) ON DELETE CASCADE,
+                catalog_product_id  INTEGER
+                    REFERENCES portal_catalog_products(id) ON DELETE SET NULL,
+                product_name        VARCHAR(500),
+                our_product_id      VARCHAR(120),
+                qty_ordered         INTEGER      NOT NULL DEFAULT 0,
+                qty_received        INTEGER      NOT NULL DEFAULT 0,
+                qty_billed          INTEGER      NOT NULL DEFAULT 0,
+                unit_price          NUMERIC(14,4) NOT NULL DEFAULT 0,
+                billed_price        NUMERIC(14,4),
+                date_ordered        TIMESTAMPTZ,
+                date_received       TIMESTAMPTZ,
+                notes               TEXT,
+                created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                updated_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+            )
+        """))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_vol_vendor_order_id
+                ON portal_vendor_order_lines(vendor_order_id)
+        """))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_vol_catalog_product_id
+                ON portal_vendor_order_lines(catalog_product_id)
+        """))
+
+        # ── 2. Create portal_vendor_order_notes ──────────────────────────────
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS portal_vendor_order_notes (
+                id               SERIAL PRIMARY KEY,
+                vendor_order_id  INTEGER NOT NULL
+                    REFERENCES portal_vendor_orders(id) ON DELETE CASCADE,
+                stage            VARCHAR(20) NOT NULL DEFAULT 'placed',
+                body             TEXT        NOT NULL,
+                created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_von_vendor_order_id
+                ON portal_vendor_order_notes(vendor_order_id)
+        """))
+
+    # ── 3. Migrate JSONB items → rows (Python loop for JSONB parsing) ────────
+    import json as _json
+    from sqlalchemy import text as _text
+
+    with engine.begin() as conn:
+        # Check if the items column still exists (idempotency guard)
+        items_col_exists = conn.execute(_text("""
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'portal_vendor_orders' AND column_name = 'items'
+        """)).fetchone()
+
+        if items_col_exists:
+            rows = conn.execute(_text("""
+                SELECT vo.id, vo.items, vo.notes
+                FROM portal_vendor_orders vo
+                WHERE vo.items IS NOT NULL
+                  AND vo.items::text != '[]'
+                  AND vo.items::text != 'null'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM portal_vendor_order_lines vol
+                      WHERE vol.vendor_order_id = vo.id
+                  )
+            """)).fetchall()
+
+            for row in rows:
+                order_id, items_raw, order_notes = row[0], row[1], row[2]
+                if isinstance(items_raw, str):
+                    try:
+                        items = _json.loads(items_raw)
+                    except Exception:
+                        items = []
+                elif isinstance(items_raw, list):
+                    items = items_raw
+                else:
+                    items = []
+
+                for item in items:
+                    lid = item.get("line_id") or __import__("uuid").uuid4().hex
+                    conn.execute(_text("""
+                        INSERT INTO portal_vendor_order_lines
+                            (line_id, vendor_order_id, catalog_product_id, product_name,
+                             our_product_id, qty_ordered, qty_received, qty_billed,
+                             unit_price, billed_price, date_ordered, notes)
+                        VALUES
+                            (:line_id, :order_id, :cid, :pname,
+                             :our_id, :qty_ord, :qty_rcv, :qty_billed,
+                             :unit_price, :billed_price, :date_ord, :item_notes)
+                        ON CONFLICT (line_id) DO NOTHING
+                    """), {
+                        "line_id": lid,
+                        "order_id": order_id,
+                        "cid": item.get("catalog_product_id"),
+                        "pname": item.get("product_name"),
+                        "our_id": item.get("product_name"),
+                        "qty_ord": int(item.get("qty_ordered") or 0),
+                        "qty_rcv": int(item.get("qty_received") or 0),
+                        "qty_billed": int(item.get("qty_billed") or 0),
+                        "unit_price": float(item.get("unit_price") or 0),
+                        "billed_price": float(item.get("billed_price")) if item.get("billed_price") else None,
+                        "date_ord": item.get("date_ordered"),
+                        "item_notes": item.get("notes"),
+                    })
+
+                # Migrate order-level notes → notes table (stage='placed')
+                if order_notes and order_notes.strip():
+                    conn.execute(_text("""
+                        INSERT INTO portal_vendor_order_notes (vendor_order_id, stage, body)
+                        SELECT :order_id, 'placed', :body
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM portal_vendor_order_notes
+                            WHERE vendor_order_id = :order_id AND stage = 'placed'
+                              AND body = :body
+                        )
+                    """), {"order_id": order_id, "body": order_notes.strip()})
+
+    # ── 4. Drop legacy columns ────────────────────────────────────────────────
+    with engine.begin() as conn:
+        for col in ("items", "notes", "bill_number", "bill_amount", "bill_key", "bill_uploaded_at"):
+            conn.execute(_text(
+                f"ALTER TABLE portal_vendor_orders DROP COLUMN IF EXISTS {col}"
+            ))
+
+
+def _migrate_v21_remove_procured_status_postgres() -> None:
+    """Move all 'procured' and 'closed' vendor orders back to 'placed'."""
+    if engine.dialect.name != "postgresql":
+        return
+    from sqlalchemy import text as _text
+    with engine.begin() as conn:
+        conn.execute(_text("""
+            UPDATE portal_vendor_orders
+            SET status = 'placed'
+            WHERE status IN ('procured', 'closed')
+        """))
+
+
+def _migrate_v22_sub_order_no_postgres() -> None:
+    """Add sub_order_no column to portal_vendor_order_lines (idempotent)."""
+    if engine.dialect.name != "postgresql":
+        return
+    from sqlalchemy import text as _text
+    with engine.begin() as conn:
+        col_exists = conn.execute(_text("""
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'portal_vendor_order_lines'
+              AND column_name = 'sub_order_no'
+        """)).fetchone()
+        if not col_exists:
+            conn.execute(_text("""
+                ALTER TABLE portal_vendor_order_lines
+                ADD COLUMN sub_order_no INTEGER NOT NULL DEFAULT 1
+            """))
+            # Back-fill: assign sequential sub_order_no per vendor_order_id, grouped by date_ordered day
+            conn.execute(_text("""
+                UPDATE portal_vendor_order_lines vol
+                SET sub_order_no = sub.rn
+                FROM (
+                    SELECT id,
+                           DENSE_RANK() OVER (
+                               PARTITION BY vendor_order_id
+                               ORDER BY DATE(date_ordered AT TIME ZONE 'UTC'), id
+                           ) AS rn
+                    FROM portal_vendor_order_lines
+                ) sub
+                WHERE vol.id = sub.id
+            """))
 
 
 def get_db() -> Generator[Session, None, None]:

@@ -14,7 +14,7 @@ const App = (() => {
   let permissions = new Set((staffUser && staffUser.permissions) || []);
   let routes = [], cities = [], customers = [], vendors = [], lookups = [];
   let peopleTab = null;
-  let customerStatusTab = "active"; // "active" | "inactive"
+  let showInactiveCustomers = false; // toggle: include inactive parties in list
   let customerMissingPhone = false; // filter: only show placeholder-phone customers
   let ordersType = "vendor";
   let setupTab = null;
@@ -1037,14 +1037,19 @@ const App = (() => {
     });
   }
 
+  function toggleInactiveCustomers() {
+    showInactiveCustomers = !showInactiveCustomers;
+    const btn = document.getElementById("cst-tab-inactive-toggle");
+    if (btn) {
+      btn.textContent = `Inactive: ${showInactiveCustomers ? "On" : "Off"}`;
+      btn.classList.toggle("active", showInactiveCustomers);
+    }
+    invalidateCache("/customers");
+    loadCustomers();
+  }
+
+  // kept for any remaining references
   function setCustomerStatusTab(tab) {
-    customerStatusTab = tab;
-    customerMissingPhone = false; // reset missing-phone filter on tab change
-    document.getElementById("cst-tab-active")?.classList.toggle("active", tab === "active");
-    document.getElementById("cst-tab-inactive")?.classList.toggle("active", tab === "inactive");
-    document.getElementById("cst-tab-missing")?.classList.toggle("active", false);
-    const btnNew = document.getElementById("btn-new-customer");
-    if (btnNew) btnNew.classList.toggle("hidden", tab !== "active");
     invalidateCache("/customers");
     loadCustomers();
   }
@@ -1058,8 +1063,9 @@ const App = (() => {
   async function loadCustomers() {
     renderPeopleCustomerSearch(); // no-op if input already exists
     const q = document.getElementById("search-input")?.value.trim() || "";
-    // When searching, include inactive so you can find any customer by name/number
-    const statusParam = q ? `status=${customerStatusTab}&include_inactive=true` : `status=${customerStatusTab}`;
+    // include_inactive=true when toggle is on or when searching
+    const includeInactive = showInactiveCustomers || !!q;
+    const statusParam = includeInactive ? "status=active&include_inactive=true" : "status=active";
     const searchParam = q ? `&search=${encodeURIComponent(q)}` : "";
     customers = await api(`/customers?${statusParam}${searchParam}`, {}, q ? 0 : 120000);
     renderCustomersTable();
@@ -1285,10 +1291,10 @@ const App = (() => {
   const CUSTOMER_COLS = [
     { key: "party_number", label: "#", get: c => c.party_number || 0 },
     { key: "business", label: "Business", get: c => `${c.business_name} ${c.person_name || ""}` },
-    { key: "phone", label: "Phone", get: c => c.phone },
-    { key: "alias", label: "Alias", get: c => c.alias || "" },
     { key: "city", label: "City / Route", get: c => `${c.city_name || ""} ${c.route_name || ""}` },
     { key: "financials", label: "Financials", filterable: false, sortable: false },
+    { key: "phone", label: "Phone", get: c => c.phone },
+    { key: "alias", label: "Alias", get: c => c.alias || "" },
     { key: "_actions", label: "", filterable: false, sortable: false },
   ];
 
@@ -1380,10 +1386,10 @@ const App = (() => {
           ${c.person_name ? `<span style="font-size:12px;color:var(--muted);">${esc(c.person_name)}</span>` : ""}
           ${!c.is_active && !c.deleted_at ? '<span class="badge badge-amber" style="margin-left:4px;">Inactive</span>' : ""}
           ${missingPh ? '<span class="badge badge-red" style="margin-left:4px;">No phone</span>' : ""}</td>
-        <td>${missingPh ? '<span style="color:var(--muted);font-style:italic;">—</span>' : esc(c.phone)}</td>
-        <td>${c.alias ? esc(c.alias) : "—"}</td>
         <td>${esc(c.city_name || "—")}${c.route_name ? `<br><span style="font-size:12px;color:var(--muted);">${esc(c.route_name)}</span>` : ""}</td>
         <td style="white-space:nowrap;">${renderFinancialsCell(c)}</td>
+        <td>${missingPh ? '<span style="color:var(--muted);font-style:italic;">—</span>' : esc(c.phone)}</td>
+        <td>${c.alias ? esc(c.alias) : "—"}</td>
         <td onclick="event.stopPropagation()"></td>
       </tr>`}).join("")}
     </tbody></table>`;
@@ -2557,7 +2563,7 @@ const App = (() => {
     onCustomerWizardCityChange, onCustomerEditCityChange, onWizardPaymentTypeChange, onEditPaymentTypeChange, finishCustomerOpen, finishCustomerPlace, resendWhatsApp,
     openCustomerDetail, closeDetail, openCustomerEdit, closeEditModal, saveCustomer,
     deleteCustomer, toggleCustomerActive, restoreCustomer, sendCredentials,
-    setCustomerStatusTab, toggleMissingPhoneFilter, setCustomerOpeningBalance, saveCustomerOpeningBalance,
+    setCustomerStatusTab, toggleInactiveCustomers, toggleMissingPhoneFilter, setCustomerOpeningBalance, saveCustomerOpeningBalance,
     toggleCustomerLedgerRow, openSelling, billCustomer, collectCustomer, openCustomerMoney,
     loadRecycleBin, setRecycleTab, openRecycleDetail, restoreItem, purgeItem,
     addLookup, submitLookup, editLookup, deleteLookup, openCustomerLedgerEntry, createCustomerOrder,

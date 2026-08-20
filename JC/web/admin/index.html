@@ -719,9 +719,8 @@
             </div>
           </div>
           <div class="ord-action-chips ui-toolbar" id="customer-status-tabs" role="tablist">
-            <button class="ord-action-chip active" id="cst-tab-active" onclick="App.setCustomerStatusTab('active')">Active</button>
-            <button class="ord-action-chip" id="cst-tab-inactive" onclick="App.setCustomerStatusTab('inactive')">Inactive</button>
-            <button class="ord-action-chip" id="cst-tab-missing" onclick="App.toggleMissingPhoneFilter()" title="Show active customers with no phone — add manually">📵 Missing Phone</button>
+            <button class="ord-action-chip" id="cst-tab-inactive-toggle" onclick="App.toggleInactiveCustomers()" title="Show inactive customers in the list">Inactive: Off</button>
+            <button class="ord-action-chip" id="cst-tab-missing" onclick="App.toggleMissingPhoneFilter()" title="Show active customers with no phone — add manually">Missing Phone</button>
           </div>
           <div class="ui-toolbar setup-search-slot" id="people-customers-search-slot"></div>
           <div class="card table-wrap" id="customers-table"></div>

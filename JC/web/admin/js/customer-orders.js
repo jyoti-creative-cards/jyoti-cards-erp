@@ -80,10 +80,7 @@ const CustomerOrders = (() => {
 
   /** Jump to Dispatch stage (keeps Today/Past date scope). */
   function goToDispatch() {
-    document.getElementById("co-hub")?.classList.remove("hidden");
-    document.getElementById("co-detail")?.classList.add("hidden");
-    currentOrder = null;
-    detailCustomerId = null;
+    closeSlidePanel();
     currentBucket = "dispatch";
     dispatchStatus = "pending";
     hubSearch = "";
@@ -195,28 +192,7 @@ const CustomerOrders = (() => {
   }
 
   function updateDetailPrimary() {
-    const btn = document.getElementById("co-detail-primary-btn");
-    if (!btn) return;
-    const canOrders = !!ctx.canWrite?.("customer_orders");
-    const canMoney = !!ctx.isAdmin?.() || !!ctx.canWrite?.("accounts_receivable") || !!ctx.canWrite?.("finance");
-    let label = "";
-    let onclick = "";
-    // Next-step hero CTA by stage
-    if (currentBucket === "open" && canOrders) {
-      label = "Create Bill";
-      onclick = "CustomerOrders.processOrder()";
-    } else if (currentBucket === "billed" && canOrders) {
-      label = "Dispatch";
-      onclick = "CustomerOrders.goToDispatch()";
-    }
-    const show = !!label;
-    btn.classList.toggle("hidden", !show);
-    if (show) {
-      btn.textContent = label;
-      btn.setAttribute("onclick", onclick);
-    }
-    // secondary create button stays; collect lives in billed toolbar
-    void canMoney;
+    // No-op: action buttons are now embedded in renderDetail() body content
   }
 
   function updateActionButtons(view) {
@@ -480,10 +456,7 @@ const CustomerOrders = (() => {
   }
 
   function showHub() {
-    document.getElementById("co-hub")?.classList.remove("hidden");
-    document.getElementById("co-detail")?.classList.add("hidden");
-    currentOrder = null;
-    detailCustomerId = null;
+    closeSlidePanel();
     hubExpandedCustomerId = null;
     hubExpandCache = {};
     if (!PAST_BUCKETS.includes(currentBucket)) currentBucket = "open";
@@ -538,119 +511,103 @@ const CustomerOrders = (() => {
     </div>` : ""}`;
   }
 
-  function renderHubCard(o, canWrite) {
+  function renderOrderCard(o, canWrite) {
     const openQty = o.total_quantity || 0;
-    const hasOpen = openQty > 0;
     const bucket = detailBucketFor(o);
     const src = sourceMeta(o.sources);
-    let primaryLabel = "View";
-    let primaryOnclick = `CustomerOrders.openDetail(${o.customer_id}, '${bucket}')`;
-    let metaBits = [];
-    const canExpand = hasOpen && (currentBucket === "open" || currentBucket === "received");
-    const expandKey = `open-${o.customer_id}`;
-    const open = hubExpandedCustomerId === expandKey;
-    const cache = hubExpandCache[expandKey];
-    const viewFn = `CustomerOrders.openDetail(${o.customer_id}, '${bucket}')`;
     const canMoney = !!ctx.isAdmin?.() || !!ctx.canWrite?.("accounts_receivable") || !!ctx.canWrite?.("finance");
+    const viewFn = `CustomerOrders.openDetail(${o.customer_id}, '${bucket}')`;
 
-    // Primary = next step in flow. More = secondary / danger.
+    // Primary action by bucket
+    let primaryLabel = "View";
+    let primaryOnclick = viewFn;
+    let statText = "";
     if (currentBucket === "open") {
       primaryLabel = "Create Bill";
       primaryOnclick = `CustomerOrders.processFromHub(${o.customer_id}, 'open')`;
-      metaBits = [`${o.line_count || 0} lines`, `<strong>${openQty}</strong> to bill`];
+      statText = `${o.line_count || 0} lines · ${openQty} to bill`;
     } else if (currentBucket === "received") {
-      primaryLabel = canWrite ? "Confirm" : "View";
+      primaryLabel = canWrite ? "Confirm →" : "View";
       primaryOnclick = canWrite ? `CustomerOrders.confirmOrder(${o.customer_id})` : viewFn;
-      metaBits = [`${o.placement_count || 0} placements`, `${o.total_quantity || 0} qty`];
+      statText = `${o.placement_count || 0} placement${(o.placement_count || 0) !== 1 ? "s" : ""} · ${o.total_quantity || 0} pcs`;
     } else if (currentBucket === "billed") {
       primaryLabel = "Dispatch";
       primaryOnclick = "CustomerOrders.goToDispatch()";
-      metaBits = [`${o.placement_count || o.bill_count || 0} bills`];
+      statText = `${o.placement_count || o.bill_count || 0} bill${(o.placement_count || 0) !== 1 ? "s" : ""}`;
     } else if (currentBucket === "cancelled" || currentBucket === "closed") {
-      primaryLabel = "View";
-      primaryOnclick = viewFn;
-      metaBits = [`${o.placement_count || 0} placements`];
-    } else {
-      primaryLabel = "View";
-      primaryOnclick = viewFn;
-      metaBits = [`${o.placement_count || 0} placements`, `${o.line_count || 0} lines`];
+      statText = `${o.placement_count || 0} placement${(o.placement_count || 0) !== 1 ? "s" : ""}`;
     }
-    if (src) metaBits.push(src);
-    // Timestamp shown inline right, city in meta below
-    const timeAgo = o.updated_at ? ctx.timeAgo?.(o.updated_at) || new Date(o.updated_at).toLocaleString() : "";
-    const meta = `${metaBits.join(" · ")}${o.city_name ? ` · <span style="color:var(--muted);">${ctx.esc(o.city_name)}</span>` : ""}`;
+    if (src) statText += (statText ? " · " : "") + src;
 
+    // More menu
     const more = [];
-    more.push({ label: "View", onclick: viewFn });
-    if (canExpand) {
-      more.push({
-        label: open ? "Hide lines" : "Show lines",
-        onclick: `CustomerOrders.toggleHubCustomer(${o.customer_id})`,
-      });
-    }
+    more.push({ label: "Open detail", onclick: viewFn });
     if (canWrite && (currentBucket === "received" || currentBucket === "open")) {
       more.push({ label: "Edit / place more", onclick: `CustomerOrders.openOfflineWizard(${o.customer_id})` });
     }
-    if (canWrite && (currentBucket === "open" || currentBucket === "received") && hasOpen) {
-      more.push({
-        label: "Cancel order",
-        danger: true,
-        onclick: `CustomerOrders.cancelCustomerOpen(${o.customer_id})`,
-      });
-    }
-    if (currentBucket === "received") {
-      more.push({ label: "View order", onclick: viewFn });
-      if (canWrite) more.push({ label: "Edit / add items", onclick: `CustomerOrders.openOfflineWizard(${o.customer_id})` });
-      if (canWrite) more.push({ label: "Cancel order", onclick: `CustomerOrders.cancelCustomerOpen(${o.customer_id})`, danger: true });
-    } else if (currentBucket === "billed") {
+    if (currentBucket === "billed") {
       if (canMoney) more.push({ label: "Collect payment", onclick: `CustomerOrders.goCollectPayment(${o.customer_id})` });
-      more.push({ label: "View bills", onclick: `CustomerOrders.openDetail(${o.customer_id}, 'billed')` });
       if (canWrite) more.push({ label: "Edit bill", onclick: `CustomerOrders.editLatestBill(${o.customer_id})` });
-      if (canWrite) more.push({ label: "Close", onclick: `CustomerOrders.openCloseBatch(${o.customer_id})`, danger: false });
+      if (canWrite) more.push({ label: "Close order", onclick: `CustomerOrders.openCloseBatch(${o.customer_id})` });
+    }
+    if (canWrite && openQty > 0 && (currentBucket === "open" || currentBucket === "received")) {
+      more.push({ label: "Cancel order", onclick: `CustomerOrders.cancelCustomerOpen(${o.customer_id})`, danger: true });
     }
 
+    // Party name HTML
     const _m1Upper = (o.marker_1 || "").toUpperCase();
-    const partyLabel = (o.party_number ? `<span style="color:var(--muted);font-size:12px;font-weight:600;margin-right:4px;">#${o.party_number}</span>` : "") + ctx.esc(o.customer_name) + (o.marker_1 ? ` <span class="badge badge-blue" style="font-size:10px;padding:2px 4px;vertical-align:middle;">${ctx.esc(o.marker_1)}</span>` : "") + (o.marker_2 ? ` <span class="badge badge-amber" style="font-size:10px;padding:2px 4px;vertical-align:middle;">${ctx.esc(o.marker_2)}</span>` : "") + (o.payment_type === "CASH" && !_m1Upper.includes("CASH") ? ` <span class="badge badge-amber" style="font-size:10px;padding:2px 4px;vertical-align:middle;">CASH</span>` : "");
-    const timePill = timeAgo ? `<span class="ord-card-time">${ctx.esc(timeAgo)}</span>` : "";
-    const bucketAccent = { received: "ord-card--received", open: "ord-card--open", billed: "ord-card--billed", closed: "ord-card--closed", cancelled: "ord-card--cancelled" }[currentBucket] || "";
-    return OrdersUI.partyCard({
-      title: partyLabel,
-      titleIsHtml: true,
-      meta,
-      pillHtml: timePill,
-      primaryLabel: canWrite || currentBucket === "billed" || currentBucket === "cancelled" || currentBucket === "closed"
-        ? primaryLabel
-        : "View",
-      primaryOnclick: (canWrite || currentBucket === "billed" || currentBucket === "cancelled" || currentBucket === "closed")
-        ? primaryOnclick
-        : viewFn,
-      moreItems: more.filter(m => m.label !== primaryLabel),
-      canWrite: true,
-      open,
-      rowOnclick: viewFn,
-      extraClass: bucketAccent,
-      expandHtml: open
-        ? `<div id="co-hub-expand-${o.customer_id}">${cache ? renderHubExpand(cache, canWrite, o.customer_id) : `<p class="vo-muted" style="margin:0;padding:8px 0;">Loading…</p>`}</div>`
-        : "",
-    });
+    const nameHtml = (o.party_number ? `<span style="color:var(--muted);font-size:11px;font-weight:600;">#${o.party_number}</span> ` : "")
+      + ctx.esc(o.customer_name)
+      + (o.marker_1 ? ` <span class="badge badge-blue" style="font-size:9px;padding:1px 4px;">${ctx.esc(o.marker_1)}</span>` : "")
+      + (o.marker_2 ? ` <span class="badge badge-amber" style="font-size:9px;padding:1px 4px;">${ctx.esc(o.marker_2)}</span>` : "")
+      + (o.payment_type === "CASH" && !_m1Upper.includes("CASH") ? ` <span class="badge badge-amber" style="font-size:9px;padding:1px 4px;">CASH</span>` : "");
+
+    const timeStr = o.updated_at ? (ctx.timeAgo?.(o.updated_at) || "") : "";
+    const bucketCls = { received: "ord-order-card--received", open: "ord-order-card--open", billed: "ord-order-card--billed", closed: "ord-order-card--closed", cancelled: "ord-order-card--cancelled" }[currentBucket] || "";
+
+    const avatarLetter = ctx.esc((o.customer_name || "?").slice(0, 1).toUpperCase());
+
+    // More menu HTML (inline, no OrdersUI.moreMenu — build simple dropdown)
+    const moreHtml = more.length ? `<div class="ord-more-wrap" style="position:relative;">
+      <button type="button" class="btn btn-ghost btn-sm" style="padding:0 8px;" onclick="event.stopPropagation();CustomerOrders.toggleCardMore(event,${o.customer_id})">⋮</button>
+      <div id="co-card-more-${o.customer_id}" class="ord-more-menu" style="display:none;position:absolute;right:0;bottom:calc(100% + 4px);z-index:20;background:#fff;border:1px solid #e2e8f0;border-radius:10px;box-shadow:0 8px 24px rgba(15,23,42,.12);min-width:160px;overflow:hidden;">
+        ${more.map(m => `<button type="button" class="ord-more-item${m.danger ? " ord-more-danger" : ""}" onclick="event.stopPropagation();CustomerOrders.closeAllCardMore();${m.onclick}">${ctx.esc(m.label)}</button>`).join("")}
+      </div>
+    </div>` : "";
+
+    const primaryBtn = (canWrite || currentBucket === "billed" || currentBucket === "cancelled" || currentBucket === "closed")
+      ? `<button type="button" class="btn btn-primary btn-sm" onclick="event.stopPropagation();${primaryOnclick}">${ctx.esc(primaryLabel)}</button>`
+      : `<button type="button" class="btn btn-secondary btn-sm" onclick="event.stopPropagation();${viewFn}">View</button>`;
+
+    return `<div class="ord-order-card ${bucketCls}" onclick="${viewFn}">
+      <div class="ord-order-card-head">
+        <div class="ord-order-card-avatar">${avatarLetter}</div>
+        <div class="ord-order-card-party">
+          <div class="ord-order-card-name">${nameHtml}</div>
+          <div class="ord-order-card-city">${o.city_name ? ctx.esc(o.city_name) : ""}${o.city_name && timeStr ? " · " : ""}${timeStr ? `<span class="ord-order-card-time">${ctx.esc(timeStr)}</span>` : ""}</div>
+        </div>
+      </div>
+      <div class="ord-order-card-body">
+        ${statText ? `<div class="ord-order-card-stat">${statText}</div>` : ""}
+      </div>
+      <div class="ord-order-card-foot" onclick="event.stopPropagation()">
+        ${primaryBtn}
+        ${moreHtml}
+      </div>
+    </div>`;
   }
 
-  async function toggleHubCustomer(customerId) {
-    const key = `open-${customerId}`;
-    if (hubExpandedCustomerId === key) {
-      hubExpandedCustomerId = null;
-      renderList();
-      return;
-    }
-    hubExpandedCustomerId = key;
-    renderList();
-    try {
-      hubExpandCache[key] = await ctx.api(`/customer-orders/customer/${customerId}?bucket=open`, {}, 0);
-    } catch (e) {
-      hubExpandCache[key] = { open_lines: [] };
-      ctx.toast?.(e.message, "error");
-    }
-    if (hubExpandedCustomerId === key) renderList();
+  function toggleCardMore(e, customerId) {
+    const id = `co-card-more-${customerId}`;
+    const el = document.getElementById(id);
+    if (!el) return;
+    const isOpen = el.style.display !== "none";
+    closeAllCardMore();
+    if (!isOpen) el.style.display = "block";
+  }
+
+  function closeAllCardMore() {
+    document.querySelectorAll('[id^="co-card-more-"]').forEach(el => { el.style.display = "none"; });
   }
 
   function renderList() {
@@ -673,7 +630,36 @@ const CustomerOrders = (() => {
       });
       return;
     }
-    el.innerHTML = `<div class="ord-hub-list">${list.map(o => renderHubCard(o, canWrite)).join("")}</div>`;
+    el.innerHTML = list.map(o => renderOrderCard(o, canWrite)).join("");
+    // Close card more menus on outside click
+    document.removeEventListener("click", closeAllCardMore);
+    document.addEventListener("click", closeAllCardMore);
+  }
+
+  function openSlidePanel() {
+    const panel = document.getElementById("co-slide-panel");
+    const backdrop = document.getElementById("co-slide-backdrop");
+    panel?.classList.add("is-open");
+    backdrop?.classList.add("is-open");
+    document.body.style.overflow = "hidden";
+    // Escape key handler
+    document._coSlideEscHandler = (e) => { if (e.key === "Escape") closeSlidePanel(); };
+    document.addEventListener("keydown", document._coSlideEscHandler);
+  }
+
+  function closeSlidePanel() {
+    const panel = document.getElementById("co-slide-panel");
+    const backdrop = document.getElementById("co-slide-backdrop");
+    panel?.classList.remove("is-open");
+    backdrop?.classList.remove("is-open");
+    document.body.style.overflow = "";
+    if (document._coSlideEscHandler) {
+      document.removeEventListener("keydown", document._coSlideEscHandler);
+      document._coSlideEscHandler = null;
+    }
+    detailCustomerId = null;
+    currentOrder = null;
+    App.updateGlobalBack?.();
   }
 
   async function openDetail(customerId, bucket) {
@@ -688,11 +674,9 @@ const CustomerOrders = (() => {
       detailCustomerId = customerId;
       coExpandedId = null;
       currentOrder = await ctx.api(`/customer-orders/customer/${customerId}?bucket=${b}`, {}, 0);
-      document.getElementById("co-hub")?.classList.add("hidden");
-      document.getElementById("co-detail")?.classList.remove("hidden");
       OrdersUI.syncStageChips("#co-detail-bucket-bar", b);
-      updateDetailPrimary();
       renderDetail();
+      openSlidePanel();
       App.updateGlobalBack?.();
       return true;
     } catch (e) {
@@ -732,7 +716,6 @@ const CustomerOrders = (() => {
             : currentBucket === "closed" ? "Done"
               : "Cancelled";
     }
-    updateDetailPrimary();
     const canWrite = !!ctx.canWrite?.("customer_orders");
     const canMoney = !!ctx.isAdmin?.() || !!ctx.canWrite?.("accounts_receivable") || !!ctx.canWrite?.("finance");
 
@@ -2638,7 +2621,8 @@ const CustomerOrders = (() => {
   }
 
   return {
-    init, loadList, setBucket, setHubMode, setQueueFilter, setHubSearch, showHub, openDetail, openCustomer, switchBucket, toggleDetailExpand, toggleHubCustomer,
+    init, loadList, setBucket, setHubMode, setQueueFilter, setHubSearch, showHub, openDetail, openCustomer, switchBucket, toggleDetailExpand,
+    openSlidePanel, closeSlidePanel, toggleCardMore, closeAllCardMore,
     goToDispatch, goCollectPayment, setDispatchStatus, setDispatchAgent, pickParcel, reassignParcel, submitParcelReassign,
     showCreateMenu, showCreateMenuFromCustomer, runHubAction, runDetailAction, openCloseBatch,
     processOrder, processFromHub, closeProcessWizard, renderProcessWizard,

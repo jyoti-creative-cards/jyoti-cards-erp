@@ -526,21 +526,21 @@
             <p id="co-list-hint" style="margin:2px 0 8px;font-size:12px;color:var(--muted);"></p>
             <div id="co-hub-search-slot"></div>
           </div>
-          <div class="ord-list" id="customer-orders-list"></div>
+          <div class="ord-order-grid" id="customer-orders-list"></div>
         </div>
-        <div id="co-detail" class="hidden ord-page">
-          <button type="button" class="btn btn-secondary back-btn" onclick="App.goBack()">← Back</button>
-          <div class="ui-hero setup-page-hero ord-detail-hero">
-            <div class="ord-detail-hero-main">
+
+        <!-- Slide-over detail panel -->
+        <div id="co-slide-backdrop" class="co-slide-backdrop" onclick="CustomerOrders.closeSlidePanel()"></div>
+        <div id="co-slide-panel" class="co-slide-panel">
+          <div class="co-slide-header">
+            <div class="co-slide-header-text">
               <div class="vo-detail-kicker" id="co-detail-sub">Customer</div>
-              <h2 class="setup-page-title prod-hero-title" id="co-detail-title">Customer</h2>
+              <div class="co-slide-title" id="co-detail-title"></div>
             </div>
-            <div class="ui-hero-actions ord-detail-hero-actions">
-              <button class="btn btn-primary btn-lg hidden" data-require-write="customer_orders" id="co-detail-primary-btn">Primary</button>
-            </div>
+            <button type="button" class="co-slide-close" onclick="CustomerOrders.closeSlidePanel()" aria-label="Close">×</button>
           </div>
-          <div id="co-detail-bucket-bar" style="display:none;"></div>
-          <div id="co-detail-body"></div>
+          <div id="co-detail-bucket-bar" class="ord-stage-chips co-slide-bucket-bar"></div>
+          <div id="co-detail-body" class="co-slide-body"></div>
         </div>
       </div>
 

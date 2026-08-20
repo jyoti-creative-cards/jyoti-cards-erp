@@ -467,7 +467,7 @@ const App = (() => {
     const bar = document.getElementById("global-back-bar");
     if (!bar) return;
     const detailOpen = !document.getElementById("detail")?.classList.contains("hidden");
-    const sellingDetail = currentViewName === "selling" && !document.getElementById("co-detail")?.classList.contains("hidden");
+    const sellingDetail = currentViewName === "selling" && document.getElementById("co-slide-panel")?.classList.contains("is-open");
     const buyingDetail = currentViewName === "buying" && !document.getElementById("orders-detail")?.classList.contains("hidden");
     const returnsDetail = currentViewName === "returns" && !document.getElementById("returns-detail")?.classList.contains("hidden");
     const reportsLedger = currentViewName === "reports" && !document.getElementById("reports-ledger-detail")?.classList.contains("hidden");
@@ -492,8 +492,8 @@ const App = (() => {
       return;
     }
     // Nested hubs inside a view
-    if (currentViewName === "selling" && !document.getElementById("co-detail")?.classList.contains("hidden")) {
-      CustomerOrders.showHub?.();
+    if (currentViewName === "selling" && document.getElementById("co-slide-panel")?.classList.contains("is-open")) {
+      CustomerOrders.closeSlidePanel?.();
       updateGlobalBack();
       return;
     }

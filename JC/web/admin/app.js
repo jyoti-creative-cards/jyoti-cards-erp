@@ -1015,11 +1015,12 @@ const App = (() => {
   function renderPeopleCustomerSearch() {
     const slot = document.getElementById("people-customers-search-slot");
     if (!slot) return;
-    const q = document.getElementById("search-input")?.value || "";
+    // Only render once — re-rendering on every keystroke destroys the focused input
+    if (document.getElementById("search-input")) return;
     slot.innerHTML = HubUI.searchBar({
       id: "search-input",
-      value: q,
-      placeholder: "Search name, phone, alias…",
+      value: "",
+      placeholder: "Search name, phone, #number…",
       oninput: "App.debouncedLoadCustomers()",
     });
   }
@@ -1027,10 +1028,10 @@ const App = (() => {
   function renderPeopleVendorSearch() {
     const slot = document.getElementById("people-vendors-search-slot");
     if (!slot) return;
-    const q = document.getElementById("vendor-search-input")?.value || "";
+    if (document.getElementById("vendor-search-input")) return;
     slot.innerHTML = HubUI.searchBar({
       id: "vendor-search-input",
-      value: q,
+      value: "",
       placeholder: "Search name, phone, alias…",
       oninput: "App.debouncedVendorSearch()",
     });
@@ -1055,7 +1056,7 @@ const App = (() => {
   }
 
   async function loadCustomers() {
-    renderPeopleCustomerSearch();
+    renderPeopleCustomerSearch(); // no-op if input already exists
     const q = document.getElementById("search-input")?.value.trim() || "";
     // When searching, include inactive so you can find any customer by name/number
     const statusParam = q ? `status=${customerStatusTab}&include_inactive=true` : `status=${customerStatusTab}`;

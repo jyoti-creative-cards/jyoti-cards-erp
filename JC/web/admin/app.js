@@ -1057,7 +1057,8 @@ const App = (() => {
   async function loadCustomers() {
     renderPeopleCustomerSearch();
     const q = document.getElementById("search-input")?.value.trim() || "";
-    const statusParam = `status=${customerStatusTab}`;
+    // When searching, include inactive so you can find any customer by name/number
+    const statusParam = q ? `status=${customerStatusTab}&include_inactive=true` : `status=${customerStatusTab}`;
     const searchParam = q ? `&search=${encodeURIComponent(q)}` : "";
     customers = await api(`/customers?${statusParam}${searchParam}`, {}, q ? 0 : 120000);
     renderCustomersTable();
@@ -1449,7 +1450,8 @@ const App = (() => {
         // In recycle bin → restore only
         footerBtns.push(`<button class="btn btn-primary btn-sm" onclick="App.restoreCustomer(${c.id})">Restore</button>`);
       } else if (!c.is_active) {
-        // Inactive → restore to active + delete
+        // Inactive → edit + restore to active + delete
+        footerBtns.push(`<button class="btn btn-secondary btn-sm" onclick="App.openCustomerEdit(${c.id})">Edit</button>`);
         footerBtns.push(`<button class="btn btn-primary btn-sm" onclick="App.toggleCustomerActive(${c.id}, true)">Make Active</button>`);
         footerBtns.push(`<button class="btn btn-danger btn-sm" onclick="App.deleteCustomer(${c.id})">Delete</button>`);
       } else {

@@ -1258,14 +1258,14 @@ table.data tr.filter-row th { padding: 6px 8px; background: #fff; border-bottom:
 .col-filter:focus { outline: none; border-color: var(--brand-light); background: #fff; }
 
 /* Modal */
-.modal-overlay { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.modal-overlay { position: fixed; inset: 0; z-index: 400; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; padding: 16px; }
 .modal { background: var(--surface); border-radius: 16px; box-shadow: var(--shadow-lg); width: 100%; max-height: 92vh; display: flex; flex-direction: column; overflow: hidden; }
 .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 20px 24px; border-bottom: 1px solid var(--border); }
 .modal-body { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 24px; }
 .modal-footer { display: flex; gap: 12px; padding: 16px 24px; border-top: 1px solid var(--border); }
 
 /* Detail panel — centered modal (not side drawer) */
-.detail-overlay { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; padding: 20px; }
+.detail-overlay { position: fixed; inset: 0; z-index: 400; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; padding: 20px; }
 .detail-panel { background: var(--surface); border-radius: 20px; box-shadow: var(--shadow-lg); width: 100%; max-height: 92vh; display: flex; flex-direction: column; overflow: hidden; }
 .detail-panel.sm { max-width: 480px; }
 .detail-panel.md { max-width: 600px; }
@@ -1293,7 +1293,7 @@ table.data tr.filter-row th { padding: 6px 8px; background: #fff; border-bottom:
 .step.done .step-num { background: var(--success); color: #fff; }
 
 /* Toast */
-#toasts { position: fixed; top: 16px; right: 16px; z-index: 100; display: flex; flex-direction: column; gap: 8px; }
+#toasts { position: fixed; top: 16px; right: 16px; z-index: 500; display: flex; flex-direction: column; gap: 8px; }
 .toast { padding: 14px 18px; border-radius: var(--radius); font-size: 14px; font-weight: 500; box-shadow: var(--shadow-lg); animation: slideIn .25s ease; max-width: 380px; }
 .toast-success { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
 .toast-error { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }

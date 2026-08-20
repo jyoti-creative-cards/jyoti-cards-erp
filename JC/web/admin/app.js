@@ -1780,7 +1780,18 @@ const App = (() => {
         <div><label class="label">GST Number</label><input id="ed-gst_number" class="input" value="${esc(c.gst_number || "")}" placeholder="22AAAAA0000A1Z5" maxlength="15" style="text-transform:uppercase;" /></div>
         <div><label class="label">Address</label><textarea id="ed-address" class="input" rows="2">${esc(c.address || "")}</textarea></div>
         <div><label class="label">Additional details</label><textarea id="ed-additional_details" class="input" rows="2">${esc(c.additional_details || "")}</textarea></div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div>
+          <label class="label">Payment type *</label>
+          <div style="display:flex;gap:8px;margin-top:4px;">
+            <label style="display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer;padding:8px 14px;border:1px solid var(--border);border-radius:8px;flex:1;justify-content:center;${(c.payment_type||'CREDIT')==='CASH'?'background:#fef3c7;border-color:#f59e0b;font-weight:600;':''}">
+              <input type="radio" name="ed-payment_type" value="CASH" ${(c.payment_type||'CREDIT')==='CASH'?'checked':''} onchange="App.onEditPaymentTypeChange('CASH')" /> CASH
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer;padding:8px 14px;border:1px solid var(--border);border-radius:8px;flex:1;justify-content:center;${(c.payment_type||'CREDIT')==='CREDIT'?'background:#eff6ff;border-color:#3b82f6;font-weight:600;':''}">
+              <input type="radio" name="ed-payment_type" value="CREDIT" ${(c.payment_type||'CREDIT')==='CREDIT'?'checked':''} onchange="App.onEditPaymentTypeChange('CREDIT')" /> CREDIT
+            </label>
+          </div>
+        </div>
+        <div id="ed-credit-limit-wrap" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;${(c.payment_type||'CREDIT')==='CASH'?'display:none!important;':''}">
           <div><label class="label">Credit Limit (₹)</label><input id="ed-credit_limit" class="input" type="number" value="${esc(c.credit_limit || "")}" /></div>
           <div style="display:flex;align-items:end;"><label style="display:flex;align-items:center;gap:8px;font-size:14px;">
             <input type="checkbox" id="ed-credit_override" ${c.credit_override ? "checked" : ""} /> Allow credit override
@@ -1801,6 +1812,15 @@ const App = (() => {
   function onCustomerEditCityChange(val) {
     const hint = document.getElementById("ed-city-hint");
     if (hint) hint.innerHTML = customerCityHint(val ? parseInt(val, 10) : null);
+  }
+
+  function onEditPaymentTypeChange(val) {
+    const wrap = document.getElementById("ed-credit-limit-wrap");
+    if (wrap) wrap.style.display = val === "CASH" ? "none" : "grid";
+    if (val === "CASH") {
+      const el = document.getElementById("ed-credit_limit");
+      if (el) el.value = "";
+    }
   }
 
   function closeEditModal() {
@@ -1832,8 +1852,14 @@ const App = (() => {
         gst_number: gst.value,
         address: document.getElementById("ed-address").value.trim() || null,
         additional_details: document.getElementById("ed-additional_details")?.value.trim() || null,
-        credit_limit: document.getElementById("ed-credit_limit").value ? parseFloat(document.getElementById("ed-credit_limit").value) : null,
-        credit_override: document.getElementById("ed-credit_override").checked,
+        payment_type: (document.querySelector('input[name="ed-payment_type"]:checked')?.value) || "CREDIT",
+        credit_limit: (() => {
+          const pt = document.querySelector('input[name="ed-payment_type"]:checked')?.value;
+          if (pt === "CASH") return 0;
+          const v = document.getElementById("ed-credit_limit")?.value;
+          return v ? parseFloat(v) : null;
+        })(),
+        credit_override: document.getElementById("ed-credit_override")?.checked || false,
         opening_balance_due: parseFloat(document.getElementById("ed-opening_due")?.value || "0") || 0,
         opening_balance_as_on: document.getElementById("ed-opening_as_on")?.value || null,
       })});
@@ -2249,11 +2275,20 @@ const App = (() => {
           </div>
         </div>
         <div class="create-field-row">
-          <div><label class="label">Credit limit (₹)</label><input id="wf-credit_limit" class="input" type="number" min="0" step="0.01" value="${esc(wizardForm.credit_limit || "")}" /></div>
-          <div style="display:flex;align-items:end;padding-bottom:10px;">
-            <label style="display:flex;gap:8px;align-items:center;font-size:14px;cursor:pointer;">
-              <input type="checkbox" id="wf-credit_override" ${wizardForm.credit_override ? "checked" : ""} /> Credit override
-            </label>
+          <div>
+            <label class="label">Payment type *</label>
+            <div style="display:flex;gap:8px;margin-top:4px;">
+              <label style="display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer;padding:8px 14px;border:1px solid var(--border);border-radius:8px;flex:1;justify-content:center;${(wizardForm.payment_type||'CREDIT')==='CASH'?'background:var(--amber-bg,#fef3c7);border-color:#f59e0b;font-weight:600;':''}">
+                <input type="radio" name="wf-payment_type" value="CASH" ${(wizardForm.payment_type||'CREDIT')==='CASH'?'checked':''} onchange="App.onWizardPaymentTypeChange('CASH')" /> CASH
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer;padding:8px 14px;border:1px solid var(--border);border-radius:8px;flex:1;justify-content:center;${(wizardForm.payment_type||'CREDIT')==='CREDIT'?'background:#eff6ff;border-color:#3b82f6;font-weight:600;':''}">
+                <input type="radio" name="wf-payment_type" value="CREDIT" ${(wizardForm.payment_type||'CREDIT')==='CREDIT'?'checked':''} onchange="App.onWizardPaymentTypeChange('CREDIT')" /> CREDIT
+              </label>
+            </div>
+          </div>
+          <div id="wf-credit-limit-wrap" style="${(wizardForm.payment_type||'CREDIT')==='CASH'?'display:none':''}">
+            <label class="label">Credit limit (₹)</label>
+            <input id="wf-credit_limit" class="input" type="number" min="0" step="0.01" value="${esc(wizardForm.credit_limit || "")}" />
           </div>
         </div>
         <div class="create-field-row">
@@ -2302,6 +2337,24 @@ const App = (() => {
     wizardForm.city_id = val ? parseInt(val, 10) : null;
     const hint = document.getElementById("wf-city-hint");
     if (hint) hint.innerHTML = customerCityHint(wizardForm.city_id);
+  }
+
+  function onWizardPaymentTypeChange(val) {
+    wizardForm.payment_type = val;
+    const wrap = document.getElementById("wf-credit-limit-wrap");
+    if (wrap) wrap.style.display = val === "CASH" ? "none" : "";
+    if (val === "CASH") {
+      const el = document.getElementById("wf-credit_limit");
+      if (el) el.value = "";
+      wizardForm.credit_limit = "";
+    }
+    // Re-style the radio buttons
+    document.querySelectorAll("label[style*='amber'],label[style*='eff6ff']").forEach(l => {
+      l.style.background = "";
+      l.style.borderColor = "";
+      l.style.fontWeight = "";
+    });
+    renderWizard();
   }
 
   function finishCustomerOpen(id) {
@@ -2383,6 +2436,8 @@ const App = (() => {
     if (cityEl) wizardForm.city_id = cityEl.value ? parseInt(cityEl.value) : null;
     const ov = document.getElementById("wf-credit_override");
     if (ov) wizardForm.credit_override = ov.checked;
+    const ptEl = document.querySelector('input[name="wf-payment_type"]:checked');
+    if (ptEl) wizardForm.payment_type = ptEl.value;
     const od = document.getElementById("wf-opening_due");
     if (od) wizardForm.opening_balance_due = od.value.trim();
     const oa = document.getElementById("wf-opening_as_on");
@@ -2413,7 +2468,8 @@ const App = (() => {
         alias: wizardForm.alias || null, city_id: wizardForm.city_id,
         gst_number: gst.value, address: wizardForm.address || null,
         additional_details: wizardForm.additional_details || null,
-        credit_limit: wizardForm.credit_limit ? parseFloat(wizardForm.credit_limit) : null,
+        payment_type: wizardForm.payment_type || "CREDIT",
+        credit_limit: (wizardForm.payment_type === "CASH") ? 0 : (wizardForm.credit_limit ? parseFloat(wizardForm.credit_limit) : null),
         credit_override: !!wizardForm.credit_override,
         opening_balance_due: openingDue > 0 ? openingDue : null,
         opening_balance_as_on: openingDue > 0 ? (wizardForm.opening_balance_as_on || null) : null,
@@ -2465,7 +2521,7 @@ const App = (() => {
     openRouteDetail, openRouteModal, saveRoute, deleteRoute,
     openCityDetail, openCityModal, saveCity, deleteCity,
     openCustomerWizard, closeWizard, wizardBack, wizardNext, createCustomer,
-    onCustomerWizardCityChange, onCustomerEditCityChange, finishCustomerOpen, finishCustomerPlace, resendWhatsApp,
+    onCustomerWizardCityChange, onCustomerEditCityChange, onWizardPaymentTypeChange, onEditPaymentTypeChange, finishCustomerOpen, finishCustomerPlace, resendWhatsApp,
     openCustomerDetail, closeDetail, openCustomerEdit, closeEditModal, saveCustomer,
     deleteCustomer, toggleCustomerActive, restoreCustomer, sendCredentials,
     setCustomerStatusTab, toggleMissingPhoneFilter, setCustomerOpeningBalance, saveCustomerOpeningBalance,

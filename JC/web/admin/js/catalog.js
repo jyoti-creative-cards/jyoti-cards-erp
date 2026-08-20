@@ -292,6 +292,8 @@ const Catalog = (() => {
 
   async function openWizard(presetVendorId) {
     ctx.showLoading?.();
+    // Always fetch fresh vendor list so a newly created vendor appears immediately
+    catalogVendors = [];
     try {
       await ensureVendors();
     } catch (e) {
@@ -355,11 +357,9 @@ const Catalog = (() => {
               ${catalogVendors.map(v => `<option value="${v.id}" ${wizardVendorId == v.id ? "selected" : ""}>${ctx.esc(vendorLabel(v))}</option>`).join("")}
             </select>
           </div>
-          <div style="display:flex;justify-content:space-between;align-items:center;">
-            <div style="display:flex;gap:8px;">
-              <button type="button" class="btn btn-secondary btn-sm" onclick="Catalog.addWizardRow()">+ Row</button>
-              <button type="button" class="btn btn-secondary btn-sm" onclick="Catalog.removeWizardRows()">Remove</button>
-            </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+              <button type="button" class="btn btn-primary btn-sm" onclick="Catalog.addWizardRow()">+ Add product</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="Catalog.removeWizardRows()" title="Remove checked rows">Remove selected</button>
           </div>
         </div>
         <div class="table-wrap">
@@ -369,6 +369,7 @@ const Catalog = (() => {
               <th>Our code *</th>
               <th>Vendor code *</th>
               <th>Photos</th>
+              <th style="width:36px;"></th>
             </tr></thead>
             <tbody>
               ${wizardRows.map((row, idx) => `
@@ -384,6 +385,10 @@ const Catalog = (() => {
                     <input type="file" multiple accept="image/*" class="input" style="font-size:12px;padding:6px;"
                       onchange="Catalog.setWizardImages(${idx}, this.files)" />
                     ${wizardImageThumbs(row)}
+                  </td>
+                  <td>
+                    <button type="button" title="Delete row" onclick="Catalog.deleteWizardRow(${idx})"
+                      style="background:none;border:none;color:var(--danger,#ef4444);font-size:18px;cursor:pointer;padding:4px 8px;line-height:1;">✕</button>
                   </td>
                 </tr>`).join("")}
             </tbody>
@@ -581,6 +586,12 @@ const Catalog = (() => {
   function removeWizardRows() {
     const kept = wizardRows.filter(r => !r.selected);
     wizardRows = kept.length ? kept : [emptyWizardRow()];
+    renderWizard();
+  }
+
+  function deleteWizardRow(idx) {
+    wizardRows.splice(idx, 1);
+    if (!wizardRows.length) wizardRows = [emptyWizardRow()];
     renderWizard();
   }
 
@@ -1014,7 +1025,7 @@ const Catalog = (() => {
 
   return {
     init, load, loadMore, setViewMode, renderGrid, renderTable, openDetail, openWizard, openWizardForVendor, closeWizard,
-    wizardBack, wizardNext, createAll, setWizardVendor, addWizardRow, maybeAddWizardRow, removeWizardRows,
+    wizardBack, wizardNext, createAll, setWizardVendor, addWizardRow, maybeAddWizardRow, removeWizardRows, deleteWizardRow,
     toggleWizardRow, toggleAllWizardRows, updateWizardRow, setWizardImages, applyBulkFields,
     setWizardSelectedRow, setWizardAlt, addWizardAddon, setWizardAddon, removeWizardAddon,
     openEdit, closeEdit, saveEdit, addEditAddonRow, deleteProduct, setVendors,

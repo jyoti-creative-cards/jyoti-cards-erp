@@ -8,6 +8,8 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, text
+from sqlalchemy import String as SAString
+from sqlalchemy.sql.expression import cast as sa_cast
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -228,10 +230,13 @@ def list_customers(
     if search:
         from app.services.token_search import sort_parties_by_search, token_match
 
+        # Strip leading # so "#123" searches party_number 123
+        search_clean = search.lstrip("#").strip()
+
         # Join city so tokens like "anjad" match city as well as name
         q = q.outerjoin(City, Customer.city_id == City.id)
         clause = token_match(
-            search,
+            search_clean,
             [
                 Customer.business_name,
                 Customer.person_name,
@@ -239,6 +244,7 @@ def list_customers(
                 Customer.alias,
                 Customer.address,
                 City.name,
+                sa_cast(Customer.party_number, SAString),
             ],
         )
         if clause is not None:
@@ -249,7 +255,7 @@ def list_customers(
             c.id: c.name
             for c in (db.query(City).filter(City.id.in_(city_ids)).all() if city_ids else [])
         }
-        rows = sort_parties_by_search(rows, search, city_lookup=city_lookup)
+        rows = sort_parties_by_search(rows, search_clean, city_lookup=city_lookup)
         return _to_public_many(rows, db)
     from sqlalchemy import nulls_last
     rows = q.order_by(nulls_last(Customer.party_number.asc()), Customer.business_name.asc()).all()

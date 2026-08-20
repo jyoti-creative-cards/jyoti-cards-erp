@@ -173,6 +173,7 @@ const Stock = (() => {
   function openAddWizard() {
     wizardStep = 1; wizardMode = null; wizardVendorId = null; placedOrder = null;
     wizardLines = []; billFile = null; billFileKey = null; pendingDebitNotes = [];
+    offlineVendorsCache = []; wizardProducts = []; // always fetch fresh on open
     enteredFromAddStock = true;
     receiptMeta = { billNumber: "", orderReceiptNumber: "", additionalCharges: "", totalBilledAmount: "", notes: "", eventDate: localToday() };
     document.getElementById("stock-wizard")?.classList.remove("hidden");
@@ -486,7 +487,7 @@ const Stock = (() => {
       const isRecv = wizardMode === "receive_goods";
       setStockWizardChrome(isRecv ? "Receive Goods" : "Bill Order", "Step 1 — select vendor");
       if (!offlineVendorsCache.length) {
-        try { offlineVendorsCache = await ctx.api("/catalog/vendors", {}, 60000) || []; } catch (_) {
+        try { offlineVendorsCache = await ctx.api("/catalog/vendors", {}, 0) || []; } catch (_) {
           try { offlineVendorsCache = await ctx.api("/vendors", {}, 0) || []; } catch (e2) {
             offlineVendorsCache = [];
             ctx.toast(e2.message, "error");
@@ -535,7 +536,7 @@ const Stock = (() => {
       if (wizardMode === "offline_vendor") {
         setStockWizardChrome("Receive without order", "Step 1 — choose the vendor");
         if (!offlineVendorsCache.length) {
-          try { offlineVendorsCache = await ctx.api("/vendors", {}, 30000) || []; } catch (_) { offlineVendorsCache = []; }
+          try { offlineVendorsCache = await ctx.api("/vendors", {}, 0) || []; } catch (_) { offlineVendorsCache = []; }
         }
         const q = offlineVendorSearch.trim();
         const active = offlineVendorsCache.filter(v => v.is_active !== false && !v.deleted_at);

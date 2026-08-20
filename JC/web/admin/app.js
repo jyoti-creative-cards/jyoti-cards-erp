@@ -1783,15 +1783,15 @@ const App = (() => {
         <div>
           <label class="label">Payment type *</label>
           <div style="display:flex;gap:8px;margin-top:4px;">
-            <label style="display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer;padding:8px 14px;border:1px solid var(--border);border-radius:8px;flex:1;justify-content:center;${(c.payment_type||'CREDIT')==='CASH'?'background:#fef3c7;border-color:#f59e0b;font-weight:600;':''}">
+            <label id="ed-label-cash" style="display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer;padding:8px 14px;border:1px solid var(--border);border-radius:8px;flex:1;justify-content:center;${(c.payment_type||'CREDIT')==='CASH'?'background:#fef3c7;border-color:#f59e0b;font-weight:600;':''}">
               <input type="radio" name="ed-payment_type" value="CASH" ${(c.payment_type||'CREDIT')==='CASH'?'checked':''} onchange="App.onEditPaymentTypeChange('CASH')" /> CASH
             </label>
-            <label style="display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer;padding:8px 14px;border:1px solid var(--border);border-radius:8px;flex:1;justify-content:center;${(c.payment_type||'CREDIT')==='CREDIT'?'background:#eff6ff;border-color:#3b82f6;font-weight:600;':''}">
+            <label id="ed-label-credit" style="display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer;padding:8px 14px;border:1px solid var(--border);border-radius:8px;flex:1;justify-content:center;${(c.payment_type||'CREDIT')==='CREDIT'?'background:#eff6ff;border-color:#3b82f6;font-weight:600;':''}">
               <input type="radio" name="ed-payment_type" value="CREDIT" ${(c.payment_type||'CREDIT')==='CREDIT'?'checked':''} onchange="App.onEditPaymentTypeChange('CREDIT')" /> CREDIT
             </label>
           </div>
         </div>
-        <div id="ed-credit-limit-wrap" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;${(c.payment_type||'CREDIT')==='CASH'?'display:none!important;':''}">
+        <div id="ed-credit-limit-wrap" style="grid-template-columns:1fr 1fr;gap:12px;display:${(c.payment_type||'CREDIT')==='CASH'?'none':'grid'};">
           <div><label class="label">Credit Limit (₹)</label><input id="ed-credit_limit" class="input" type="number" value="${esc(c.credit_limit || "")}" /></div>
           <div style="display:flex;align-items:end;"><label style="display:flex;align-items:center;gap:8px;font-size:14px;">
             <input type="checkbox" id="ed-credit_override" ${c.credit_override ? "checked" : ""} /> Allow credit override
@@ -1820,6 +1820,18 @@ const App = (() => {
     if (val === "CASH") {
       const el = document.getElementById("ed-credit_limit");
       if (el) el.value = "";
+    }
+    const cashLabel = document.getElementById("ed-label-cash");
+    const creditLabel = document.getElementById("ed-label-credit");
+    if (cashLabel) {
+      cashLabel.style.background = val === "CASH" ? "#fef3c7" : "";
+      cashLabel.style.borderColor = val === "CASH" ? "#f59e0b" : "";
+      cashLabel.style.fontWeight = val === "CASH" ? "600" : "";
+    }
+    if (creditLabel) {
+      creditLabel.style.background = val === "CREDIT" ? "#eff6ff" : "";
+      creditLabel.style.borderColor = val === "CREDIT" ? "#3b82f6" : "";
+      creditLabel.style.fontWeight = val === "CREDIT" ? "600" : "";
     }
   }
 
@@ -2278,10 +2290,10 @@ const App = (() => {
           <div>
             <label class="label">Payment type *</label>
             <div style="display:flex;gap:8px;margin-top:4px;">
-              <label style="display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer;padding:8px 14px;border:1px solid var(--border);border-radius:8px;flex:1;justify-content:center;${(wizardForm.payment_type||'CREDIT')==='CASH'?'background:var(--amber-bg,#fef3c7);border-color:#f59e0b;font-weight:600;':''}">
+              <label id="wf-label-cash" style="display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer;padding:8px 14px;border:1px solid var(--border);border-radius:8px;flex:1;justify-content:center;${(wizardForm.payment_type||'CREDIT')==='CASH'?'background:#fef3c7;border-color:#f59e0b;font-weight:600;':''}">
                 <input type="radio" name="wf-payment_type" value="CASH" ${(wizardForm.payment_type||'CREDIT')==='CASH'?'checked':''} onchange="App.onWizardPaymentTypeChange('CASH')" /> CASH
               </label>
-              <label style="display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer;padding:8px 14px;border:1px solid var(--border);border-radius:8px;flex:1;justify-content:center;${(wizardForm.payment_type||'CREDIT')==='CREDIT'?'background:#eff6ff;border-color:#3b82f6;font-weight:600;':''}">
+              <label id="wf-label-credit" style="display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer;padding:8px 14px;border:1px solid var(--border);border-radius:8px;flex:1;justify-content:center;${(wizardForm.payment_type||'CREDIT')==='CREDIT'?'background:#eff6ff;border-color:#3b82f6;font-weight:600;':''}">
                 <input type="radio" name="wf-payment_type" value="CREDIT" ${(wizardForm.payment_type||'CREDIT')==='CREDIT'?'checked':''} onchange="App.onWizardPaymentTypeChange('CREDIT')" /> CREDIT
               </label>
             </div>
@@ -2341,6 +2353,7 @@ const App = (() => {
 
   function onWizardPaymentTypeChange(val) {
     wizardForm.payment_type = val;
+    // Show/hide credit limit — do NOT re-render the form (would wipe user input)
     const wrap = document.getElementById("wf-credit-limit-wrap");
     if (wrap) wrap.style.display = val === "CASH" ? "none" : "";
     if (val === "CASH") {
@@ -2348,13 +2361,19 @@ const App = (() => {
       if (el) el.value = "";
       wizardForm.credit_limit = "";
     }
-    // Re-style the radio buttons
-    document.querySelectorAll("label[style*='amber'],label[style*='eff6ff']").forEach(l => {
-      l.style.background = "";
-      l.style.borderColor = "";
-      l.style.fontWeight = "";
-    });
-    renderWizard();
+    // Update label highlight styles in place
+    const cashLabel = document.getElementById("wf-label-cash");
+    const creditLabel = document.getElementById("wf-label-credit");
+    if (cashLabel) {
+      cashLabel.style.background = val === "CASH" ? "#fef3c7" : "";
+      cashLabel.style.borderColor = val === "CASH" ? "#f59e0b" : "";
+      cashLabel.style.fontWeight = val === "CASH" ? "600" : "";
+    }
+    if (creditLabel) {
+      creditLabel.style.background = val === "CREDIT" ? "#eff6ff" : "";
+      creditLabel.style.borderColor = val === "CREDIT" ? "#3b82f6" : "";
+      creditLabel.style.fontWeight = val === "CREDIT" ? "600" : "";
+    }
   }
 
   function finishCustomerOpen(id) {

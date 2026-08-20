@@ -50,6 +50,21 @@ body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Ro
 .badge-gray { background: #f1f5f9; color: #64748b; }
 .badge-amber { background: #fef3c7; color: #b45309; }
 .badge-red { background: #fee2e2; color: #b91c1c; }
+/* Toggle switch */
+.toggle-track {
+  display: inline-flex; align-items: center;
+  width: 36px; height: 20px; border-radius: 10px;
+  background: var(--border, #e2e8f0); transition: background 0.2s;
+  flex-shrink: 0; position: relative;
+}
+.toggle-track.is-on { background: var(--primary, #6366f1); }
+.toggle-thumb {
+  position: absolute; left: 2px;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.25);
+  transition: left 0.2s;
+}
+.toggle-track.is-on .toggle-thumb { left: 18px; }
 .sub-tabs { display: flex; gap: 6px; margin-bottom: 20px; flex-wrap: wrap; }
 .sub-tab { padding: 6px 14px; font-size: 13px; font-weight: 600; border-radius: 8px; border: 1px solid var(--border); background: #fff; color: var(--muted); cursor: pointer; }
 .sub-tab.active { background: var(--brand); color: #fff; border-color: var(--brand); }

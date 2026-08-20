@@ -14,8 +14,9 @@ const App = (() => {
   let permissions = new Set((staffUser && staffUser.permissions) || []);
   let routes = [], cities = [], customers = [], vendors = [], lookups = [];
   let peopleTab = null;
-  let showInactiveCustomers = false; // toggle: include inactive parties in list
-  let customerMissingPhone = false; // filter: only show placeholder-phone customers
+  let showInactiveCustomers = false; // toggle switch: expose inactive parties
+  let customerStatusTab = "active";  // "active" | "inactive" — only relevant when showInactiveCustomers=true
+  let customerMissingPhone = false;  // filter: only show placeholder-phone customers
   let ordersType = "vendor";
   let setupTab = null;
   let recycleData = { routes: [], cities: [], customers: [], total: 0 };
@@ -1039,17 +1040,22 @@ const App = (() => {
 
   function toggleInactiveCustomers() {
     showInactiveCustomers = !showInactiveCustomers;
-    const btn = document.getElementById("cst-tab-inactive-toggle");
-    if (btn) {
-      btn.textContent = `Inactive: ${showInactiveCustomers ? "On" : "Off"}`;
-      btn.classList.toggle("active", showInactiveCustomers);
-    }
+    if (!showInactiveCustomers) customerStatusTab = "active"; // reset to active when hiding
+    // Update toggle switch visuals
+    document.getElementById("cst-inactive-track")?.classList.toggle("is-on", showInactiveCustomers);
+    // Show/hide Active/Inactive tabs
+    const tabsEl = document.getElementById("customer-status-tabs");
+    if (tabsEl) tabsEl.style.display = showInactiveCustomers ? "" : "none";
     invalidateCache("/customers");
     loadCustomers();
   }
 
-  // kept for any remaining references
   function setCustomerStatusTab(tab) {
+    customerStatusTab = tab;
+    customerMissingPhone = false;
+    document.getElementById("cst-tab-active")?.classList.toggle("active", tab === "active");
+    document.getElementById("cst-tab-inactive")?.classList.toggle("active", tab === "inactive");
+    document.getElementById("cst-tab-missing")?.classList.toggle("active", false);
     invalidateCache("/customers");
     loadCustomers();
   }
@@ -1063,9 +1069,14 @@ const App = (() => {
   async function loadCustomers() {
     renderPeopleCustomerSearch(); // no-op if input already exists
     const q = document.getElementById("search-input")?.value.trim() || "";
-    // include_inactive=true when toggle is on or when searching
-    const includeInactive = showInactiveCustomers || !!q;
-    const statusParam = includeInactive ? "status=active&include_inactive=true" : "status=active";
+    // When toggle is off: only active customers (search still works across active only)
+    // When toggle is on: use the active/inactive tab selection
+    let statusParam;
+    if (!showInactiveCustomers) {
+      statusParam = "status=active";
+    } else {
+      statusParam = `status=${customerStatusTab}`;
+    }
     const searchParam = q ? `&search=${encodeURIComponent(q)}` : "";
     customers = await api(`/customers?${statusParam}${searchParam}`, {}, q ? 0 : 120000);
     renderCustomersTable();

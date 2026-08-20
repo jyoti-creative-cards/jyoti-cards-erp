@@ -718,9 +718,18 @@
               <button class="btn btn-primary btn-lg" data-require-write="customers" id="btn-new-customer" onclick="App.openCustomerWizard()">+ New Customer</button>
             </div>
           </div>
-          <div class="ord-action-chips ui-toolbar" id="customer-status-tabs" role="tablist">
-            <button class="ord-action-chip" id="cst-tab-inactive-toggle" onclick="App.toggleInactiveCustomers()" title="Show inactive customers in the list">Inactive: Off</button>
-            <button class="ord-action-chip" id="cst-tab-missing" onclick="App.toggleMissingPhoneFilter()" title="Show active customers with no phone — add manually">Missing Phone</button>
+          <div class="ui-toolbar" style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:8px 0;">
+            <label class="toggle-switch-label" onclick="App.toggleInactiveCustomers()" style="cursor:pointer;display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500;color:var(--text);">
+              <span class="toggle-track" id="cst-inactive-track">
+                <span class="toggle-thumb" id="cst-inactive-thumb"></span>
+              </span>
+              Inactive parties
+            </label>
+            <div class="ord-action-chips" id="customer-status-tabs" role="tablist" style="display:none;">
+              <button class="ord-action-chip active" id="cst-tab-active" onclick="App.setCustomerStatusTab('active')">Active</button>
+              <button class="ord-action-chip" id="cst-tab-inactive" onclick="App.setCustomerStatusTab('inactive')">Inactive</button>
+            </div>
+            <button class="ord-action-chip" id="cst-tab-missing" onclick="App.toggleMissingPhoneFilter()" title="Show customers with no phone">Missing Phone</button>
           </div>
           <div class="ui-toolbar setup-search-slot" id="people-customers-search-slot"></div>
           <div class="card table-wrap" id="customers-table"></div>

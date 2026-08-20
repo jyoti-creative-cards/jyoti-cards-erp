@@ -1282,6 +1282,7 @@ const App = (() => {
 
   // ── Customers ─────────────────────────────────────────────────────
   const CUSTOMER_COLS = [
+    { key: "party_number", label: "#", get: c => c.party_number || 0 },
     { key: "business", label: "Business", get: c => `${c.business_name} ${c.person_name || ""}` },
     { key: "phone", label: "Phone", get: c => c.phone },
     { key: "alias", label: "Alias", get: c => c.alias || "" },
@@ -1322,20 +1323,28 @@ const App = (() => {
     return parts.join('<br>');
   }
 
-  // Party badges: #number + marker_1 + marker_2 + payment_type(CASH only if not already in marker_1)
+  // Extract "other notes" from notes field — stored before " | Bills:" separator
+  function getOtherNotes(c) {
+    if (!c.notes) return "";
+    const first = c.notes.split(" | ")[0] || "";
+    return first.startsWith("Bills:") ? "" : first;
+  }
+
+  // Party badges: marker_1 + marker_2 + other_notes + payment_type(CASH only if not already in markers)
   function partyBadgesHtml(c, opts) {
     const parts = [];
-    if (c.party_number) {
-      parts.push(`<span style="font-size:11px;color:var(--muted);font-weight:600;">#${c.party_number}</span>`);
-    }
     if (c.marker_1) {
       parts.push(`<span class="badge badge-blue" style="font-size:10px;padding:2px 5px;">${esc(c.marker_1)}</span>`);
     }
     if (c.marker_2) {
       parts.push(`<span class="badge badge-amber" style="font-size:10px;padding:2px 5px;">${esc(c.marker_2)}</span>`);
     }
-    const m1upper = (c.marker_1 || "").toUpperCase();
-    if (c.payment_type === "CASH" && !m1upper.includes("CASH")) {
+    const otherNotes = getOtherNotes(c);
+    if (otherNotes) {
+      parts.push(`<span class="badge badge-green" style="font-size:10px;padding:2px 5px;">${esc(otherNotes)}</span>`);
+    }
+    const allMarkers = [(c.marker_1 || ""), (c.marker_2 || ""), otherNotes].join(" ").toUpperCase();
+    if (c.payment_type === "CASH" && !allMarkers.includes("CASH")) {
       parts.push(`<span class="badge badge-amber" style="font-size:10px;padding:2px 5px;">CASH</span>`);
     }
     return parts.join(" ");
@@ -1362,9 +1371,10 @@ const App = (() => {
         const missingPh = c.phone && c.phone.startsWith("000");
         const badges = partyBadgesHtml(c);
         return `<tr class="clickable" onclick="App.openCustomerDetail(${c.id})">
+        <td style="text-align:center;color:var(--muted);font-size:12px;font-weight:700;white-space:nowrap;padding-right:4px;">${c.party_number ? `#${c.party_number}` : "—"}</td>
         <td><div style="display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;">
             <strong>${esc(c.business_name)}</strong>
-            ${badges ? `<span style="display:inline-flex;gap:3px;align-items:center;">${badges}</span>` : ""}
+            ${badges ? `<span style="display:inline-flex;gap:3px;align-items:center;flex-wrap:wrap;">${badges}</span>` : ""}
           </div>
           ${c.person_name ? `<span style="font-size:12px;color:var(--muted);">${esc(c.person_name)}</span>` : ""}
           ${!c.is_active && !c.deleted_at ? '<span class="badge badge-amber" style="margin-left:4px;">Inactive</span>' : ""}
@@ -1405,7 +1415,8 @@ const App = (() => {
           ${c.route_name ? `<span class="badge badge-gray">${esc(c.route_name)}</span>` : ""}
           ${c.marker_1 ? `<span class="badge badge-blue">${esc(c.marker_1)}</span>` : ""}
           ${c.marker_2 ? `<span class="badge badge-amber">${esc(c.marker_2)}</span>` : ""}
-          ${c.payment_type === "CASH" && !(c.marker_1 || "").toUpperCase().includes("CASH") ? `<span class="badge badge-amber">CASH</span>` : ""}
+          ${getOtherNotes(c) ? `<span class="badge badge-green">${esc(getOtherNotes(c))}</span>` : ""}
+          ${c.payment_type === "CASH" && ![(c.marker_1||""),(c.marker_2||""),getOtherNotes(c)].join(" ").toUpperCase().includes("CASH") ? `<span class="badge badge-amber">CASH</span>` : ""}
         </div>
         ${(c.outstanding_balance !== null && c.outstanding_balance !== undefined) ? `
         <div class="credit-summary" style="margin-top:12px;display:flex;gap:16px;flex-wrap:wrap;">

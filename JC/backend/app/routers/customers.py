@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -349,7 +349,9 @@ def create_customer(body: CustomerCreate, db: Session = Depends(get_db), auth: A
         credit_limit=Decimal(str(body.credit_limit)) if body.credit_limit is not None else None,
         credit_override=body.credit_override,
         gst_number=(body.gst_number.strip().upper() if body.gst_number else None),
-        party_number=body.party_number,
+        party_number=body.party_number if body.party_number is not None else (
+            (db.execute(text("SELECT COALESCE(MAX(party_number), 0) + 1 FROM jc_customers")).scalar())
+        ),
         marker_1=(body.marker_1.strip() if body.marker_1 else None),
         marker_2=(body.marker_2.strip() if body.marker_2 else None),
         payment_type=(body.payment_type.strip().upper() if body.payment_type else None),

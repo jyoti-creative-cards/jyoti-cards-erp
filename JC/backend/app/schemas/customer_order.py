@@ -151,7 +151,6 @@ class ProcessBillIn(BaseModel):
     narration: Optional[str] = None
     force_credit_override: bool = False
     bill_date: Optional[date] = None  # backdate; default = today
-    bill_number: Optional[str] = Field(None, min_length=1, max_length=60)  # TEMP correction
 
 
 class EditBillLineIn(BaseModel):
@@ -174,7 +173,6 @@ class EditBillIn(BaseModel):
     additional_charges: List[AdditionalChargeIn] = []
     narration: Optional[str] = None
     force_credit_override: bool = False
-    bill_number: Optional[str] = Field(None, min_length=1, max_length=60)  # TEMP correction
 
 
 class PatchBillNumberIn(BaseModel):

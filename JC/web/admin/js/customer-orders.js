@@ -1257,7 +1257,6 @@ const CustomerOrders = (() => {
       force_credit_override: !!forceCreditOverride,
     };
     if (!editBillId) body.bill_series_id = Number(billSeriesId);
-    if ((editBillNumber || "").trim()) body.bill_number = editBillNumber.trim();
     if (discOn && useOverallDiscount && overallDiscount.trim()) {
       body.overall_discount_percent = Number(overallDiscount);
     }
@@ -1372,7 +1371,6 @@ const CustomerOrders = (() => {
       packagingCharges = "";
       additionalCharges = [{ name: "", amount: "" }];
       billSeriesId = billSeries.length ? String(billSeries[0].id) : "";
-      editBillNumber = nextBillNumberFromSeries();
       customerNotes = pctx.default_narration || "";
       narration = "";
       billDate = localToday();
@@ -1733,10 +1731,12 @@ const CustomerOrders = (() => {
           <div class="card" style="padding:12px 14px;margin-bottom:16px;background:#f8fafc;white-space:pre-wrap;font-size:14px;">${ctx.esc(customerNotes)}</div>
           <p style="font-size:12px;color:var(--muted);margin:-8px 0 16px;">From the customer — not editable here.</p>
         ` : (editBillId ? "" : `<p style="font-size:13px;color:var(--muted);margin:0 0 16px;">No customer note on this order.</p>`)}
-        ${`
-          <label class="label">Bill number — temp</label>
-          <input class="input" style="width:100%;max-width:220px;margin-bottom:4px;" value="${ctx.esc(editBillNumber)}" oninput="CustomerOrders.setEditBillNumber(this.value)" />
-          <p style="font-size:12px;color:var(--muted);margin:0 0 16px;">${editBillId ? "Temporary. Fix typo / wrong number." : "Next from series. Change if you need a different number."} Must be unique among open bills.</p>
+        ${editBillId ? "" : `
+          <div style="margin-bottom:16px;">
+            <label class="label">Bill number</label>
+            <div style="font-size:15px;font-weight:600;color:var(--text);">${ctx.esc(nextBillNumberFromSeries() || "—")}</div>
+            <p style="font-size:12px;color:var(--muted);margin:4px 0 0;">Auto-assigned from series when bill is created.</p>
+          </div>
         `}
         ${editBillId ? "" : `
           <label class="label">Bill date</label>
@@ -1782,7 +1782,7 @@ const CustomerOrders = (() => {
       </div>
       <div class="review-grid" style="margin-bottom:16px;">
         ${ctx.reviewRow("Customer", processContext?.customer_name)}
-        ${ctx.reviewRow("Bill number", editBillNumber || "—")}
+        ${!editBillId ? ctx.reviewRow("Bill number", nextBillNumberFromSeries() || "auto") : ""}
         ${!editBillId ? ctx.reviewRow("Bill date", billDate || localToday()) : ""}
         ${ctx.reviewRow("Lines shipping", shipCount)}
         ${ctx.reviewRow("Transport", modeLabel)}
@@ -1850,7 +1850,6 @@ const CustomerOrders = (() => {
   function setGstRate(v) { gstRate = v; }
   function setBillSeries(v) {
     billSeriesId = v;
-    if (!editBillId) editBillNumber = nextBillNumberFromSeries();
   }
   function nextBillNumberFromSeries() {
     const s = billSeries.find(x => String(x.id) === String(billSeriesId));

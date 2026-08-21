@@ -2562,11 +2562,14 @@ const CustomerOrders = (() => {
     if (offlineBusy || !offlineCustomerId) return;
     const notesEl = document.getElementById("co-offline-notes");
     if (notesEl) offlineNotes = notesEl.value || "";
+    const body = buildOfflineBody();
+    if (!body.lines || !body.lines.length) {
+      return ctx.toast("Add at least one product before placing the order", "error");
+    }
     offlineBusy = true;
     renderOfflineWizard();
     ctx.showLoading?.();
     try {
-      const body = buildOfflineBody();
       if (offlineEditPlacementId) {
         const pid = offlineEditPlacementId;
         const cid = offlineCustomerId;

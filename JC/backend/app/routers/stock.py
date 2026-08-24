@@ -532,20 +532,31 @@ def get_received_for_bill(
     label = _vendor_label(vendor, city_name)
     received = get_open_order(db, vendor_id, "received")
     unbilled = unbilled_received_qty_by_product(db, vendor_id)
+
+    from app.services.order_summary import pending_qty_by_product
+    from decimal import Decimal as _Dec
+    placed_qty = pending_qty_by_product(db, vendor_id)
+
+    bc = vendor.billing_context or {}
+    factor = _Dec(str(bc.get("invoice_factor", 1)))
+
     lines: list[ReceivedLineForBill] = []
     for cat_id, qty in unbilled.items():
         prod = db.get(CatalogProduct, cat_id)
         if not prod:
             continue
+        display_price = (prod.buying_price * factor).quantize(_Dec("0.01")) if prod.buying_price else None
         lines.append(
             ReceivedLineForBill(
                 catalog_product_id=cat_id,
                 our_product_id=prod.our_product_id,
                 vendor_product_id=prod.vendor_product_id,
                 category=prod.category,
+                quantity_placed=int(placed_qty.get(cat_id, 0)),
                 quantity_received=int(qty),
                 quantity_unbilled=int(qty),
-                buying_price=format(prod.buying_price, "f"),
+                buying_price=format(prod.buying_price, "f") if prod.buying_price else None,
+                buying_price_display=format(display_price, "f") if display_price else None,
                 unit=prod.unit,
                 image_urls=presigned_urls(prod.image_keys or []),
             )
@@ -556,6 +567,7 @@ def get_received_for_bill(
         vendor_label=label,
         order_id=received.id if received else None,
         lines=lines,
+        billing_context=vendor.billing_context,
     )
 
 
@@ -683,6 +695,7 @@ def _finalize_vendor_receipt(
         billed_placement_id=placement.id,
         additional_charges=body.additional_charges.quantize(Decimal("0.01")) if body.additional_charges is not None else None,
         total_billed_amount=body.total_billed_amount.quantize(Decimal("0.01")) if body.total_billed_amount is not None else None,
+        actual_ap_amount=body.actual_ap_amount.quantize(Decimal("0.01")) if getattr(body, "actual_ap_amount", None) is not None else None,
         bill_number=(body.bill_number or "").strip() or None,
         bill_file_key=body.bill_file_key,
         notes=(body.notes or "").strip() or None,

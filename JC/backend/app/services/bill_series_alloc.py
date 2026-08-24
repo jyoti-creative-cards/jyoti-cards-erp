@@ -61,13 +61,5 @@ def _assert_bill_number_free(db: Session, bill_number: str, *, exclude_bill_id: 
 
 
 def resolve_bill_number(db: Session, series_id: int, override: str | None = None) -> str:
-    """TEMP: custom number allowed. Series cursor advances only if using next series number."""
-    custom = (override or "").strip()
-    preview = bill_series_preview(db, series_id)
-    next_num = preview.get("next_bill_number")
-    if custom:
-        _assert_bill_number_free(db, custom)
-        if next_num and custom == next_num:
-            return allocate_bill_number(db, series_id)
-        return custom
+    """Bill number always comes from the series — no custom override."""
     return allocate_bill_number(db, series_id)

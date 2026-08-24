@@ -79,6 +79,7 @@ class VendorReceiptCreate(BaseModel):
     lines: List[VendorReceiptLineIn] = Field(..., min_length=1)
     additional_charges: Optional[Decimal] = Field(None, ge=0)
     total_billed_amount: Optional[Decimal] = Field(None, ge=0)
+    actual_ap_amount: Optional[Decimal] = Field(None, ge=0)  # actual payable when split-pricing differs from bill
     bill_number: Optional[str] = None
     order_receipt_number: Optional[str] = None
     bill_file_key: Optional[str] = None
@@ -126,9 +127,11 @@ class ReceivedLineForBill(BaseModel):
     our_product_id: str
     vendor_product_id: Optional[str] = None
     category: Optional[str] = None
-    quantity_received: int
+    quantity_placed: int = 0       # pending in placed order (to receive)
+    quantity_received: int         # unbilled received qty (to bill)
     quantity_unbilled: int
-    buying_price: Optional[str] = None
+    buying_price: Optional[str] = None        # actual catalog price per unit
+    buying_price_display: Optional[str] = None  # price shown on bill (after invoice_factor)
     unit: Optional[str]
     image_urls: List[str] = []
 
@@ -138,3 +141,4 @@ class VendorReceivedForBill(BaseModel):
     vendor_label: str
     order_id: Optional[int]
     lines: List[ReceivedLineForBill] = []
+    billing_context: Optional[dict] = None  # vendor's billing terms

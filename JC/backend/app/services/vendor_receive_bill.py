@@ -240,6 +240,28 @@ def receive_vendor_goods(
     }
 
 
+def _compute_billing_totals(
+    bc: dict,
+    invoice_subtotal: Decimal,
+) -> tuple[Decimal, Decimal]:
+    """Return (bill_total, extra_cash) from billing context.
+
+    bill_total = what the vendor's document shows (invoice_factor applied + freight + GST).
+    extra_cash = remaining amount for split-price vendors (factor < 1), no tax.
+    """
+    factor = Decimal(str(bc.get("invoice_factor", 1)))
+    packing = Decimal(str(bc.get("freight_charges", 0)))
+    gst_rate_pct = Decimal(str(bc.get("gst_rate", 0)))
+    gst_enabled = bool(bc.get("gst_enabled", False))
+    is_split = factor < Decimal("1")
+
+    base = invoice_subtotal + packing
+    gst = (base * gst_rate_pct / 100).quantize(Decimal("0.01")) if gst_enabled else Decimal("0")
+    bill_total = (base + gst).quantize(Decimal("0.01"))
+    extra_cash = invoice_subtotal.quantize(Decimal("0.01")) if is_split else Decimal("0")
+    return bill_total, extra_cash
+
+
 def bill_from_received(db: Session, auth: AuthContext, body: VendorReceiptCreate) -> dict:
     """Bill against unbilled received. No stock change. Posts AP + debit notes."""
     bill_lines = [
@@ -257,10 +279,6 @@ def bill_from_received(db: Session, auth: AuthContext, body: VendorReceiptCreate
             normalized.append((ln, bq))
     if not normalized:
         raise HTTPException(400, "enter billed quantity on at least one row")
-
-    line_bill_total = sum((ln.billed_amount or Decimal("0")) for ln, _ in normalized)
-    if body.total_billed_amount is None and line_bill_total <= 0:
-        raise HTTPException(400, "enter total bill amount for this shipment")
 
     vendor = db.get(Vendor, body.vendor_id)
     if not vendor or vendor.deleted_at:
@@ -282,6 +300,34 @@ def bill_from_received(db: Session, auth: AuthContext, body: VendorReceiptCreate
 
     from app.services.biz_date import as_biz_date, resolve_biz_dt
 
+    # --- Compute AP amounts from vendor billing context ---
+    bc = vendor.billing_context or {}
+    factor = Decimal(str(bc.get("invoice_factor", 1)))
+
+    # Build product map for this bill
+    prod_map: dict[int, CatalogProduct] = {}
+    for ln, bq in normalized:
+        prod = db.get(CatalogProduct, ln.catalog_product_id)
+        if not prod or prod.vendor_id != body.vendor_id:
+            raise HTTPException(400, f"invalid product {ln.catalog_product_id} for vendor")
+        prod_map[ln.catalog_product_id] = prod
+
+    invoice_subtotal = sum(
+        (prod_map[ln.catalog_product_id].buying_price * factor * bq).quantize(Decimal("0.01"))
+        for ln, bq in normalized
+    )
+
+    has_context = bool(bc)
+    if has_context:
+        computed_bill_total, extra_cash = _compute_billing_totals(bc, invoice_subtotal)
+        bill_total_for_receipt = computed_bill_total
+    else:
+        line_bill_total = sum((ln.billed_amount or Decimal("0")) for ln, _ in normalized)
+        if body.total_billed_amount is None and line_bill_total <= 0:
+            raise HTTPException(400, "enter total bill amount for this shipment")
+        bill_total_for_receipt = body.total_billed_amount
+        extra_cash = Decimal("0")
+
     billed = get_or_create_open_order(db, body.vendor_id, "billed", "billed")
     now = resolve_biz_dt(getattr(body, "bill_date", None))
 
@@ -302,7 +348,8 @@ def bill_from_received(db: Session, auth: AuthContext, body: VendorReceiptCreate
         placed_order_id=None,
         billed_placement_id=placement.id,
         additional_charges=body.additional_charges.quantize(Decimal("0.01")) if body.additional_charges is not None else None,
-        total_billed_amount=body.total_billed_amount.quantize(Decimal("0.01")) if body.total_billed_amount is not None else None,
+        total_billed_amount=bill_total_for_receipt.quantize(Decimal("0.01")) if bill_total_for_receipt is not None else None,
+        actual_ap_amount=(bill_total_for_receipt + extra_cash).quantize(Decimal("0.01")) if extra_cash > 0 else None,
         bill_number=(body.bill_number or "").strip() or None,
         bill_file_key=body.bill_file_key,
         notes=(getattr(body, "notes", None) or "").strip() or None,
@@ -317,11 +364,8 @@ def bill_from_received(db: Session, auth: AuthContext, body: VendorReceiptCreate
     line_summary = []
     reduce_pairs: list[tuple[int, int]] = []
     for ln, bq in normalized:
-        prod = db.get(CatalogProduct, ln.catalog_product_id)
-        if not prod or prod.vendor_id != body.vendor_id:
-            raise HTTPException(400, f"invalid product {ln.catalog_product_id} for vendor")
-        unbilled_recv = int(unbilled.get(prod.id, 0))
-        # quantity_received on bill receipt = how much of received pool this bill covers (same as billed here)
+        prod = prod_map[ln.catalog_product_id]
+        billed_amt = (prod.buying_price * factor * bq).quantize(Decimal("0.01")) if has_context else (ln.billed_amount or Decimal("0")).quantize(Decimal("0.01"))
         db.add(
             VendorOrderLine(
                 placement_id=placement.id,
@@ -330,7 +374,7 @@ def bill_from_received(db: Session, auth: AuthContext, body: VendorReceiptCreate
                 quantity=bq,
                 quantity_remaining=bq,
                 quantity_billed=bq,
-                billed_amount=(ln.billed_amount or Decimal("0")).quantize(Decimal("0.01")),
+                billed_amount=billed_amt,
                 buying_price=prod.buying_price,
             )
         )
@@ -339,10 +383,9 @@ def bill_from_received(db: Session, auth: AuthContext, body: VendorReceiptCreate
                 receipt_id=receipt.id,
                 catalog_product_id=prod.id,
                 our_product_id=prod.our_product_id,
-                # Bill receipts do not receive stock — keep 0 so summary qty is not double-counted
                 quantity_received=0,
                 quantity_billed=bq,
-                billed_amount=(ln.billed_amount or Decimal("0")).quantize(Decimal("0.01")),
+                billed_amount=billed_amt,
                 buying_price=prod.buying_price,
             )
         )
@@ -351,28 +394,36 @@ def bill_from_received(db: Session, auth: AuthContext, body: VendorReceiptCreate
 
     reduce_unbilled_received(db, body.vendor_id, reduce_pairs)
 
-    bill_total = receipt_bill_amount(db, receipt.id)
-    if bill_total != 0:
-        from app.models.accounts_payable import ApLedgerEntry
-
-        existing_bill = (
-            db.query(ApLedgerEntry)
-            .filter(ApLedgerEntry.receipt_id == receipt.id, ApLedgerEntry.entry_type == "bill")
-            .first()
+    # Post AP entry 1: bill document total
+    bill_num_label = (body.bill_number or "").strip() or str(receipt.id)
+    if bill_total_for_receipt and bill_total_for_receipt > 0:
+        post_bill_entry(
+            db,
+            vendor_id=body.vendor_id,
+            receipt_id=receipt.id,
+            amount=bill_total_for_receipt,
+            description=f"Bill {bill_num_label} — ₹{bill_total_for_receipt}",
+            actor_type=auth.actor_type,
+            actor_id=auth.actor_id,
+            actor_name=auth.actor_name,
+            value_date=as_biz_date(now),
+            created_at=now,
         )
-        if not existing_bill:
-            post_bill_entry(
-                db,
-                vendor_id=body.vendor_id,
-                receipt_id=receipt.id,
-                amount=bill_total,
-                description=f"Bill {body.bill_number or receipt.id} — ₹{bill_total}",
-                actor_type=auth.actor_type,
-                actor_id=auth.actor_id,
-                actor_name=auth.actor_name,
-                value_date=as_biz_date(now),
-                created_at=now,
-            )
+
+    # Post AP entry 2: extra cash for split-price vendors (remaining half, no tax)
+    if extra_cash > 0:
+        post_bill_entry(
+            db,
+            vendor_id=body.vendor_id,
+            receipt_id=receipt.id,
+            amount=extra_cash,
+            description=f"Bill {bill_num_label} — extra cash (half-price balance) ₹{extra_cash}",
+            actor_type=auth.actor_type,
+            actor_id=auth.actor_id,
+            actor_name=auth.actor_name,
+            value_date=as_biz_date(now),
+            created_at=now,
+        )
 
     bill_product_ids = {ln.catalog_product_id for ln, _ in normalized}
     for dn_in in body.debit_notes or []:

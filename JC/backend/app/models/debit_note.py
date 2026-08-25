@@ -26,6 +26,7 @@ class DebitNote(Base):
     quantity: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     unit_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 2), nullable=True)
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    source: Mapped[str] = mapped_column(String(10), nullable=False, default="manual", server_default="manual")
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_by_type: Mapped[str] = mapped_column(String(20), nullable=False)
     created_by_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)

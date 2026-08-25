@@ -122,6 +122,7 @@ def init_db() -> None:
         _migrate_bill_date()
         _migrate_bill_transport()
         _migrate_vendor_billing_terms()
+        _migrate_vendor_billing_v2()
         with engine.begin() as conn:
             conn.execute(text("SELECT 1"))
         _DB_READY = True
@@ -175,6 +176,26 @@ def _migrate_vendor_billing_terms() -> None:
         "UPDATE jc_vendors SET billing_pct = 50, additional_charge = 100, additional_charge_label = 'Packing charges', discount_pct = 0, gst_included = TRUE, gst_rate_pct = 18 WHERE business_name = 'VEE PEE CREATIONS'",
         "UPDATE jc_vendors SET billing_pct = 100, additional_charge = 0, additional_charge_label = 'Additional charge', discount_pct = 0, gst_included = TRUE, gst_rate_pct = 18 WHERE business_name = 'SINGHAL PRINT & GRAPHICS'",
         "UPDATE jc_vendors SET billing_pct = 100, additional_charge = 100, additional_charge_label = 'Freight charges', discount_pct = 6, gst_included = TRUE, gst_rate_pct = 18 WHERE business_name = 'GARG ENTERPRISES'",
+    ]
+    for stmt in stmts:
+        try:
+            with engine.begin() as conn:
+                s = stmt.replace(" ADD COLUMN IF NOT EXISTS ", " ADD COLUMN ") if _is_sqlite else stmt
+                conn.execute(text(s))
+        except Exception:
+            log.warning("Migration step skipped", exc_info=True)
+
+
+def _migrate_vendor_billing_v2() -> None:
+    """One-receipt-per-bill: bill_status + frozen expected amounts + debit note source."""
+    stmts = [
+        "ALTER TABLE jc_stock_receipts ADD COLUMN IF NOT EXISTS bill_status VARCHAR(20) NOT NULL DEFAULT 'pending_bill'",
+        "ALTER TABLE jc_stock_receipts ADD COLUMN IF NOT EXISTS expected_bill_amount NUMERIC(14,2)",
+        "ALTER TABLE jc_stock_receipts ADD COLUMN IF NOT EXISTS expected_extra_cash NUMERIC(14,2)",
+        "ALTER TABLE jc_stock_receipts ADD COLUMN IF NOT EXISTS billed_at TIMESTAMPTZ",
+        "ALTER TABLE jc_debit_notes ADD COLUMN IF NOT EXISTS source VARCHAR(10) NOT NULL DEFAULT 'manual'",
+        "UPDATE jc_stock_receipts SET bill_status = 'billed', billed_at = received_at WHERE receipt_type = 'vendor_bill'",
+        "UPDATE jc_stock_receipts SET bill_status = 'pending_bill' WHERE receipt_type = 'vendor_receive'",
     ]
     for stmt in stmts:
         try:

@@ -530,20 +530,36 @@ def get_pending_bill_receipts(
     if not vendor or vendor.deleted_at:
         raise HTTPException(404, "vendor not found")
     label = _vendor_label(vendor, _vendor_city(db, vendor))
+    from sqlalchemy import func
+
     rows = (
         db.query(StockReceipt)
         .filter(StockReceipt.vendor_id == vendor_id, StockReceipt.bill_status == "pending_bill")
         .order_by(StockReceipt.received_at.asc())
         .all()
     )
+    receipt_ids = [r.id for r in rows]
+    line_stats: dict[int, tuple[int, int]] = {}
+    if receipt_ids:
+        agg = (
+            db.query(
+                StockReceiptLine.receipt_id,
+                func.count(StockReceiptLine.id),
+                func.coalesce(func.sum(StockReceiptLine.quantity_received), 0),
+            )
+            .filter(StockReceiptLine.receipt_id.in_(receipt_ids))
+            .group_by(StockReceiptLine.receipt_id)
+            .all()
+        )
+        line_stats = {int(rid): (int(cnt), int(qty)) for rid, cnt, qty in agg}
     receipts = []
     for r in rows:
-        lines = db.query(StockReceiptLine).filter(StockReceiptLine.receipt_id == r.id).all()
+        line_count, total_qty = line_stats.get(r.id, (0, 0))
         receipts.append(PendingBillReceipt(
             receipt_id=r.id, order_receipt_number=r.order_receipt_number, received_at=r.received_at,
             expected_bill_amount=format(r.expected_bill_amount, "f") if r.expected_bill_amount is not None else None,
             expected_extra_cash=format(r.expected_extra_cash, "f") if r.expected_extra_cash is not None else None,
-            line_count=len(lines), total_quantity=sum(l.quantity_received for l in lines),
+            line_count=line_count, total_quantity=total_qty,
         ))
     return VendorPendingBillList(vendor_id=vendor_id, vendor_label=label, receipts=receipts)
 

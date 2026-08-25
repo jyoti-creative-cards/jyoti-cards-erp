@@ -11,7 +11,7 @@ from app.models.stock import StockReceipt, StockReceiptLine
 from app.models.debit_note import DebitNote
 from app.models.accounts_payable import ApLedgerEntry
 from app.models.vendor_order import VendorOrder, VendorOrderLine, VendorOrderPlacement
-from app.services.ap_ledger import receipt_bill_amount, receipt_debit_note_total
+from app.services.ap_ledger import debit_note_payable_effect
 from app.schemas.ledger import EntityLedgerEntry, LedgerLineDetail
 from app.services.storage import presigned_url
 
@@ -38,8 +38,13 @@ def build_vendor_ledger(db: Session, vendor_id: int, *, show_actor: bool = True,
         .order_by(VendorOrderPlacement.placed_at.desc())
         .all()
     )
+    placement_ids = [p.id for p, _ in placements]
+    plines_by: dict[int, list] = defaultdict(list)
+    if placement_ids:
+        for ln in db.query(VendorOrderLine).filter(VendorOrderLine.placement_id.in_(placement_ids)).all():
+            plines_by[ln.placement_id].append(ln)
     for placement, order in placements:
-        lines = db.query(VendorOrderLine).filter(VendorOrderLine.placement_id == placement.id).all()
+        lines = plines_by.get(placement.id) or []
         line_details = [
             LedgerLineDetail(
                 our_product_id=ln.our_product_id,
@@ -84,8 +89,41 @@ def build_vendor_ledger(db: Session, vendor_id: int, *, show_actor: bool = True,
         .order_by(StockReceipt.received_at.desc())
         .all()
     )
+    receipt_ids = [r.id for r in receipts]
+    rlines_by: dict[int, list] = defaultdict(list)
+    if receipt_ids:
+        for ln in db.query(StockReceiptLine).filter(StockReceiptLine.receipt_id.in_(receipt_ids)).all():
+            rlines_by[ln.receipt_id].append(ln)
+
+    all_notes = (
+        db.query(DebitNote)
+        .filter(DebitNote.vendor_id == vendor_id)
+        .order_by(DebitNote.created_at.desc())
+        .all()
+    )
+    notes_by_receipt: dict[int, list] = defaultdict(list)
+    for n in all_notes:
+        notes_by_receipt[n.receipt_id].append(n)
+    receipts_by_id = {r.id: r for r in receipts}
+
+    def _receipt_bill_amount(receipt: StockReceipt, rlines: list) -> Decimal:
+        if receipt.actual_ap_amount is not None:
+            return receipt.actual_ap_amount.quantize(Decimal("0.01"))
+        if receipt.total_billed_amount is not None:
+            return receipt.total_billed_amount.quantize(Decimal("0.01"))
+        line_total = sum((ln.billed_amount or Decimal("0") for ln in rlines), Decimal("0"))
+        extra = receipt.additional_charges if receipt.additional_charges else Decimal("0")
+        return (line_total + extra).quantize(Decimal("0.01"))
+
+    def _receipt_debit_note_total(receipt_id: int) -> Decimal:
+        total = sum(
+            (debit_note_payable_effect(n.amount, n.note_type) for n in notes_by_receipt.get(receipt_id, [])),
+            Decimal("0"),
+        )
+        return total.quantize(Decimal("0.01"))
+
     for receipt in receipts:
-        rlines = db.query(StockReceiptLine).filter(StockReceiptLine.receipt_id == receipt.id).all()
+        rlines = rlines_by.get(receipt.id) or []
         line_details = [
             LedgerLineDetail(
                 our_product_id=ln.our_product_id, quantity_received=ln.quantity_received,
@@ -108,8 +146,8 @@ def build_vendor_ledger(db: Session, vendor_id: int, *, show_actor: bool = True,
             ),
         ))
         if receipt.bill_status == "billed":
-            bill_amt = receipt_bill_amount(db, receipt.id)
-            dn_total = receipt_debit_note_total(db, receipt.id)
+            bill_amt = _receipt_bill_amount(receipt, rlines)
+            dn_total = _receipt_debit_note_total(receipt.id)
             entries.append((
                 receipt.billed_at or receipt.received_at,
                 EntityLedgerEntry(
@@ -127,8 +165,8 @@ def build_vendor_ledger(db: Session, vendor_id: int, *, show_actor: bool = True,
                 ),
             ))
 
-    for note in db.query(DebitNote).filter(DebitNote.vendor_id == vendor_id).order_by(DebitNote.created_at.desc()).all():
-        receipt = db.get(StockReceipt, note.receipt_id)
+    for note in all_notes:
+        receipt = receipts_by_id.get(note.receipt_id)
         summary = (
             f"{note.our_product_id} × {note.quantity} = ₹{note.amount}"
             if note.note_type == "item"

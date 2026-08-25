@@ -195,7 +195,6 @@ def _migrate_vendor_billing_v2() -> None:
         "ALTER TABLE jc_stock_receipts ADD COLUMN IF NOT EXISTS billed_at TIMESTAMPTZ",
         "ALTER TABLE jc_debit_notes ADD COLUMN IF NOT EXISTS source VARCHAR(10) NOT NULL DEFAULT 'manual'",
         "UPDATE jc_stock_receipts SET bill_status = 'billed', billed_at = received_at WHERE receipt_type = 'vendor_bill'",
-        "UPDATE jc_stock_receipts SET bill_status = 'pending_bill' WHERE receipt_type = 'vendor_receive'",
     ]
     for stmt in stmts:
         try:

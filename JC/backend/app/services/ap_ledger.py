@@ -453,26 +453,67 @@ def set_opening_balance(
 
 
 def build_ap_ledger(db: Session, vendor_id: int) -> list[dict]:
+    from app.services.debit_notes import infer_direction
+
     entries = (
         db.query(ApLedgerEntry)
         .filter(ApLedgerEntry.vendor_id == vendor_id)
         .order_by(ApLedgerEntry.created_at.asc(), ApLedgerEntry.id.asc())
         .all()
     )
+
+    receipt_ids = {e.receipt_id for e in entries if e.receipt_id}
+    receipts_by_id: dict[int, StockReceipt] = {}
+    rlines_by_receipt: dict[int, list] = {}
+    notes_by_receipt: dict[int, list] = {}
+    if receipt_ids:
+        receipts_by_id = {r.id: r for r in db.query(StockReceipt).filter(StockReceipt.id.in_(receipt_ids)).all()}
+        for ln in db.query(StockReceiptLine).filter(StockReceiptLine.receipt_id.in_(receipt_ids)).all():
+            rlines_by_receipt.setdefault(ln.receipt_id, []).append(ln)
+        for dn in db.query(DebitNote).filter(DebitNote.receipt_id.in_(receipt_ids)).all():
+            notes_by_receipt.setdefault(dn.receipt_id, []).append(dn)
+
+    debit_note_ids = {e.debit_note_id for e in entries if e.debit_note_id}
+    notes_by_id: dict[int, DebitNote] = {}
+    if debit_note_ids:
+        # Reuse already-fetched rows where possible to avoid a second round-trip
+        have = {n.id for notes in notes_by_receipt.values() for n in notes}
+        missing = debit_note_ids - have
+        notes_by_id = {n.id: n for notes in notes_by_receipt.values() for n in notes}
+        if missing:
+            for dn in db.query(DebitNote).filter(DebitNote.id.in_(missing)).all():
+                notes_by_id[dn.id] = dn
+
+    def _bill_amount(receipt: StockReceipt, rlines: list) -> Decimal:
+        if receipt.actual_ap_amount is not None:
+            return receipt.actual_ap_amount.quantize(Decimal("0.01"))
+        if receipt.total_billed_amount is not None:
+            return receipt.total_billed_amount.quantize(Decimal("0.01"))
+        line_total = sum((ln.billed_amount or Decimal("0") for ln in rlines), Decimal("0"))
+        extra = receipt.additional_charges if receipt.additional_charges else Decimal("0")
+        return (line_total + extra).quantize(Decimal("0.01"))
+
+    def _debit_note_total(rid: int) -> Decimal:
+        total = sum(
+            (debit_note_payable_effect(n.amount, n.note_type) for n in notes_by_receipt.get(rid, [])),
+            Decimal("0"),
+        )
+        return total.quantize(Decimal("0.01"))
+
     balance = Decimal("0")
     out = []
     for e in entries:
         balance = (balance + e.amount).quantize(Decimal("0.01"))
-        receipt = db.get(StockReceipt, e.receipt_id) if e.receipt_id else None
+        receipt = receipts_by_id.get(e.receipt_id) if e.receipt_id else None
+        rlines = rlines_by_receipt.get(e.receipt_id, []) if e.receipt_id else []
         bill_amount = receipt_debit_total = net_payable = None
         if e.entry_type == "bill" and e.receipt_id:
-            bill_amount = receipt_bill_amount(db, e.receipt_id)
-            debit_note_total = receipt_debit_note_total(db, e.receipt_id)
+            bill_amount = _bill_amount(receipt, rlines)
+            debit_note_total = _debit_note_total(e.receipt_id)
             net_payable = (bill_amount + debit_note_total).quantize(Decimal("0.01"))
             receipt_debit_total = debit_note_total
         details: dict = {}
         if e.receipt_id and receipt:
-            rlines = db.query(StockReceiptLine).filter(StockReceiptLine.receipt_id == e.receipt_id).all()
             details["lines"] = [
                 {
                     "our_product_id": ln.our_product_id,
@@ -484,9 +525,8 @@ def build_ap_ledger(db: Session, vendor_id: int) -> list[dict]:
             ]
             if receipt.additional_charges:
                 details["additional_charges"] = format(receipt.additional_charges, "f")
-            dns = db.query(DebitNote).filter(DebitNote.receipt_id == e.receipt_id).all()
+            dns = notes_by_receipt.get(e.receipt_id, [])
             if dns:
-                from app.services.debit_notes import infer_direction
                 details["debit_notes"] = [
                     {
                         "id": dn.id,
@@ -501,9 +541,8 @@ def build_ap_ledger(db: Session, vendor_id: int) -> list[dict]:
                     for dn in dns
                 ]
         if e.debit_note_id:
-            dn = db.get(DebitNote, e.debit_note_id)
+            dn = notes_by_id.get(e.debit_note_id)
             if dn:
-                from app.services.debit_notes import infer_direction
                 details["debit_note"] = {
                     "id": dn.id,
                     "note_type": dn.note_type,

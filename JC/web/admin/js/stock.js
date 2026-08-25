@@ -1467,6 +1467,7 @@ const Stock = (() => {
             })),
             bill_number: billNum,
             bill_file_key: key,
+            bill_date: eventDate,
             notes: receiptMeta.notes || null,
             debit_notes: debitNotesPayload,
           }
@@ -1621,7 +1622,9 @@ const Stock = (() => {
     try {
       const receipt = await ctx.api(`/stock/receipts/${receiptId}`, {}, 0);
       editReceiptId = receipt.id;
-      editReceiptType = receipt.receipt_type || "vendor_order";
+      // One-to-one model: receipt_type stays "vendor_receive" for life; bill_status
+      // (not receipt_type) tells us whether this is now a bill to edit.
+      editReceiptType = receipt.bill_status === "billed" ? "vendor_bill" : (receipt.receipt_type || "vendor_order");
       wizardMode = "edit_receipt";
       wizardStep = 1;
       wizardVendorId = receipt.vendor_id;

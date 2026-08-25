@@ -721,6 +721,7 @@ def get_receipt_detail(
         "id": receipt.id,
         "vendor_id": receipt.vendor_id,
         "receipt_type": receipt.receipt_type,
+        "bill_status": receipt.bill_status,
         "bill_number": receipt.bill_number,
         "order_receipt_number": receipt.order_receipt_number,
         "notes": receipt.notes,

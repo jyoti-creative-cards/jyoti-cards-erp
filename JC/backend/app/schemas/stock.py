@@ -99,6 +99,7 @@ class VendorBillIn(BaseModel):
     lines: List[VendorBillLineIn] = []
     bill_number: Optional[str] = None
     bill_file_key: Optional[str] = None
+    bill_date: Optional[date] = None  # vendor's paper invoice date; default = today
     notes: Optional[str] = None
     debit_notes: List[DebitNoteIn] = []
 

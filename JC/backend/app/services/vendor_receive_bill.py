@@ -208,7 +208,7 @@ def bill_receipt(db: Session, auth: AuthContext, receipt_id: int, body: VendorBi
     is_split = vendor.billing_pct < 100
 
     from app.services.biz_date import as_biz_date, resolve_biz_dt
-    now = resolve_biz_dt(None)
+    now = resolve_biz_dt(body.bill_date)
 
     for ln, bq in normalized:
         ln.quantity_billed = bq

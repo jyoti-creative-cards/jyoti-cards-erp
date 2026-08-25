@@ -121,6 +121,7 @@ def init_db() -> None:
         _migrate_bill_cancel()
         _migrate_bill_date()
         _migrate_bill_transport()
+        _migrate_vendor_billing_terms()
         with engine.begin() as conn:
             conn.execute(text("SELECT 1"))
         _DB_READY = True
@@ -157,6 +158,29 @@ def _migrate_bill_transport() -> None:
                 if _is_sqlite:
                     stmt = stmt.replace(" ADD COLUMN IF NOT EXISTS ", " ADD COLUMN ")
                 conn.execute(text(stmt))
+        except Exception:
+            log.warning("Migration step skipped", exc_info=True)
+
+
+def _migrate_vendor_billing_terms() -> None:
+    """Typed billing columns replacing billing_context JSON."""
+    stmts = [
+        "ALTER TABLE jc_vendors ADD COLUMN IF NOT EXISTS billing_pct NUMERIC(5,2) NOT NULL DEFAULT 100",
+        "ALTER TABLE jc_vendors ADD COLUMN IF NOT EXISTS additional_charge NUMERIC(10,2) NOT NULL DEFAULT 100",
+        "ALTER TABLE jc_vendors ADD COLUMN IF NOT EXISTS additional_charge_label VARCHAR(50) NOT NULL DEFAULT 'Additional charge'",
+        "ALTER TABLE jc_vendors ADD COLUMN IF NOT EXISTS discount_pct NUMERIC(5,2) NOT NULL DEFAULT 0",
+        "ALTER TABLE jc_vendors ADD COLUMN IF NOT EXISTS gst_included BOOLEAN NOT NULL DEFAULT TRUE",
+        "ALTER TABLE jc_vendors ADD COLUMN IF NOT EXISTS gst_rate_pct NUMERIC(5,2) NOT NULL DEFAULT 18",
+        "ALTER TABLE jc_vendors ADD COLUMN IF NOT EXISTS billing_notes TEXT",
+        "UPDATE jc_vendors SET billing_pct = 50, additional_charge = 100, additional_charge_label = 'Packing charges', discount_pct = 0, gst_included = TRUE, gst_rate_pct = 18 WHERE business_name = 'VEE PEE CREATIONS'",
+        "UPDATE jc_vendors SET billing_pct = 100, additional_charge = 0, additional_charge_label = 'Additional charge', discount_pct = 0, gst_included = TRUE, gst_rate_pct = 18 WHERE business_name = 'SINGHAL PRINT & GRAPHICS'",
+        "UPDATE jc_vendors SET billing_pct = 100, additional_charge = 100, additional_charge_label = 'Freight charges', discount_pct = 6, gst_included = TRUE, gst_rate_pct = 18 WHERE business_name = 'GARG ENTERPRISES'",
+    ]
+    for stmt in stmts:
+        try:
+            with engine.begin() as conn:
+                s = stmt.replace(" ADD COLUMN IF NOT EXISTS ", " ADD COLUMN ") if _is_sqlite else stmt
+                conn.execute(text(s))
         except Exception:
             log.warning("Migration step skipped", exc_info=True)
 

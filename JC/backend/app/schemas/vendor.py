@@ -31,6 +31,16 @@ class VendorUpdate(BaseModel):
     is_active: Optional[bool] = None
 
 
+class VendorBillingTerms(BaseModel):
+    billing_pct: float = Field(100.0, gt=0, le=100)
+    additional_charge: float = Field(100.0, ge=0)
+    additional_charge_label: str = Field("Additional charge", max_length=50)
+    discount_pct: float = Field(0.0, ge=0, le=100)
+    gst_included: bool = True
+    gst_rate_pct: float = Field(18.0, ge=0, le=100)
+    billing_notes: Optional[str] = None
+
+
 class VendorPublic(BaseModel):
     id: int
     business_name: str
@@ -45,6 +55,7 @@ class VendorPublic(BaseModel):
     is_active: bool
     opening_balance_due: Optional[str] = None
     opening_balance_as_on: Optional[str] = None
+    billing_terms: VendorBillingTerms
     created_at: datetime
     updated_at: datetime
     deleted_at: Optional[datetime] = None

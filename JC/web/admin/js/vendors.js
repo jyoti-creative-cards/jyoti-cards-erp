@@ -610,6 +610,15 @@ const Vendors = (() => {
     const v = await ctx.api(`/vendors/${id}`);
     editingId = id;
     const cities = ctx.getCities();
+    const billing = v.billing_terms || {
+      billing_pct: 100,
+      additional_charge: 100,
+      additional_charge_label: "Additional charge",
+      discount_pct: 0,
+      gst_included: true,
+      gst_rate_pct: 18,
+      billing_notes: "",
+    };
     document.getElementById("vendor-edit-body").innerHTML = `
       <div style="display:grid;gap:16px;">
         <div><label class="label">Business Name *</label><input id="ve-business_name" class="input" value="${ctx.esc(v.business_name)}" /></div>
@@ -625,6 +634,24 @@ const Vendors = (() => {
         <div><label class="label">Alias / search name</label><input id="ve-alias" class="input" value="${ctx.esc(v.alias || "")}" /></div>
         <div><label class="label">GST Number</label><input id="ve-gst_number" class="input" value="${ctx.esc(v.gst_number || "")}" placeholder="22AAAAA0000A1Z5" maxlength="15" style="text-transform:uppercase;" /></div>
         <div><label class="label">Address</label><textarea id="ve-address" class="input" rows="2">${ctx.esc(v.address || "")}</textarea></div>
+        ${ctx.isAdmin?.() ? `
+          <div style="border-top:1px solid var(--line);padding-top:16px;">
+            <div style="font-weight:600;margin-bottom:12px;">Billing terms (admin only)</div>
+            <div style="display:grid;gap:16px;">
+              <div class="create-field-row">
+                <div><label class="label">Billing %</label><input id="ve-billing_pct" class="input" type="number" min="0.01" max="100" step="0.01" value="${ctx.esc(String(billing.billing_pct ?? 100))}" /></div>
+                <div><label class="label">Additional charge</label><input id="ve-additional_charge" class="input" type="number" min="0" step="0.01" value="${ctx.esc(String(billing.additional_charge ?? 100))}" /></div>
+              </div>
+              <div><label class="label">Additional charge label</label><input id="ve-additional_charge_label" class="input" maxlength="50" value="${ctx.esc(billing.additional_charge_label || "Additional charge")}" /></div>
+              <div class="create-field-row">
+                <div><label class="label">Discount %</label><input id="ve-discount_pct" class="input" type="number" min="0" max="100" step="0.01" value="${ctx.esc(String(billing.discount_pct ?? 0))}" /></div>
+                <div><label class="label">GST rate %</label><input id="ve-gst_rate_pct" class="input" type="number" min="0" max="100" step="0.01" value="${ctx.esc(String(billing.gst_rate_pct ?? 18))}" /></div>
+              </div>
+              <label style="display:flex;align-items:center;gap:8px;"><input id="ve-gst_included" type="checkbox" ${billing.gst_included !== false ? "checked" : ""} /> GST included</label>
+              <div><label class="label">Billing notes</label><textarea id="ve-billing_notes" class="input" rows="3">${ctx.esc(billing.billing_notes || "")}</textarea></div>
+            </div>
+          </div>
+        ` : ""}
       </div>`;
     document.getElementById("vendor-edit-footer").innerHTML = `
       <button class="btn btn-secondary" onclick="Vendors.closeEdit()">Cancel</button>
@@ -653,6 +680,21 @@ const Vendors = (() => {
     if (!sec.ok) return ctx.toast("Secondary phone must be 10 digits or blank", "error");
     const gst = validateGst(document.getElementById("ve-gst_number").value);
     if (!gst.ok) return ctx.toast("GST looks invalid — use 15-char GSTIN or leave blank", "error");
+    const billingPct = ctx.isAdmin?.() ? parseFloat(document.getElementById("ve-billing_pct").value) : null;
+    const additionalCharge = ctx.isAdmin?.() ? parseFloat(document.getElementById("ve-additional_charge").value) : null;
+    const additionalChargeLabel = ctx.isAdmin?.() ? document.getElementById("ve-additional_charge_label").value.trim() : null;
+    const discountPct = ctx.isAdmin?.() ? parseFloat(document.getElementById("ve-discount_pct").value) : null;
+    const gstRatePct = ctx.isAdmin?.() ? parseFloat(document.getElementById("ve-gst_rate_pct").value) : null;
+    const gstIncluded = ctx.isAdmin?.() ? document.getElementById("ve-gst_included").checked : null;
+    const billingNotes = ctx.isAdmin?.() ? (document.getElementById("ve-billing_notes").value.trim() || null) : null;
+    if (ctx.isAdmin?.()) {
+      if (!Number.isFinite(billingPct) || billingPct <= 0 || billingPct > 100) return ctx.toast("Billing % must be between 0.01 and 100", "error");
+      if (!Number.isFinite(additionalCharge) || additionalCharge < 0) return ctx.toast("Additional charge must be 0 or more", "error");
+      if (!additionalChargeLabel) return ctx.toast("Additional charge label required", "error");
+      if (additionalChargeLabel.length > 50) return ctx.toast("Additional charge label too long", "error");
+      if (!Number.isFinite(discountPct) || discountPct < 0 || discountPct > 100) return ctx.toast("Discount % must be between 0 and 100", "error");
+      if (!Number.isFinite(gstRatePct) || gstRatePct < 0 || gstRatePct > 100) return ctx.toast("GST rate % must be between 0 and 100", "error");
+    }
     try {
       await ctx.api(`/vendors/${editingId}`, { method: "PATCH", body: JSON.stringify({
         business_name: business,
@@ -664,6 +706,17 @@ const Vendors = (() => {
         gst_number: gst.value,
         address: document.getElementById("ve-address").value.trim() || null,
       })});
+      if (ctx.isAdmin?.()) {
+        await ctx.api(`/vendors/${editingId}/billing-terms`, { method: "PATCH", body: JSON.stringify({
+          billing_pct: billingPct,
+          additional_charge: additionalCharge,
+          additional_charge_label: additionalChargeLabel,
+          discount_pct: discountPct,
+          gst_included: gstIncluded,
+          gst_rate_pct: gstRatePct,
+          billing_notes: billingNotes,
+        })});
+      }
       const id = editingId;
       closeEdit();
       App.closeDetail();

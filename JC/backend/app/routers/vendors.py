@@ -16,7 +16,7 @@ from app.models.catalog_product import CatalogProduct
 from app.models.city import City
 from app.models.vendor import Vendor
 from app.schemas.ledger import EntityLedgerResponse
-from app.schemas.vendor import VendorCreate, VendorPublic, VendorUpdate
+from app.schemas.vendor import VendorBillingTerms, VendorCreate, VendorPublic, VendorUpdate
 from app.services.activity import log_from_auth
 from app.services.ledger import build_vendor_ledger
 from app.services.history import TRACKED_FIELDS, diff_summary, list_entity_history, record_entity_history, row_snapshot
@@ -58,6 +58,11 @@ def _to_public(row: Vendor, db: Session, include_history: bool = False) -> Vendo
         is_active=row.is_active,
         opening_balance_due=format(opening.amount, "f") if opening else None,
         opening_balance_as_on=opening.value_date.isoformat() if opening and opening.value_date else None,
+        billing_terms=VendorBillingTerms(
+            billing_pct=float(row.billing_pct), additional_charge=float(row.additional_charge),
+            additional_charge_label=row.additional_charge_label, discount_pct=float(row.discount_pct),
+            gst_included=row.gst_included, gst_rate_pct=float(row.gst_rate_pct), billing_notes=row.billing_notes,
+        ),
         created_at=row.created_at,
         updated_at=row.updated_at,
         deleted_at=row.deleted_at,
@@ -127,6 +132,11 @@ def list_vendors(
                 city_name=city_name,
                 gst_number=r.gst_number,
                 is_active=r.is_active,
+                billing_terms=VendorBillingTerms(
+                    billing_pct=float(r.billing_pct), additional_charge=float(r.additional_charge),
+                    additional_charge_label=r.additional_charge_label, discount_pct=float(r.discount_pct),
+                    gst_included=r.gst_included, gst_rate_pct=float(r.gst_rate_pct), billing_notes=r.billing_notes,
+                ),
                 created_at=r.created_at,
                 updated_at=r.updated_at,
                 deleted_at=r.deleted_at,
@@ -142,6 +152,39 @@ def get_vendor(vendor_id: int, db: Session = Depends(get_db)) -> VendorPublic:
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="vendor not found")
     return _to_public(row, db, include_history=True)
+
+
+@router.get("/{vendor_id}/billing-terms", response_model=VendorBillingTerms, dependencies=[Depends(require_permission("vendors.read"))])
+def get_vendor_billing_terms(vendor_id: int, db: Session = Depends(get_db)) -> VendorBillingTerms:
+    row = db.get(Vendor, vendor_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="vendor not found")
+    return _to_public(row, db).billing_terms
+
+
+@router.patch("/{vendor_id}/billing-terms", response_model=VendorBillingTerms, dependencies=[Depends(require_permission("vendors.write"))])
+def update_vendor_billing_terms(
+    vendor_id: int,
+    body: VendorBillingTerms,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("vendors.write")),
+) -> VendorBillingTerms:
+    row = db.get(Vendor, vendor_id)
+    if row is None or not row.is_active:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="vendor not found")
+    if not auth.is_admin:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="admin only")
+    row.billing_pct = body.billing_pct
+    row.additional_charge = body.additional_charge
+    row.additional_charge_label = body.additional_charge_label
+    row.discount_pct = body.discount_pct
+    row.gst_included = body.gst_included
+    row.gst_rate_pct = body.gst_rate_pct
+    row.billing_notes = body.billing_notes
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _to_public(row, db).billing_terms
 
 
 @router.get("/{vendor_id}/ledger", response_model=EntityLedgerResponse, dependencies=[Depends(require_permission("vendors.read"))])

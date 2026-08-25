@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, func, true as sql_true
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, func, true as sql_true
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -22,6 +23,13 @@ class Vendor(Base):
     city_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("jc_cities.id", ondelete="RESTRICT"), nullable=True, index=True)
     gst_number: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     billing_context: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    billing_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False, default=Decimal("100"), server_default="100")
+    additional_charge: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=Decimal("100"), server_default="100")
+    additional_charge_label: Mapped[str] = mapped_column(String(50), nullable=False, default="Additional charge", server_default="Additional charge")
+    discount_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False, default=Decimal("0"), server_default="0")
+    gst_included: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=sql_true())
+    gst_rate_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False, default=Decimal("18"), server_default="18")
+    billing_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=sql_true())
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

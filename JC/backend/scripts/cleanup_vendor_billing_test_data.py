@@ -18,11 +18,15 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from app.config import get_settings
 
-EXPECTED_RECEIPTS = (
-    ("test vendor", "1234"),
-    ("delete ven", "886"),
-    ("delete ven", "8757"),
-    ("DEV PRINT & PACK PRIVATE LIMITED", "direct opening demo"),
+JUNK_VENDOR_RECEIPT_COUNTS = {
+    "test vendor": 2,
+    "delete ven": 4,
+}
+
+REAL_VENDOR_NAME = "DEV PRINT & PACK PRIVATE LIMITED"
+REAL_VENDOR_MATCHES = (
+    ("bill_number", "direct opening demo"),
+    ("order_receipt_number", "OLD YEAR"),
 )
 
 JUNK_VENDOR_NAMES = (
@@ -82,7 +86,7 @@ def print_rows(title: str, rows: Iterable[dict], fields: tuple[str, ...]) -> Non
         print(f"  - {', '.join(bits)}")
 
 
-def fetch_receipt(cursor: RealDictCursor, vendor_name: str, number: str) -> dict:
+def fetch_vendor_receipts(cursor: RealDictCursor, vendor_name: str) -> list[dict]:
     cursor.execute(
         """
         SELECT
@@ -100,10 +104,42 @@ def fetch_receipt(cursor: RealDictCursor, vendor_name: str, number: str) -> dict
         FROM jc_stock_receipts r
         JOIN jc_vendors v ON v.id = r.vendor_id
         WHERE v.business_name = %s
-          AND (r.order_receipt_number = %s OR r.bill_number = %s)
         ORDER BY r.id
         """,
-        (vendor_name, number, number),
+        (vendor_name,),
+    )
+    return cursor.fetchall()
+
+
+def fetch_exact_vendor_receipt(
+    cursor: RealDictCursor,
+    vendor_name: str,
+    field_name: str,
+    expected_value: str,
+) -> dict:
+    if field_name not in {"bill_number", "order_receipt_number"}:
+        raise ValueError(f"Unsupported field name: {field_name}")
+    cursor.execute(
+        f"""
+        SELECT
+            r.id,
+            v.id AS vendor_id,
+            v.business_name,
+            r.receipt_type,
+            r.order_receipt_number,
+            r.bill_number,
+            r.total_billed_amount,
+            r.actual_ap_amount,
+            r.expected_bill_amount,
+            r.bill_status,
+            r.received_at
+        FROM jc_stock_receipts r
+        JOIN jc_vendors v ON v.id = r.vendor_id
+        WHERE v.business_name = %s
+          AND r.{field_name} = %s
+        ORDER BY r.id
+        """,
+        (vendor_name, expected_value),
     )
     rows = cursor.fetchall()
     if len(rows) != 1:
@@ -117,7 +153,7 @@ def fetch_receipt(cursor: RealDictCursor, vendor_name: str, number: str) -> dict
         ]
         raise RuntimeError(
             "Safety check failed for "
-            f"vendor={vendor_name!r}, number={number!r}: expected exactly 1 receipt, found {len(rows)}. "
+            f"vendor={vendor_name!r}, {field_name}={expected_value!r}: expected exactly 1 receipt, found {len(rows)}. "
             f"Matches: {details}"
         )
     return rows[0]
@@ -161,11 +197,74 @@ def main() -> int:
 
     try:
         print("")
-        print("Step 1: Match the 4 expected stock receipts.")
+        print("Step 1: Match the 8 expected stock receipts.")
         matched_receipts: list[dict] = []
         seen_receipt_ids: set[int] = set()
-        for vendor_name, number in EXPECTED_RECEIPTS:
-            receipt = fetch_receipt(cursor, vendor_name, number)
+        for vendor_name, expected_count in JUNK_VENDOR_RECEIPT_COUNTS.items():
+            vendor_receipts = fetch_vendor_receipts(cursor, vendor_name)
+            if len(vendor_receipts) != expected_count:
+                details = [
+                    (
+                        f"id={row['id']}, receipt_type={row['receipt_type']}, "
+                        f"order_receipt_number={format_value(row['order_receipt_number'])}, "
+                        f"bill_number={format_value(row['bill_number'])}"
+                    )
+                    for row in vendor_receipts
+                ]
+                raise RuntimeError(
+                    "Safety check failed for "
+                    f"vendor={vendor_name!r}: expected exactly {expected_count} receipt rows, found {len(vendor_receipts)}. "
+                    f"Matches: {details}"
+                )
+            print(f"  - vendor={vendor_name!r} -> matched {len(vendor_receipts)} row(s)")
+            for receipt in vendor_receipts:
+                if receipt["id"] in seen_receipt_ids:
+                    raise RuntimeError(
+                        f"Safety check failed: receipt id {receipt['id']} matched more than one expected target."
+                    )
+                seen_receipt_ids.add(receipt["id"])
+                matched_receipts.append(receipt)
+
+        dev_vendor_receipts: list[dict] = []
+        for field_name, expected_value in REAL_VENDOR_MATCHES:
+            receipt = fetch_exact_vendor_receipt(
+                cursor,
+                REAL_VENDOR_NAME,
+                field_name,
+                expected_value,
+            )
+            if receipt["id"] in seen_receipt_ids:
+                raise RuntimeError(
+                    f"Safety check failed: receipt id {receipt['id']} matched more than one expected target."
+                )
+            seen_receipt_ids.add(receipt["id"])
+            dev_vendor_receipts.append(receipt)
+            matched_receipts.append(receipt)
+
+        if len(dev_vendor_receipts) != len(REAL_VENDOR_MATCHES):
+            raise RuntimeError(
+                "Safety check failed for "
+                f"vendor={REAL_VENDOR_NAME!r}: expected exactly {len(REAL_VENDOR_MATCHES)} matched rows, "
+                f"found {len(dev_vendor_receipts)}."
+            )
+        for receipt in dev_vendor_receipts:
+            is_expected_match = (
+                receipt["bill_number"] == "direct opening demo"
+                or receipt["order_receipt_number"] == "OLD YEAR"
+            )
+            if not is_expected_match:
+                raise RuntimeError(
+                    "Safety check failed for "
+                    f"vendor={REAL_VENDOR_NAME!r}: accidentally matched unexpected receipt id={receipt['id']}."
+                )
+        print(f"  - vendor={REAL_VENDOR_NAME!r} -> matched {len(dev_vendor_receipts)} row(s)")
+
+        if len(matched_receipts) != 8:
+            raise RuntimeError(
+                f"Safety check failed: expected exactly 8 matched receipts, found {len(matched_receipts)}."
+            )
+
+        for receipt in matched_receipts:
             amount = (
                 receipt["actual_ap_amount"]
                 if receipt["actual_ap_amount"] is not None
@@ -175,18 +274,12 @@ def main() -> int:
                 amount = receipt["expected_bill_amount"]
             print(
                 "  - "
-                f"target vendor={vendor_name!r}, number={number!r} -> "
-                f"id={receipt['id']}, receipt_type={receipt['receipt_type']}, "
+                f"id={receipt['id']}, vendor={receipt['business_name']!r}, "
+                f"receipt_type={receipt['receipt_type']}, "
                 f"order_receipt_number={format_value(receipt['order_receipt_number'])}, "
                 f"bill_number={format_value(receipt['bill_number'])}, "
                 f"amount={format_value(amount)}, bill_status={format_value(receipt['bill_status'])}"
             )
-            if receipt["id"] in seen_receipt_ids:
-                raise RuntimeError(
-                    f"Safety check failed: receipt id {receipt['id']} matched more than one expected target."
-                )
-            seen_receipt_ids.add(receipt["id"])
-            matched_receipts.append(receipt)
 
         summary["matched_receipts"] = len(matched_receipts)
 

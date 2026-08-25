@@ -195,6 +195,9 @@ def _migrate_vendor_billing_v2() -> None:
         "ALTER TABLE jc_stock_receipts ADD COLUMN IF NOT EXISTS billed_at TIMESTAMPTZ",
         "ALTER TABLE jc_debit_notes ADD COLUMN IF NOT EXISTS source VARCHAR(10) NOT NULL DEFAULT 'manual'",
         "UPDATE jc_stock_receipts SET bill_status = 'billed', billed_at = received_at WHERE receipt_type = 'vendor_bill'",
+        # Split-billing vendors post 2 'bill' rows per receipt (main + extra cash) —
+        # the old one-bill-per-receipt unique index predates that and blocks it.
+        "DROP INDEX IF EXISTS uq_ap_receipt_bill",
     ]
     for stmt in stmts:
         try:
@@ -391,11 +394,9 @@ def _migrate_money_uniques() -> None:
         ON jc_ar_ledger_entries (customer_id)
         WHERE entry_type = 'opening_balance'
         """,
-        """
-        CREATE UNIQUE INDEX IF NOT EXISTS uq_ap_receipt_bill
-        ON jc_ap_ledger_entries (receipt_id)
-        WHERE entry_type = 'bill' AND receipt_id IS NOT NULL
-        """,
+        # NOTE: no one-bill-per-receipt index here — split-billing vendors post 2
+        # 'bill' rows per receipt (main + extra cash). See _migrate_vendor_billing_v2,
+        # which drops the old uq_ap_receipt_bill index that used to enforce this.
         """
         CREATE UNIQUE INDEX IF NOT EXISTS uq_ap_debit_note_id
         ON jc_ap_ledger_entries (debit_note_id)

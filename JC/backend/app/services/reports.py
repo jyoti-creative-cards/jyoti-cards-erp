@@ -32,6 +32,46 @@ def _range_bounds(from_date: Optional[date], to_date: Optional[date]) -> tuple[O
     return start, end
 
 
+def _batch_labels(db: Session, model, ids: set[int]) -> dict[int, "object"]:
+    if not ids:
+        return {}
+    return {row.id: row for row in db.query(model).filter(model.id.in_(ids)).all()}
+
+
+def _vendor_labels(db: Session, vendor_ids: set[int]) -> dict[int, str]:
+    if not vendor_ids:
+        return {}
+    vendors = {v.id: v for v in db.query(Vendor).filter(Vendor.id.in_(vendor_ids)).all()}
+    city_ids = {v.city_id for v in vendors.values() if v.city_id}
+    cities = {c.id: c.name for c in db.query(City).filter(City.id.in_(city_ids)).all()} if city_ids else {}
+    out = {}
+    for vid in vendor_ids:
+        v = vendors.get(vid)
+        if not v:
+            out[vid] = f"Vendor #{vid}"
+            continue
+        city_name = cities.get(v.city_id) if v.city_id else None
+        out[vid] = f"{v.business_name} — {city_name}" if city_name else v.business_name
+    return out
+
+
+def _customer_labels(db: Session, customer_ids: set[int]) -> dict[int, str]:
+    if not customer_ids:
+        return {}
+    customers = {c.id: c for c in db.query(Customer).filter(Customer.id.in_(customer_ids)).all()}
+    city_ids = {c.city_id for c in customers.values() if c.city_id}
+    cities = {c.id: c.name for c in db.query(City).filter(City.id.in_(city_ids)).all()} if city_ids else {}
+    out = {}
+    for cid in customer_ids:
+        c = customers.get(cid)
+        if not c:
+            out[cid] = f"Customer #{cid}"
+            continue
+        city_name = cities.get(c.city_id) if c.city_id else None
+        out[cid] = f"{c.business_name} — {city_name}" if city_name else c.business_name
+    return out
+
+
 def list_sales(db: Session, from_date: Optional[date] = None, to_date: Optional[date] = None) -> list[dict]:
     q = db.query(CustomerBill).order_by(CustomerBill.created_at.desc(), CustomerBill.id.desc())
     start, end = _range_bounds(from_date, to_date)
@@ -39,9 +79,11 @@ def list_sales(db: Session, from_date: Optional[date] = None, to_date: Optional[
         q = q.filter(CustomerBill.created_at >= start)
     if end:
         q = q.filter(CustomerBill.created_at <= end)
+    bills = q.limit(500).all()
+    customers = {c.id: c for c in db.query(Customer).filter(Customer.id.in_({b.customer_id for b in bills})).all()} if bills else {}
     out = []
-    for b in q.limit(500).all():
-        c = db.get(Customer, b.customer_id)
+    for b in bills:
+        c = customers.get(b.customer_id)
         out.append(
             {
                 "id": b.id,
@@ -68,9 +110,13 @@ def list_purchases(db: Session, from_date: Optional[date] = None, to_date: Optio
         q = q.filter(ApLedgerEntry.created_at >= start)
     if end:
         q = q.filter(ApLedgerEntry.created_at <= end)
+    rows = q.limit(500).all()
+    receipt_ids = {e.receipt_id for e in rows if e.receipt_id}
+    receipts = _batch_labels(db, StockReceipt, receipt_ids)
+    vendor_labels = _vendor_labels(db, {e.vendor_id for e in rows})
     out = []
-    for e in q.limit(500).all():
-        receipt = db.get(StockReceipt, e.receipt_id) if e.receipt_id else None
+    for e in rows:
+        receipt = receipts.get(e.receipt_id) if e.receipt_id else None
         out.append(
             {
                 "id": e.receipt_id or e.id,
@@ -78,7 +124,7 @@ def list_purchases(db: Session, from_date: Optional[date] = None, to_date: Optio
                 "doc_type": "purchase_bill",
                 "doc_number": (receipt.bill_number if receipt else None) or f"R-{e.receipt_id}",
                 "party_id": e.vendor_id,
-                "party_label": _vendor_label(db, e.vendor_id),
+                "party_label": vendor_labels.get(e.vendor_id) or f"Vendor #{e.vendor_id}",
                 "amount": format(e.amount, "f"),
                 "date": e.created_at.date().isoformat() if e.created_at else None,
                 "created_at": e.created_at.isoformat() if e.created_at else None,
@@ -96,7 +142,9 @@ def list_payments(db: Session, from_date: Optional[date] = None, to_date: Option
         ar_q = ar_q.filter(ArLedgerEntry.created_at >= start)
     if end:
         ar_q = ar_q.filter(ArLedgerEntry.created_at <= end)
-    for e in ar_q.order_by(ArLedgerEntry.created_at.desc()).limit(300).all():
+    ar_rows = ar_q.order_by(ArLedgerEntry.created_at.desc()).limit(300).all()
+    ar_labels = _customer_labels(db, {e.customer_id for e in ar_rows})
+    for e in ar_rows:
         out.append(
             {
                 "id": e.id,
@@ -104,7 +152,7 @@ def list_payments(db: Session, from_date: Optional[date] = None, to_date: Option
                 "direction": "in",
                 "doc_number": e.payment_ref or f"AR-{e.id}",
                 "party_id": e.customer_id,
-                "party_label": _customer_label(db, e.customer_id),
+                "party_label": ar_labels.get(e.customer_id) or f"Customer #{e.customer_id}",
                 "amount": format(abs(e.amount), "f"),
                 "date": e.created_at.date().isoformat() if e.created_at else None,
                 "created_at": e.created_at.isoformat() if e.created_at else None,
@@ -117,7 +165,9 @@ def list_payments(db: Session, from_date: Optional[date] = None, to_date: Option
         ap_q = ap_q.filter(ApLedgerEntry.created_at >= start)
     if end:
         ap_q = ap_q.filter(ApLedgerEntry.created_at <= end)
-    for e in ap_q.order_by(ApLedgerEntry.created_at.desc()).limit(300).all():
+    ap_rows = ap_q.order_by(ApLedgerEntry.created_at.desc()).limit(300).all()
+    ap_labels = _vendor_labels(db, {e.vendor_id for e in ap_rows})
+    for e in ap_rows:
         out.append(
             {
                 "id": e.id,
@@ -125,7 +175,7 @@ def list_payments(db: Session, from_date: Optional[date] = None, to_date: Option
                 "direction": "out",
                 "doc_number": e.payment_ref or f"AP-{e.id}",
                 "party_id": e.vendor_id,
-                "party_label": _vendor_label(db, e.vendor_id),
+                "party_label": ap_labels.get(e.vendor_id) or f"Vendor #{e.vendor_id}",
                 "amount": format(abs(e.amount), "f"),
                 "date": e.created_at.date().isoformat() if e.created_at else None,
                 "created_at": e.created_at.isoformat() if e.created_at else None,

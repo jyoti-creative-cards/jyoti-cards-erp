@@ -81,6 +81,23 @@ def _vendor_context(db: Session, vendor_id: int, *, require_active: bool = True)
     return vendor, city_name, label
 
 
+def _vendor_contexts(db: Session, vendor_ids: set[int]) -> dict[int, tuple[Vendor, Optional[str], str]]:
+    """Batched _vendor_context (require_active=False) — one query for N vendors instead of N."""
+    if not vendor_ids:
+        return {}
+    vendors = {v.id: v for v in db.query(Vendor).filter(Vendor.id.in_(vendor_ids)).all()}
+    city_ids = {v.city_id for v in vendors.values() if v.city_id}
+    cities = {c.id: c.name for c in db.query(City).filter(City.id.in_(city_ids)).all()} if city_ids else {}
+    out: dict[int, tuple[Vendor, Optional[str], str]] = {}
+    for vid, vendor in vendors.items():
+        city_name = cities.get(vendor.city_id) if vendor.city_id else None
+        label = _vendor_label(vendor, city_name)
+        if vendor.deleted_at:
+            label = f"{label} (deleted)"
+        out[vid] = (vendor, city_name, label)
+    return out
+
+
 def _placement_color_map(placements: list[VendorOrderPlacement]) -> dict[int, int]:
     ordered = sorted(placements, key=lambda p: (p.placed_at, p.id))
     return {p.id: idx for idx, p in enumerate(ordered)}
@@ -265,6 +282,63 @@ def _summary_from_order(db: Session, order: VendorOrder) -> VendorOrderSummary:
     )
 
 
+def _summaries_from_orders(db: Session, orders: list[VendorOrder]) -> list[VendorOrderSummary]:
+    """Batched _summary_from_order — 3 queries total instead of 3 per order."""
+    from sqlalchemy import func
+
+    if not orders:
+        return []
+    order_ids = [o.id for o in orders]
+    vctx = _vendor_contexts(db, {o.vendor_id for o in orders})
+
+    placement_counts: dict[int, int] = defaultdict(int)
+    for order_id, cnt in (
+        db.query(VendorOrderPlacement.vendor_order_id, func.count(VendorOrderPlacement.id))
+        .filter(VendorOrderPlacement.vendor_order_id.in_(order_ids))
+        .group_by(VendorOrderPlacement.vendor_order_id)
+        .all()
+    ):
+        placement_counts[int(order_id)] = int(cnt)
+
+    lines_by_order: dict[int, list] = defaultdict(list)
+    for order_id, ln in (
+        db.query(VendorOrderPlacement.vendor_order_id, VendorOrderLine)
+        .join(VendorOrderLine, VendorOrderLine.placement_id == VendorOrderPlacement.id)
+        .filter(VendorOrderPlacement.vendor_order_id.in_(order_ids))
+        .all()
+    ):
+        lines_by_order[int(order_id)].append(ln)
+
+    out = []
+    for order in orders:
+        ctx = vctx.get(order.vendor_id)
+        if ctx is None:
+            continue
+        vendor, city_name, label = ctx
+        line_stats = lines_by_order.get(order.id, [])
+        if order.bucket == "received":
+            total_qty = sum(int(ln.quantity or 0) for ln in line_stats)
+        else:
+            total_qty = sum(ln.quantity for ln in line_stats)
+        out.append(
+            VendorOrderSummary(
+                id=order.id,
+                vendor_id=order.vendor_id,
+                vendor_name=vendor.business_name,
+                vendor_city=city_name,
+                vendor_label=label,
+                status=order.status,
+                bucket=order.bucket,
+                is_open=order.is_open,
+                placement_count=placement_counts.get(order.id, 0),
+                line_count=len(line_stats),
+                total_quantity=total_qty,
+                updated_at=order.updated_at,
+            )
+        )
+    return out
+
+
 @router.get("", response_model=List[VendorOrderSummary])
 def list_vendor_orders(
     bucket: str = Query("open", pattern="^(open|placed|received|billed|cancelled|closed)$"),
@@ -374,14 +448,15 @@ def list_vendor_orders(
             .group_by(VendorOpenLine.vendor_id)
             .all()
         )
+        receive_vctx = _vendor_contexts(db, {int(vendor_id) for vendor_id, _, _ in rows})
         for vendor_id, total_qty, line_count in rows:
             vid = int(vendor_id)
             if today_receive is not None and vid not in today_receive:
                 continue
-            try:
-                vendor, city_name, label = _vendor_context(db, vid, require_active=False)
-            except HTTPException:
+            ctx = receive_vctx.get(vid)
+            if ctx is None:
                 continue
+            vendor, city_name, label = ctx
             placed_order = (
                 db.query(VendorOrder)
                 .filter(VendorOrder.vendor_id == vid, VendorOrder.bucket == "placed", VendorOrder.is_open.is_(True))
@@ -438,14 +513,15 @@ def list_vendor_orders(
             .group_by(StockReceipt.vendor_id)
             .all()
         )
+        bill_vctx = _vendor_contexts(db, {int(vendor_id) for vendor_id, _, _ in pending_rows})
         for vendor_id, receipt_count, total_qty in pending_rows:
             vid = int(vendor_id)
             if today_bill is not None and vid not in today_bill:
                 continue
-            try:
-                vendor, city_name, label = _vendor_context(db, vid, require_active=False)
-            except HTTPException:
+            ctx = bill_vctx.get(vid)
+            if ctx is None:
                 continue
+            vendor, city_name, label = ctx
             latest = (
                 db.query(func.max(StockReceipt.received_at))
                 .filter(StockReceipt.vendor_id == vid, StockReceipt.bill_status == "pending_bill")
@@ -479,13 +555,14 @@ def list_vendor_orders(
         by_vendor: dict[int, list] = defaultdict(list)
         for ln in closed_lines:
             by_vendor[ln.vendor_id].append(ln)
+        closed_vctx = _vendor_contexts(db, set(by_vendor.keys()))
         for vendor_id, lines in by_vendor.items():
             if today_closed is not None and vendor_id not in today_closed:
                 continue
-            try:
-                vendor, city_name, label = _vendor_context(db, vendor_id, require_active=False)
-            except HTTPException:
+            ctx = closed_vctx.get(vendor_id)
+            if ctx is None:
                 continue
+            vendor, city_name, label = ctx
             seen.add(vendor_id)
             summaries.append(
                 VendorOrderSummary(
@@ -516,6 +593,7 @@ def list_vendor_orders(
         if day_start is not None:
             billed_rows_q = billed_rows_q.filter(StockReceipt.billed_at >= day_start, StockReceipt.billed_at < day_end)
         billed_rows = billed_rows_q.group_by(StockReceipt.vendor_id).all()
+        billed_vctx = _vendor_contexts(db, {int(vendor_id) for vendor_id, _, _, _ in billed_rows if int(vendor_id) not in seen})
         for vendor_id, receipt_count, total_qty, latest in billed_rows:
             vid = int(vendor_id)
             if vid in seen:
@@ -528,10 +606,10 @@ def list_vendor_orders(
                             s.updated_at = latest
                         break
                 continue
-            try:
-                vendor, city_name, label = _vendor_context(db, vid, require_active=False)
-            except HTTPException:
+            ctx = billed_vctx.get(vid)
+            if ctx is None:
                 continue
+            vendor, city_name, label = ctx
             summaries.append(
                 VendorOrderSummary(
                     id=0,
@@ -565,7 +643,7 @@ def list_vendor_orders(
             .order_by(VendorOrder.updated_at.asc())
             .all()
         )
-        summaries = [_summary_from_order(db, o) for o in orders]
+        summaries = _summaries_from_orders(db, orders)
         if view == "open":
             summaries = [s for s in summaries if s.total_quantity > 0]
         return summaries
@@ -584,7 +662,7 @@ def list_vendor_orders(
             .order_by(VendorOrder.updated_at.asc())
             .all()
         )
-        return [_summary_from_order(db, o) for o in orders]
+        return _summaries_from_orders(db, orders)
 
     if bucket == "billed" and day_start is not None:
         today_vids = _vids_with_placement_today(("billed",))
@@ -600,7 +678,7 @@ def list_vendor_orders(
             .order_by(VendorOrder.updated_at.asc())
             .all()
         )
-        return [_summary_from_order(db, o) for o in orders]
+        return _summaries_from_orders(db, orders)
 
     orders = (
         db.query(VendorOrder)
@@ -613,7 +691,7 @@ def list_vendor_orders(
             o for o in orders
             if o.updated_at and day_start <= o.updated_at.astimezone(timezone.utc) < day_end
         ]
-    summaries = [_summary_from_order(db, o) for o in orders]
+    summaries = _summaries_from_orders(db, orders)
     if bucket == "placed" and view == "open":
         summaries = [s for s in summaries if s.total_quantity > 0]
     return summaries

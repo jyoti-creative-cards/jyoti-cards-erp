@@ -60,10 +60,12 @@ def lock_ap_account(db: Session, vendor_id: int) -> VendorApAccount:
 
 
 def receipt_bill_amount(db: Session, receipt_id: int) -> Decimal:
-    """Bill amount for AP. Prefer total_billed_amount (full bill). Do not add additional_charges on top."""
+    """Bill amount for AP. actual_ap_amount takes precedence (split-price vendors). Falls back to total_billed_amount."""
     receipt = db.get(StockReceipt, receipt_id)
     if not receipt:
         return Decimal("0")
+    if receipt.actual_ap_amount is not None:
+        return receipt.actual_ap_amount.quantize(Decimal("0.01"))
     if receipt.total_billed_amount is not None:
         return receipt.total_billed_amount.quantize(Decimal("0.01"))
     lines = db.query(StockReceiptLine).filter(StockReceiptLine.receipt_id == receipt_id).all()

@@ -39,6 +39,7 @@ class StockReceipt(Base):
     )
     additional_charges: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 2), nullable=True)
     total_billed_amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 2), nullable=True)
+    actual_ap_amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2), nullable=True)  # actual AP when split-pricing applies
     bill_number: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     order_receipt_number: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     bill_file_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)

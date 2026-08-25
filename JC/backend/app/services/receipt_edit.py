@@ -25,6 +25,22 @@ from app.services.storage import delete_keys
 from app.services.vendor_billing_math import compute_bill_totals
 
 
+def _refresh_expected_bill(db: Session, receipt: StockReceipt) -> None:
+    """Recompute the frozen bill estimate after received quantities change."""
+    vendor = db.get(Vendor, receipt.vendor_id)
+    if not vendor:
+        return
+    lines = db.query(StockReceiptLine).filter(StockReceiptLine.receipt_id == receipt.id).all()
+    total_actual_value = sum((ln.buying_price * ln.quantity_received for ln in lines), Decimal("0"))
+    bill_total, extra_cash = compute_bill_totals(
+        total_actual_value=total_actual_value,
+        billing_pct=vendor.billing_pct, additional_charge=vendor.additional_charge,
+        discount_pct=vendor.discount_pct, gst_included=vendor.gst_included, gst_rate_pct=vendor.gst_rate_pct,
+    )
+    receipt.expected_bill_amount = bill_total
+    receipt.expected_extra_cash = extra_cash if vendor.billing_pct < 100 else None
+
+
 def _vendor_label(db: Session, vendor_id: int) -> str:
     vendor = db.get(Vendor, vendor_id)
     if not vendor:
@@ -210,6 +226,8 @@ def _edit_receive(db: Session, auth: AuthContext, receipt: StockReceipt, body: V
         reduce_from_open(db, receipt.vendor_id, apply)
 
     _replace_receipt_lines(db, receipt, stock_lines, recv_field=True)
+    db.flush()
+    _refresh_expected_bill(db, receipt)
 
     if receipt.received_placement_id:
         for vol in list(placement_lines.values()):

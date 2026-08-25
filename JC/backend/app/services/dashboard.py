@@ -53,13 +53,13 @@ def build_dashboard(db: Session) -> dict:
               (SELECT COUNT(*) FROM jc_customer_bills
                  WHERE created_at >= :day_start AND created_at <= :day_end) AS sales_count,
               (SELECT COUNT(*) FROM jc_ap_ledger_entries
-                 WHERE entry_type = 'bill'
+                 WHERE entry_type = 'bill' AND deleted_at IS NULL
                    AND created_at >= :day_start AND created_at <= :day_end) AS purchase_count,
               (SELECT COALESCE(SUM(amount), 0) FROM jc_ar_ledger_entries
                  WHERE entry_type = 'payment'
                    AND created_at >= :day_start AND created_at <= :day_end) AS cash_in_raw,
               (SELECT COALESCE(SUM(amount), 0) FROM jc_ap_ledger_entries
-                 WHERE entry_type = 'payment'
+                 WHERE entry_type = 'payment' AND deleted_at IS NULL
                    AND created_at >= :day_start AND created_at <= :day_end) AS cash_out_raw
             """
         ),
@@ -109,6 +109,7 @@ def build_dashboard(db: Session) -> dict:
             FROM jc_ap_ledger_entries e
             JOIN jc_vendors v ON v.id = e.vendor_id AND v.deleted_at IS NULL
             LEFT JOIN jc_cities ci ON ci.id = v.city_id
+            WHERE e.deleted_at IS NULL
             GROUP BY v.id, v.business_name, ci.name
             HAVING SUM(e.amount) > 0
             ORDER BY SUM(e.amount) DESC

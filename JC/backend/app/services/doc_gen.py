@@ -277,7 +277,9 @@ def generate_vendor_receipt_document(db: Session, receipt_id: int) -> str | None
     dn_total = receipt_debit_note_total(db, receipt.id)
     net = (bill_amt + dn_total).quantize(Decimal("0.01"))
     from app.services.debit_notes import infer_direction
-    dn_rows = db.query(DebitNote).filter(DebitNote.receipt_id == receipt.id).order_by(DebitNote.id.asc()).all()
+    dn_rows = db.query(DebitNote).filter(
+        DebitNote.receipt_id == receipt.id, DebitNote.deleted_at.is_(None)
+    ).order_by(DebitNote.id.asc()).all()
     debit_notes_out = []
     dir_labels = {
         "short": "Short delivery",

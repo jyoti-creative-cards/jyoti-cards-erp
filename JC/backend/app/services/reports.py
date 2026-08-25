@@ -102,7 +102,11 @@ def list_sales(db: Session, from_date: Optional[date] = None, to_date: Optional[
 def list_purchases(db: Session, from_date: Optional[date] = None, to_date: Optional[date] = None) -> list[dict]:
     q = (
         db.query(ApLedgerEntry)
-        .filter(ApLedgerEntry.entry_type == "bill", ApLedgerEntry.receipt_id.isnot(None))
+        .filter(
+            ApLedgerEntry.entry_type == "bill",
+            ApLedgerEntry.receipt_id.isnot(None),
+            ApLedgerEntry.deleted_at.is_(None),
+        )
         .order_by(ApLedgerEntry.created_at.desc(), ApLedgerEntry.id.desc())
     )
     start, end = _range_bounds(from_date, to_date)
@@ -160,7 +164,9 @@ def list_payments(db: Session, from_date: Optional[date] = None, to_date: Option
             }
         )
 
-    ap_q = db.query(ApLedgerEntry).filter(ApLedgerEntry.entry_type == "payment")
+    ap_q = db.query(ApLedgerEntry).filter(
+        ApLedgerEntry.entry_type == "payment", ApLedgerEntry.deleted_at.is_(None)
+    )
     if start:
         ap_q = ap_q.filter(ApLedgerEntry.created_at >= start)
     if end:
@@ -228,6 +234,7 @@ def daybook(db: Session, day: date) -> dict:
 
     for e in db.query(ApLedgerEntry).filter(
         ApLedgerEntry.entry_type == "bill",
+        ApLedgerEntry.deleted_at.is_(None),
         ApLedgerEntry.created_at >= start,
         ApLedgerEntry.created_at <= end,
     ).all():
@@ -262,6 +269,7 @@ def daybook(db: Session, day: date) -> dict:
 
     for e in db.query(ApLedgerEntry).filter(
         ApLedgerEntry.entry_type == "payment",
+        ApLedgerEntry.deleted_at.is_(None),
         ApLedgerEntry.created_at >= start,
         ApLedgerEntry.created_at <= end,
     ).all():
@@ -296,6 +304,7 @@ def daybook(db: Session, day: date) -> dict:
 
     for e in db.query(ApLedgerEntry).filter(
         ApLedgerEntry.entry_type.in_(("opening_balance", "debit_note")),
+        ApLedgerEntry.deleted_at.is_(None),
         ApLedgerEntry.created_at >= start,
         ApLedgerEntry.created_at <= end,
     ).all():

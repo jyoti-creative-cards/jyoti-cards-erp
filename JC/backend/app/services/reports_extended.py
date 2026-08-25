@@ -174,7 +174,7 @@ def customer_wise_sales(db: Session, from_date: Optional[date], to_date: Optiona
 
 def vendor_wise_purchases(db: Session, from_date: Optional[date], to_date: Optional[date]) -> list[dict]:
     start, end = _range_bounds(from_date, to_date)
-    q = db.query(ApLedgerEntry).filter(ApLedgerEntry.entry_type == "bill")
+    q = db.query(ApLedgerEntry).filter(ApLedgerEntry.entry_type == "bill", ApLedgerEntry.deleted_at.is_(None))
     if start:
         q = q.filter(ApLedgerEntry.created_at >= start)
     if end:
@@ -334,7 +334,7 @@ def ageing_ap(db: Session, as_of: Optional[date] = None) -> dict:
     }
     entries = (
         db.query(ApLedgerEntry)
-        .filter(ApLedgerEntry.vendor_id.in_(list(vendors.keys())))
+        .filter(ApLedgerEntry.vendor_id.in_(list(vendors.keys())), ApLedgerEntry.deleted_at.is_(None))
         .order_by(ApLedgerEntry.vendor_id.asc(), ApLedgerEntry.created_at.asc(), ApLedgerEntry.id.asc())
         .all()
     )
@@ -528,7 +528,7 @@ def returns_register(db: Session, from_date: Optional[date], to_date: Optional[d
 
 def debit_note_register(db: Session, from_date: Optional[date], to_date: Optional[date]) -> list[dict]:
     start, end = _range_bounds(from_date, to_date)
-    q = db.query(DebitNote).order_by(DebitNote.created_at.desc())
+    q = db.query(DebitNote).filter(DebitNote.deleted_at.is_(None)).order_by(DebitNote.created_at.desc())
     if start:
         q = q.filter(DebitNote.created_at >= start)
     if end:
@@ -582,7 +582,11 @@ def gst_purchase_register(db: Session, from_date: Optional[date], to_date: Optio
     start, end = _range_bounds(from_date, to_date)
     q = (
         db.query(ApLedgerEntry)
-        .filter(ApLedgerEntry.entry_type == "bill", ApLedgerEntry.receipt_id.isnot(None))
+        .filter(
+            ApLedgerEntry.entry_type == "bill",
+            ApLedgerEntry.receipt_id.isnot(None),
+            ApLedgerEntry.deleted_at.is_(None),
+        )
         .order_by(ApLedgerEntry.created_at.desc())
     )
     if start:
@@ -688,7 +692,9 @@ def pnl_detail(db: Session, from_date: Optional[date], to_date: Optional[date]) 
     gst_total = sum((Decimal(str(b.gst_amount or 0)) for b in sales_bills), Decimal("0"))
 
     # COGS approx = purchase billed in period
-    ap_q = db.query(ApLedgerEntry).filter(ApLedgerEntry.entry_type == "bill")
+    ap_q = db.query(ApLedgerEntry).filter(
+        ApLedgerEntry.entry_type == "bill", ApLedgerEntry.deleted_at.is_(None)
+    )
     if start:
         ap_q = ap_q.filter(ApLedgerEntry.created_at >= start)
     if end:

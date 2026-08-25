@@ -177,6 +177,8 @@ def bill_receipt(db: Session, auth: AuthContext, receipt_id: int, body: VendorBi
     receipt = db.get(StockReceipt, receipt_id)
     if not receipt:
         raise HTTPException(404, "receipt not found")
+    if receipt.deleted_at:
+        raise HTTPException(400, "receipt is voided — restore it from the recycle bin first")
     if receipt.bill_status != "pending_bill":
         raise HTTPException(400, "receipt is not open for billing")
 

@@ -84,7 +84,9 @@ def debit_note_payable_effect(amount: Decimal, note_type: str) -> Decimal:
 
 
 def receipt_debit_note_total(db: Session, receipt_id: int) -> Decimal:
-    notes = db.query(DebitNote).filter(DebitNote.receipt_id == receipt_id).all()
+    notes = db.query(DebitNote).filter(
+        DebitNote.receipt_id == receipt_id, DebitNote.deleted_at.is_(None)
+    ).all()
     total = sum((debit_note_payable_effect(n.amount, n.note_type) for n in notes), Decimal("0"))
     return total.quantize(Decimal("0.01"))
 
@@ -370,7 +372,9 @@ def post_payment_entry(
 
 
 def vendor_ap_totals(db: Session, vendor_id: int) -> dict:
-    rows = db.query(ApLedgerEntry).filter(ApLedgerEntry.vendor_id == vendor_id).all()
+    rows = db.query(ApLedgerEntry).filter(
+        ApLedgerEntry.vendor_id == vendor_id, ApLedgerEntry.deleted_at.is_(None)
+    ).all()
     outstanding = sum((r.amount for r in rows), Decimal("0")).quantize(Decimal("0.01"))
     opening_total = sum((r.amount for r in rows if r.entry_type == "opening_balance"), Decimal("0")).quantize(Decimal("0.01"))
     bill_total = sum((r.amount for r in rows if r.entry_type == "bill"), Decimal("0")).quantize(Decimal("0.01"))
@@ -457,7 +461,7 @@ def build_ap_ledger(db: Session, vendor_id: int) -> list[dict]:
 
     entries = (
         db.query(ApLedgerEntry)
-        .filter(ApLedgerEntry.vendor_id == vendor_id)
+        .filter(ApLedgerEntry.vendor_id == vendor_id, ApLedgerEntry.deleted_at.is_(None))
         .order_by(ApLedgerEntry.created_at.asc(), ApLedgerEntry.id.asc())
         .all()
     )
@@ -470,7 +474,9 @@ def build_ap_ledger(db: Session, vendor_id: int) -> list[dict]:
         receipts_by_id = {r.id: r for r in db.query(StockReceipt).filter(StockReceipt.id.in_(receipt_ids)).all()}
         for ln in db.query(StockReceiptLine).filter(StockReceiptLine.receipt_id.in_(receipt_ids)).all():
             rlines_by_receipt.setdefault(ln.receipt_id, []).append(ln)
-        for dn in db.query(DebitNote).filter(DebitNote.receipt_id.in_(receipt_ids)).all():
+        for dn in db.query(DebitNote).filter(
+            DebitNote.receipt_id.in_(receipt_ids), DebitNote.deleted_at.is_(None)
+        ).all():
             notes_by_receipt.setdefault(dn.receipt_id, []).append(dn)
 
     debit_note_ids = {e.debit_note_id for e in entries if e.debit_note_id}
@@ -618,6 +624,7 @@ def list_ap_vendors(db: Session) -> list[dict]:
             payment_sum,
             outstanding_sum,
         )
+        .filter(ApLedgerEntry.deleted_at.is_(None))
         .group_by(ApLedgerEntry.vendor_id)
         .all()
     )
@@ -708,6 +715,7 @@ def ap_dues_total(db: Session) -> dict:
             FROM jc_ap_ledger_entries e
             JOIN jc_vendors v ON v.id = e.vendor_id AND v.deleted_at IS NULL
             LEFT JOIN jc_cities ci ON ci.id = v.city_id
+            WHERE e.deleted_at IS NULL
             GROUP BY v.id, v.business_name, ci.name
             HAVING SUM(e.amount) > 0
             ORDER BY SUM(e.amount) DESC

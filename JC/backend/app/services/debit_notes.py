@@ -87,6 +87,8 @@ def create_debit_note(
     receipt = db.get(StockReceipt, receipt_id)
     if not receipt or receipt.vendor_id != vendor_id:
         raise HTTPException(404, "receipt not found for vendor")
+    if receipt.deleted_at:
+        raise HTTPException(400, "receipt is voided — restore it from the recycle bin first")
 
     if body.note_type == "item":
         direction, signed_qty, _ = normalize_signed_values(

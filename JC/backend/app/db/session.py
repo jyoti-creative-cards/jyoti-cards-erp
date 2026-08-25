@@ -123,6 +123,7 @@ def init_db() -> None:
         _migrate_bill_transport()
         _migrate_vendor_billing_terms()
         _migrate_vendor_billing_v2()
+        _migrate_void_recycle()
         with engine.begin() as conn:
             conn.execute(text("SELECT 1"))
         _DB_READY = True
@@ -198,6 +199,29 @@ def _migrate_vendor_billing_v2() -> None:
         # Split-billing vendors post 2 'bill' rows per receipt (main + extra cash) —
         # the old one-bill-per-receipt unique index predates that and blocks it.
         "DROP INDEX IF EXISTS uq_ap_receipt_bill",
+    ]
+    for stmt in stmts:
+        try:
+            with engine.begin() as conn:
+                s = stmt.replace(" ADD COLUMN IF NOT EXISTS ", " ADD COLUMN ") if _is_sqlite else stmt
+                conn.execute(text(s))
+        except Exception:
+            log.warning("Migration step skipped", exc_info=True)
+
+
+def _migrate_void_recycle() -> None:
+    """Void/restore/purge for stock receipts (incl. bills), debit notes, and their AP entries.
+
+    Soft-delete via deleted_at; every "active" query elsewhere must exclude deleted_at IS NOT NULL.
+    """
+    stmts = [
+        "ALTER TABLE jc_stock_receipts ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ",
+        "ALTER TABLE jc_stock_receipts ADD COLUMN IF NOT EXISTS deleted_reason TEXT",
+        "ALTER TABLE jc_stock_receipts ADD COLUMN IF NOT EXISTS deleted_by_name VARCHAR(200)",
+        "ALTER TABLE jc_debit_notes ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ",
+        "ALTER TABLE jc_debit_notes ADD COLUMN IF NOT EXISTS deleted_reason TEXT",
+        "ALTER TABLE jc_debit_notes ADD COLUMN IF NOT EXISTS deleted_by_name VARCHAR(200)",
+        "ALTER TABLE jc_ap_ledger_entries ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ",
     ]
     for stmt in stmts:
         try:

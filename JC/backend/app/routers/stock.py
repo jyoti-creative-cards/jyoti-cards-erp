@@ -8,7 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.deps import AuthContext, get_auth_context
+from app.deps import AuthContext, get_auth_context, require_admin
 from app.models.catalog_alternative import CatalogAlternative
 from app.models.catalog_addon_link import CatalogAddonLink
 from app.models.catalog_product import CatalogProduct
@@ -34,6 +34,7 @@ from app.schemas.stock import (
     VendorReceiptCreate,
     VendorReceiveCreate,
     OfflineVendorReceiptCreate,
+    VoidIn,
 )
 from app.services.pricing import coerce_selling_price, effective_selling_price
 from app.services.stock_levels import stock_status_label
@@ -53,6 +54,7 @@ from app.services.vendor_receive_bill import (
     receive_vendor_goods,
 )
 from app.services.storage import bill_key, presigned_url, presigned_urls, storage_configured, upload_bytes, vendor_folder_slug
+from app.services.void_service import void_receipt
 
 router = APIRouter(prefix="/stock", tags=["stock"])
 
@@ -534,7 +536,11 @@ def get_pending_bill_receipts(
 
     rows = (
         db.query(StockReceipt)
-        .filter(StockReceipt.vendor_id == vendor_id, StockReceipt.bill_status == "pending_bill")
+        .filter(
+            StockReceipt.vendor_id == vendor_id,
+            StockReceipt.bill_status == "pending_bill",
+            StockReceipt.deleted_at.is_(None),
+        )
         .order_by(StockReceipt.received_at.asc())
         .all()
     )
@@ -571,7 +577,7 @@ def get_receipt_for_bill(
     auth: AuthContext = Depends(get_auth_context),
 ) -> ReceiptForBillDetail:
     receipt = db.get(StockReceipt, receipt_id)
-    if not receipt or receipt.bill_status != "pending_bill":
+    if not receipt or receipt.deleted_at or receipt.bill_status != "pending_bill":
         raise HTTPException(404, "receipt not open for billing")
     vendor = db.get(Vendor, receipt.vendor_id)
     if not vendor or vendor.deleted_at:
@@ -618,7 +624,7 @@ def preview_receipt_bill(
     auth: AuthContext = Depends(get_auth_context),
 ) -> BillPreviewOut:
     receipt = db.get(StockReceipt, receipt_id)
-    if not receipt or receipt.bill_status != "pending_bill":
+    if not receipt or receipt.deleted_at or receipt.bill_status != "pending_bill":
         raise HTTPException(404, "receipt not open for billing")
     vendor = db.get(Vendor, receipt.vendor_id)
     if not vendor or vendor.deleted_at:
@@ -731,13 +737,20 @@ def get_receipt_detail(
     rlines = db.query(StockReceiptLine).filter(StockReceiptLine.receipt_id == receipt.id).all()
     bill_amt = receipt_bill_amount(db, receipt.id)
     dn_total = receipt_debit_note_total(db, receipt.id)
-    notes = db.query(DebitNote).filter(DebitNote.receipt_id == receipt.id).order_by(DebitNote.id.asc()).all()
+    notes = (
+        db.query(DebitNote)
+        .filter(DebitNote.receipt_id == receipt.id, DebitNote.deleted_at.is_(None))
+        .order_by(DebitNote.id.asc())
+        .all()
+    )
     history = list_entity_history(db, "stock_receipt", receipt.id)
     data = {
         "id": receipt.id,
         "vendor_id": receipt.vendor_id,
         "receipt_type": receipt.receipt_type,
         "bill_status": receipt.bill_status,
+        "deleted_at": receipt.deleted_at.isoformat() if receipt.deleted_at else None,
+        "deleted_reason": receipt.deleted_reason,
         "bill_number": receipt.bill_number,
         "order_receipt_number": receipt.order_receipt_number,
         "notes": receipt.notes,
@@ -787,6 +800,19 @@ def get_receipt_detail(
     if auth.is_admin:
         data["received_by_name"] = receipt.received_by_name
     return data
+
+
+@router.post("/receipts/{receipt_id}/void", dependencies=[Depends(require_admin)])
+def void_receipt_endpoint(
+    receipt_id: int,
+    body: VoidIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    result = void_receipt(db, auth, receipt_id, body.reason)
+    response_cache.invalidate("stock:")
+    response_cache.invalidate("shop:")
+    return result
 
 
 @router.patch("/receipts/{receipt_id}")

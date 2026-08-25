@@ -9,6 +9,10 @@ from pydantic import BaseModel, Field
 from app.schemas.debit_note import DebitNoteIn
 
 
+class VoidIn(BaseModel):
+    reason: Optional[str] = None
+
+
 class StockProductSummary(BaseModel):
     catalog_product_id: int
     our_product_id: str

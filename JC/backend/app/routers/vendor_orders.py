@@ -127,9 +127,13 @@ def _build_detail(db: Session, order: VendorOrder, *, open_only: bool = False) -
         all_lines.extend(plines)
         receipt = None
         if order.bucket == "billed":
-            receipt = db.query(StockReceipt).filter(StockReceipt.billed_placement_id == p.id).first()
+            receipt = db.query(StockReceipt).filter(
+                StockReceipt.billed_placement_id == p.id, StockReceipt.deleted_at.is_(None)
+            ).first()
         elif order.bucket == "received":
-            receipt = db.query(StockReceipt).filter(StockReceipt.received_placement_id == p.id).first()
+            receipt = db.query(StockReceipt).filter(
+                StockReceipt.received_placement_id == p.id, StockReceipt.deleted_at.is_(None)
+            ).first()
         bill_amt = dn_total = net = bill_file = None
         if receipt:
             if order.bucket == "billed":
@@ -421,6 +425,7 @@ def list_vendor_orders(
             db.query(StockReceipt.vendor_id)
             .filter(
                 StockReceipt.bill_status == "pending_bill",
+                StockReceipt.deleted_at.is_(None),
                 StockReceipt.received_at >= day_start,
                 StockReceipt.received_at < day_end,
             )
@@ -509,7 +514,7 @@ def list_vendor_orders(
                 func.coalesce(func.sum(StockReceiptLine.quantity_received), 0),
             )
             .join(StockReceiptLine, StockReceiptLine.receipt_id == StockReceipt.id)
-            .filter(StockReceipt.bill_status == "pending_bill")
+            .filter(StockReceipt.bill_status == "pending_bill", StockReceipt.deleted_at.is_(None))
             .group_by(StockReceipt.vendor_id)
             .all()
         )
@@ -524,7 +529,11 @@ def list_vendor_orders(
             vendor, city_name, label = ctx
             latest = (
                 db.query(func.max(StockReceipt.received_at))
-                .filter(StockReceipt.vendor_id == vid, StockReceipt.bill_status == "pending_bill")
+                .filter(
+                    StockReceipt.vendor_id == vid,
+                    StockReceipt.bill_status == "pending_bill",
+                    StockReceipt.deleted_at.is_(None),
+                )
                 .scalar()
             )
             out.append(
@@ -588,7 +597,7 @@ def list_vendor_orders(
                 func.max(StockReceipt.billed_at),
             )
             .join(StockReceiptLine, StockReceiptLine.receipt_id == StockReceipt.id)
-            .filter(StockReceipt.bill_status == "billed")
+            .filter(StockReceipt.bill_status == "billed", StockReceipt.deleted_at.is_(None))
         )
         if day_start is not None:
             billed_rows_q = billed_rows_q.filter(StockReceipt.billed_at >= day_start, StockReceipt.billed_at < day_end)
@@ -879,7 +888,9 @@ def list_closeable_billed(
     for placement, order in rows:
         vendor, city_name, label = _vendor_context(db, order.vendor_id)
         lines = db.query(VendorOrderLine).filter(VendorOrderLine.placement_id == placement.id).all()
-        receipt = db.query(StockReceipt).filter(StockReceipt.billed_placement_id == placement.id).first()
+        receipt = db.query(StockReceipt).filter(
+            StockReceipt.billed_placement_id == placement.id, StockReceipt.deleted_at.is_(None)
+        ).first()
         out.append(
             CloseableVendorItemOut(
                 id=placement.id,
@@ -1167,7 +1178,9 @@ def get_vendor_closed_lines(
             .all()
         )
         for p in placements:
-            receipt = db.query(StockReceipt).filter(StockReceipt.billed_placement_id == p.id).first()
+            receipt = db.query(StockReceipt).filter(
+                StockReceipt.billed_placement_id == p.id, StockReceipt.deleted_at.is_(None)
+            ).first()
             plines = db.query(VendorOrderLine).filter(VendorOrderLine.placement_id == p.id).all()
             for ln in plines:
                 out.append(

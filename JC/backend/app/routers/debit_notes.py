@@ -7,12 +7,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.deps import AuthContext, get_auth_context
+from app.deps import AuthContext, get_auth_context, require_admin
 from app.models.debit_note import DebitNote
 from app.models.stock import StockReceipt
 from app.models.vendor import Vendor
 from app.models.city import City
 from app.schemas.debit_note import DebitNoteIn, DebitNoteOut, DebitNoteUpdate
+from app.schemas.stock import VoidIn
 from app.services.debit_notes import (
     _resolve_item_amount,
     create_debit_note,
@@ -21,6 +22,7 @@ from app.services.debit_notes import (
 )
 from app.services.activity import log_from_auth
 from app.services.ap_ledger import debit_note_payable_effect
+from app.services.void_service import void_debit_note
 
 router = APIRouter(prefix="/debit-notes", tags=["debit-notes"])
 
@@ -57,6 +59,8 @@ def _debit_note_out(db: Session, note: DebitNote) -> DebitNoteOut:
         bill_number=receipt.bill_number if receipt else None,
         vendor_label=_vendor_label(vendor, city_name) if vendor else None,
         source=note.source,
+        deleted_at=note.deleted_at,
+        deleted_reason=note.deleted_reason,
     )
 
 
@@ -67,7 +71,7 @@ def list_debit_notes(
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(get_auth_context),
 ):
-    q = db.query(DebitNote).order_by(DebitNote.created_at.desc())
+    q = db.query(DebitNote).filter(DebitNote.deleted_at.is_(None)).order_by(DebitNote.created_at.desc())
     if vendor_id is not None:
         q = q.filter(DebitNote.vendor_id == vendor_id)
     if receipt_id is not None:
@@ -101,6 +105,20 @@ def create_debit_note_endpoint(
     return _debit_note_out(db, note)
 
 
+@router.post("/{note_id}/void", dependencies=[Depends(require_admin)])
+def void_debit_note_endpoint(
+    note_id: int,
+    body: VoidIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    from app.services import response_cache
+
+    result = void_debit_note(db, auth, note_id, body.reason)
+    response_cache.invalidate("stock:")
+    return result
+
+
 @router.patch("/{note_id}", response_model=DebitNoteOut)
 def update_debit_note(
     note_id: int,
@@ -111,6 +129,8 @@ def update_debit_note(
     note = db.get(DebitNote, note_id)
     if not note:
         raise HTTPException(404, "debit note not found")
+    if note.deleted_at:
+        raise HTTPException(400, "debit note is voided — restore it from the recycle bin first")
 
     note_type = body.note_type or note.note_type
     if note_type == "item":

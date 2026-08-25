@@ -528,7 +528,10 @@ const Stock = (() => {
                 ${pendingDebitNotes.map((dn, i) => `<tr>
                   <td>${ctx.esc(dnDisplayLabel(dn))}${dn.notes ? ` — ${ctx.esc(dn.notes)}` : ""}</td>
                   <td>${fmtPrice(dnPayableEffect(dn))}</td>
-                  <td><button type="button" class="btn btn-ghost btn-sm" onclick="Stock.removeDebitNote(${i})">Remove</button></td>
+                  <td style="white-space:nowrap;">
+                    <button type="button" class="btn btn-ghost btn-sm" onclick="Stock.editPendingDebitNote(${i})">Edit</button>
+                    <button type="button" class="btn btn-ghost btn-sm" onclick="Stock.removeDebitNote(${i})">Remove</button>
+                  </td>
                 </tr>`).join("")}
               </tbody></table>`
             : `<p class="vo-muted" style="margin:0;">No debit notes on this bill.</p>`}
@@ -1042,7 +1045,10 @@ const Stock = (() => {
           ${comment}
         </td>
         <td><span class="dn-effect-pill ${payLess ? "is-less" : "is-more"}">${payLess ? "Pay less" : "Pay more"} ${fmtPrice(Math.abs(amt))}</span></td>
-        <td><button class="btn btn-ghost btn-sm" onclick="Stock.removeDebitNote(${i})">✕</button></td>
+        <td style="white-space:nowrap;">
+          <button class="btn btn-ghost btn-sm" onclick="Stock.editPendingDebitNote(${i})">Edit</button>
+          <button class="btn btn-ghost btn-sm" onclick="Stock.removeDebitNote(${i})">✕</button>
+        </td>
       </tr>`;
     }).join("");
     const billDisplayAmt = parseFloat(receiptMeta.totalBilledAmount) || 0;
@@ -1179,6 +1185,42 @@ const Stock = (() => {
   function removeDebitNote(idx) {
     pendingDebitNotes.splice(idx, 1);
     renderWizard();
+  }
+  function editPendingDebitNote(idx) {
+    const active = billableLines();
+    const existing = pendingDebitNotes[idx];
+    if (!existing) return;
+    DebitNotes.openCreate({
+      vendorId: wizardVendorId,
+      receiptId: null,
+      receivingLines: active.map(l => ({
+        catalog_product_id: l.catalog_product_id,
+        our_product_id: l.our_product_id,
+        buying_price: l.buying_price || placedOrder?.lines?.find(x => x.catalog_product_id === l.catalog_product_id)?.buying_price,
+        quantity_received: l.quantity_received || 0,
+        quantity_billed: l.quantity_billed || 0,
+      })),
+      prefill: existing,
+      editIndex: idx,
+      onDone: (payload, i) => {
+        if (!payload) return;
+        const line = active.find(l => l.catalog_product_id === payload.catalog_product_id);
+        const price = Number(line?.buying_price || 0);
+        const amt = payload.note_type === "item" ? price * payload.quantity : Number(payload.amount) || 0;
+        // Full replace (not merge) — drops _auto_suggested/source:"auto" so a hand-edited
+        // suggestion survives the next bill-preview refresh instead of being wiped and re-added.
+        pendingDebitNotes[i] = {
+          ...payload,
+          direction: payload.direction,
+          _direction: payload.direction,
+          _direction_label: payload._direction_label,
+          _label: line?.our_product_id || existing._label,
+          _amount: Math.abs(amt),
+          _payable_effect: payload.note_type === "item" ? -amt : amt,
+        };
+        renderWizard();
+      },
+    });
   }
   function openOfflineQtyPopup(productId) {
     offlineQtyPopupId = productId;
@@ -1672,6 +1714,11 @@ const Stock = (() => {
     finally { ctx.hideLoading?.(); }
   }
   function renderReceiptDetail(title, entryType, qtyDelta, balanceAfter, when, notes, receipt) {
+    const voidedBanner = receipt?.deleted_at
+      ? `<div style="background:var(--danger-bg,#fee2e2);color:var(--danger);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:13px;">
+          <strong>Voided</strong>${receipt.deleted_reason ? ` — ${ctx.esc(receipt.deleted_reason)}` : ""}. Restore it from the recycle bin to edit or bill again.
+        </div>`
+      : "";
     const meta = [
       entryType ? ctx.reviewRow("Type", entryType) : "",
       qtyDelta != null ? ctx.reviewRow("Quantity", (qtyDelta > 0 ? "+" : "") + qtyDelta) : "",
@@ -1712,11 +1759,30 @@ const Stock = (() => {
       extra += `<div style="margin-top:16px;">${ctx.changeHistoryTable(receipt.change_history)}</div>`;
     }
     const canWrite = ctx.canWrite?.("stock") !== false;
+    const isVoided = !!receipt?.deleted_at;
     const editLabel = receipt?.receipt_type === "vendor_receive" ? "Edit receive" : "Edit bill";
     const footer = `
-      ${canWrite && receipt?.id ? `<button class="btn btn-primary" onclick="Stock.openEditReceipt(${receipt.id})">${editLabel}</button>` : ""}
+      ${canWrite && receipt?.id && !isVoided ? `<button class="btn btn-primary" onclick="Stock.openEditReceipt(${receipt.id})">${editLabel}</button>` : ""}
+      ${ctx.isAdmin?.() && receipt?.id && !isVoided ? `<button class="btn btn-danger" onclick="Stock.voidReceipt(${receipt.id}, ${receipt.vendor_id || "null"})">Void</button>` : ""}
       ${ctx.detailFooterChild()}`;
-    ctx.openDetail(title, ctx.ledgerDetailCard("Receipt details", meta, table, extra), footer, "md", { push: true });
+    ctx.openDetail(title, voidedBanner + ctx.ledgerDetailCard("Receipt details", meta, table, extra), footer, "md", { push: true });
+  }
+  async function voidReceipt(receiptId, vendorId) {
+    const reason = prompt("Why are you voiding this receipt/bill? (optional)", "");
+    if (reason === null) return;
+    if (!confirm("Void this receipt? Stock and AP will be reversed. It moves to the recycle bin and can be restored.")) return;
+    ctx.showLoading?.();
+    try {
+      await ctx.api(`/stock/receipts/${receiptId}/void`, { method: "POST", body: JSON.stringify({ reason: reason || null }) });
+      ctx.invalidateCache?.("/stock");
+      ctx.invalidateCache?.("/vendor-orders");
+      ctx.invalidateCache?.("/accounts-payable");
+      ctx.closeDetail?.();
+      ctx.toast("Voided — moved to recycle bin", "success");
+      if (typeof VendorOrders !== "undefined" && VendorOrders.refreshIfOpen) VendorOrders.refreshIfOpen(vendorId);
+      await load();
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
   }
   async function editThreshold(catalogProductId, current) {
     const raw = prompt("Low stock threshold (qty below this = low stock):", String(current ?? 5));
@@ -1765,5 +1831,6 @@ const Stock = (() => {
     openOfflineQtyPopup, closeOfflineQtyPopup, confirmOfflineQty, removeOfflineLine, bumpOfflineQty,
     wizardBack, wizardNext, submitReceipt, openDebitNote, removeDebitNote, editThreshold, setSellingPrice,
     openReceiptPdf, fetchReceiptPdf, openEditReceipt, selectPendingReceipt, changePendingReceipt,
+    voidReceipt, editPendingDebitNote,
   };
 })();

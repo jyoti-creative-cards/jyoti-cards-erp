@@ -59,7 +59,9 @@ def _receipt_snapshot(db: Session, receipt: StockReceipt) -> dict:
         .order_by(StockReceiptLine.id.asc())
         .all()
     )
-    notes = db.query(DebitNote).filter(DebitNote.receipt_id == receipt.id).order_by(DebitNote.id.asc()).all()
+    notes = db.query(DebitNote).filter(
+        DebitNote.receipt_id == receipt.id, DebitNote.deleted_at.is_(None)
+    ).order_by(DebitNote.id.asc()).all()
     return {
         "receipt_type": receipt.receipt_type,
         "bill_number": receipt.bill_number,
@@ -329,7 +331,9 @@ def _edit_bill(db: Session, auth: AuthContext, receipt: StockReceipt, body: Vend
         receipt.notes = (body.notes or "").strip() or None
     receipt.receipt_document_key = None
 
-    old_notes = db.query(DebitNote).filter(DebitNote.receipt_id == receipt.id).all()
+    old_notes = db.query(DebitNote).filter(
+        DebitNote.receipt_id == receipt.id, DebitNote.deleted_at.is_(None)
+    ).all()
     for n in old_notes:
         reverse_debit_note_effects(db, auth, n, reason=f"receipt edit #{receipt.id}")
         db.delete(n)
@@ -385,6 +389,8 @@ def update_vendor_receipt(
     receipt = db.get(StockReceipt, receipt_id)
     if not receipt:
         raise HTTPException(404, "receipt not found")
+    if receipt.deleted_at:
+        raise HTTPException(400, "receipt is voided — restore it from the recycle bin first")
     if body.vendor_id != receipt.vendor_id:
         raise HTTPException(400, "cannot change vendor on an existing bill")
     if receipt.bill_status == "billed":

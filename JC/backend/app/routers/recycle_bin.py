@@ -14,8 +14,10 @@ from app.models.catalog_alternative import CatalogAlternative
 from app.models.catalog_product import CatalogProduct
 from app.models.city import City
 from app.models.customer import Customer
+from app.models.debit_note import DebitNote
 from app.models.route import Route
 from app.models.staff import Staff
+from app.models.stock import StockReceipt
 from app.models.vendor import Vendor
 from app.services.activity import log_from_auth
 from app.routers.customers import _to_public as customer_public
@@ -34,6 +36,12 @@ from app.schemas.catalog import CatalogProductPublic
 from app.schemas.addon import AddonPublic
 from app.schemas.vendor import VendorPublic
 from app.services.storage import delete_keys
+from app.services.void_service import (
+    purge_debit_note,
+    purge_receipt,
+    restore_debit_note,
+    restore_receipt,
+)
 
 router = APIRouter(prefix="/recycle-bin", tags=["recycle-bin"])
 
@@ -47,6 +55,12 @@ def list_recycle_bin(db: Session = Depends(get_db)) -> RecycleBinList:
     cat_rows = db.query(CatalogProduct).filter(CatalogProduct.is_active.is_(False)).order_by(CatalogProduct.deleted_at.desc()).all()
     addon_rows = db.query(AddonProduct).filter(AddonProduct.is_active.is_(False)).order_by(AddonProduct.deleted_at.desc()).all()
     staff_rows = db.query(Staff).filter(Staff.is_active.is_(False)).order_by(Staff.deleted_at.desc()).all()
+    receipt_rows = (
+        db.query(StockReceipt).filter(StockReceipt.deleted_at.isnot(None)).order_by(StockReceipt.deleted_at.desc()).all()
+    )
+    dn_rows = (
+        db.query(DebitNote).filter(DebitNote.deleted_at.isnot(None)).order_by(DebitNote.deleted_at.desc()).all()
+    )
 
     routes = [RecycleBinItem(type="route", id=r.id, name=r.name, subtitle=r.notes, deleted_at=r.deleted_at) for r in route_rows]
     route_map = {r.id: r.name for r in route_rows}
@@ -61,8 +75,40 @@ def list_recycle_bin(db: Session = Depends(get_db)) -> RecycleBinList:
     catalog_products = [RecycleBinItem(type="catalog_product", id=p.id, name=p.our_product_id, subtitle=p.vendor_product_id, deleted_at=p.deleted_at) for p in cat_rows]
     addons = [RecycleBinItem(type="addon", id=a.id, name=a.our_product_id, subtitle=a.name or a.vendor_product_id, deleted_at=a.deleted_at) for a in addon_rows]
     staff = [RecycleBinItem(type="staff", id=s.id, name=s.name, subtitle=s.phone, deleted_at=s.deleted_at) for s in staff_rows]
-    total = len(routes) + len(cities) + len(customers) + len(vendors) + len(catalog_products) + len(addons) + len(staff)
-    return RecycleBinList(routes=routes, cities=cities, customers=customers, vendors=vendors, catalog_products=catalog_products, addons=addons, staff=staff, total=total)
+
+    vendor_ids_for_notes = {r.vendor_id for r in receipt_rows} | {d.vendor_id for d in dn_rows}
+    vendor_names = {
+        v.id: v.business_name
+        for v in (db.query(Vendor).filter(Vendor.id.in_(vendor_ids_for_notes)).all() if vendor_ids_for_notes else [])
+    }
+    receipts = [
+        RecycleBinItem(
+            type="receipt",
+            id=r.id,
+            name=f"{'Bill' if r.bill_status == 'billed' else 'Receipt'} — {vendor_names.get(r.vendor_id, f'Vendor #{r.vendor_id}')}",
+            subtitle=r.bill_number or r.order_receipt_number or r.deleted_reason,
+            deleted_at=r.deleted_at,
+        )
+        for r in receipt_rows
+    ]
+    debit_notes = [
+        RecycleBinItem(
+            type="debit_note",
+            id=d.id,
+            name=f"Debit note ₹{d.amount} — {vendor_names.get(d.vendor_id, f'Vendor #{d.vendor_id}')}",
+            subtitle=d.notes or d.deleted_reason,
+            deleted_at=d.deleted_at,
+        )
+        for d in dn_rows
+    ]
+    total = (
+        len(routes) + len(cities) + len(customers) + len(vendors) + len(catalog_products) + len(addons) + len(staff)
+        + len(receipts) + len(debit_notes)
+    )
+    return RecycleBinList(
+        routes=routes, cities=cities, customers=customers, vendors=vendors, catalog_products=catalog_products,
+        addons=addons, staff=staff, receipts=receipts, debit_notes=debit_notes, total=total,
+    )
 
 
 @router.get("/routes/{route_id}", response_model=RouteDetail, dependencies=[Depends(require_permission("recycle.read"))])
@@ -361,3 +407,40 @@ def purge_staff(staff_id: int, db: Session = Depends(get_db), auth: AuthContext 
     db.delete(row)
     db.commit()
     return {"ok": True, "message": "staff permanently deleted"}
+
+
+@router.post("/receipts/{receipt_id}/restore", dependencies=[Depends(require_admin)])
+def restore_receipt_endpoint(receipt_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_admin)) -> dict:
+    from app.services import response_cache
+
+    result = restore_receipt(db, auth, receipt_id)
+    response_cache.invalidate("stock:")
+    response_cache.invalidate("shop:")
+    return result
+
+
+@router.delete("/receipts/{receipt_id}", dependencies=[Depends(require_admin)])
+def purge_receipt_endpoint(receipt_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_admin)) -> dict:
+    from app.services import response_cache
+
+    result = purge_receipt(db, auth, receipt_id)
+    response_cache.invalidate("stock:")
+    return result
+
+
+@router.post("/debit-notes/{note_id}/restore", dependencies=[Depends(require_admin)])
+def restore_debit_note_endpoint(note_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_admin)) -> dict:
+    from app.services import response_cache
+
+    result = restore_debit_note(db, auth, note_id)
+    response_cache.invalidate("stock:")
+    return result
+
+
+@router.delete("/debit-notes/{note_id}", dependencies=[Depends(require_admin)])
+def purge_debit_note_endpoint(note_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_admin)) -> dict:
+    from app.services import response_cache
+
+    result = purge_debit_note(db, auth, note_id)
+    response_cache.invalidate("stock:")
+    return result

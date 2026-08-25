@@ -85,7 +85,7 @@ def build_vendor_ledger(db: Session, vendor_id: int, *, show_actor: bool = True,
 
     receipts = (
         db.query(StockReceipt)
-        .filter(StockReceipt.vendor_id == vendor_id)
+        .filter(StockReceipt.vendor_id == vendor_id, StockReceipt.deleted_at.is_(None))
         .order_by(StockReceipt.received_at.desc())
         .all()
     )
@@ -97,7 +97,7 @@ def build_vendor_ledger(db: Session, vendor_id: int, *, show_actor: bool = True,
 
     all_notes = (
         db.query(DebitNote)
-        .filter(DebitNote.vendor_id == vendor_id)
+        .filter(DebitNote.vendor_id == vendor_id, DebitNote.deleted_at.is_(None))
         .order_by(DebitNote.created_at.desc())
         .all()
     )
@@ -198,7 +198,11 @@ def build_vendor_ledger(db: Session, vendor_id: int, *, show_actor: bool = True,
 
     ap_entries = (
         db.query(ApLedgerEntry)
-        .filter(ApLedgerEntry.vendor_id == vendor_id, ApLedgerEntry.entry_type == "payment")
+        .filter(
+            ApLedgerEntry.vendor_id == vendor_id,
+            ApLedgerEntry.entry_type == "payment",
+            ApLedgerEntry.deleted_at.is_(None),
+        )
         .order_by(ApLedgerEntry.created_at.desc())
         .all()
     ) if include_ap else []

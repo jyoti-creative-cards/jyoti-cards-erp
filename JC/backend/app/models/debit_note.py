@@ -35,3 +35,6 @@ class DebitNote(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    deleted_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    deleted_by_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)

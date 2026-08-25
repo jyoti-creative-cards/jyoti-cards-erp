@@ -63,3 +63,5 @@ class DebitNoteOut(BaseModel):
     bill_number: Optional[str] = None
     vendor_label: Optional[str] = None
     source: Literal["auto", "manual"] = "manual"
+    deleted_at: Optional[datetime] = None
+    deleted_reason: Optional[str] = None

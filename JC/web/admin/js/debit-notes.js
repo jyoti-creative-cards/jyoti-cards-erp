@@ -6,6 +6,8 @@ const DebitNotes = (() => {
     receiptId: null,
     lines: [],
     editing: null,
+    editIndex: null, // set when editing a not-yet-saved wizard row (local, no API call)
+    prefillNote: null,
     onDone: null,
     noteType: "item",
     itemDirection: "short", // short = billed more / received less → pay less
@@ -31,19 +33,22 @@ const DebitNotes = (() => {
     return { itemDirection: "short", valueDirection: d === "under" ? "under" : "over" };
   }
 
-  function openCreate({ vendorId, receiptId, receivingLines, onDone }) {
+  function openCreate({ vendorId, receiptId, receivingLines, onDone, prefill, editIndex }) {
+    const dirs = prefill ? directionFromNote(prefill) : { itemDirection: "short", valueDirection: "over" };
     state = {
       vendorId,
       receiptId,
       lines: receivingLines || [],
       editing: null,
+      editIndex: editIndex != null ? editIndex : null,
+      prefillNote: prefill || null,
       onDone: onDone || null,
-      noteType: "item",
-      itemDirection: "short",
-      valueDirection: "over",
+      noteType: prefill?.note_type || "item",
+      itemDirection: dirs.itemDirection,
+      valueDirection: dirs.valueDirection,
     };
-    document.getElementById("dn-modal-title").textContent = "Add Debit Note";
-    renderForm();
+    document.getElementById("dn-modal-title").textContent = editIndex != null ? "Edit Debit Note" : "Add Debit Note";
+    renderForm(prefill);
     document.getElementById("debit-note-modal").classList.remove("hidden");
   }
 
@@ -73,14 +78,14 @@ const DebitNotes = (() => {
   function close() {
     document.getElementById("debit-note-modal")?.classList.add("hidden");
     state = {
-      vendorId: null, receiptId: null, lines: [], editing: null, onDone: null,
+      vendorId: null, receiptId: null, lines: [], editing: null, editIndex: null, prefillNote: null, onDone: null,
       noteType: "item", itemDirection: "short", valueDirection: "over",
     };
   }
 
   function setType(type) {
     state.noteType = type === "value" ? "value" : "item";
-    renderForm(state.editing);
+    renderForm(state.editing || state.prefillNote);
   }
 
   function setItemDirection(dir) {
@@ -185,6 +190,9 @@ const DebitNotes = (() => {
     footer.innerHTML = state.editing
       ? `<button class="btn btn-secondary" onclick="DebitNotes.close()">Cancel</button>
          <button class="btn btn-primary" onclick="DebitNotes.saveEdit()">Save</button>`
+      : state.editIndex != null
+      ? `<button class="btn btn-secondary" onclick="DebitNotes.close()">Cancel</button>
+         <button class="btn btn-primary" onclick="DebitNotes.saveLocalEdit()">Save</button>`
       : `<button class="btn btn-secondary" onclick="DebitNotes.close()">Cancel</button>
          <button class="btn btn-primary" onclick="DebitNotes.review()">Add Note</button>`;
 
@@ -341,6 +349,15 @@ const DebitNotes = (() => {
     finally { ctx.hideLoading?.(); }
   }
 
+  function saveLocalEdit() {
+    const payload = buildPayload();
+    if (!payload) return;
+    const idx = state.editIndex;
+    const onDone = state.onDone;
+    close();
+    if (onDone) onDone(payload, idx);
+  }
+
   let listCtx = null;
 
   async function openForReceipt({ vendorId, receiptId, receivingLines, onDone }) {
@@ -355,19 +372,27 @@ const DebitNotes = (() => {
       document.getElementById("dn-modal-title").textContent = "Debit Notes";
       const body = document.getElementById("debit-note-body");
       const footer = document.getElementById("debit-note-footer");
+      const canAdmin = ctx.isAdmin?.();
       const rows = (notes || []).map(n => {
         const effect = n.payable_effect != null ? n.payable_effect : (n.note_type === "item" ? -Number(n.amount) : Number(n.amount));
         const payLess = Number(effect) < 0;
         const title = n.note_type === "item"
           ? `${ctx.esc(n.our_product_id || "Item")} × ${n.quantity}${n.direction ? ` (${ctx.esc(n.direction)})` : ""}`
           : `Value ${ctx.esc(n.direction || "adj.")}`;
+        const autoTag = n.source === "auto" ? ` <span class="badge badge-blue" style="font-size:10px;">auto</span>` : "";
+        const voided = !!n.deleted_at;
         return `<div class="dn-list-card">
           <div class="dn-list-main">
-            <strong>${title}</strong>
+            <strong>${title}</strong>${autoTag}${voided ? ` <span class="badge badge-red" style="font-size:10px;">voided</span>` : ""}
             <span class="dn-effect-pill ${payLess ? "is-less" : "is-more"}">${payLess ? "Pay less" : "Pay more"} ${fmtPrice(Math.abs(effect))}</span>
           </div>
           ${n.notes ? `<div class="dn-row-note">${ctx.esc(n.notes)}</div>` : ""}
+          ${voided && n.deleted_reason ? `<div class="dn-row-note" style="color:var(--danger);">Voided — ${ctx.esc(n.deleted_reason)}</div>` : ""}
           <div class="vo-muted" style="margin-top:4px;">${new Date(n.created_at).toLocaleString()}</div>
+          ${!voided ? `<div style="margin-top:6px;">
+            <button type="button" class="btn btn-ghost btn-sm" onclick="DebitNotes.editFromList(${n.id})">Edit</button>
+            ${canAdmin ? `<button type="button" class="btn btn-ghost btn-sm" onclick="DebitNotes.voidFromList(${n.id})">Void</button>` : ""}
+          </div>` : ""}
         </div>`;
       }).join("");
       body.innerHTML = `
@@ -395,8 +420,35 @@ const DebitNotes = (() => {
     });
   }
 
+  function editFromList(noteId) {
+    if (!listCtx) return;
+    const { vendorId, receiptId, receivingLines, onDone } = listCtx;
+    openEdit(noteId, async () => {
+      if (onDone) await onDone();
+      await openForReceipt({ vendorId, receiptId, receivingLines, onDone });
+    });
+  }
+
+  async function voidFromList(noteId) {
+    if (!listCtx) return;
+    const { vendorId, receiptId, receivingLines, onDone } = listCtx;
+    const reason = prompt("Why are you voiding this debit note? (optional)", "");
+    if (reason === null) return;
+    if (!confirm("Void this debit note? It moves to the recycle bin and can be restored.")) return;
+    ctx.showLoading?.();
+    try {
+      await ctx.api(`/debit-notes/${noteId}/void`, { method: "POST", body: JSON.stringify({ reason: reason || null }) });
+      ctx.invalidateCache?.("/debit-notes");
+      ctx.invalidateCache?.("/accounts-payable");
+      ctx.toast("Debit note voided — moved to recycle bin", "success");
+      if (onDone) await onDone();
+      await openForReceipt({ vendorId, receiptId, receivingLines, onDone });
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
   return {
-    init, openCreate, openEdit, openForReceipt, addFromList, close, setType, setItemDirection, setValueDirection,
-    updatePreview, review, saveEdit, buildPayload,
+    init, openCreate, openEdit, openForReceipt, addFromList, editFromList, voidFromList, close, setType, setItemDirection, setValueDirection,
+    updatePreview, review, saveEdit, saveLocalEdit, buildPayload,
   };
 })();

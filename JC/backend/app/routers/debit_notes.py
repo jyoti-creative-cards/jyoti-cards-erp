@@ -56,6 +56,7 @@ def _debit_note_out(db: Session, note: DebitNote) -> DebitNoteOut:
         updated_at=note.updated_at,
         bill_number=receipt.bill_number if receipt else None,
         vendor_label=_vendor_label(vendor, city_name) if vendor else None,
+        source=note.source,
     )
 
 

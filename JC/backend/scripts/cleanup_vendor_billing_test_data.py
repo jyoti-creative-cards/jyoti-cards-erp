@@ -361,18 +361,35 @@ def main() -> int:
             summary["jc_stock_receipts"] += len(receipt_rows)
 
         print("")
-        print("Step 3: Delete remaining AP ledger rows for junk vendor names.")
+        print("Step 2b: Resolve junk vendor ids up front (id-scoped deletes from here on).")
         vendor_name_sql = vendor_name_placeholders(JUNK_VENDOR_NAMES)
+        cursor.execute(
+            f"SELECT id, business_name FROM jc_vendors WHERE business_name IN ({vendor_name_sql})",
+            JUNK_VENDOR_NAMES,
+        )
+        junk_vendor_rows = cursor.fetchall()
+        junk_vendor_name_counts = Counter(row["business_name"] for row in junk_vendor_rows)
+        if junk_vendor_name_counts != Counter(JUNK_VENDOR_NAMES):
+            raise RuntimeError(
+                "Safety check failed for junk vendors: expected exactly one vendor row for each of "
+                f"{JUNK_VENDOR_NAMES}, found {dict(junk_vendor_name_counts)}."
+            )
+        junk_vendor_ids = tuple(row["id"] for row in junk_vendor_rows)
+        print_rows("  jc_vendors (resolved)", junk_vendor_rows, ("id", "business_name"))
+        vendor_id_sql = vendor_name_placeholders(junk_vendor_ids)
+
+        print("")
+        print("Step 3: Delete remaining AP ledger rows for junk vendor ids.")
         remaining_ap_rows = delete_returning(
             cursor,
             f"""
             DELETE FROM jc_ap_ledger_entries e
             USING jc_vendors v
             WHERE e.vendor_id = v.id
-              AND v.business_name IN ({vendor_name_sql})
+              AND v.id IN ({vendor_id_sql})
             RETURNING e.id, v.business_name, e.vendor_id, e.entry_type, e.amount, e.receipt_id, e.debit_note_id, e.description
             """,
-            JUNK_VENDOR_NAMES,
+            junk_vendor_ids,
         )
         print_rows(
             "jc_ap_ledger_entries",
@@ -382,7 +399,7 @@ def main() -> int:
         summary["jc_ap_ledger_entries"] += len(remaining_ap_rows)
 
         print("")
-        print("Step 4: Delete vendor orders, placements, and lines for junk vendor names.")
+        print("Step 4: Delete vendor orders, placements, and lines for junk vendor ids.")
         order_lines = delete_returning(
             cursor,
             f"""
@@ -391,10 +408,10 @@ def main() -> int:
             WHERE l.placement_id = p.id
               AND p.vendor_order_id = o.id
               AND o.vendor_id = v.id
-              AND v.business_name IN ({vendor_name_sql})
+              AND v.id IN ({vendor_id_sql})
             RETURNING l.id, v.business_name, l.placement_id, l.catalog_product_id, l.our_product_id, l.quantity, l.quantity_remaining
             """,
-            JUNK_VENDOR_NAMES,
+            junk_vendor_ids,
         )
         print_rows(
             "jc_vendor_order_lines",
@@ -410,10 +427,10 @@ def main() -> int:
             USING jc_vendor_orders o, jc_vendors v
             WHERE p.vendor_order_id = o.id
               AND o.vendor_id = v.id
-              AND v.business_name IN ({vendor_name_sql})
+              AND v.id IN ({vendor_id_sql})
             RETURNING p.id, v.business_name, p.vendor_order_id, p.status, p.placed_by_name, p.placed_at
             """,
-            JUNK_VENDOR_NAMES,
+            junk_vendor_ids,
         )
         print_rows(
             "jc_vendor_order_placements",
@@ -428,10 +445,10 @@ def main() -> int:
             DELETE FROM jc_vendor_orders o
             USING jc_vendors v
             WHERE o.vendor_id = v.id
-              AND v.business_name IN ({vendor_name_sql})
+              AND v.id IN ({vendor_id_sql})
             RETURNING o.id, v.business_name, o.vendor_id, o.bucket, o.status, o.is_open
             """,
-            JUNK_VENDOR_NAMES,
+            junk_vendor_ids,
         )
         print_rows(
             "jc_vendor_orders",
@@ -448,10 +465,10 @@ def main() -> int:
             UPDATE jc_vendors
             SET is_active = FALSE,
                 deleted_at = NOW()
-            WHERE business_name IN ({vendor_name_sql})
+            WHERE id IN ({vendor_id_sql})
             RETURNING id, business_name, is_active, deleted_at
             """,
-            JUNK_VENDOR_NAMES,
+            junk_vendor_ids,
         )
         print_rows(
             "jc_vendors",
@@ -472,6 +489,11 @@ def main() -> int:
             print(f"  {table_name}: {count}")
 
         if args.execute:
+            if not sys.stdin.isatty():
+                connection.rollback()
+                print("")
+                print("Abort: --execute requires an interactive terminal (stdin is not a TTY). Transaction rolled back.")
+                return 1
             print("")
             confirmation = input("Type 'yes' to commit these deletions: ").strip()
             if confirmation != "yes":

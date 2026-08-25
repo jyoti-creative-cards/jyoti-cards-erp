@@ -16,13 +16,13 @@ from app.models.vendor import Vendor
 from app.models.vendor_order import VendorOrderLine
 from app.schemas.stock import VendorReceiptCreate
 from app.services.activity import log_from_auth
-from app.services.ap_ledger import receipt_bill_amount, sync_receipt_bill_ledger
+from app.services.ap_ledger import sync_receipt_bill_ledger, sync_receipt_extra_cash_ledger
 from app.services.debit_notes import create_debit_note, reverse_debit_note_effects
 from app.services.history import record_entity_history
 from app.services.open_lines import add_to_open, reduce_from_open
 from app.services.stock_receipt import add_stock
 from app.services.storage import delete_keys
-from app.services.vendor_receive_bill import reduce_unbilled_received
+from app.services.vendor_billing_math import compute_bill_totals
 
 
 def _vendor_label(db: Session, vendor_id: int) -> str:
@@ -265,139 +265,46 @@ def _edit_receive(db: Session, auth: AuthContext, receipt: StockReceipt, body: V
 
 
 def _edit_bill(db: Session, auth: AuthContext, receipt: StockReceipt, body: VendorReceiptCreate) -> dict:
-    """Edit bill against received: AP + DN + billed lines + unbilled received. No stock."""
-    normalized = []
-    for ln in body.lines:
-        bq = int(ln.quantity_billed or 0)
-        if bq <= 0:
-            bq = int(ln.quantity_received or 0)
-        if bq > 0:
-            normalized.append((ln, bq))
-    if not normalized:
+    """Edit an already-billed receipt in place: billed qty/amount, AP, debit notes. No stock, no cross-receipt pool."""
+    vendor = db.get(Vendor, receipt.vendor_id)
+    if not vendor or vendor.deleted_at:
+        raise HTTPException(404, "vendor not found")
+
+    lines = db.query(StockReceiptLine).filter(StockReceiptLine.receipt_id == receipt.id).all()
+    billed_qty_in = {ln.catalog_product_id: ln.quantity_billed for ln in body.lines}
+
+    normalized: list[tuple[StockReceiptLine, int]] = []
+    for ln in lines:
+        bq = billed_qty_in.get(ln.catalog_product_id)
+        bq = int(bq) if bq is not None else int(ln.quantity_billed or 0)
+        if bq < 0:
+            raise HTTPException(400, f"billed qty for {ln.our_product_id} cannot be negative")
+        normalized.append((ln, bq))
+    if not any(bq > 0 for _, bq in normalized):
         raise HTTPException(400, "enter billed quantity on at least one row")
-    line_bill_total = sum((ln.billed_amount or Decimal("0")) for ln, _ in normalized)
-    if body.total_billed_amount is None and line_bill_total <= 0:
-        raise HTTPException(400, "enter total bill amount for this shipment")
 
     label = _vendor_label(db, receipt.vendor_id)
     before = _receipt_snapshot(db, receipt)
-    old_lines = {
-        ln.catalog_product_id: ln
-        for ln in db.query(StockReceiptLine).filter(StockReceiptLine.receipt_id == receipt.id).all()
-    }
 
-    # Restore unbilled received from old billed qty, then apply new
-    restore = [
-        (pid, int(ln.quantity_billed or ln.quantity_received or 0))
-        for pid, ln in old_lines.items()
-        if int(ln.quantity_billed or ln.quantity_received or 0) > 0
-    ]
-    if restore:
-        # add back to quantity_remaining on received lines (reverse of reduce)
-        from app.services.stock_receipt import get_open_order
-        from app.models.vendor_order import VendorOrderPlacement
+    total_actual_value = sum((ln.buying_price * bq for ln, bq in normalized), Decimal("0"))
+    bill_total, extra_cash = compute_bill_totals(
+        total_actual_value=total_actual_value,
+        billing_pct=vendor.billing_pct, additional_charge=vendor.additional_charge,
+        discount_pct=vendor.discount_pct, gst_included=vendor.gst_included, gst_rate_pct=vendor.gst_rate_pct,
+    )
+    entered_total = (body.total_billed_amount if body.total_billed_amount is not None else bill_total).quantize(Decimal("0.01"))
+    is_split = vendor.billing_pct < 100
 
-        received = get_open_order(db, receipt.vendor_id, "received")
-        if received:
-            for catalog_product_id, qty in restore:
-                left = int(qty or 0)
-                if left <= 0:
-                    continue
-                order_lines = (
-                    db.query(VendorOrderLine)
-                    .join(VendorOrderPlacement, VendorOrderLine.placement_id == VendorOrderPlacement.id)
-                    .filter(
-                        VendorOrderPlacement.vendor_order_id == received.id,
-                        VendorOrderPlacement.status == "received",
-                        VendorOrderLine.catalog_product_id == catalog_product_id,
-                    )
-                    .order_by(VendorOrderPlacement.placed_at.desc(), VendorOrderLine.id.desc())
-                    .all()
-                )
-                for ol in order_lines:
-                    if left <= 0:
-                        break
-                    billed = int(ol.quantity_billed or 0)
-                    take = min(billed, left) if billed > 0 else min(
-                        max(0, int(ol.quantity or 0) - int(ol.quantity_remaining or 0)), left
-                    )
-                    if take <= 0:
-                        # if no billed marker, put back up to quantity - remaining room
-                        room = max(0, int(ol.quantity or 0) - int(ol.quantity_remaining or 0))
-                        take = min(room, left)
-                    if take <= 0:
-                        continue
-                    ol.quantity_remaining = int(ol.quantity_remaining or 0) + take
-                    ol.quantity_billed = max(0, int(ol.quantity_billed or 0) - take)
-                    left -= take
-                if left > 0:
-                    prod = db.get(CatalogProduct, catalog_product_id)
-                    raise HTTPException(
-                        400,
-                        f"cannot restore unbilled received for "
-                        f"{prod.our_product_id if prod else catalog_product_id} — short by {left}",
-                    )
-
-    apply = [(ln.catalog_product_id, bq) for ln, bq in normalized]
-    # Validate against restored pool then reduce
-    from app.services.vendor_receive_bill import unbilled_received_qty_by_product
-
-    unbilled = unbilled_received_qty_by_product(db, receipt.vendor_id)
     for ln, bq in normalized:
-        have = int(unbilled.get(ln.catalog_product_id, 0))
-        if bq > have:
-            prod = db.get(CatalogProduct, ln.catalog_product_id)
-            raise HTTPException(
-                400,
-                f"billed qty for {prod.our_product_id if prod else ln.catalog_product_id} ({bq}) "
-                f"exceeds unbilled received ({have})",
-            )
-    reduce_unbilled_received(db, receipt.vendor_id, apply)
-
-    # No stock change for vendor_bill
-    bill_body_lines = []
-    for ln, bq in normalized:
-        # reuse schema objects with billed qty
         ln.quantity_billed = bq
-        ln.quantity_received = bq
-        bill_body_lines.append(ln)
-    _replace_receipt_lines(db, receipt, bill_body_lines, recv_field=False)
-
-    if receipt.billed_placement_id:
-        old_vol = (
-            db.query(VendorOrderLine)
-            .filter(VendorOrderLine.placement_id == receipt.billed_placement_id)
-            .all()
-        )
-        for vol in old_vol:
-            db.delete(vol)
-        db.flush()
-        for ln, bq in normalized:
-            prod = db.get(CatalogProduct, ln.catalog_product_id)
-            if not prod:
-                continue
-            db.add(
-                VendorOrderLine(
-                    placement_id=receipt.billed_placement_id,
-                    catalog_product_id=prod.id,
-                    our_product_id=prod.our_product_id,
-                    quantity=bq,
-                    quantity_remaining=bq,
-                    quantity_billed=bq,
-                    billed_amount=(ln.billed_amount or Decimal("0")).quantize(Decimal("0.01")),
-                    buying_price=prod.buying_price,
-                )
-            )
+        ln.billed_amount = (ln.buying_price * vendor.billing_pct / 100 * bq).quantize(Decimal("0.01"))
 
     old_bill_key = receipt.bill_file_key
     old_doc_key = receipt.receipt_document_key
     receipt.bill_number = (body.bill_number or "").strip() or None
-    receipt.additional_charges = (
-        body.additional_charges.quantize(Decimal("0.01")) if body.additional_charges is not None else None
-    )
-    receipt.total_billed_amount = (
-        body.total_billed_amount.quantize(Decimal("0.01")) if body.total_billed_amount is not None else None
-    )
+    receipt.additional_charges = vendor.additional_charge.quantize(Decimal("0.01"))
+    receipt.total_billed_amount = entered_total
+    receipt.actual_ap_amount = (entered_total + extra_cash).quantize(Decimal("0.01")) if extra_cash > 0 else None
     if body.bill_file_key is not None:
         receipt.bill_file_key = body.bill_file_key or None
     if body.notes is not None:
@@ -414,135 +321,30 @@ def _edit_bill(db: Session, auth: AuthContext, receipt: StockReceipt, body: Vend
     for dn_in in body.debit_notes or []:
         if dn_in.note_type == "item" and dn_in.catalog_product_id not in bill_product_ids:
             raise HTTPException(400, "debit note item must be from billed lines")
-        create_debit_note(db, auth, vendor_id=receipt.vendor_id, receipt_id=receipt.id, body=dn_in)
+        create_debit_note(db, auth, vendor_id=receipt.vendor_id, receipt_id=receipt.id, body=dn_in, source="manual")
 
-    bill_total = receipt_bill_amount(db, receipt.id)
+    bill_num_label = str(receipt.bill_number or receipt.id)
     sync_receipt_bill_ledger(
         db,
         vendor_id=receipt.vendor_id,
         receipt_id=receipt.id,
-        bill_total=bill_total,
-        bill_label=str(receipt.bill_number or receipt.id),
+        bill_total=entered_total,
+        bill_label=bill_num_label,
         actor_type=auth.actor_type,
         actor_id=auth.actor_id,
         actor_name=auth.actor_name,
     )
-
-    after = _receipt_snapshot(db, receipt)
-    summary = _summary_from_snapshots(before, after)
-    record_entity_history(db, "stock_receipt", receipt.id, before, summary)
-    log_from_auth(
-        db, auth, action="update", entity_type="stock_receipt", entity_id=receipt.id,
-        entity_label=label, detail=summary[:500],
-    )
-    _cleanup_s3(old_doc_key, old_bill_key, receipt.bill_file_key)
-    db.commit()
-    return {"ok": True, "receipt_id": receipt.id, "message": "Bill updated", "change_summary": summary}
-
-
-def _edit_combined(db: Session, auth: AuthContext, receipt: StockReceipt, body: VendorReceiptCreate) -> dict:
-    """Legacy vendor_order / offline_vendor: stock + open + AP together."""
-    bill_lines = [ln for ln in body.lines if ln.quantity_received > 0 or (ln.quantity_billed or 0) > 0]
-    if not bill_lines:
-        raise HTTPException(400, "enter quantity received or billed on at least one row")
-    line_bill_total = sum((ln.billed_amount or Decimal("0")) for ln in bill_lines)
-    if body.total_billed_amount is None and line_bill_total <= 0:
-        raise HTTPException(400, "enter total bill amount for this shipment")
-
-    offline = receipt.receipt_type == "offline_vendor"
-    label = _vendor_label(db, receipt.vendor_id)
-    before = _receipt_snapshot(db, receipt)
-    old_lines = {
-        ln.catalog_product_id: ln
-        for ln in db.query(StockReceiptLine).filter(StockReceiptLine.receipt_id == receipt.id).all()
-    }
-    new_by_pid = {ln.catalog_product_id: ln for ln in bill_lines}
-
-    for pid in set(old_lines) | set(new_by_pid):
-        old_recv = int(old_lines[pid].quantity_received or 0) if pid in old_lines else 0
-        new_recv = int(new_by_pid[pid].quantity_received or 0) if pid in new_by_pid else 0
-        _stock_delta(
-            db, receipt, label, pid, new_recv - old_recv,
-            f"Edit bill {body.bill_number or receipt.bill_number or receipt.id}",
+    if is_split:
+        sync_receipt_extra_cash_ledger(
+            db,
+            vendor_id=receipt.vendor_id,
+            receipt_id=receipt.id,
+            extra_cash=extra_cash,
+            bill_label=bill_num_label,
+            actor_type=auth.actor_type,
+            actor_id=auth.actor_id,
+            actor_name=auth.actor_name,
         )
-
-    if not offline:
-        restore = [(pid, int(ln.quantity_received or 0)) for pid, ln in old_lines.items() if int(ln.quantity_received or 0) > 0]
-        apply = [(ln.catalog_product_id, int(ln.quantity_received or 0)) for ln in bill_lines if int(ln.quantity_received or 0) > 0]
-        if restore:
-            add_to_open(db, receipt.vendor_id, restore)
-        if apply:
-            reduce_from_open(db, receipt.vendor_id, apply)
-
-    _replace_receipt_lines(db, receipt, bill_lines, recv_field=True)
-
-    if receipt.billed_placement_id:
-        old_vol = (
-            db.query(VendorOrderLine)
-            .filter(VendorOrderLine.placement_id == receipt.billed_placement_id)
-            .all()
-        )
-        for vol in old_vol:
-            db.delete(vol)
-        db.flush()
-        for ln in bill_lines:
-            recv_qty = int(ln.quantity_received or 0)
-            if recv_qty <= 0:
-                continue
-            prod = db.get(CatalogProduct, ln.catalog_product_id)
-            if not prod:
-                continue
-            db.add(
-                VendorOrderLine(
-                    placement_id=receipt.billed_placement_id,
-                    catalog_product_id=prod.id,
-                    our_product_id=prod.our_product_id,
-                    quantity=recv_qty,
-                    quantity_remaining=recv_qty,
-                    quantity_billed=int(ln.quantity_billed or 0),
-                    billed_amount=(ln.billed_amount or Decimal("0")).quantize(Decimal("0.01")),
-                    buying_price=prod.buying_price,
-                )
-            )
-
-    old_bill_key = receipt.bill_file_key
-    old_doc_key = receipt.receipt_document_key
-    receipt.bill_number = (body.bill_number or "").strip() or None
-    receipt.additional_charges = (
-        body.additional_charges.quantize(Decimal("0.01")) if body.additional_charges is not None else None
-    )
-    receipt.total_billed_amount = (
-        body.total_billed_amount.quantize(Decimal("0.01")) if body.total_billed_amount is not None else None
-    )
-    if body.bill_file_key is not None:
-        receipt.bill_file_key = body.bill_file_key or None
-    if body.notes is not None:
-        receipt.notes = (body.notes or "").strip() or None
-    receipt.receipt_document_key = None
-
-    old_notes = db.query(DebitNote).filter(DebitNote.receipt_id == receipt.id).all()
-    for n in old_notes:
-        reverse_debit_note_effects(db, auth, n, reason=f"receipt edit #{receipt.id}")
-        db.delete(n)
-    db.flush()
-
-    bill_product_ids = {ln.catalog_product_id for ln in bill_lines}
-    for dn_in in body.debit_notes or []:
-        if dn_in.note_type == "item" and dn_in.catalog_product_id not in bill_product_ids:
-            raise HTTPException(400, "debit note item must be from billed or received lines")
-        create_debit_note(db, auth, vendor_id=receipt.vendor_id, receipt_id=receipt.id, body=dn_in)
-
-    bill_total = receipt_bill_amount(db, receipt.id)
-    sync_receipt_bill_ledger(
-        db,
-        vendor_id=receipt.vendor_id,
-        receipt_id=receipt.id,
-        bill_total=bill_total,
-        bill_label=str(receipt.bill_number or receipt.id),
-        actor_type=auth.actor_type,
-        actor_id=auth.actor_id,
-        actor_name=auth.actor_name,
-    )
 
     after = _receipt_snapshot(db, receipt)
     summary = _summary_from_snapshots(before, after)
@@ -567,10 +369,6 @@ def update_vendor_receipt(
         raise HTTPException(404, "receipt not found")
     if body.vendor_id != receipt.vendor_id:
         raise HTTPException(400, "cannot change vendor on an existing bill")
-
-    rtype = receipt.receipt_type or "vendor_order"
-    if rtype == "vendor_receive":
-        return _edit_receive(db, auth, receipt, body)
-    if rtype == "vendor_bill":
+    if receipt.bill_status == "billed":
         return _edit_bill(db, auth, receipt, body)
-    return _edit_combined(db, auth, receipt, body)
+    return _edit_receive(db, auth, receipt, body)

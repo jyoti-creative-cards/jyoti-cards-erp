@@ -12,7 +12,10 @@ const Stock = (() => {
   let billFileKey = null;
   let pendingDebitNotes = [];
   let receiptMeta = { billNumber: "", orderReceiptNumber: "", additionalCharges: "", totalBilledAmount: "", notes: "", eventDate: "" };
-  let vendorBillingCtx = null; // loaded per-vendor when entering bill wizard
+  let wizardReceiptId = null; // selected pending-bill receipt (bill_received mode)
+  let wizardPendingBillList = null; // { vendor_id, vendor_label, receipts } from /stock/vendor-order/{id}/received
+  let billingTerms = null; // vendor's typed billing terms, loaded with the chosen receipt
+  let billPreview = null; // { expected_bill_total, expected_extra_cash, suggested_debit_notes } from /bill-preview
   function localToday() {
     const n = new Date();
     return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
@@ -207,13 +210,13 @@ const Stock = (() => {
     offlineVendorsCache = [];
     receivePrefill = prefill || null;
     enteredFromAddStock = false;
-    vendorBillingCtx = null;
+    wizardReceiptId = null;
+    wizardPendingBillList = null;
+    billingTerms = null;
+    billPreview = null;
     receiptMeta = { billNumber: "", orderReceiptNumber: "", additionalCharges: "", totalBilledAmount: "", notes: "", eventDate: localToday() };
     document.getElementById("stock-wizard")?.classList.remove("hidden");
     document.querySelector("#stock-wizard .modal-header h3").textContent = "Bill Order";
-    if (vendorId) {
-      try { vendorBillingCtx = await ctx.api(`/vendors/${vendorId}/billing-context`, {}, 0); } catch (_) {}
-    }
     await renderWizard();
   }
   async function openOfflineWizard(vendorId) {
@@ -345,70 +348,86 @@ const Stock = (() => {
   function receivedLines() {
     return wizardLines.filter(l => (l.quantity_received || 0) > 0);
   }
-  function _billingCalc() {
-    if (!vendorBillingCtx) return null;
-    const bc = vendorBillingCtx;
-    const factor = bc.invoice_factor || 1;
-    const qtyUnit = bc.invoice_qty_unit || 1;
-    const isSplit = factor < 1;
-    // catalog buying_price is per-unit actual price
-    const actualSubtotal = wizardLines.reduce((sum, l) => {
-      const qty = Number(l.quantity_billed) || 0;
-      const price = Number(l.buying_price) || 0;
-      return sum + qty * price;
-    }, 0);
-    if (actualSubtotal <= 0 && !(bc.freight_charges || bc.packing_charges)) return null;
-    const invoiceSubtotal = actualSubtotal * factor; // what vendor writes on bill for items
-    const packing = bc.freight_charges || 0;         // "freight_charges" doubles as packing here
-    const invoiceBase = invoiceSubtotal + packing;
-    const gstAmount = bc.gst_enabled ? invoiceBase * (bc.gst_rate || 18) / 100 : 0;
-    const billTotal = invoiceBase + gstAmount;        // what vendor's bill document shows
-    // For split-price: extra cash = the other portion (not on bill, no GST)
-    const extraCash = isSplit ? invoiceSubtotal : 0;
-    const actualAp = billTotal + extraCash;           // real payment = bill + extra
-    return { factor, qtyUnit, isSplit, actualSubtotal, invoiceSubtotal, packing, gstAmount, billTotal, extraCash, actualAp, bc };
-  }
-  function computedBillTotal() {
-    const calc = _billingCalc();
-    if (!calc || calc.billTotal <= 0) return "";
-    return String(Math.round(calc.billTotal * 100) / 100);
-  }
-  function computedActualAp() {
-    const calc = _billingCalc();
-    if (!calc) return null;
-    return calc.isSplit ? Math.round(calc.actualAp * 100) / 100 : null;
-  }
-  function renderVendorBillingContextCard() {
-    if (!vendorBillingCtx) return "";
-    const calc = _billingCalc();
-    if (!calc) return "";
-    const { bc, isSplit, actualSubtotal, invoiceSubtotal, packing, gstAmount, billTotal, extraCash, actualAp, factor, qtyUnit } = calc;
-    const canOverride = ctx.isAdmin?.() || bc.allow_override;
-    const lockIcon = canOverride ? "" : `<span style="font-size:11px;color:var(--muted);margin-left:6px;">🔒 locked</span>`;
-    const fmtAmt = v => `₹${(Math.round(v * 100) / 100).toFixed(2)}`;
+  function renderVendorBillingTermsCard() {
+    if (!billingTerms) return "";
+    const t = billingTerms;
+    const isSplit = Number(t.billing_pct) < 100;
     const rows = [];
-    if (isSplit) {
-      rows.push(`<tr><td style="color:var(--muted);">Actual items (${factor * 100}% on bill)</td><td>${fmtAmt(actualSubtotal)}</td></tr>`);
-      rows.push(`<tr><td>Invoice items (${factor < 1 ? `per ${qtyUnit} units` : ""})</td><td>${fmtAmt(invoiceSubtotal)}</td></tr>`);
-    } else {
-      if (actualSubtotal > 0) rows.push(`<tr><td>Items subtotal</td><td>${fmtAmt(actualSubtotal)}</td></tr>`);
-      if (bc.discount_percent) rows.push(`<tr><td>Discount (${bc.discount_percent}%)</td><td style="color:var(--danger);">−${fmtAmt(actualSubtotal * bc.discount_percent / 100)}</td></tr>`);
-    }
-    if (packing > 0) rows.push(`<tr><td>Packing / freight</td><td>+${fmtAmt(packing)}</td></tr>`);
-    if (bc.gst_enabled) rows.push(`<tr><td>GST ${bc.gst_rate}%</td><td>+${fmtAmt(gstAmount)}</td></tr>`);
-    rows.push(`<tr style="font-weight:600;"><td>Bill document total</td><td>${fmtAmt(billTotal)}</td></tr>`);
-    if (isSplit && extraCash > 0) {
-      rows.push(`<tr><td style="color:var(--muted);padding-top:4px;">+ Extra cash (no GST)</td><td>${fmtAmt(extraCash)}</td></tr>`);
-      rows.push(`<tr style="font-weight:700;color:var(--primary);"><td>Actual AP (total paid)</td><td>${fmtAmt(actualAp)}</td></tr>`);
-    }
+    rows.push(`<tr><td>Billing</td><td>${Number(t.billing_pct)}% of item value${isSplit ? " (split billing)" : ""}</td></tr>`);
+    if (Number(t.discount_pct) > 0) rows.push(`<tr><td>Discount</td><td>${Number(t.discount_pct)}%</td></tr>`);
+    if (Number(t.additional_charge) > 0) rows.push(`<tr><td>${ctx.esc(t.additional_charge_label || "Additional charge")}</td><td>+${fmtPrice(t.additional_charge)}</td></tr>`);
+    rows.push(`<tr><td>GST</td><td>${t.gst_included ? `${Number(t.gst_rate_pct)}% included` : "Not included"}</td></tr>`);
     return `
       <div class="stock-bill-card" style="margin-bottom:12px;background:#f0f9ff;border:1px solid #bae6fd;">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-          <span style="font-weight:600;font-size:14px;">Vendor billing terms</span>${lockIcon}
+          <span style="font-weight:600;font-size:14px;">Vendor billing terms</span>
         </div>
-        ${bc.notes ? `<p style="font-size:13px;color:var(--muted);margin:0 0 8px;">${ctx.esc(bc.notes)}</p>` : ""}
-        ${rows.length ? `<table class="data" style="font-size:13px;margin:0;width:100%;"><tbody>${rows.join("")}</tbody></table>` : ""}
+        ${t.billing_notes ? `<p style="font-size:13px;color:var(--muted);margin:0 0 8px;">${ctx.esc(t.billing_notes)}</p>` : ""}
+        <table class="data" style="font-size:13px;margin:0;width:100%;"><tbody>${rows.join("")}</tbody></table>
       </div>`;
+  }
+  async function selectPendingReceipt(receiptId) {
+    wizardReceiptId = receiptId;
+    ctx.showLoading?.();
+    try {
+      const detail = await ctx.api(`/stock/receipts/${receiptId}/for-bill`, {}, 0);
+      billingTerms = detail.billing_terms || null;
+      placedOrder = detail;
+      wizardLines = (detail.lines || []).map(l => ({
+        catalog_product_id: l.catalog_product_id,
+        our_product_id: l.our_product_id,
+        quantity_received: l.quantity_received,
+        quantity_billed: l.quantity_received,
+        buying_price: l.buying_price,
+        unit: l.unit,
+        image_urls: l.image_urls || [],
+      }));
+      receiptMeta.totalBilledAmount = detail.expected_bill_amount || "";
+      billPreview = null;
+      pendingDebitNotes = [];
+    } catch (e) {
+      ctx.toast(e.message, "error");
+      wizardReceiptId = null;
+    } finally { ctx.hideLoading?.(); }
+    await renderWizard();
+  }
+  function changePendingReceipt() {
+    wizardReceiptId = null;
+    wizardLines = [];
+    billingTerms = null;
+    billPreview = null;
+    pendingDebitNotes = [];
+    renderWizard();
+  }
+  async function refreshBillPreview() {
+    const total = parseFloat(receiptMeta.totalBilledAmount) || 0;
+    try {
+      const preview = await ctx.api(`/stock/receipts/${wizardReceiptId}/bill-preview`, {
+        method: "POST",
+        body: JSON.stringify({
+          total_billed_amount: total,
+          lines: wizardLines.map(l => ({ catalog_product_id: l.catalog_product_id, quantity_billed: l.quantity_billed || 0 })),
+        }),
+      }, 0);
+      billPreview = preview;
+      pendingDebitNotes = pendingDebitNotes.filter(dn => !dn._auto_suggested);
+      for (const s of preview.suggested_debit_notes || []) {
+        const amt = Number(s.amount) || 0;
+        pendingDebitNotes.push({
+          note_type: s.note_type,
+          direction: s.direction,
+          catalog_product_id: s.catalog_product_id,
+          quantity: null,
+          amount: amt,
+          notes: s.notes,
+          source: "auto",
+          _auto_suggested: true,
+          _label: s.our_product_id,
+          _amount: amt,
+          _payable_effect: s.direction === "over" ? -amt : amt,
+        });
+      }
+    } catch (e) { ctx.toast(e.message, "error"); }
   }
   async function renderWizard() {
     const stepsEl = document.getElementById("stock-wizard-steps");
@@ -850,88 +869,86 @@ const Stock = (() => {
         <button class="btn btn-primary" onclick="Stock.wizardNext()">Review →</button>`;
       return;
     }
-    if (wizardStep === 2 && wizardMode === "bill_received") {
-      if (!placedOrder) {
-        bodyEl.innerHTML = HubUI.emptyState({ title: "Loading…", sub: "Loading received goods…" });
+    if (wizardStep === 2 && wizardMode === "bill_received" && !wizardReceiptId) {
+      if (!wizardPendingBillList) {
+        bodyEl.innerHTML = HubUI.emptyState({ title: "Loading…", sub: "Loading pending receipts…" });
         footerEl.innerHTML = `<button class="btn btn-secondary" onclick="Stock.wizardBack()">← Back</button>`;
         ctx.showLoading?.();
-        try {
-          placedOrder = await ctx.api(`/stock/vendor-order/${wizardVendorId}/received`, {}, 0);
-          // Use billing_context from API response as fallback
-          if (!vendorBillingCtx && placedOrder.billing_context) {
-            vendorBillingCtx = placedOrder.billing_context;
-          }
-          wizardLines = (placedOrder.lines || []).map(l => ({
-            catalog_product_id: l.catalog_product_id,
-            our_product_id: l.our_product_id,
-            vendor_product_id: l.vendor_product_id || "",
-            category: l.category || "",
-            quantity_placed: l.quantity_placed || 0,
-            quantity_ordered: l.quantity_unbilled,
-            quantity_received: l.quantity_unbilled,
-            buying_price: l.buying_price,
-            buying_price_display: l.buying_price_display || l.buying_price,
-            unit: l.unit,
-            image_urls: l.image_urls,
-            quantity_billed: l.quantity_unbilled,
-          }));
-          if (receivePrefill?.catalog_product_id) {
-            const qty = Math.max(1, parseInt(String(receivePrefill.quantity || receivePrefill.pending_qty || 1), 10) || 1);
-            const match = wizardLines.find(l => l.catalog_product_id === receivePrefill.catalog_product_id);
-            if (match) {
-              match.quantity_billed = Math.min(qty, match.quantity_ordered || qty);
-              match.quantity_received = match.quantity_billed;
-              wizardLines = [match];
-            }
-            receivePrefill = null;
-          }
-        } catch (e) { ctx.toast(e.message, "error"); wizardStep = 1; return renderWizard(); }
+        try { wizardPendingBillList = await ctx.api(`/stock/vendor-order/${wizardVendorId}/received`, {}, 0); }
+        catch (e) { ctx.toast(e.message, "error"); wizardStep = 1; return renderWizard(); }
         finally { ctx.hideLoading?.(); }
       }
-      if (!wizardLines.length) {
-        setStockWizardChrome("Bill Order", "Nothing to bill");
-        bodyEl.innerHTML = HubUI.emptyState({ title: "Nothing to bill", sub: "No unbilled received goods for this vendor." });
+      const receipts = wizardPendingBillList.receipts || [];
+      setStockWizardChrome("Bill Order", "Step 2 — pick a receipt to bill");
+      if (!receipts.length) {
+        bodyEl.innerHTML = HubUI.emptyState({ title: "Nothing to bill", sub: "No pending receipts for this vendor." });
         footerEl.innerHTML = `<button class="btn btn-secondary" onclick="Stock.wizardBack()">← Back</button>`;
         return;
       }
-      setStockWizardChrome("Bill Order", "Step 2 — 3-way match and bill details");
-      const hasCtx = !!vendorBillingCtx;
       bodyEl.innerHTML = `
         <div class="vo-wiz-step-head">
-          <h4>${ctx.esc(placedOrder.vendor_label)}</h4>
-          <p>Enter billed qty. Placed = pending in order; Received = unbilled stock on hand.</p>
+          <h4>${ctx.esc(wizardPendingBillList.vendor_label)}</h4>
+          <p>${receipts.length} receipt${receipts.length === 1 ? "" : "s"} pending bill. One bill per receipt.</p>
+        </div>
+        <div class="vo-wiz-vendor-list">
+          ${receipts.map(r => `
+            <button type="button" class="vo-wiz-vendor-card" onclick="Stock.selectPendingReceipt(${r.receipt_id})">
+              <span class="vo-wiz-vendor-letter">#${r.receipt_id}</span>
+              <span class="vo-wiz-vendor-meta">
+                <strong>${ctx.esc(r.order_receipt_number || `Receipt #${r.receipt_id}`)}</strong>
+                <span>${new Date(r.received_at).toLocaleDateString()} · ${r.line_count} line${r.line_count === 1 ? "" : "s"} · ${r.total_quantity} qty</span>
+              </span>
+              <span class="vo-wiz-vendor-meta" style="text-align:right;">
+                <strong>${r.expected_bill_amount != null ? fmtPrice(r.expected_bill_amount) : "—"}</strong>
+                ${r.expected_extra_cash ? `<span>+ ${fmtPrice(r.expected_extra_cash)} extra cash</span>` : ""}
+              </span>
+            </button>`).join("")}
+        </div>`;
+      footerEl.innerHTML = `<button class="btn btn-secondary" onclick="Stock.wizardBack()">← Back</button>`;
+      return;
+    }
+    if (wizardStep === 2 && wizardMode === "bill_received" && wizardReceiptId) {
+      if (!wizardLines.length) {
+        setStockWizardChrome("Bill Order", "Nothing to bill");
+        bodyEl.innerHTML = HubUI.emptyState({ title: "Nothing to bill", sub: "This receipt has no lines." });
+        footerEl.innerHTML = `<button class="btn btn-secondary" onclick="Stock.changePendingReceipt()">← Choose different receipt</button>`;
+        return;
+      }
+      setStockWizardChrome("Bill Order", "Step 2 — enter billed quantities & bill total");
+      bodyEl.innerHTML = `
+        <div class="vo-wiz-step-head">
+          <h4>${ctx.esc(placedOrder.vendor_label)} — receipt #${placedOrder.receipt_id}${placedOrder.order_receipt_number ? ` (${ctx.esc(placedOrder.order_receipt_number)})` : ""}</h4>
+          <p>Billed qty defaults to received — edit if the vendor's bill differs. Total bill amount defaults to the calculated expectation — edit to match the paper invoice.</p>
         </div>
         <div class="stock-receive-table-wrap">
           <table class="data stock-receive-table"><thead><tr>
-            <th></th><th>Product</th><th style="text-align:right;">Placed</th><th style="text-align:right;">Received</th><th style="text-align:right;">Price</th><th style="text-align:right;">Billed qty</th>
+            <th></th><th>Product</th><th style="text-align:right;">Received</th><th style="text-align:right;">Price</th><th style="text-align:right;">Billed qty</th>
           </tr></thead><tbody>
             ${wizardLines.map((l, i) => {
               const img = (l.image_urls && l.image_urls[0]) || "";
-              const displayPrice = l.buying_price_display || l.buying_price;
               const diff = (l.quantity_billed || 0) - (l.quantity_received || 0);
               const diffBadge = diff !== 0
                 ? `<span class="badge ${diff > 0 ? "badge-amber" : "badge-blue"}" style="font-size:10px;margin-left:4px;">${diff > 0 ? "+" : ""}${diff}</span>`
                 : "";
               return `<tr>
                 <td>${thumb(img)}</td>
-                <td><strong>${ctx.esc(productIdLabel(l))}</strong>${diffBadge}</td>
-                <td style="text-align:right;color:var(--muted);">${l.quantity_placed || 0}</td>
+                <td><strong>${ctx.esc(l.our_product_id)}</strong>${diffBadge}</td>
                 <td style="text-align:right;color:var(--muted);">${l.quantity_received || 0}</td>
-                <td style="text-align:right;">${fmtPrice(displayPrice)}</td>
-                <td style="text-align:right;"><input type="number" min="0" class="input stock-qty-input stock-billed-input" value="${l.quantity_billed || ""}" onchange="Stock.setLine(${i},'quantity_billed',this.value)" /></td>
+                <td style="text-align:right;">${fmtPrice(l.buying_price)}</td>
+                <td style="text-align:right;"><input type="number" min="0" class="input stock-qty-input stock-billed-input" value="${l.quantity_billed ?? ""}" onchange="Stock.setLine(${i},'quantity_billed',this.value)" /></td>
               </tr>`;
             }).join("")}
           </tbody></table>
         </div>
-        ${renderVendorBillingContextCard()}
+        ${renderVendorBillingTermsCard()}
         <div class="stock-bill-card">
           <h4>Vendor bill</h4>
           <div class="stock-bill-grid">
             <div><label class="label">Bill number</label><input class="input" id="stock-bill-number" value="${ctx.esc(receiptMeta.billNumber)}" placeholder="Vendor bill #" /></div>
             <div><label class="label">Bill date</label>
               <input type="date" class="input" id="stock-event-date" value="${ctx.esc(receiptMeta.eventDate || localToday())}" /></div>
-            ${!hasCtx ? `<div class="stock-bill-total"><label class="label">Total bill amount *</label>
-              <input type="number" min="0" step="0.01" class="input" id="stock-total-billed" value="${ctx.esc(receiptMeta.totalBilledAmount)}" placeholder="₹ total on vendor bill" required /></div>` : ""}
+            <div class="stock-bill-total"><label class="label">Total bill amount *</label>
+              <input type="number" min="0" step="0.01" class="input" id="stock-total-billed" value="${ctx.esc(receiptMeta.totalBilledAmount)}" placeholder="₹ total on vendor bill" required /></div>
             <div><label class="label">Upload bill</label>
               <input type="file" class="input" accept=".pdf,image/*" onchange="Stock.setBillFile(this.files[0])" />
               ${billFile ? `<span class="stock-file-name">${ctx.esc(billFile.name)}</span>` : ""}
@@ -941,7 +958,7 @@ const Stock = (() => {
           </div>
         </div>`;
       footerEl.innerHTML = `
-        <button class="btn btn-secondary" onclick="Stock.wizardBack()">← Back</button>
+        <button class="btn btn-secondary" onclick="Stock.changePendingReceipt()">← Choose different receipt</button>
         <button class="btn btn-primary" onclick="Stock.wizardNext()">Debit Notes →</button>`;
       return;
     }
@@ -980,7 +997,7 @@ const Stock = (() => {
     }
     if (wizardStep === 3 && wizardMode === "bill_received") {
       setStockWizardChrome("Debit Notes", "Auto-suggested based on billed vs received");
-      autoSuggestDebitNotes();
+      if (!billPreview) await refreshBillPreview();
       renderDebitNoteStep(bodyEl, footerEl);
       return;
     }
@@ -997,8 +1014,6 @@ const Stock = (() => {
     if (billEl) receiptMeta.billNumber = (billEl.value || "").trim();
     const totalEl = document.getElementById("stock-total-billed");
     if (totalEl && totalEl.tagName === "INPUT") receiptMeta.totalBilledAmount = totalEl.value || "";
-    else if (vendorBillingCtx) receiptMeta.totalBilledAmount = computedBillTotal(); // auto-computed
-    else if (!receiptMeta.totalBilledAmount) receiptMeta.totalBilledAmount = computedBillTotal();
     const ornEl = document.getElementById("stock-order-receipt-number");
     if (ornEl) receiptMeta.orderReceiptNumber = (ornEl.value || "").trim();
     const notesEl = document.getElementById("stock-receive-notes");
@@ -1007,41 +1022,10 @@ const Stock = (() => {
     if (dateEl) receiptMeta.eventDate = (dateEl.value || "").trim() || localToday();
   }
   function calcReviewTotals(active) {
-    const calc = _billingCalc();
-    const billAmount = calc ? calc.billTotal : (parseFloat(receiptMeta.totalBilledAmount) || 0);
+    const billAmount = parseFloat(receiptMeta.totalBilledAmount) || 0;
     const dnAdj = pendingDebitNotes.reduce((s, dn) => s + dnPayableEffect(dn), 0);
-    const netPayable = calc ? (calc.actualAp + dnAdj) : (billAmount + dnAdj);
+    const netPayable = billAmount + dnAdj;
     return { billAmount, charges: 0, dnAdj, netPayable };
-  }
-  function autoSuggestDebitNotes() {
-    // Remove previously auto-suggested notes, keep manually added ones
-    pendingDebitNotes = pendingDebitNotes.filter(dn => !dn._auto_suggested);
-    const bc = vendorBillingCtx;
-    const factor = bc?.invoice_factor || 1;
-    for (const l of wizardLines) {
-      const billed = Number(l.quantity_billed) || 0;
-      const received = Number(l.quantity_received) || 0;
-      if (billed === 0 && received === 0) continue;
-      const diff = billed - received;
-      if (diff === 0) continue;
-      const price = Number(l.buying_price_display || l.buying_price) || 0;
-      const qty = Math.abs(diff);
-      const amt = price * qty;
-      pendingDebitNotes.push({
-        note_type: "item",
-        catalog_product_id: l.catalog_product_id,
-        quantity: qty,
-        amount: amt,
-        notes: diff > 0
-          ? `Billed ${billed} > received ${received} — vendor overcharged`
-          : `Received ${received} > billed ${billed} — vendor undercharged`,
-        _auto_suggested: true,
-        _label: l.our_product_id,
-        _amount: amt,
-        // diff > 0: vendor billed more than received → "pay less" effect (reduce AP)
-        _payable_effect: -amt,
-      });
-    }
   }
   function renderDebitNoteStep(bodyEl, footerEl) {
     const billable = billableLines();
@@ -1061,8 +1045,7 @@ const Stock = (() => {
         <td><button class="btn btn-ghost btn-sm" onclick="Stock.removeDebitNote(${i})">✕</button></td>
       </tr>`;
     }).join("");
-    const calc = _billingCalc();
-    const billDisplayAmt = calc ? calc.billTotal : (parseFloat(receiptMeta.totalBilledAmount) || 0);
+    const billDisplayAmt = parseFloat(receiptMeta.totalBilledAmount) || 0;
     bodyEl.innerHTML = `
       <div class="vo-wiz-step-head vo-wiz-step-head-row">
         <div>
@@ -1085,7 +1068,6 @@ const Stock = (() => {
   }
   function renderReviewStep(bodyEl, footerEl) {
     const active = billableLines();
-    const calc = _billingCalc();
     const dnAdj = pendingDebitNotes.reduce((s, dn) => s + dnPayableEffect(dn), 0);
     const dnRows = pendingDebitNotes.map((dn) => {
       const amt = dnPayableEffect(dn);
@@ -1097,39 +1079,35 @@ const Stock = (() => {
         <td><span class="dn-effect-pill ${payLess ? "is-less" : "is-more"}">${payLess ? "Pay less" : "Pay more"} ${fmtPrice(Math.abs(amt))}</span></td>
       </tr>`;
     }).join("");
-    // Build AP entries section
-    let apSection = "";
-    if (calc) {
-      const { billTotal, extraCash, isSplit, actualAp } = calc;
-      const billNum = receiptMeta.billNumber || "—";
-      apSection = `
-        <h4 style="margin:0 0 8px;font-size:15px;">AP entries (accounts payable)</h4>
-        <div class="stock-dn-table-wrap" style="margin-bottom:16px;">
-          <table class="data" style="font-size:13px;"><thead><tr><th>Entry</th><th>Amount</th></tr></thead><tbody>
-            <tr>
-              <td>Bill ${ctx.esc(billNum)} — document total</td>
-              <td style="font-weight:600;">${fmtPrice(billTotal)}</td>
-            </tr>
-            ${isSplit && extraCash > 0 ? `<tr>
-              <td>Bill ${ctx.esc(billNum)} — extra cash (half-price balance, no GST)</td>
-              <td style="font-weight:600;">${fmtPrice(extraCash)}</td>
-            </tr>
-            <tr style="border-top:2px solid var(--border);">
-              <td style="font-weight:700;color:var(--primary);">Total AP</td>
-              <td style="font-weight:700;color:var(--primary);">${fmtPrice(actualAp)}</td>
-            </tr>` : ""}
-          </tbody></table>
-        </div>`;
-    } else {
-      const billAmt = parseFloat(receiptMeta.totalBilledAmount) || 0;
-      const netPayable = billAmt + dnAdj;
-      apSection = `
-        <div class="review-block" style="margin-bottom:16px;">
-          ${ctx.reviewRow("Bill amount", fmtPrice(billAmt))}
-          ${ctx.reviewRow("Debit note adj", dnAdj ? `${fmtPrice(dnAdj)} (${dnAdj < 0 ? "pay less" : "pay more"})` : "None")}
-          ${ctx.reviewRow("Net payable", fmtPrice(netPayable))}
-        </div>`;
-    }
+    const billAmt = parseFloat(receiptMeta.totalBilledAmount) || 0;
+    const extraCash = billPreview?.expected_extra_cash ? Number(billPreview.expected_extra_cash) : 0;
+    const billNum = receiptMeta.billNumber || "—";
+    const apSection = `
+      <h4 style="margin:0 0 8px;font-size:15px;">AP entries (accounts payable)</h4>
+      <div class="stock-dn-table-wrap" style="margin-bottom:16px;">
+        <table class="data" style="font-size:13px;"><thead><tr><th>Entry</th><th>Amount</th></tr></thead><tbody>
+          <tr>
+            <td>Entry 1 — bill ${ctx.esc(billNum)} document total</td>
+            <td style="font-weight:600;">${fmtPrice(billAmt)}</td>
+          </tr>
+          ${extraCash > 0 ? `<tr>
+            <td>Entry 2 — extra cash (half-price balance, no GST)</td>
+            <td style="font-weight:600;">${fmtPrice(extraCash)}</td>
+          </tr>
+          <tr style="border-top:2px solid var(--border);">
+            <td style="font-weight:700;color:var(--primary);">Total AP (before debit notes)</td>
+            <td style="font-weight:700;color:var(--primary);">${fmtPrice(billAmt + extraCash)}</td>
+          </tr>` : ""}
+          ${dnAdj ? `<tr>
+            <td>Debit note adjustment</td>
+            <td style="font-weight:600;">${fmtPrice(dnAdj)}</td>
+          </tr>
+          <tr style="border-top:2px solid var(--border);">
+            <td style="font-weight:700;color:var(--primary);">Net payable</td>
+            <td style="font-weight:700;color:var(--primary);">${fmtPrice(billAmt + extraCash + dnAdj)}</td>
+          </tr>` : ""}
+        </tbody></table>
+      </div>`;
     bodyEl.innerHTML = `
       <div class="vo-wiz-review-hero">
         <span class="vo-wiz-review-label">Billing from</span>
@@ -1291,6 +1269,12 @@ const Stock = (() => {
     placedOrder = null;
     wizardLines = [];
     wizardProducts = [];
+    if (wizardMode === "bill_received") {
+      wizardReceiptId = null;
+      wizardPendingBillList = null;
+      billingTerms = null;
+      billPreview = null;
+    }
     if (wizardMode === "offline_vendor" && wizardVendorId) {
       const v = offlineVendorsCache.find(x => x.id === wizardVendorId);
       const lbl = v
@@ -1372,14 +1356,17 @@ const Stock = (() => {
     if (wizardMode === "bill_received") {
       if (wizardStep === 1 && !wizardVendorId) return;
       if (wizardStep === 2) {
+        if (!wizardReceiptId) return; // still picking a receipt
         if (!wizardLines.some(l => (l.quantity_billed || 0) > 0)) {
           return ctx.toast("Enter billed quantity on at least one row", "error");
         }
         saveReceiptMeta();
         const total = parseFloat(receiptMeta.totalBilledAmount);
-        if (!vendorBillingCtx && (!receiptMeta.totalBilledAmount || Number.isNaN(total) || total <= 0)) {
+        if (!receiptMeta.totalBilledAmount || Number.isNaN(total) || total < 0) {
           return ctx.toast("Enter total bill amount", "error");
         }
+        ctx.showLoading?.();
+        try { await refreshBillPreview(); } finally { ctx.hideLoading?.(); }
       }
       wizardStep++;
       await renderWizard();
@@ -1418,6 +1405,7 @@ const Stock = (() => {
     const isReceive = wizardMode === "receive_goods" || isOffline
       || (isEdit && (editReceiptType === "vendor_receive" || editReceiptType === "offline_vendor"));
     const isBill = wizardMode === "bill_received" || (isEdit && editReceiptType === "vendor_bill");
+    const isNewBill = isBill && !isEdit;
     const active = isReceive
       ? receivedLines()
       : (isBill ? wizardLines.filter(l => (l.quantity_billed || 0) > 0) : billableLines());
@@ -1428,7 +1416,7 @@ const Stock = (() => {
         ? "/stock/receipts/offline-vendor"
         : isReceive
           ? "/stock/receipts/vendor-receive"
-          : "/stock/receipts/vendor-bill";
+          : `/stock/receipts/${wizardReceiptId}/bill`;
     const savedVendorId = wizardVendorId;
     const savedLabel = placedOrder?.vendor_label || "";
     const savedMode = wizardMode;
@@ -1436,17 +1424,26 @@ const Stock = (() => {
     const savedBillNum = receiptMeta.billNumber || "";
     const savedOrderReceipt = receiptMeta.orderReceiptNumber || "";
     const savedDns = [...pendingDebitNotes];
+    const savedExtraCash = billPreview?.expected_extra_cash ? Number(billPreview.expected_extra_cash) : 0;
     ctx.showLoading?.();
     try {
       let key = billFileKey;
       if (billFile) key = await uploadBill();
       const billNum = receiptMeta.billNumber || null;
-      const totalBilled = vendorBillingCtx ? (parseFloat(computedBillTotal()) || null) : (receiptMeta.totalBilledAmount ? parseFloat(receiptMeta.totalBilledAmount) : null);
-      if (!isReceive && !vendorBillingCtx && (!totalBilled || totalBilled <= 0)) return ctx.toast("Enter total bill amount", "error");
+      const totalBilled = receiptMeta.totalBilledAmount ? parseFloat(receiptMeta.totalBilledAmount) : null;
+      if (!isReceive && (totalBilled == null || totalBilled < 0)) return ctx.toast("Enter total bill amount", "error");
       if (isReceive && !receiptMeta.orderReceiptNumber) {
         return ctx.toast("Enter order receipt number", "error");
       }
       const eventDate = receiptMeta.eventDate || localToday();
+      const debitNotesPayload = pendingDebitNotes.map(dn => ({
+        note_type: dn.note_type,
+        direction: dn.direction || dn._direction || null,
+        catalog_product_id: dn.catalog_product_id,
+        quantity: dn.quantity,
+        amount: dn.amount,
+        notes: dn.notes || null,
+      }));
       const payload = isReceive
         ? {
             vendor_id: wizardVendorId,
@@ -1461,6 +1458,18 @@ const Stock = (() => {
               billed_amount: 0,
             })),
           }
+        : isNewBill
+        ? {
+            total_billed_amount: totalBilled,
+            lines: active.map(l => ({
+              catalog_product_id: l.catalog_product_id,
+              quantity_billed: l.quantity_billed || 0,
+            })),
+            bill_number: billNum,
+            bill_file_key: key,
+            notes: receiptMeta.notes || null,
+            debit_notes: debitNotesPayload,
+          }
         : {
             vendor_id: wizardVendorId,
             bill_number: billNum,
@@ -1468,7 +1477,6 @@ const Stock = (() => {
             notes: receiptMeta.notes || null,
             additional_charges: null,
             total_billed_amount: totalBilled,
-            actual_ap_amount: computedActualAp() || undefined,
             bill_date: eventDate,
             lines: active.map(l => ({
               catalog_product_id: l.catalog_product_id,
@@ -1476,14 +1484,7 @@ const Stock = (() => {
               quantity_billed: l.quantity_billed || 0,
               billed_amount: 0,
             })),
-            debit_notes: pendingDebitNotes.map(dn => ({
-              note_type: dn.note_type,
-              direction: dn.direction || dn._direction || null,
-              catalog_product_id: dn.catalog_product_id,
-              quantity: dn.quantity,
-              amount: dn.amount,
-              notes: dn.notes || null,
-            })),
+            debit_notes: debitNotesPayload,
           };
       const res = await ctx.api(endpoint, {
         method: isEdit ? "PATCH" : "POST",
@@ -1528,6 +1529,7 @@ const Stock = (() => {
         return;
       }
       const totals = calcReviewTotals(active);
+      if (savedExtraCash > 0) totals.netPayable += savedExtraCash;
       let docUrl = res.document_url;
       if (!docUrl && rid) {
         try {
@@ -1567,6 +1569,7 @@ const Stock = (() => {
           ${ctx.reviewRow("Vendor", savedLabel || "—")}
           ${ctx.reviewRow("Bill number", savedBillNum || "—")}
           ${ctx.reviewRow("Bill amount", fmtPrice(totals.billAmount))}
+          ${savedExtraCash > 0 ? ctx.reviewRow("Extra cash", fmtPrice(savedExtraCash)) : ""}
           ${totals.dnAdj ? ctx.reviewRow("Debit note adj.", fmtPrice(totals.dnAdj)) : ""}
           ${ctx.reviewRow("Net payable", fmtPrice(totals.netPayable))}
         </div>
@@ -1758,6 +1761,6 @@ const Stock = (() => {
     toggleOfflineProduct, setOfflineLine, onOfflineProductSearch, onOfflineVendorSearch,
     openOfflineQtyPopup, closeOfflineQtyPopup, confirmOfflineQty, removeOfflineLine, bumpOfflineQty,
     wizardBack, wizardNext, submitReceipt, openDebitNote, removeDebitNote, editThreshold, setSellingPrice,
-    openReceiptPdf, fetchReceiptPdf, openEditReceipt,
+    openReceiptPdf, fetchReceiptPdf, openEditReceipt, selectPendingReceipt, changePendingReceipt,
   };
 })();

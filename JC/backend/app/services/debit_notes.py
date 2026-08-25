@@ -80,6 +80,7 @@ def create_debit_note(
     vendor_id: int,
     receipt_id: int,
     body: DebitNoteIn,
+    source: str = "manual",
 ) -> DebitNote:
     from app.models.stock import StockReceipt
 
@@ -105,6 +106,7 @@ def create_debit_note(
             unit_price=unit_price,
             amount=amount,
             notes=body.notes,
+            source=source,
             created_by_type=auth.actor_type,
             created_by_id=auth.actor_id,
             created_by_name=auth.actor_name,
@@ -121,6 +123,7 @@ def create_debit_note(
             direction=direction,
             amount=signed_amt,
             notes=body.notes,
+            source=source,
             created_by_type=auth.actor_type,
             created_by_id=auth.actor_id,
             created_by_name=auth.actor_name,

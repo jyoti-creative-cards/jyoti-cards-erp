@@ -275,7 +275,6 @@ def list_vendor_orders(
 ):
     """Same stages for Today and Past. `day=today` = IST calendar day; `day=all` = full history."""
     from sqlalchemy import func
-    from app.services.vendor_receive_bill import unbilled_received_qty_by_product
 
     day_start = day_end = None
     if day == "today":
@@ -342,13 +341,27 @@ def list_vendor_orders(
         }
         return from_lines | from_placements
 
+    def _vids_pending_bill_today() -> set[int]:
+        assert day_start is not None and day_end is not None
+        rows = (
+            db.query(StockReceipt.vendor_id)
+            .filter(
+                StockReceipt.bill_status == "pending_bill",
+                StockReceipt.received_at >= day_start,
+                StockReceipt.received_at < day_end,
+            )
+            .distinct()
+            .all()
+        )
+        return {int(r[0]) for r in rows}
+
     if bucket == "open":
         out: list[VendorOrderSummary] = []
         today_receive = None
         today_bill = None
         if day_start is not None:
             today_receive = _vids_with_placement_today(("placed",)) | _vids_open_created_today()
-            today_bill = _vids_with_placement_today(("received", "billed"))
+            today_bill = _vids_pending_bill_today()
 
         # Yet to receive (placed open lines)
         rows = (
@@ -413,44 +426,45 @@ def list_vendor_orders(
                 )
             )
 
-        # Yet to bill (unbilled received)
-        received_orders = (
-            db.query(VendorOrder)
-            .filter(VendorOrder.bucket == "received", VendorOrder.is_open.is_(True))
+        # Yet to bill (pending StockReceipts, one-to-one model)
+        pending_rows = (
+            db.query(
+                StockReceipt.vendor_id,
+                func.count(StockReceipt.id),
+                func.coalesce(func.sum(StockReceiptLine.quantity_received), 0),
+            )
+            .join(StockReceiptLine, StockReceiptLine.receipt_id == StockReceipt.id)
+            .filter(StockReceipt.bill_status == "pending_bill")
+            .group_by(StockReceipt.vendor_id)
             .all()
         )
-        for ro in received_orders:
-            if today_bill is not None and ro.vendor_id not in today_bill:
-                continue
-            unbilled = unbilled_received_qty_by_product(db, ro.vendor_id)
-            if not unbilled:
+        for vendor_id, receipt_count, total_qty in pending_rows:
+            vid = int(vendor_id)
+            if today_bill is not None and vid not in today_bill:
                 continue
             try:
-                vendor, city_name, label = _vendor_context(db, ro.vendor_id, require_active=False)
+                vendor, city_name, label = _vendor_context(db, vid, require_active=False)
             except HTTPException:
                 continue
-            total_qty = sum(unbilled.values())
+            latest = (
+                db.query(func.max(StockReceipt.received_at))
+                .filter(StockReceipt.vendor_id == vid, StockReceipt.bill_status == "pending_bill")
+                .scalar()
+            )
             out.append(
                 VendorOrderSummary(
-                    id=ro.id,
-                    vendor_id=ro.vendor_id,
+                    id=0,
+                    vendor_id=vid,
                     vendor_name=vendor.business_name,
                     vendor_city=city_name,
                     vendor_label=label,
                     status="to_bill",
                     bucket="open",
                     is_open=True,
-                    placement_count=(
-                        db.query(VendorOrderPlacement)
-                        .filter(
-                            VendorOrderPlacement.vendor_order_id == ro.id,
-                            VendorOrderPlacement.status == "received",
-                        )
-                        .count()
-                    ),
-                    line_count=len(unbilled),
-                    total_quantity=int(total_qty),
-                    updated_at=ro.updated_at,
+                    placement_count=int(receipt_count),
+                    line_count=int(receipt_count),
+                    total_quantity=int(total_qty or 0),
+                    updated_at=latest or datetime.now(timezone.utc),
                     open_kind="to_bill",
                 )
             )
@@ -489,57 +503,49 @@ def list_vendor_orders(
                     updated_at=max((l.updated_at for l in lines), default=datetime.now(timezone.utc)),
                 )
             )
-        billed_order = db.query(VendorOrder).filter(VendorOrder.bucket == "billed", VendorOrder.is_open.is_(True)).all()
-        for order in billed_order:
-            closed_ps = (
-                db.query(VendorOrderPlacement)
-                .filter(VendorOrderPlacement.vendor_order_id == order.id, VendorOrderPlacement.closed_at.isnot(None))
-                .all()
+        billed_rows_q = (
+            db.query(
+                StockReceipt.vendor_id,
+                func.count(StockReceipt.id),
+                func.coalesce(func.sum(StockReceiptLine.quantity_received), 0),
+                func.max(StockReceipt.billed_at),
             )
-            if day_start is not None:
-                closed_ps = [
-                    p for p in closed_ps
-                    if p.closed_at and day_start <= p.closed_at.astimezone(timezone.utc) < day_end
-                ]
-            if not closed_ps:
-                continue
-            closed_line_rows = (
-                db.query(VendorOrderLine)
-                .filter(VendorOrderLine.placement_id.in_([p.id for p in closed_ps]))
-                .all()
-            )
-            line_count = len(closed_line_rows)
-            total_qty = sum(ln.quantity for ln in closed_line_rows)
-            latest = max((p.closed_at for p in closed_ps if p.closed_at), default=order.updated_at)
-            if order.vendor_id in seen:
+            .join(StockReceiptLine, StockReceiptLine.receipt_id == StockReceipt.id)
+            .filter(StockReceipt.bill_status == "billed")
+        )
+        if day_start is not None:
+            billed_rows_q = billed_rows_q.filter(StockReceipt.billed_at >= day_start, StockReceipt.billed_at < day_end)
+        billed_rows = billed_rows_q.group_by(StockReceipt.vendor_id).all()
+        for vendor_id, receipt_count, total_qty, latest in billed_rows:
+            vid = int(vendor_id)
+            if vid in seen:
                 for s in summaries:
-                    if s.vendor_id == order.vendor_id:
-                        s.id = order.id or s.id
-                        s.placement_count += len(closed_ps)
-                        s.line_count += line_count
-                        s.total_quantity += total_qty
+                    if s.vendor_id == vid:
+                        s.placement_count += int(receipt_count)
+                        s.line_count += int(receipt_count)
+                        s.total_quantity += int(total_qty or 0)
                         if latest and (not s.updated_at or latest > s.updated_at):
                             s.updated_at = latest
                         break
                 continue
             try:
-                vendor, city_name, label = _vendor_context(db, order.vendor_id, require_active=False)
+                vendor, city_name, label = _vendor_context(db, vid, require_active=False)
             except HTTPException:
                 continue
             summaries.append(
                 VendorOrderSummary(
-                    id=order.id,
-                    vendor_id=order.vendor_id,
+                    id=0,
+                    vendor_id=vid,
                     vendor_name=vendor.business_name,
                     vendor_city=city_name,
                     vendor_label=label,
                     status="closed",
                     bucket="closed",
                     is_open=True,
-                    placement_count=len(closed_ps),
-                    line_count=line_count,
-                    total_quantity=total_qty,
-                    updated_at=latest,
+                    placement_count=int(receipt_count),
+                    line_count=int(receipt_count),
+                    total_quantity=int(total_qty or 0),
+                    updated_at=latest or datetime.now(timezone.utc),
                 )
             )
         summaries.sort(key=lambda x: x.updated_at or datetime.min.replace(tzinfo=timezone.utc))

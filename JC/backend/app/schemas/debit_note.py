@@ -62,3 +62,4 @@ class DebitNoteOut(BaseModel):
     updated_at: datetime
     bill_number: Optional[str] = None
     vendor_label: Optional[str] = None
+    source: Literal["auto", "manual"] = "manual"

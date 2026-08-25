@@ -89,6 +89,20 @@ class VendorReceiptCreate(BaseModel):
     received_on: Optional[date] = None  # receive backdate (goods in)
 
 
+class VendorBillLineIn(BaseModel):
+    catalog_product_id: int
+    quantity_billed: Optional[int] = Field(None, ge=0)
+
+
+class VendorBillIn(BaseModel):
+    total_billed_amount: Decimal = Field(..., ge=0)
+    lines: List[VendorBillLineIn] = []
+    bill_number: Optional[str] = None
+    bill_file_key: Optional[str] = None
+    notes: Optional[str] = None
+    debit_notes: List[DebitNoteIn] = []
+
+
 class VendorReceiveCreate(BaseModel):
     """Goods-only receive (placed order or offline). Bill later from Received."""
     vendor_id: int
@@ -122,23 +136,48 @@ class VendorPlacedOrderForReceipt(BaseModel):
     lines: List[PlacedLineForReceipt] = []
 
 
-class ReceivedLineForBill(BaseModel):
+class PendingBillReceipt(BaseModel):
+    receipt_id: int
+    order_receipt_number: Optional[str] = None
+    received_at: datetime
+    expected_bill_amount: Optional[str] = None
+    expected_extra_cash: Optional[str] = None
+    line_count: int
+    total_quantity: int
+
+
+class VendorPendingBillList(BaseModel):
+    vendor_id: int
+    vendor_label: str
+    receipts: List[PendingBillReceipt] = []
+
+
+class ReceiptLineForBill(BaseModel):
     catalog_product_id: int
     our_product_id: str
-    vendor_product_id: Optional[str] = None
-    category: Optional[str] = None
-    quantity_placed: int = 0       # pending in placed order (to receive)
-    quantity_received: int         # unbilled received qty (to bill)
-    quantity_unbilled: int
-    buying_price: Optional[str] = None        # actual catalog price per unit
-    buying_price_display: Optional[str] = None  # price shown on bill (after invoice_factor)
-    unit: Optional[str]
+    quantity_received: int
+    buying_price: str
+    unit: Optional[str] = None
     image_urls: List[str] = []
 
 
-class VendorReceivedForBill(BaseModel):
+class ReceiptForBillDetail(BaseModel):
+    receipt_id: int
     vendor_id: int
     vendor_label: str
-    order_id: Optional[int]
-    lines: List[ReceivedLineForBill] = []
-    billing_context: Optional[dict] = None  # vendor's billing terms
+    order_receipt_number: Optional[str] = None
+    expected_bill_amount: Optional[str] = None
+    expected_extra_cash: Optional[str] = None
+    billing_terms: dict
+    lines: List[ReceiptLineForBill] = []
+
+
+class BillPreviewIn(BaseModel):
+    total_billed_amount: Decimal = Field(..., ge=0)
+    lines: List[VendorBillLineIn] = []
+
+
+class BillPreviewOut(BaseModel):
+    expected_bill_total: str
+    expected_extra_cash: Optional[str] = None
+    suggested_debit_notes: List[dict] = []

@@ -344,9 +344,12 @@ const VendorOrders = (() => {
     if (!isBill && canWrite) {
       more.push({ label: "Cancel Order", onclick: `VendorOrders.cancelVendorOpen(${o.vendor_id})`, danger: true });
     }
+    const meta = isBill
+      ? `${o.line_count} shipment${o.line_count === 1 ? "" : "s"} pending · <strong>${o.total_quantity}</strong> qty to bill`
+      : `${o.line_count} products · <strong>${o.total_quantity}</strong> to receive`;
     return OrdersUI.partyCard({
       title: o.vendor_label,
-      meta: `${o.line_count} products · <strong>${o.total_quantity}</strong> ${isBill ? "to bill" : "to receive"}`,
+      meta,
       pillHtml: OrdersUI.pill(isBill ? "To bill" : "To receive", isBill ? "info" : "warn"),
       primaryLabel: isBill ? "Bill vendor" : "Receive goods",
       primaryOnclick,
@@ -384,20 +387,18 @@ const VendorOrders = (() => {
   }
 
   function renderOpenBillExpand(detail, canWrite) {
-    const lines = detail.lines || [];
-    if (!lines.length) return `<p class="vo-muted" style="margin:0;">Nothing to bill.</p>`;
+    const receipts = detail.receipts || [];
+    if (!receipts.length) return `<p class="vo-muted" style="margin:0;">Nothing to bill.</p>`;
     return `<table class="data vo-hub-table"><thead><tr>
-      <th></th><th>Product</th><th>Unbilled</th><th>Price</th>
+      <th>Receipt</th><th>Received</th><th>Lines</th><th>Qty</th><th>Expected amount</th>
     </tr></thead><tbody>
-      ${lines.map(l => {
-        const img = (l.image_urls && l.image_urls[0]) || "";
-        return `<tr>
-          <td>${thumb(img, "vo-thumb-sm")}</td>
-          <td><strong>${ctx.esc(l.our_product_id)}</strong></td>
-          <td><strong>${l.quantity_unbilled ?? l.quantity}</strong></td>
-          <td>${fmtPrice(l.buying_price)}</td>
-        </tr>`;
-      }).join("")}
+      ${receipts.map(r => `<tr>
+        <td><strong>${ctx.esc(r.order_receipt_number || `#${r.receipt_id}`)}</strong></td>
+        <td class="vo-muted">${r.received_at ? new Date(r.received_at).toLocaleDateString() : "—"}</td>
+        <td>${r.line_count}</td>
+        <td><strong>${r.total_quantity}</strong></td>
+        <td>${r.expected_bill_amount != null ? fmtPrice(r.expected_bill_amount) : "—"}${r.expected_extra_cash ? ` <span class="vo-muted">+ ${fmtPrice(r.expected_extra_cash)}</span>` : ""}</td>
+      </tr>`).join("")}
     </tbody></table>
     ${canWrite ? `<div class="vo-hub-expand-actions">
       <button class="btn btn-primary" onclick="VendorOrders.billVendor(${detail.vendor_id})">Bill Order</button>
@@ -741,11 +742,8 @@ const VendorOrders = (() => {
         const recv = await ctx.api(`/stock/vendor-order/${vendorId}/received`, {}, 0);
         hubExpandCache[key] = {
           vendor_id: vendorId,
-          lines: (recv.lines || []).map(l => ({
-            ...l,
-            quantity: l.quantity_unbilled,
-            quantity_unbilled: l.quantity_unbilled,
-          })),
+          vendor_label: recv.vendor_label,
+          receipts: recv.receipts || [],
         };
       } else if (bucket === "closed") {
         hubExpandCache[key] = { lines: await ctx.api(`/vendor-orders/vendor/${vendorId}/closed`, {}, 0) };

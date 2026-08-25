@@ -34,7 +34,7 @@ def build_vendor_ledger(db: Session, vendor_id: int, *, show_actor: bool = True,
     placements = (
         db.query(VendorOrderPlacement, VendorOrder)
         .join(VendorOrder, VendorOrderPlacement.vendor_order_id == VendorOrder.id)
-        .filter(VendorOrder.vendor_id == vendor_id)
+        .filter(VendorOrder.vendor_id == vendor_id, VendorOrder.bucket.in_(("placed", "cancelled")))
         .order_by(VendorOrderPlacement.placed_at.desc())
         .all()
     )
@@ -45,7 +45,6 @@ def build_vendor_ledger(db: Session, vendor_id: int, *, show_actor: bool = True,
                 our_product_id=ln.our_product_id,
                 quantity=ln.quantity,
                 quantity_remaining=ln.quantity if order.bucket == "placed" else None,
-                quantity_received=ln.quantity if order.bucket == "billed" else None,
                 quantity_billed=ln.quantity_billed,
                 billed_amount=_fmt_amount(ln.billed_amount),
                 buying_price=format(ln.buying_price, "f"),
@@ -55,45 +54,10 @@ def build_vendor_ledger(db: Session, vendor_id: int, *, show_actor: bool = True,
         if order.bucket == "placed":
             title = "Placed order"
             event_type = "order_placed"
-            summary = ", ".join(f"{ln.our_product_id} × {ln.quantity}" for ln in lines[:8])
-        elif order.bucket == "cancelled":
+        else:
             title = "Cancelled placement"
             event_type = "order_cancelled"
-            summary = ", ".join(f"{ln.our_product_id} × {ln.quantity}" for ln in lines[:8])
-        else:
-            title = "Received bill / shipment"
-            event_type = "stock_received"
-            summary = ", ".join(
-                f"{ln.our_product_id} recv {ln.quantity}"
-                + (f" bill {ln.quantity_billed}" if ln.quantity_billed else "")
-                for ln in lines[:8]
-            )
-        receipt = (
-            db.query(StockReceipt)
-            .filter(StockReceipt.billed_placement_id == placement.id)
-            .first()
-        )
-        details = {
-            "bucket": order.bucket,
-            "placement_id": placement.id,
-            "vendor_order_id": placement.vendor_order_id,
-            "lines": [l.model_dump() for l in line_details],
-        }
-        if receipt:
-            bill_amt = receipt_bill_amount(db, receipt.id)
-            dn_total = receipt_debit_note_total(db, receipt.id)
-            details.update(
-                {
-                    "receipt_id": receipt.id,
-                    "bill_number": receipt.bill_number,
-                    "bill_amount": format(bill_amt, "f"),
-                    "debit_note_total": format(dn_total, "f"),
-                    "net_payable": format(bill_amt + dn_total, "f"),
-                    "additional_charges": _fmt_amount(receipt.additional_charges),
-                    "bill_file_url": presigned_url(receipt.bill_file_key) if receipt.bill_file_key else None,
-                    "received_at": receipt.received_at.isoformat(),
-                }
-            )
+        summary = ", ".join(f"{ln.our_product_id} × {ln.quantity}" for ln in lines[:8])
         entries.append(
             (
                 placement.placed_at,
@@ -104,10 +68,64 @@ def build_vendor_ledger(db: Session, vendor_id: int, *, show_actor: bool = True,
                     summary=summary or "—",
                     occurred_at=placement.placed_at,
                     **_actor_fields(placement.placed_by_name, placement.placed_by_type, show_actor),
-                    details=details,
+                    details={
+                        "bucket": order.bucket,
+                        "placement_id": placement.id,
+                        "vendor_order_id": placement.vendor_order_id,
+                        "lines": [l.model_dump() for l in line_details],
+                    },
                 ),
             )
         )
+
+    receipts = (
+        db.query(StockReceipt)
+        .filter(StockReceipt.vendor_id == vendor_id)
+        .order_by(StockReceipt.received_at.desc())
+        .all()
+    )
+    for receipt in receipts:
+        rlines = db.query(StockReceiptLine).filter(StockReceiptLine.receipt_id == receipt.id).all()
+        line_details = [
+            LedgerLineDetail(
+                our_product_id=ln.our_product_id, quantity_received=ln.quantity_received,
+                quantity_billed=ln.quantity_billed, billed_amount=_fmt_amount(ln.billed_amount),
+                buying_price=format(ln.buying_price, "f"),
+            )
+            for ln in rlines
+        ]
+        summary = ", ".join(f"{ln.our_product_id} +{ln.quantity_received}" for ln in rlines[:8]) or "—"
+        entries.append((
+            receipt.received_at,
+            EntityLedgerEntry(
+                id=f"receipt-{receipt.id}", event_type="stock_received", title="Stock receipt", summary=summary,
+                occurred_at=receipt.received_at,
+                **_actor_fields(receipt.received_by_name, receipt.received_by_type, show_actor),
+                details={
+                    "receipt_id": receipt.id, "order_receipt_number": receipt.order_receipt_number,
+                    "expected_bill_amount": _fmt_amount(receipt.expected_bill_amount), "lines": [l.model_dump() for l in line_details],
+                },
+            ),
+        ))
+        if receipt.bill_status == "billed":
+            bill_amt = receipt_bill_amount(db, receipt.id)
+            dn_total = receipt_debit_note_total(db, receipt.id)
+            entries.append((
+                receipt.billed_at or receipt.received_at,
+                EntityLedgerEntry(
+                    id=f"bill-{receipt.id}", event_type="vendor_bill", title="Bill",
+                    summary=f"{receipt.bill_number or receipt.id} — ₹{bill_amt}", occurred_at=receipt.billed_at or receipt.received_at,
+                    **_actor_fields(receipt.received_by_name, receipt.received_by_type, show_actor),
+                    details={
+                        "receipt_id": receipt.id, "bill_number": receipt.bill_number,
+                        "bill_amount": format(bill_amt, "f"), "debit_note_total": format(dn_total, "f"),
+                        "net_payable": format(bill_amt + dn_total, "f"),
+                        "additional_charges": _fmt_amount(receipt.additional_charges),
+                        "bill_file_url": presigned_url(receipt.bill_file_key) if receipt.bill_file_key else None,
+                        "lines": [l.model_dump() for l in line_details],
+                    },
+                ),
+            ))
 
     for note in db.query(DebitNote).filter(DebitNote.vendor_id == vendor_id).order_by(DebitNote.created_at.desc()).all():
         receipt = db.get(StockReceipt, note.receipt_id)
@@ -176,49 +194,6 @@ def build_vendor_ledger(db: Session, vendor_id: int, *, show_actor: bool = True,
                         "payment_receipt_url": presigned_url(ap.payment_receipt_key) if ap.payment_receipt_key else None,
                         "comment": ap.payment_comment,
                         "reversed": ap.id in reversed_ap_ids,
-                    },
-                ),
-            )
-        )
-
-    receipts = (
-        db.query(StockReceipt)
-        .filter(StockReceipt.vendor_id == vendor_id)
-        .order_by(StockReceipt.received_at.desc())
-        .all()
-    )
-    seen_placement_ids = {e[1].details.get("placement_id") for e in entries if e[1].details.get("placement_id")}
-    for receipt in receipts:
-        if receipt.billed_placement_id and receipt.billed_placement_id in seen_placement_ids:
-            continue
-        rlines = db.query(StockReceiptLine).filter(StockReceiptLine.receipt_id == receipt.id).all()
-        line_details = [
-            LedgerLineDetail(
-                our_product_id=ln.our_product_id,
-                quantity_received=ln.quantity_received,
-                quantity_billed=ln.quantity_billed,
-                billed_amount=_fmt_amount(ln.billed_amount),
-                buying_price=format(ln.buying_price, "f"),
-            )
-            for ln in rlines
-        ]
-        summary = ", ".join(f"{ln.our_product_id} +{ln.quantity_received}" for ln in rlines[:8])
-        entries.append(
-            (
-                receipt.received_at,
-                EntityLedgerEntry(
-                    id=f"receipt-{receipt.id}",
-                    event_type="stock_received",
-                    title="Stock receipt",
-                    summary=summary or "—",
-                    occurred_at=receipt.received_at,
-                    **_actor_fields(receipt.received_by_name, receipt.received_by_type, show_actor),
-                    details={
-                        "receipt_id": receipt.id,
-                        "bill_number": receipt.bill_number,
-                        "additional_charges": _fmt_amount(receipt.additional_charges),
-                        "bill_file_url": presigned_url(receipt.bill_file_key) if receipt.bill_file_key else None,
-                        "lines": [l.model_dump() for l in line_details],
                     },
                 ),
             )

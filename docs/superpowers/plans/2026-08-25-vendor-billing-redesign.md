@@ -326,7 +326,6 @@ Steps:
           "ALTER TABLE jc_stock_receipts ADD COLUMN IF NOT EXISTS billed_at TIMESTAMPTZ",
           "ALTER TABLE jc_debit_notes ADD COLUMN IF NOT EXISTS source VARCHAR(10) NOT NULL DEFAULT 'manual'",
           "UPDATE jc_stock_receipts SET bill_status = 'billed', billed_at = received_at WHERE receipt_type = 'vendor_bill'",
-          "UPDATE jc_stock_receipts SET bill_status = 'pending_bill' WHERE receipt_type = 'vendor_receive'",
       ]
       for stmt in stmts:
           try:
@@ -337,6 +336,8 @@ Steps:
               log.warning("Migration step skipped", exc_info=True)
   ```
   Register right after `_migrate_vendor_billing_terms()`.
+
+  Note: there is deliberately no `UPDATE ... SET bill_status = 'pending_bill' WHERE receipt_type = 'vendor_receive'` statement — the column's `DEFAULT 'pending_bill'` already gives every existing `vendor_receive` row the correct value the moment the column is added, and this migration re-runs on every app boot. An explicit unconditional `UPDATE` here would re-fire on every boot and stomp the `bill_status` of receipts that Task 5's `bill_receipt()` has since legitimately flipped to `'billed'` (since `receipt_type` stays `'vendor_receive'` for a batch's entire lifecycle in this design — that value never changes to signal "this one is now billed"). The `vendor_bill` backfill statement is safe to leave unconditional: `receipt_type = 'vendor_bill'` only ever matches the old pre-redesign rows (which Task 4 deletes anyway), never a row created by the new flow, so repeating it is a harmless no-op.
 
 - [ ] **Step 4:** Manually verify column presence: `\d jc_stock_receipts` and `\d jc_debit_notes` via psql, or re-run the earlier psycopg2 introspection pattern used in this chat.
 
@@ -351,15 +352,19 @@ Steps:
 - Consumes: nothing (standalone script reading `DATABASE_URL` from `.env` like other one-off scripts in this repo)
 - Produces: none (data-only side effects)
 
-- [ ] **Step 1:** Write the script. It must, in order, inside one transaction:
-  1. Find the 4 test `StockReceipt` rows by exact match on `(vendor business_name, order_receipt_number or bill_number)`: `('test vendor', '1234')`, `('delete ven', '886')`, `('delete ven', '8757')`, `('DEV PRINT & PACK PRIVATE LIMITED', 'direct opening demo')` — print each receipt's id, vendor, amount before deleting, and abort with an error if any of the 4 aren't found exactly as expected (safety check — do not delete anything not explicitly matched).
-  2. For each matched receipt id: delete `jc_debit_notes` rows where `receipt_id` matches, delete `jc_ap_ledger_entries` rows where `receipt_id` matches, delete `jc_stock_receipt_lines` rows where `receipt_id` matches, delete the `jc_stock_receipts` row itself.
-  3. Delete any remaining `jc_ap_ledger_entries` for vendors named `test vendor` or `agrawal test vendor` (their opening-balance/payment/payment_reversal test rows) and for `delete ven`.
-  4. Delete `jc_vendor_orders`/`jc_vendor_order_placements`/`jc_vendor_order_lines` rows belonging to vendors `test vendor`, `delete ven`, `agrawal test vendor` (cascade via placement id).
-  5. Soft-delete the 3 junk vendors: `UPDATE jc_vendors SET is_active=false, deleted_at=now() WHERE business_name IN ('test vendor','delete ven','agrawal test vendor')`.
-  6. Print a final summary (rows deleted per table) before committing. Require typing `yes` at a confirmation prompt before committing (matches the caution used earlier in this chat for destructive operations).
+**Corrected scope (superseding an earlier undercount):** the original design check only looked for `vendor_bill`-type rows and missed that each of the 3 junk-vendor test bills also has a paired `vendor_receive` row created alongside it under the pre-redesign flow (same vendor, created back-to-back). Verified against the live DB on 2026-08-25: `test vendor` has 2 receipts (`id=81` vendor_receive `order_receipt_number='1234'`, `id=82` vendor_bill `bill_number='1234'` ₹1000), `delete ven` has 4 (`id=18` receive `'658'` / `id=19` bill `'886'` ₹8000, `id=20` receive `'786'` / `id=21` bill `'8757'` ₹45688), and `DEV PRINT & PACK PRIVATE LIMITED` (a REAL vendor — do not touch its other receipts) has exactly 2 test rows among its 9 total (`id=15` receive `order_receipt_number='OLD YEAR'`, `id=16` bill `bill_number='direct opening demo'` ₹15000) plus 7 genuinely real receives (`order_receipt_number` in `'08','34','41','48','77','62','75'`) that must survive untouched. Total `jc_stock_receipts` rows to delete: **8**, not 4. The live `vendor_receive`-type count today is 84, of which 4 (`id 81, 18, 20, 15`) are these junk-paired rows — after cleanup, 80 real `vendor_receive` rows remain, not 84.
 
-- [ ] **Step 2:** Run it against the real DB, review the printed summary carefully, confirm, and verify afterward with a quick count query that `jc_stock_receipts` still has 84 `vendor_receive`-origin rows and 0 `vendor_bill`-type rows.
+- [ ] **Step 1:** Write the script. It must, in order, inside one transaction:
+  1. For vendors `test vendor` and `delete ven` (100% junk — no real data, being fully deactivated in step 5 below regardless): find and print ALL `jc_stock_receipts` rows for these two vendor_ids, with no number filtering — expect exactly 2 rows for `test vendor` (ids 81, 82) and exactly 4 for `delete ven` (ids 18, 19, 20, 21). Abort if the counts don't match these exact expectations (safety check).
+  2. For vendor `DEV PRINT & PACK PRIVATE LIMITED` (a REAL vendor — must not touch its other data): find exactly the row where `bill_number = 'direct opening demo'` and exactly the row where `order_receipt_number = 'OLD YEAR'`. Abort if either match count is not exactly 1, or if a third row for this vendor is accidentally matched.
+  3. Combine steps 1+2 into one list of exactly 8 `StockReceipt` ids. Print each one's id, vendor, receipt_type, order_receipt_number/bill_number, and amount before deleting.
+  4. For each of the 8 matched receipt ids: delete `jc_debit_notes` rows where `receipt_id` matches, delete `jc_ap_ledger_entries` rows where `receipt_id` matches, delete `jc_stock_receipt_lines` rows where `receipt_id` matches, delete the `jc_stock_receipts` row itself.
+  5. Delete any remaining `jc_ap_ledger_entries` for vendors named `test vendor`, `delete ven`, or `agrawal test vendor` (their opening-balance/payment/payment_reversal test rows).
+  6. Delete `jc_vendor_orders`/`jc_vendor_order_placements`/`jc_vendor_order_lines` rows belonging to vendors `test vendor`, `delete ven`, `agrawal test vendor` (cascade via placement id).
+  7. Soft-delete the 3 junk vendors: `UPDATE jc_vendors SET is_active=false, deleted_at=now() WHERE business_name IN ('test vendor','delete ven','agrawal test vendor')`.
+  8. Print a final summary (rows deleted per table) before committing. Require typing `yes` at a confirmation prompt before committing (matches the caution used earlier in this chat for destructive operations).
+
+- [ ] **Step 2:** Run it against the real DB, review the printed summary carefully, confirm, and verify afterward with a quick count query that `jc_stock_receipts` has 80 `vendor_receive`-origin rows and 0 `vendor_bill`-type rows, and that `DEV PRINT & PACK PRIVATE LIMITED` still has exactly 7 receipts.
 
 ---
 

@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from decimal import Decimal
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
-from sqlalchemy import func, or_, text
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -16,18 +15,22 @@ from app.models.catalog_product import CatalogProduct
 from app.models.city import City
 from app.models.stock import StockBalance, StockLedger, StockReceipt, StockReceiptLine
 from app.models.vendor import Vendor
-from app.models.vendor_order import VendorOrder, VendorOrderLine, VendorOrderPlacement
 from app.schemas.stock import (
+    BillPreviewIn,
+    BillPreviewOut,
     BulkSellingPriceIn,
+    PendingBillReceipt,
     PlacedLineForReceipt,
-    ReceivedLineForBill,
+    ReceiptForBillDetail,
+    ReceiptLineForBill,
     SellingPriceUpdate,
     StockThresholdUpdate,
     StockLedgerEntry,
     StockProductDetail,
     StockProductSummary,
+    VendorBillIn,
+    VendorPendingBillList,
     VendorPlacedOrderForReceipt,
-    VendorReceivedForBill,
     VendorReceiptCreate,
     VendorReceiveCreate,
     OfflineVendorReceiptCreate,
@@ -36,20 +39,18 @@ from app.services.pricing import coerce_selling_price, effective_selling_price
 from app.services.stock_levels import stock_status_label
 from app.schemas.ledger import StockLedgerDetail
 from app.models.debit_note import DebitNote
-from app.services.ap_ledger import debit_note_payable_effect, post_bill_entry, receipt_bill_amount, receipt_debit_note_total
-from app.services.debit_notes import create_debit_note
+from app.services.ap_ledger import debit_note_payable_effect, receipt_bill_amount, receipt_debit_note_total
 from app.services.activity import log_from_auth
-from app.services.open_lines import reduce_from_open
 from app.services.order_summary import pending_qty_by_product, placed_qty_by_product, received_qty_by_product
-from app.services.stock_receipt import add_stock, get_open_order, get_or_create_open_order
+from app.services.stock_receipt import get_open_order
 from app.services.doc_gen import generate_vendor_receipt_document
 from app.services import response_cache
 from app.services.history import list_entity_history
 from app.services.receipt_edit import update_vendor_receipt
 from app.services.vendor_receive_bill import (
-    bill_from_received,
+    bill_receipt,
+    preview_bill_deviations,
     receive_vendor_goods,
-    unbilled_received_qty_by_product,
 )
 from app.services.storage import bill_key, presigned_url, presigned_urls, storage_configured, upload_bytes, vendor_folder_slug
 
@@ -519,56 +520,103 @@ def get_placed_order_for_receipt(
     )
 
 
-@router.get("/vendor-order/{vendor_id}/received", response_model=VendorReceivedForBill)
-def get_received_for_bill(
+@router.get("/vendor-order/{vendor_id}/received", response_model=VendorPendingBillList)
+def get_pending_bill_receipts(
     vendor_id: int,
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(get_auth_context),
-):
+) -> VendorPendingBillList:
     vendor = db.get(Vendor, vendor_id)
     if not vendor or vendor.deleted_at:
         raise HTTPException(404, "vendor not found")
-    city_name = _vendor_city(db, vendor)
-    label = _vendor_label(vendor, city_name)
-    received = get_open_order(db, vendor_id, "received")
-    unbilled = unbilled_received_qty_by_product(db, vendor_id)
-
-    from app.services.order_summary import pending_qty_by_product
-    from decimal import Decimal as _Dec
-    placed_qty = pending_qty_by_product(db, vendor_id)
-
-    bc = vendor.billing_context or {}
-    factor = _Dec(str(bc.get("invoice_factor", 1)))
-
-    lines: list[ReceivedLineForBill] = []
-    for cat_id, qty in unbilled.items():
-        prod = db.get(CatalogProduct, cat_id)
-        if not prod:
-            continue
-        display_price = (prod.buying_price * factor).quantize(_Dec("0.01")) if prod.buying_price else None
-        lines.append(
-            ReceivedLineForBill(
-                catalog_product_id=cat_id,
-                our_product_id=prod.our_product_id,
-                vendor_product_id=prod.vendor_product_id,
-                category=prod.category,
-                quantity_placed=int(placed_qty.get(cat_id, 0)),
-                quantity_received=int(qty),
-                quantity_unbilled=int(qty),
-                buying_price=format(prod.buying_price, "f") if prod.buying_price else None,
-                buying_price_display=format(display_price, "f") if display_price else None,
-                unit=prod.unit,
-                image_urls=presigned_urls(prod.image_keys or []),
-            )
-        )
-    lines.sort(key=lambda x: x.our_product_id.lower())
-    return VendorReceivedForBill(
-        vendor_id=vendor_id,
-        vendor_label=label,
-        order_id=received.id if received else None,
-        lines=lines,
-        billing_context=vendor.billing_context,
+    label = _vendor_label(vendor, _vendor_city(db, vendor))
+    rows = (
+        db.query(StockReceipt)
+        .filter(StockReceipt.vendor_id == vendor_id, StockReceipt.bill_status == "pending_bill")
+        .order_by(StockReceipt.received_at.asc())
+        .all()
     )
+    receipts = []
+    for r in rows:
+        lines = db.query(StockReceiptLine).filter(StockReceiptLine.receipt_id == r.id).all()
+        receipts.append(PendingBillReceipt(
+            receipt_id=r.id, order_receipt_number=r.order_receipt_number, received_at=r.received_at,
+            expected_bill_amount=format(r.expected_bill_amount, "f") if r.expected_bill_amount is not None else None,
+            expected_extra_cash=format(r.expected_extra_cash, "f") if r.expected_extra_cash is not None else None,
+            line_count=len(lines), total_quantity=sum(l.quantity_received for l in lines),
+        ))
+    return VendorPendingBillList(vendor_id=vendor_id, vendor_label=label, receipts=receipts)
+
+
+@router.get("/receipts/{receipt_id}/for-bill", response_model=ReceiptForBillDetail)
+def get_receipt_for_bill(
+    receipt_id: int,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(get_auth_context),
+) -> ReceiptForBillDetail:
+    receipt = db.get(StockReceipt, receipt_id)
+    if not receipt or receipt.bill_status != "pending_bill":
+        raise HTTPException(404, "receipt not open for billing")
+    vendor = db.get(Vendor, receipt.vendor_id)
+    if not vendor or vendor.deleted_at:
+        raise HTTPException(404, "vendor not found")
+    label = _vendor_label(vendor, _vendor_city(db, vendor))
+
+    rlines = db.query(StockReceiptLine).filter(StockReceiptLine.receipt_id == receipt_id).all()
+    lines: list[ReceiptLineForBill] = []
+    for ln in rlines:
+        prod = db.get(CatalogProduct, ln.catalog_product_id)
+        lines.append(ReceiptLineForBill(
+            catalog_product_id=ln.catalog_product_id,
+            our_product_id=ln.our_product_id,
+            quantity_received=ln.quantity_received,
+            buying_price=format(ln.buying_price, "f"),
+            unit=prod.unit if prod else None,
+            image_urls=presigned_urls(prod.image_keys or []) if prod else [],
+        ))
+    lines.sort(key=lambda x: x.our_product_id.lower())
+
+    billing_terms = {
+        "billing_pct": format(vendor.billing_pct, "f"),
+        "additional_charge": format(vendor.additional_charge, "f"),
+        "additional_charge_label": vendor.additional_charge_label,
+        "discount_pct": format(vendor.discount_pct, "f"),
+        "gst_included": vendor.gst_included,
+        "gst_rate_pct": format(vendor.gst_rate_pct, "f"),
+        "billing_notes": vendor.billing_notes,
+    }
+    return ReceiptForBillDetail(
+        receipt_id=receipt.id, vendor_id=vendor.id, vendor_label=label,
+        order_receipt_number=receipt.order_receipt_number,
+        expected_bill_amount=format(receipt.expected_bill_amount, "f") if receipt.expected_bill_amount is not None else None,
+        expected_extra_cash=format(receipt.expected_extra_cash, "f") if receipt.expected_extra_cash is not None else None,
+        billing_terms=billing_terms, lines=lines,
+    )
+
+
+@router.post("/receipts/{receipt_id}/bill-preview", response_model=BillPreviewOut)
+def preview_receipt_bill(
+    receipt_id: int,
+    body: BillPreviewIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(get_auth_context),
+) -> BillPreviewOut:
+    receipt = db.get(StockReceipt, receipt_id)
+    if not receipt or receipt.bill_status != "pending_bill":
+        raise HTTPException(404, "receipt not open for billing")
+    vendor = db.get(Vendor, receipt.vendor_id)
+    if not vendor or vendor.deleted_at:
+        raise HTTPException(404, "vendor not found")
+    rlines = db.query(StockReceiptLine).filter(StockReceiptLine.receipt_id == receipt_id).all()
+    billed_qty_by_pid = {
+        ln_in.catalog_product_id: int(ln_in.quantity_billed)
+        for ln_in in (body.lines or [])
+        if ln_in.quantity_billed is not None
+    }
+    result = preview_bill_deviations(
+        db, vendor, rlines, billed_qty_by_pid, body.total_billed_amount.quantize(Decimal("0.01")),
+    )
+    return BillPreviewOut(**result)
 
 
 @router.post("/upload-bill")
@@ -620,202 +668,17 @@ def create_vendor_receive(
     return result
 
 
-@router.post("/receipts/vendor-bill", status_code=status.HTTP_201_CREATED)
-def create_vendor_bill_from_received(
-    body: VendorReceiptCreate,
+@router.post("/receipts/{receipt_id}/bill", status_code=status.HTTP_201_CREATED)
+def create_receipt_bill(
+    receipt_id: int,
+    body: VendorBillIn,
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(get_auth_context),
 ):
-    result = bill_from_received(db, auth, body)
+    result = bill_receipt(db, auth, receipt_id, body)
     response_cache.invalidate("stock:")
     response_cache.invalidate("shop:")
     return result
-
-
-@router.post("/receipts/vendor-order", status_code=status.HTTP_201_CREATED)
-def create_vendor_receipt(
-    body: VendorReceiptCreate,
-    db: Session = Depends(get_db),
-    auth: AuthContext = Depends(get_auth_context),
-):
-    """Bill against unbilled received goods (split flow)."""
-    result = bill_from_received(db, auth, body)
-    response_cache.invalidate("stock:")
-    response_cache.invalidate("shop:")
-    return result
-
-
-def _finalize_vendor_receipt(
-    db: Session,
-    auth: AuthContext,
-    body: VendorReceiptCreate,
-    *,
-    offline: bool,
-) -> dict:
-    # Include billed-only lines (received 0, billed > 0) so debit notes can attach to them.
-    stock_lines = [ln for ln in body.lines if ln.quantity_received > 0]
-    bill_lines = [ln for ln in body.lines if ln.quantity_received > 0 or (ln.quantity_billed or 0) > 0]
-    if not bill_lines:
-        raise HTTPException(400, "enter quantity received or billed on at least one row")
-
-    line_bill_total = sum((ln.billed_amount or Decimal("0")) for ln in bill_lines)
-    if body.total_billed_amount is None and line_bill_total <= 0:
-        raise HTTPException(400, "enter total bill amount for this shipment")
-
-    vendor = db.get(Vendor, body.vendor_id)
-    if not vendor or vendor.deleted_at:
-        raise HTTPException(404, "vendor not found")
-    city_name = _vendor_city(db, vendor)
-    label = _vendor_label(vendor, city_name)
-
-    placed = None
-    if not offline:
-        placed = get_open_order(db, body.vendor_id, "placed")
-        if not placed:
-            raise HTTPException(400, "no open placed order for this vendor")
-
-    billed = get_or_create_open_order(db, body.vendor_id, "billed", "billed")
-    now = datetime.now(timezone.utc)
-
-    placement = VendorOrderPlacement(
-        vendor_order_id=billed.id,
-        status="billed",
-        placed_by_type=auth.actor_type,
-        placed_by_id=auth.actor_id,
-        placed_by_name=auth.actor_name,
-        placed_at=now,
-    )
-    db.add(placement)
-    db.flush()
-
-    receipt = StockReceipt(
-        receipt_type="offline_vendor" if offline else "vendor_order",
-        vendor_id=body.vendor_id,
-        placed_order_id=placed.id if placed else None,
-        billed_placement_id=placement.id,
-        additional_charges=body.additional_charges.quantize(Decimal("0.01")) if body.additional_charges is not None else None,
-        total_billed_amount=body.total_billed_amount.quantize(Decimal("0.01")) if body.total_billed_amount is not None else None,
-        actual_ap_amount=body.actual_ap_amount.quantize(Decimal("0.01")) if getattr(body, "actual_ap_amount", None) is not None else None,
-        bill_number=(body.bill_number or "").strip() or None,
-        bill_file_key=body.bill_file_key,
-        notes=(body.notes or "").strip() or None,
-        received_by_type=auth.actor_type,
-        received_by_id=auth.actor_id,
-        received_by_name=auth.actor_name,
-        received_at=now,
-    )
-    db.add(receipt)
-    db.flush()
-
-    line_summary = []
-    for ln in bill_lines:
-        prod = db.get(CatalogProduct, ln.catalog_product_id)
-        if not prod or prod.vendor_id != body.vendor_id:
-            raise HTTPException(400, f"invalid product {ln.catalog_product_id} for vendor")
-
-        recv_qty = int(ln.quantity_received or 0)
-        billed_qty = int(ln.quantity_billed or 0)
-
-        if recv_qty > 0:
-            db.add(
-                VendorOrderLine(
-                    placement_id=placement.id,
-                    catalog_product_id=prod.id,
-                    our_product_id=prod.our_product_id,
-                    quantity=recv_qty,
-                    quantity_remaining=recv_qty,
-                    quantity_billed=billed_qty,
-                    billed_amount=ln.billed_amount.quantize(Decimal("0.01")),
-                    buying_price=prod.buying_price,
-                )
-            )
-
-        # Always persist receipt line (including billed-only) for debit-note product resolution.
-        db.add(
-            StockReceiptLine(
-                receipt_id=receipt.id,
-                catalog_product_id=prod.id,
-                our_product_id=prod.our_product_id,
-                quantity_received=recv_qty,
-                quantity_billed=billed_qty,
-                billed_amount=ln.billed_amount.quantize(Decimal("0.01")),
-                buying_price=prod.buying_price,
-            )
-        )
-        if recv_qty > 0:
-            add_stock(
-                db,
-                catalog_product_id=prod.id,
-                our_product_id=prod.our_product_id,
-                quantity=recv_qty,
-                entry_type="received",
-                reference_type="stock_receipt",
-                reference_id=receipt.id,
-                party=label,
-                notes=f"Bill {body.bill_number or '—'}" + (" (offline)" if offline else ""),
-            )
-            line_summary.append(f"{prod.our_product_id}+{recv_qty}")
-        else:
-            line_summary.append(f"{prod.our_product_id} billed {billed_qty} (0 received)")
-
-    if not offline and stock_lines:
-        reduce_from_open(
-            db,
-            body.vendor_id,
-            [(ln.catalog_product_id, ln.quantity_received) for ln in stock_lines],
-        )
-
-    bill_total = receipt_bill_amount(db, receipt.id)
-    if bill_total != 0:
-        from app.models.accounts_payable import ApLedgerEntry
-        existing_bill = (
-            db.query(ApLedgerEntry)
-            .filter(ApLedgerEntry.receipt_id == receipt.id, ApLedgerEntry.entry_type == "bill")
-            .first()
-        )
-        if not existing_bill:
-            post_bill_entry(
-                db,
-                vendor_id=body.vendor_id,
-                receipt_id=receipt.id,
-                amount=bill_total,
-                description=f"Bill {body.bill_number or receipt.id} — ₹{bill_total}",
-                actor_type=auth.actor_type,
-                actor_id=auth.actor_id,
-                actor_name=auth.actor_name,
-            )
-
-    bill_product_ids = {ln.catalog_product_id for ln in bill_lines}
-    for dn_in in body.debit_notes or []:
-        if dn_in.note_type == "item" and dn_in.catalog_product_id not in bill_product_ids:
-            raise HTTPException(400, "debit note item must be from billed or received lines")
-        create_debit_note(db, auth, vendor_id=body.vendor_id, receipt_id=receipt.id, body=dn_in)
-
-    if placed:
-        placed.updated_at = now
-    billed.updated_at = now
-    log_from_auth(
-        db,
-        auth,
-        action="receive" if not offline else "offline_receive",
-        entity_type="stock_receipt",
-        entity_id=receipt.id,
-        entity_label=label,
-        detail=", ".join(line_summary[:10]),
-    )
-    doc_url = None
-    # Defer PDF — generate on first document download so submit stays fast
-    db.commit()
-    response_cache.invalidate("stock:")
-    response_cache.invalidate("shop:")
-    return {
-        "ok": True,
-        "receipt_id": receipt.id,
-        "billed_placement_id": placement.id,
-        "message": f"{'Offline order' if offline else 'Received stock'} for {len(stock_lines)} product(s)",
-        "document_url": doc_url,
-        "receipt_document_key": receipt.receipt_document_key,
-    }
 
 
 @router.post("/receipts/offline-vendor", status_code=status.HTTP_201_CREATED)

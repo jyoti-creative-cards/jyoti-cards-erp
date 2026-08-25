@@ -276,6 +276,64 @@ def sync_receipt_bill_ledger(
     )
 
 
+def sync_receipt_extra_cash_ledger(
+    db: Session,
+    *,
+    vendor_id: int,
+    receipt_id: int,
+    extra_cash: Decimal,
+    bill_label: str,
+    actor_type: str,
+    actor_id: Optional[int],
+    actor_name: str,
+) -> None:
+    """Same shape as sync_receipt_bill_ledger, for split-billing vendors' second (extra-cash) AP entry."""
+    rows = (
+        db.query(ApLedgerEntry)
+        .filter(ApLedgerEntry.receipt_id == receipt_id, ApLedgerEntry.entry_type.in_(("bill", "adjustment")))
+        .order_by(ApLedgerEntry.id.asc())
+        .all()
+    )
+    extra_bill = next((r for r in rows if r.entry_type == "bill" and "extra cash" in (r.description or "")), None)
+    target = as_signed_increase(extra_cash) if extra_cash > 0 else Decimal("0.00")
+    if extra_bill is None:
+        if target > 0:
+            post_bill_entry(
+                db,
+                vendor_id=vendor_id,
+                receipt_id=receipt_id,
+                amount=target,
+                description=f"Bill {bill_label} — extra cash (half-price balance) ₹{target}",
+                actor_type=actor_type,
+                actor_id=actor_id,
+                actor_name=actor_name,
+            )
+        return
+    included = {extra_bill.id}
+    changed = True
+    while changed:
+        changed = False
+        for r in rows:
+            if r.entry_type == "adjustment" and r.reverses_entry_id in included and r.id not in included:
+                included.add(r.id)
+                changed = True
+    net = sum((Decimal(str(r.amount)) for r in rows if r.id in included), Decimal("0")).quantize(Decimal("0.01"))
+    delta = (target - net).quantize(Decimal("0.01"))
+    if abs(delta) < Decimal("0.01"):
+        return
+    post_ap_adjustment(
+        db,
+        vendor_id=vendor_id,
+        amount=delta,
+        receipt_id=receipt_id,
+        reverses_entry_id=extra_bill.id,
+        description=f"Bill adjust {bill_label} — extra cash Δ₹{delta}",
+        actor_type=actor_type,
+        actor_id=actor_id,
+        actor_name=actor_name,
+    )
+
+
 def post_payment_entry(
     db: Session,
     *,

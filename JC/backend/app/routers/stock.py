@@ -388,12 +388,12 @@ def get_ledger_entry_detail(
     )
 
 
-@router.patch("/products/{catalog_product_id}/selling-price", response_model=StockProductSummary)
+@router.patch("/products/{catalog_product_id}/selling-price", response_model=StockProductSummary, dependencies=[Depends(require_admin)])
 def update_selling_price(
     catalog_product_id: int,
     body: SellingPriceUpdate,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(get_auth_context),
+    auth: AuthContext = Depends(require_admin),
 ):
     row = db.get(CatalogProduct, catalog_product_id)
     if not row or not row.is_active:
@@ -420,11 +420,11 @@ def update_selling_price(
     return StockProductSummary(**d)
 
 
-@router.post("/products/selling-price/bulk")
+@router.post("/products/selling-price/bulk", dependencies=[Depends(require_admin)])
 def bulk_update_selling_price(
     body: BulkSellingPriceIn,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(get_auth_context),
+    auth: AuthContext = Depends(require_admin),
 ):
     updated = 0
     for item in body.items:

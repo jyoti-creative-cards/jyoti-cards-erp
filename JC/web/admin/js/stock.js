@@ -97,9 +97,9 @@ const Stock = (() => {
         && Number(p.selling_price) !== Number(p.buying_price);
       const sellHtml = realSell
         ? `<div class="stock-price-row"><strong>${fmtPrice(p.selling_price)}</strong>
-            ${ctx.canWrite?.("catalog") || ctx.canWrite?.("stock") ? `<button class="btn btn-secondary btn-sm" onclick="Stock.setSellingPrice(${p.catalog_product_id}, '${ctx.esc(String(p.selling_price))}')">Set</button>` : ""}</div>`
+            ${ctx.isAdmin?.() ? `<button class="btn btn-secondary btn-sm" onclick="Stock.setSellingPrice(${p.catalog_product_id}, '${ctx.esc(String(p.selling_price))}')">Set</button>` : ""}</div>`
         : `<div class="stock-price-row"><span class="prod-price-missing">Not set</span>
-            ${ctx.canWrite?.("catalog") || ctx.canWrite?.("stock") ? `<button class="btn btn-primary btn-sm" onclick="Stock.setSellingPrice(${p.catalog_product_id}, '')">Set sell price</button>` : ""}</div>`;
+            ${ctx.isAdmin?.() ? `<button class="btn btn-primary btn-sm" onclick="Stock.setSellingPrice(${p.catalog_product_id}, '')">Set sell price</button>` : ""}</div>`;
       const statusBadge = p.stock_status === "in_stock" ? "badge-green"
         : p.stock_status === "low_stock" ? "badge-amber"
         : p.stock_status === "negative_stock" ? "badge-red" : "badge-gray";

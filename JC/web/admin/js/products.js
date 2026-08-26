@@ -750,7 +750,7 @@ const Products = (() => {
     }
 
     const summary = stockSummaryHtml(allItems);
-    const canSetSell = !!(ctx.canWrite?.("catalog") || ctx.canWrite?.("stock"));
+    const canSetSell = !!ctx.isAdmin?.();
     const bulkSell = filters.no_sell_price && canSetSell && items.some(it => it.kind === "product");
 
     if (bulkSell) {
@@ -912,9 +912,9 @@ const Products = (() => {
 
       const sellHtml = sell != null && sell !== ""
         ? `<div class="stock-price-row"><strong>${fmtPrice(sell)}</strong>
-            ${ctx.canWrite?.("catalog") || ctx.canWrite?.("stock") ? `<button class="btn btn-secondary btn-sm" onclick="Stock.setSellingPrice(${id}, '${ctx.esc(String(sell))}')">Set</button>` : ""}</div>`
+            ${ctx.isAdmin?.() ? `<button class="btn btn-secondary btn-sm" onclick="Stock.setSellingPrice(${id}, '${ctx.esc(String(sell))}')">Set</button>` : ""}</div>`
         : `<div class="stock-price-row"><span class="prod-price-missing">Not set</span>
-            ${ctx.canWrite?.("catalog") || ctx.canWrite?.("stock") ? `<button class="btn btn-primary btn-sm" onclick="Stock.setSellingPrice(${id}, '')">Set sell price</button>` : ""}</div>`;
+            ${ctx.isAdmin?.() ? `<button class="btn btn-primary btn-sm" onclick="Stock.setSellingPrice(${id}, '')">Set sell price</button>` : ""}</div>`;
 
       const ledgerRows = stock?.ledger?.length
         ? stock.ledger.map(e => `<tr class="clickable ledger-row" data-handler="stock" data-entry-id="${e.id}">

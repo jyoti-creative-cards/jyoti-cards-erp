@@ -42,3 +42,4 @@ class ArLedgerEntry(Base):
     created_by_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_by_name: Mapped[str] = mapped_column(String(200), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

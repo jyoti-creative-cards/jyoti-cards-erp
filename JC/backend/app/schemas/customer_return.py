@@ -82,4 +82,6 @@ class CustomerReturnDetail(BaseModel):
     document_key: Optional[str] = None
     created_by_name: str
     created_at: datetime
+    deleted_at: Optional[datetime] = None
+    deleted_reason: Optional[str] = None
     lines: List[CustomerReturnLineOut] = []

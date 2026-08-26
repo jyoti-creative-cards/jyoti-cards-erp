@@ -50,7 +50,7 @@ def item_wise_sales(db: Session, from_date: Optional[date], to_date: Optional[da
     q = (
         db.query(CustomerBillLine, CustomerBill)
         .join(CustomerBill, CustomerBill.id == CustomerBillLine.bill_id)
-        .filter(CustomerBillLine.status == "billed")
+        .filter(CustomerBillLine.status == "billed", CustomerBill.deleted_at.is_(None))
     )
     if start:
         q = q.filter(CustomerBill.created_at >= start)
@@ -143,7 +143,7 @@ def item_wise_purchases(db: Session, from_date: Optional[date], to_date: Optiona
 
 def customer_wise_sales(db: Session, from_date: Optional[date], to_date: Optional[date]) -> list[dict]:
     start, end = _range_bounds(from_date, to_date)
-    q = db.query(CustomerBill)
+    q = db.query(CustomerBill).filter(CustomerBill.deleted_at.is_(None))
     if start:
         q = q.filter(CustomerBill.created_at >= start)
     if end:
@@ -266,7 +266,7 @@ def ageing_ar(db: Session, as_of: Optional[date] = None) -> dict:
     }
     entries = (
         db.query(ArLedgerEntry)
-        .filter(ArLedgerEntry.customer_id.in_(list(customers.keys())))
+        .filter(ArLedgerEntry.customer_id.in_(list(customers.keys())), ArLedgerEntry.deleted_at.is_(None))
         .order_by(ArLedgerEntry.customer_id.asc(), ArLedgerEntry.created_at.asc(), ArLedgerEntry.id.asc())
         .all()
     )
@@ -502,7 +502,7 @@ def low_stock_count(db: Session, threshold: int = 10) -> int:
 
 def returns_register(db: Session, from_date: Optional[date], to_date: Optional[date]) -> list[dict]:
     start, end = _range_bounds(from_date, to_date)
-    q = db.query(CustomerReturn).order_by(CustomerReturn.created_at.desc())
+    q = db.query(CustomerReturn).filter(CustomerReturn.deleted_at.is_(None)).order_by(CustomerReturn.created_at.desc())
     if start:
         q = q.filter(CustomerReturn.created_at >= start)
     if end:
@@ -554,7 +554,7 @@ def debit_note_register(db: Session, from_date: Optional[date], to_date: Optiona
 
 def gst_sales_register(db: Session, from_date: Optional[date], to_date: Optional[date]) -> list[dict]:
     start, end = _range_bounds(from_date, to_date)
-    q = db.query(CustomerBill).order_by(CustomerBill.created_at.desc())
+    q = db.query(CustomerBill).filter(CustomerBill.deleted_at.is_(None)).order_by(CustomerBill.created_at.desc())
     if start:
         q = q.filter(CustomerBill.created_at >= start)
     if end:
@@ -682,7 +682,7 @@ def expense_by_category(db: Session, from_date: Optional[date], to_date: Optiona
 def pnl_detail(db: Session, from_date: Optional[date], to_date: Optional[date]) -> dict:
     start, end = _range_bounds(from_date, to_date)
     # Accrual-ish sales
-    sales_q = db.query(CustomerBill)
+    sales_q = db.query(CustomerBill).filter(CustomerBill.deleted_at.is_(None))
     if start:
         sales_q = sales_q.filter(CustomerBill.created_at >= start)
     if end:
@@ -724,7 +724,7 @@ def pnl_detail(db: Session, from_date: Optional[date], to_date: Optional[date]) 
     losses = sum((Decimal(str(l.amount)) for l in loss_q.all()), Decimal("0"))
 
     # Cash collections for contrast (payments stored signed negative)
-    ar_pay = db.query(ArLedgerEntry).filter(ArLedgerEntry.entry_type == "payment")
+    ar_pay = db.query(ArLedgerEntry).filter(ArLedgerEntry.entry_type == "payment", ArLedgerEntry.deleted_at.is_(None))
     if start:
         ar_pay = ar_pay.filter(ArLedgerEntry.created_at >= start)
     if end:

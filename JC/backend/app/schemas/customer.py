@@ -166,4 +166,7 @@ class RecycleBinList(BaseModel):
     staff: List[RecycleBinItem] = []
     receipts: List[RecycleBinItem] = []
     debit_notes: List[RecycleBinItem] = []
+    customer_bills: List[RecycleBinItem] = []
+    customer_placements: List[RecycleBinItem] = []
+    customer_returns: List[RecycleBinItem] = []
     total: int = 0

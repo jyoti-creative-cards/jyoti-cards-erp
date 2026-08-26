@@ -73,7 +73,11 @@ def _customer_labels(db: Session, customer_ids: set[int]) -> dict[int, str]:
 
 
 def list_sales(db: Session, from_date: Optional[date] = None, to_date: Optional[date] = None) -> list[dict]:
-    q = db.query(CustomerBill).order_by(CustomerBill.created_at.desc(), CustomerBill.id.desc())
+    q = (
+        db.query(CustomerBill)
+        .filter(CustomerBill.deleted_at.is_(None))
+        .order_by(CustomerBill.created_at.desc(), CustomerBill.id.desc())
+    )
     start, end = _range_bounds(from_date, to_date)
     if start:
         q = q.filter(CustomerBill.created_at >= start)
@@ -141,7 +145,7 @@ def list_payments(db: Session, from_date: Optional[date] = None, to_date: Option
     start, end = _range_bounds(from_date, to_date)
     out: list[dict] = []
 
-    ar_q = db.query(ArLedgerEntry).filter(ArLedgerEntry.entry_type == "payment")
+    ar_q = db.query(ArLedgerEntry).filter(ArLedgerEntry.entry_type == "payment", ArLedgerEntry.deleted_at.is_(None))
     if start:
         ar_q = ar_q.filter(ArLedgerEntry.created_at >= start)
     if end:
@@ -218,7 +222,9 @@ def daybook(db: Session, day: date) -> dict:
     start, end = _day_bounds(day)
     rows: list[dict] = []
 
-    for b in db.query(CustomerBill).filter(CustomerBill.created_at >= start, CustomerBill.created_at <= end).all():
+    for b in db.query(CustomerBill).filter(
+        CustomerBill.created_at >= start, CustomerBill.created_at <= end, CustomerBill.deleted_at.is_(None)
+    ).all():
         c = db.get(Customer, b.customer_id)
         rows.append(
             {
@@ -252,6 +258,7 @@ def daybook(db: Session, day: date) -> dict:
 
     for e in db.query(ArLedgerEntry).filter(
         ArLedgerEntry.entry_type == "payment",
+        ArLedgerEntry.deleted_at.is_(None),
         ArLedgerEntry.created_at >= start,
         ArLedgerEntry.created_at <= end,
     ).all():
@@ -287,6 +294,7 @@ def daybook(db: Session, day: date) -> dict:
 
     for e in db.query(ArLedgerEntry).filter(
         ArLedgerEntry.entry_type.in_(("opening_balance", "credit_note")),
+        ArLedgerEntry.deleted_at.is_(None),
         ArLedgerEntry.created_at >= start,
         ArLedgerEntry.created_at <= end,
     ).all():

@@ -41,22 +41,25 @@ def build_dashboard(db: Session) -> dict:
               (SELECT COUNT(*) FROM jc_vendor_orders
                  WHERE is_open IS TRUE AND bucket IN ('placed','received')) AS vo_open,
               (SELECT COUNT(*) FROM jc_customer_returns
-                 WHERE created_at >= :week_start) AS returns_recent,
+                 WHERE deleted_at IS NULL AND created_at >= :week_start) AS returns_recent,
               (SELECT COUNT(*) FROM jc_customer_returns
-                 WHERE created_at >= :day_start AND created_at <= :day_end) AS returns_today,
+                 WHERE deleted_at IS NULL
+                   AND created_at >= :day_start AND created_at <= :day_end) AS returns_today,
               (SELECT COUNT(*) FROM jc_catalog_products p
                  LEFT JOIN jc_stock_balances b ON b.catalog_product_id = p.id
                  WHERE p.is_active IS TRUE AND p.deleted_at IS NULL
                    AND COALESCE(b.quantity_on_hand, 0) <= 10) AS low_stock,
               (SELECT COALESCE(SUM(grand_total), 0) FROM jc_customer_bills
-                 WHERE created_at >= :day_start AND created_at <= :day_end) AS sales_total,
+                 WHERE deleted_at IS NULL
+                   AND created_at >= :day_start AND created_at <= :day_end) AS sales_total,
               (SELECT COUNT(*) FROM jc_customer_bills
-                 WHERE created_at >= :day_start AND created_at <= :day_end) AS sales_count,
+                 WHERE deleted_at IS NULL
+                   AND created_at >= :day_start AND created_at <= :day_end) AS sales_count,
               (SELECT COUNT(*) FROM jc_ap_ledger_entries
                  WHERE entry_type = 'bill' AND deleted_at IS NULL
                    AND created_at >= :day_start AND created_at <= :day_end) AS purchase_count,
               (SELECT COALESCE(SUM(amount), 0) FROM jc_ar_ledger_entries
-                 WHERE entry_type = 'payment'
+                 WHERE entry_type = 'payment' AND deleted_at IS NULL
                    AND created_at >= :day_start AND created_at <= :day_end) AS cash_in_raw,
               (SELECT COALESCE(SUM(amount), 0) FROM jc_ap_ledger_entries
                  WHERE entry_type = 'payment' AND deleted_at IS NULL
@@ -85,6 +88,7 @@ def build_dashboard(db: Session) -> dict:
             FROM jc_ar_ledger_entries e
             JOIN jc_customers c ON c.id = e.customer_id AND c.deleted_at IS NULL
             LEFT JOIN jc_cities ci ON ci.id = c.city_id
+            WHERE e.deleted_at IS NULL
             GROUP BY c.id, c.business_name, ci.name
             HAVING SUM(e.amount) > 0
             ORDER BY SUM(e.amount) DESC

@@ -14,6 +14,9 @@ from app.models.catalog_alternative import CatalogAlternative
 from app.models.catalog_product import CatalogProduct
 from app.models.city import City
 from app.models.customer import Customer
+from app.models.customer_bill import CustomerBill
+from app.models.customer_order import CustomerOrderPlacement
+from app.models.customer_return import CustomerReturn
 from app.models.debit_note import DebitNote
 from app.models.route import Route
 from app.models.staff import Staff
@@ -37,8 +40,14 @@ from app.schemas.addon import AddonPublic
 from app.schemas.vendor import VendorPublic
 from app.services.storage import delete_keys
 from app.services.void_service import (
+    purge_customer_bill,
+    purge_customer_placement,
+    purge_customer_return,
     purge_debit_note,
     purge_receipt,
+    restore_customer_bill,
+    restore_customer_placement,
+    restore_customer_return,
     restore_debit_note,
     restore_receipt,
 )
@@ -60,6 +69,18 @@ def list_recycle_bin(db: Session = Depends(get_db)) -> RecycleBinList:
     )
     dn_rows = (
         db.query(DebitNote).filter(DebitNote.deleted_at.isnot(None)).order_by(DebitNote.deleted_at.desc()).all()
+    )
+    cbill_rows = (
+        db.query(CustomerBill).filter(CustomerBill.deleted_at.isnot(None)).order_by(CustomerBill.deleted_at.desc()).all()
+    )
+    cplacement_rows = (
+        db.query(CustomerOrderPlacement)
+        .filter(CustomerOrderPlacement.deleted_at.isnot(None))
+        .order_by(CustomerOrderPlacement.deleted_at.desc())
+        .all()
+    )
+    cret_rows = (
+        db.query(CustomerReturn).filter(CustomerReturn.deleted_at.isnot(None)).order_by(CustomerReturn.deleted_at.desc()).all()
     )
 
     routes = [RecycleBinItem(type="route", id=r.id, name=r.name, subtitle=r.notes, deleted_at=r.deleted_at) for r in route_rows]
@@ -101,13 +122,63 @@ def list_recycle_bin(db: Session = Depends(get_db)) -> RecycleBinList:
         )
         for d in dn_rows
     ]
+
+    from app.models.customer_order import CustomerOrder
+
+    placement_order_ids = {p.customer_order_id for p in cplacement_rows}
+    placement_orders = (
+        {o.id: o.customer_id for o in db.query(CustomerOrder).filter(CustomerOrder.id.in_(placement_order_ids)).all()}
+        if placement_order_ids else {}
+    )
+    customer_ids_for_notes = (
+        {b.customer_id for b in cbill_rows}
+        | {r.customer_id for r in cret_rows}
+        | set(placement_orders.values())
+    )
+    customer_names = {
+        c.id: c.business_name
+        for c in (db.query(Customer).filter(Customer.id.in_(customer_ids_for_notes)).all() if customer_ids_for_notes else [])
+    }
+    customer_bills = [
+        RecycleBinItem(
+            type="customer_bill",
+            id=b.id,
+            name=f"Bill {b.bill_number} — {customer_names.get(b.customer_id, f'Customer #{b.customer_id}')}",
+            subtitle=f"₹{b.grand_total}" + (f" — {b.deleted_reason}" if b.deleted_reason else ""),
+            deleted_at=b.deleted_at,
+        )
+        for b in cbill_rows
+    ]
+    customer_placements = [
+        RecycleBinItem(
+            type="customer_placement",
+            id=p.id,
+            name=f"Order #{p.id} — {customer_names.get(placement_orders.get(p.customer_order_id), f'Order #{p.id}')}",
+            subtitle=p.deleted_reason or p.customer_notes,
+            deleted_at=p.deleted_at,
+        )
+        for p in cplacement_rows
+    ]
+    customer_returns = [
+        RecycleBinItem(
+            type="customer_return",
+            id=r.id,
+            name=f"Return {r.return_number} — {customer_names.get(r.customer_id, f'Customer #{r.customer_id}')}",
+            subtitle=f"Credit ₹{r.credit_amount}" + (f" — {r.deleted_reason}" if r.deleted_reason else ""),
+            deleted_at=r.deleted_at,
+        )
+        for r in cret_rows
+    ]
+
     total = (
         len(routes) + len(cities) + len(customers) + len(vendors) + len(catalog_products) + len(addons) + len(staff)
-        + len(receipts) + len(debit_notes)
+        + len(receipts) + len(debit_notes) + len(customer_bills) + len(customer_placements) + len(customer_returns)
     )
     return RecycleBinList(
         routes=routes, cities=cities, customers=customers, vendors=vendors, catalog_products=catalog_products,
-        addons=addons, staff=staff, receipts=receipts, debit_notes=debit_notes, total=total,
+        addons=addons, staff=staff, receipts=receipts, debit_notes=debit_notes,
+        customer_bills=customer_bills, customer_placements=customer_placements, customer_returns=customer_returns,
+        total=total,
     )
 
 
@@ -443,4 +514,64 @@ def purge_debit_note_endpoint(note_id: int, db: Session = Depends(get_db), auth:
 
     result = purge_debit_note(db, auth, note_id)
     response_cache.invalidate("stock:")
+    return result
+
+
+@router.post("/customer-bills/{bill_id}/restore", dependencies=[Depends(require_admin)])
+def restore_customer_bill_endpoint(bill_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_admin)) -> dict:
+    from app.services import response_cache
+
+    result = restore_customer_bill(db, auth, bill_id)
+    response_cache.invalidate("stock:")
+    response_cache.invalidate("shop:")
+    return result
+
+
+@router.delete("/customer-bills/{bill_id}", dependencies=[Depends(require_admin)])
+def purge_customer_bill_endpoint(bill_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_admin)) -> dict:
+    from app.services import response_cache
+
+    result = purge_customer_bill(db, auth, bill_id)
+    response_cache.invalidate("stock:")
+    response_cache.invalidate("shop:")
+    return result
+
+
+@router.post("/customer-placements/{placement_id}/restore", dependencies=[Depends(require_admin)])
+def restore_customer_placement_endpoint(placement_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_admin)) -> dict:
+    from app.services import response_cache
+
+    result = restore_customer_placement(db, auth, placement_id)
+    response_cache.invalidate("stock:")
+    response_cache.invalidate("shop:")
+    return result
+
+
+@router.delete("/customer-placements/{placement_id}", dependencies=[Depends(require_admin)])
+def purge_customer_placement_endpoint(placement_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_admin)) -> dict:
+    from app.services import response_cache
+
+    result = purge_customer_placement(db, auth, placement_id)
+    response_cache.invalidate("stock:")
+    response_cache.invalidate("shop:")
+    return result
+
+
+@router.post("/customer-returns/{return_id}/restore", dependencies=[Depends(require_admin)])
+def restore_customer_return_endpoint(return_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_admin)) -> dict:
+    from app.services import response_cache
+
+    result = restore_customer_return(db, auth, return_id)
+    response_cache.invalidate("stock:")
+    response_cache.invalidate("shop:")
+    return result
+
+
+@router.delete("/customer-returns/{return_id}", dependencies=[Depends(require_admin)])
+def purge_customer_return_endpoint(return_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_admin)) -> dict:
+    from app.services import response_cache
+
+    result = purge_customer_return(db, auth, return_id)
+    response_cache.invalidate("stock:")
+    response_cache.invalidate("shop:")
     return result

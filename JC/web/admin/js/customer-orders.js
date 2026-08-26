@@ -786,6 +786,9 @@ const CustomerOrders = (() => {
         if (canEditBill) {
           more.push({ label: "Cancel bill", onclick: `CustomerOrders.cancelBill(${b.id})`, danger: true });
         }
+        if (ctx.isAdmin?.()) {
+          more.push({ label: "Void (recycle bin)", onclick: `CustomerOrders.voidBill(${b.id})`, danger: true });
+        }
         if (canWrite) {
           more.unshift({ label: "Dispatch", onclick: "CustomerOrders.goToDispatch()" });
         }
@@ -849,6 +852,7 @@ const CustomerOrders = (() => {
         const more = [];
         if (canEdit) more.push({ label: "Edit order", onclick: `CustomerOrders.openEditPlacement(${p.id})` });
         if (canCancel) more.push({ label: cancelLabel, onclick: `CustomerOrders.cancelPlacement(${p.id})`, danger: true });
+        if (ctx.isAdmin?.()) more.push({ label: "Void (recycle bin)", onclick: `CustomerOrders.voidPlacement(${p.id})`, danger: true });
         return HubUI.partyCard({
           title: `Order #${p.id}`,
           meta: `${new Date(p.placed_at).toLocaleString()}${p.customer_notes ? ` · ${ctx.esc(p.customer_notes)}` : ""}${p.cancel_reason ? `<div style="color:var(--danger);margin-top:2px;">Cancelled: ${ctx.esc(p.cancel_reason)}</div>` : ""}`,
@@ -888,6 +892,7 @@ const CustomerOrders = (() => {
         pillHtml: currentBucket === "cancelled" || p.cancel_reason
           ? HubUI.pill("Cancelled", "danger")
           : HubUI.pill(currentBucket === "closed" ? "Closed" : "History", "muted"),
+        moreItems: ctx.isAdmin?.() ? [{ label: "Void (recycle bin)", onclick: `CustomerOrders.voidPlacement(${p.id})`, danger: true }] : [],
         open: expanded,
         rowOnclick: `CustomerOrders.toggleDetailExpand('${openKey}')`,
         canWrite: true,
@@ -1218,6 +1223,37 @@ const CustomerOrders = (() => {
         ctx.invalidateCache?.("/customer-orders");
         ctx.invalidateCache?.("/freight-agents");
         await openDetail(detailCustomerId, "open");
+      } catch (e) { ctx.toast(e.message, "error"); }
+      finally { ctx.hideLoading?.(); }
+    });
+  }
+
+  function voidBill(billId) {
+    promptReason("Void bill — moves to recycle bin. Cancels first if not already cancelled.", async (reason) => {
+      if (!confirm("Void this bill? Admin-only. Restore later from the recycle bin.")) return;
+      ctx.showLoading?.();
+      try {
+        await ctx.api(`/customer-orders/bills/${billId}/void`, { method: "POST", body: JSON.stringify({ reason }) });
+        ctx.toast("Bill voided — moved to recycle bin", "success");
+        ctx.invalidateCache?.("/customer-orders");
+        ctx.invalidateCache?.("/accounts-receivable");
+        await openDetail(detailCustomerId, currentBucket);
+        loadList();
+      } catch (e) { ctx.toast(e.message, "error"); }
+      finally { ctx.hideLoading?.(); }
+    });
+  }
+
+  function voidPlacement(placementId) {
+    promptReason("Void order — moves to recycle bin. Cancels unbilled qty first if still open.", async (reason) => {
+      if (!confirm("Void this order? Admin-only. Restore later from the recycle bin.")) return;
+      ctx.showLoading?.();
+      try {
+        await ctx.api(`/customer-orders/placements/${placementId}/void`, { method: "POST", body: JSON.stringify({ reason }) });
+        ctx.toast("Order voided — moved to recycle bin", "success");
+        ctx.invalidateCache?.("/customer-orders");
+        await openDetail(detailCustomerId, currentBucket);
+        loadList();
       } catch (e) { ctx.toast(e.message, "error"); }
       finally { ctx.hideLoading?.(); }
     });
@@ -2637,7 +2673,7 @@ const CustomerOrders = (() => {
     setOfflinePlacedOn,
     setForceCredit,
     processNext, processBack, submitProcess,
-    confirmOrder, _doConfirm, cancelOpenLine, cancelPlacement, cancelCustomerOpen, cancelAllOpen, editOpenLine, editReceivedLine, deleteReceivedLine, openEditPlacement, closeBillLine, cancelBill, openBillDoc, shareBillWhatsApp,
+    confirmOrder, _doConfirm, cancelOpenLine, cancelPlacement, cancelCustomerOpen, cancelAllOpen, editOpenLine, editReceivedLine, deleteReceivedLine, openEditPlacement, closeBillLine, cancelBill, voidBill, voidPlacement, openBillDoc, shareBillWhatsApp,
     openOfflineWizard, closeOfflineWizard, renderOfflineWizard,
     setOfflineCustomer, pickOfflineCustomer, onOfflineCustomerSearch, setOfflineNotes,
     onOfflineSearchInput, onOfflineSearchKey, toggleOfflineProduct, addOfflineProduct, removeOfflineLine,

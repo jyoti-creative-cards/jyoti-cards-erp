@@ -55,7 +55,8 @@ def _returned_qty_map(db: Session, bill_line_ids: list[int]) -> dict[int, int]:
         return {}
     rows = (
         db.query(CustomerReturnLine.bill_line_id, func.coalesce(func.sum(CustomerReturnLine.quantity_returned), 0))
-        .filter(CustomerReturnLine.bill_line_id.in_(bill_line_ids))
+        .join(CustomerReturn, CustomerReturn.id == CustomerReturnLine.return_id)
+        .filter(CustomerReturnLine.bill_line_id.in_(bill_line_ids), CustomerReturn.deleted_at.is_(None))
         .group_by(CustomerReturnLine.bill_line_id)
         .all()
     )
@@ -222,6 +223,7 @@ def list_returns_by_customer(db: Session) -> list[dict]:
             func.coalesce(func.sum(CustomerReturn.credit_amount), 0),
             func.max(CustomerReturn.created_at),
         )
+        .filter(CustomerReturn.deleted_at.is_(None))
         .group_by(CustomerReturn.customer_id)
         .all()
     )
@@ -259,7 +261,7 @@ def list_returns_by_customer(db: Session) -> list[dict]:
 def list_customer_returns(db: Session, customer_id: int) -> list[dict]:
     rows = (
         db.query(CustomerReturn)
-        .filter(CustomerReturn.customer_id == customer_id)
+        .filter(CustomerReturn.customer_id == customer_id, CustomerReturn.deleted_at.is_(None))
         .order_by(CustomerReturn.created_at.desc())
         .all()
     )
@@ -307,6 +309,8 @@ def get_return_detail(db: Session, return_id: int) -> dict:
         "document_key": ret.document_key,
         "created_by_name": ret.created_by_name,
         "created_at": ret.created_at,
+        "deleted_at": ret.deleted_at,
+        "deleted_reason": ret.deleted_reason,
         "lines": [
             {
                 "id": ln.id,

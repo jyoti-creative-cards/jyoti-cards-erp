@@ -158,7 +158,26 @@ const Returns = (() => {
         <table class="data"><thead><tr><th>Product</th><th>Bill</th><th>Qty</th><th>Sold</th><th>Amount</th></tr></thead>
         <tbody>${lines}</tbody></table>`,
         `<button class="btn btn-secondary" style="flex:1;" onclick="Returns.openDoc(${d.id}, true)">Print</button>
+         ${ctx.isAdmin?.() ? `<button class="btn btn-danger" onclick="Returns.voidReturn(${d.id})">Void</button>` : ""}
          <button class="btn btn-primary" style="flex:1;" onclick="App.closeDetail()">Done</button>`, "md");
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  async function voidReturn(returnId) {
+    const reason = prompt("Why are you voiding this return? (optional)", "");
+    if (reason === null) return;
+    if (!confirm("Void this return? Stock and AR credit will be reversed. It moves to the recycle bin and can be restored.")) return;
+    ctx.showLoading?.();
+    try {
+      await ctx.api(`/customer-returns/${returnId}/void`, { method: "POST", body: JSON.stringify({ reason: reason || null }) });
+      ctx.invalidateCache?.("/customer-returns");
+      ctx.invalidateCache?.("/accounts-receivable");
+      ctx.invalidateCache?.("/stock");
+      ctx.closeDetail?.();
+      ctx.toast("Return voided — moved to recycle bin", "success");
+      await showHub();
+      if (detailCustomerId) await openDetail(detailCustomerId);
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
   }
@@ -447,7 +466,7 @@ const Returns = (() => {
 
   return {
     init, showHub, setHubSearch, openDetail, openCreate, openCreateFromDetail, closeWizard, onCustomerPick, pickCustomer, setWizardSearch, setQty, next, back, submit,
-    openReturn, openDoc,
+    openReturn, openDoc, voidReturn,
     get wizard() { return wizard; },
   };
 })();

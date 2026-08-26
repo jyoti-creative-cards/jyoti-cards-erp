@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.deps import AuthContext, require_permission
+from app.deps import AuthContext, require_admin, require_permission
 from app.schemas.customer_return import (
     CustomerReturnCreate,
     CustomerReturnDetail,
@@ -15,6 +15,7 @@ from app.schemas.customer_return import (
     CustomerReturnSummary,
     ReturnableLineOut,
 )
+from app.schemas.stock import VoidIn
 from app.services.activity import log_from_auth
 from app.services.customer_returns import (
     create_customer_return,
@@ -25,6 +26,7 @@ from app.services.customer_returns import (
     list_returns_by_customer,
 )
 from app.services.storage import presigned_url, storage_configured
+from app.services.void_service import void_customer_return
 from app.models.customer_return import CustomerReturn
 
 router = APIRouter(prefix="/customer-returns", tags=["customer-returns"])
@@ -100,6 +102,21 @@ def get_return(
         **{k: v for k, v in detail.items() if k != "lines"},
         lines=[CustomerReturnLineOut(**ln) for ln in detail["lines"]],
     )
+
+
+@router.post("/{return_id}/void", dependencies=[Depends(require_admin)])
+def void_return_endpoint(
+    return_id: int,
+    body: VoidIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    from app.services import response_cache
+
+    result = void_customer_return(db, auth, return_id, body.reason)
+    response_cache.invalidate("stock:")
+    response_cache.invalidate("shop:")
+    return result
 
 
 @router.get("/{return_id}/document")

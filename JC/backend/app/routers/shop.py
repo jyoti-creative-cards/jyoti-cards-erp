@@ -528,6 +528,7 @@ def _find_bill_for_line(db: Session, customer_id: int, catalog_product_id: int, 
         .filter(
             CustomerBill.customer_id == customer_id,
             CustomerBillLine.catalog_product_id == catalog_product_id,
+            CustomerBill.deleted_at.is_(None),
         )
     )
     if placed_at is not None:
@@ -631,7 +632,7 @@ def list_order_history(
         return []
     placements = (
         db.query(CustomerOrderPlacement)
-        .filter(CustomerOrderPlacement.customer_order_id.in_(order_ids))
+        .filter(CustomerOrderPlacement.customer_order_id.in_(order_ids), CustomerOrderPlacement.deleted_at.is_(None))
         .order_by(CustomerOrderPlacement.placed_at.desc())
         .all()
     )
@@ -703,7 +704,11 @@ def list_my_orders(
 
     placements = (
         db.query(CustomerOrderPlacement)
-        .filter(CustomerOrderPlacement.customer_order_id == received.id, CustomerOrderPlacement.status == "received")
+        .filter(
+            CustomerOrderPlacement.customer_order_id == received.id,
+            CustomerOrderPlacement.status == "received",
+            CustomerOrderPlacement.deleted_at.is_(None),
+        )
         .order_by(CustomerOrderPlacement.placed_at.desc())
         .all()
     )

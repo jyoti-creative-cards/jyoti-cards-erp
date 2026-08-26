@@ -83,7 +83,7 @@ def customer_ar_totals(db: Session, customer_id: int) -> dict[str, Decimal]:
             ),
             func.coalesce(func.sum(ArLedgerEntry.amount), 0),
         )
-        .filter(ArLedgerEntry.customer_id == customer_id)
+        .filter(ArLedgerEntry.customer_id == customer_id, ArLedgerEntry.deleted_at.is_(None))
         .one()
     )
     opening_total, bill_total, pay_mag, rev_mag, credit_total, outstanding = row
@@ -104,7 +104,7 @@ def batch_customer_outstanding(db: Session, customer_ids: list[int]) -> dict[int
 
     rows = (
         db.query(ArLedgerEntry.customer_id, func.sum(ArLedgerEntry.amount))
-        .filter(ArLedgerEntry.customer_id.in_(customer_ids))
+        .filter(ArLedgerEntry.customer_id.in_(customer_ids), ArLedgerEntry.deleted_at.is_(None))
         .group_by(ArLedgerEntry.customer_id)
         .all()
     )
@@ -276,7 +276,7 @@ def post_credit_note_entry(
 def build_ar_ledger(db: Session, customer_id: int) -> list[dict]:
     entries = (
         db.query(ArLedgerEntry)
-        .filter(ArLedgerEntry.customer_id == customer_id)
+        .filter(ArLedgerEntry.customer_id == customer_id, ArLedgerEntry.deleted_at.is_(None))
         .order_by(ArLedgerEntry.created_at.asc(), ArLedgerEntry.id.asc())
         .all()
     )
@@ -347,6 +347,7 @@ def list_ar_customers(db: Session) -> list[dict]:
             credit_sum,
             outstanding_sum,
         )
+        .filter(ArLedgerEntry.deleted_at.is_(None))
         .group_by(ArLedgerEntry.customer_id)
         .all()
     )
@@ -381,6 +382,7 @@ def list_ar_customers(db: Session) -> list[dict]:
         .filter(
             ArLedgerEntry.customer_id.in_(cust_ids),
             ArLedgerEntry.entry_type == "opening_balance",
+            ArLedgerEntry.deleted_at.is_(None),
         )
         .all()
     ):
@@ -433,6 +435,7 @@ def ar_dues_total(db: Session) -> dict:
             FROM jc_ar_ledger_entries e
             JOIN jc_customers c ON c.id = e.customer_id AND c.deleted_at IS NULL
             LEFT JOIN jc_cities ci ON ci.id = c.city_id
+            WHERE e.deleted_at IS NULL
             GROUP BY c.id, c.business_name, ci.name
             HAVING SUM(e.amount) > 0
             ORDER BY SUM(e.amount) DESC

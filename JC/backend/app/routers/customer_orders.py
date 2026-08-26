@@ -20,7 +20,7 @@ def _local_day_bounds_utc(now: datetime | None = None) -> tuple[datetime, dateti
     return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
 
 from app.db.session import get_db
-from app.deps import AuthContext, require_permission
+from app.deps import AuthContext, require_admin, require_permission
 from app.models.catalog_product import CatalogProduct
 from app.models.city import City
 from app.models.customer import Customer
@@ -70,6 +70,8 @@ from app.services.customer_order_flow import (
 from app.services.doc_gen import generate_customer_bill_document, generate_customer_order_document
 from app.services import response_cache
 from app.services.storage import presigned_url, storage_configured
+from app.schemas.stock import VoidIn
+from app.services.void_service import void_customer_bill, void_customer_placement
 
 router = APIRouter(prefix="/customer-orders", tags=["customer-orders"])
 
@@ -128,6 +130,9 @@ def serialize_customer_bill(
         transport_receipt_number=bill.transport_receipt_number,
         freight_agent_name=agent_name,
         cancelled_at=bill.cancelled_at,
+        cancel_reason=bill.cancel_reason,
+        deleted_at=bill.deleted_at,
+        deleted_reason=bill.deleted_reason,
         lines=[
             CustomerBillLineOut(
                 id=ln.id,
@@ -161,7 +166,10 @@ def _sources_for_received(db: Session, received_order_id: int | None) -> list[st
         return []
     notes = (
         db.query(CustomerOrderPlacement.customer_notes)
-        .filter(CustomerOrderPlacement.customer_order_id == received_order_id)
+        .filter(
+            CustomerOrderPlacement.customer_order_id == received_order_id,
+            CustomerOrderPlacement.deleted_at.is_(None),
+        )
         .all()
     )
     found: set[str] = set()
@@ -171,7 +179,9 @@ def _sources_for_received(db: Session, received_order_id: int | None) -> list[st
 
 
 def _summary(db: Session, order: CustomerOrder) -> CustomerOrderSummary:
-    placements = db.query(CustomerOrderPlacement).filter(CustomerOrderPlacement.customer_order_id == order.id).count()
+    placements = db.query(CustomerOrderPlacement).filter(
+        CustomerOrderPlacement.customer_order_id == order.id, CustomerOrderPlacement.deleted_at.is_(None)
+    ).count()
     lines = (
         db.query(CustomerOrderLine)
         .join(CustomerOrderPlacement, CustomerOrderLine.placement_id == CustomerOrderPlacement.id)
@@ -233,6 +243,7 @@ def list_customer_orders(
                 CustomerOrder.is_open.is_(True),
                 CustomerOrder.bucket == "received",
                 CustomerOrderPlacement.status == "received",
+                CustomerOrderPlacement.deleted_at.is_(None),
                 CustomerOrderPlacement.placed_at >= day_start,
                 CustomerOrderPlacement.placed_at < day_end,
             )
@@ -285,6 +296,7 @@ def list_customer_orders(
                 pq = db.query(func.min(CustomerOrderPlacement.placed_at)).filter(
                     CustomerOrderPlacement.customer_order_id == received.id,
                     CustomerOrderPlacement.status == "received",
+                    CustomerOrderPlacement.deleted_at.is_(None),
                 )
                 if day_start is not None:
                     pq = pq.filter(
@@ -444,7 +456,7 @@ def get_customer_order_detail(
 
     placements = (
         db.query(CustomerOrderPlacement)
-        .filter(CustomerOrderPlacement.customer_order_id == order.id)
+        .filter(CustomerOrderPlacement.customer_order_id == order.id, CustomerOrderPlacement.deleted_at.is_(None))
         .order_by(CustomerOrderPlacement.placed_at.asc())
         .all()
     )
@@ -468,6 +480,8 @@ def get_customer_order_detail(
                 customer_notes=p.customer_notes,
                 cancel_reason=p.cancel_reason,
                 placed_at=p.placed_at,
+                deleted_at=p.deleted_at,
+                deleted_reason=p.deleted_reason,
                 lines=[
                     CustomerOrderLineOut(
                         id=ln.id,
@@ -865,6 +879,59 @@ def cancel_placement_endpoint(
     return {"ok": True, "placement_id": placement_id}
 
 
+@router.get("/placements/{placement_id}", response_model=CustomerPlacementOut)
+def get_placement_detail(
+    placement_id: int,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("customer_orders.read")),
+):
+    placement = db.get(CustomerOrderPlacement, placement_id)
+    if not placement:
+        raise HTTPException(404, "order not found")
+    lines = (
+        db.query(CustomerOrderLine)
+        .filter(CustomerOrderLine.placement_id == placement.id)
+        .order_by(CustomerOrderLine.id.asc())
+        .all()
+    )
+    return CustomerPlacementOut(
+        id=placement.id,
+        status=placement.status,
+        customer_notes=placement.customer_notes,
+        cancel_reason=placement.cancel_reason,
+        placed_at=placement.placed_at,
+        deleted_at=placement.deleted_at,
+        deleted_reason=placement.deleted_reason,
+        lines=[
+            CustomerOrderLineOut(
+                id=ln.id,
+                catalog_product_id=ln.catalog_product_id,
+                our_product_id=ln.our_product_id,
+                quantity=ln.quantity,
+                quantity_billed=ln.quantity_billed,
+                unit_price=format(ln.unit_price, "f"),
+                status=ln.status,
+                cancel_reason=ln.cancel_reason,
+                addons=[],
+            )
+            for ln in lines
+        ],
+    )
+
+
+@router.post("/placements/{placement_id}/void", dependencies=[Depends(require_admin)])
+def void_placement_endpoint(
+    placement_id: int,
+    body: VoidIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    result = void_customer_placement(db, auth, placement_id, body.reason)
+    response_cache.invalidate("stock:")
+    response_cache.invalidate("shop:")
+    return result
+
+
 @router.post("/customer/{customer_id}/confirm", dependencies=[Depends(require_permission("customer_orders.write"))])
 def confirm_customer_order(
     customer_id: int,
@@ -971,6 +1038,20 @@ def cancel_bill_endpoint(
     response_cache.invalidate("shop:")
     response_cache.invalidate("catalog:")
     return {"ok": True, "bill_id": cancelled.id, "bill_number": cancelled.bill_number}
+
+
+@router.post("/bills/{bill_id}/void", dependencies=[Depends(require_admin)])
+def void_bill_endpoint(
+    bill_id: int,
+    body: VoidIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    result = void_customer_bill(db, auth, bill_id, body.reason)
+    response_cache.invalidate("stock:")
+    response_cache.invalidate("shop:")
+    response_cache.invalidate("catalog:")
+    return result
 
 
 @router.put("/bills/{bill_id}")

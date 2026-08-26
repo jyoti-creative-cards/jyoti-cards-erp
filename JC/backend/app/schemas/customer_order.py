@@ -33,6 +33,8 @@ class CustomerPlacementOut(BaseModel):
     customer_notes: Optional[str] = None
     cancel_reason: Optional[str] = None
     placed_at: datetime
+    deleted_at: Optional[datetime] = None
+    deleted_reason: Optional[str] = None
     lines: List[CustomerOrderLineOut] = []
 
 
@@ -103,6 +105,9 @@ class CustomerBillOut(BaseModel):
     transport_receipt_number: Optional[str] = None
     freight_agent_name: Optional[str] = None
     cancelled_at: Optional[datetime] = None
+    cancel_reason: Optional[str] = None
+    deleted_at: Optional[datetime] = None
+    deleted_reason: Optional[str] = None
     lines: List[CustomerBillLineOut] = []
 
 

@@ -2004,6 +2004,9 @@ const App = (() => {
       { id: "addons", label: "Add-ons", count: recycleData.addons?.length || 0 },
       { id: "receipts", label: "Receipts/Bills", count: recycleData.receipts?.length || 0 },
       { id: "debit_notes", label: "Debit Notes", count: recycleData.debit_notes?.length || 0 },
+      { id: "customer_bills", label: "Customer Bills", count: recycleData.customer_bills?.length || 0 },
+      { id: "customer_placements", label: "Customer Orders", count: recycleData.customer_placements?.length || 0 },
+      { id: "customer_returns", label: "Customer Returns", count: recycleData.customer_returns?.length || 0 },
       ...(isAdmin() ? [{ id: "staff", label: "Staff", count: recycleData.staff?.length || 0 }] : []),
     ];
     if (typeof OrdersUI !== "undefined") {
@@ -2039,6 +2042,9 @@ const App = (() => {
     if (recycleTab === "all" || recycleTab === "addons") items = items.concat((recycleData.addons || []).map(i => ({ ...i, type: "addon" })));
     if (recycleTab === "all" || recycleTab === "receipts") items = items.concat((recycleData.receipts || []).map(i => ({ ...i, type: "receipt" })));
     if (recycleTab === "all" || recycleTab === "debit_notes") items = items.concat((recycleData.debit_notes || []).map(i => ({ ...i, type: "debit_note" })));
+    if (recycleTab === "all" || recycleTab === "customer_bills") items = items.concat((recycleData.customer_bills || []).map(i => ({ ...i, type: "customer_bill" })));
+    if (recycleTab === "all" || recycleTab === "customer_placements") items = items.concat((recycleData.customer_placements || []).map(i => ({ ...i, type: "customer_placement" })));
+    if (recycleTab === "all" || recycleTab === "customer_returns") items = items.concat((recycleData.customer_returns || []).map(i => ({ ...i, type: "customer_return" })));
     if (isAdmin() && (recycleTab === "all" || recycleTab === "staff")) items = items.concat((recycleData.staff || []).map(i => ({ ...i, type: "staff" })));
 
     if (!items.length) {
@@ -2049,9 +2055,10 @@ const App = (() => {
       return;
     }
     const rows = TableUtils.apply(items, "recycle", RECYCLE_COLS);
-    const typeBadge = t => ({ route: "badge-blue", city: "badge-green", customer: "badge-gray", vendor: "badge-amber", catalog_product: "badge-blue", addon: "badge-gray", staff: "badge-blue", receipt: "badge-amber", debit_note: "badge-red" }[t] || "badge-gray");
+    const typeBadge = t => ({ route: "badge-blue", city: "badge-green", customer: "badge-gray", vendor: "badge-amber", catalog_product: "badge-blue", addon: "badge-gray", staff: "badge-blue", receipt: "badge-amber", debit_note: "badge-red", customer_bill: "badge-amber", customer_placement: "badge-blue", customer_return: "badge-red" }[t] || "badge-gray");
     const canRecycleWrite = canWrite("recycle");
-    const canAct = i => (i.type === "receipt" || i.type === "debit_note") ? isAdmin() : canRecycleWrite;
+    const ADMIN_ONLY_TYPES = ["receipt", "debit_note", "customer_bill", "customer_placement", "customer_return"];
+    const canAct = i => ADMIN_ONLY_TYPES.includes(i.type) ? isAdmin() : canRecycleWrite;
     el.innerHTML = `<table class="data">${TableUtils.headerHtml("recycle", RECYCLE_COLS)}<tbody>
       ${rows.map(i => `<tr class="clickable" onclick="App.openRecycleDetail('${i.type}',${i.id})">
         <td><span class="badge ${typeBadge(i.type)}">${i.type}</span></td>
@@ -2145,9 +2152,40 @@ const App = (() => {
         ${reviewRow("Amount", "₹" + d.amount)}${reviewRow("Note", d.notes || "—")}
         ${reviewRow("Deleted", fmtDate(d.deleted_at))}${reviewRow("Reason", d.deleted_reason || "—")}
       </div>`;
+    } else if (type === "customer_bill") {
+      const b = await api(`/customer-orders/bills/${id}`);
+      body = `<div class="review-grid" style="margin-bottom:20px;">
+        ${reviewRow("Bill number", b.bill_number)}${reviewRow("Grand total", "₹" + b.grand_total)}
+        ${reviewRow("Cancelled", b.cancelled_at ? fmtDate(b.cancelled_at) : "—")}${reviewRow("Cancel reason", b.cancel_reason || "—")}
+        ${reviewRow("Deleted", fmtDate(b.deleted_at))}${reviewRow("Reason", b.deleted_reason || "—")}
+      </div>
+      <div class="detail-section"><h4>Lines (${(b.lines || []).length})</h4>
+        ${(b.lines || []).length ? b.lines.map(l => `<div class="review-row"><span>${esc(l.our_product_id)}</span><span>qty ${l.quantity_shipped} · ₹${l.line_total}</span></div>`).join("") : "<p style='color:var(--muted)'>None</p>"}
+      </div>
+      <p style="margin-top:12px;font-size:12px;color:var(--muted);">Restoring un-hides the bill only — it stays cancelled if it already was.</p>`;
+    } else if (type === "customer_placement") {
+      const p = await api(`/customer-orders/placements/${id}`);
+      body = `<div class="review-grid" style="margin-bottom:20px;">
+        ${reviewRow("Status", p.status)}${reviewRow("Cancel reason", p.cancel_reason || "—")}
+        ${reviewRow("Deleted", fmtDate(p.deleted_at))}${reviewRow("Reason", p.deleted_reason || "—")}
+      </div>
+      <div class="detail-section"><h4>Lines (${(p.lines || []).length})</h4>
+        ${(p.lines || []).length ? p.lines.map(l => `<div class="review-row"><span>${esc(l.our_product_id)}</span><span>qty ${l.quantity} · billed ${l.quantity_billed || 0}</span></div>`).join("") : "<p style='color:var(--muted)'>None</p>"}
+      </div>
+      <p style="margin-top:12px;font-size:12px;color:var(--muted);">Restoring un-hides the order only — it stays cancelled if it already was.</p>`;
+    } else if (type === "customer_return") {
+      const r = await api(`/customer-returns/${id}`);
+      body = `<div class="review-grid" style="margin-bottom:20px;">
+        ${reviewRow("Return number", r.return_number)}${reviewRow("Credit amount", "₹" + r.credit_amount)}
+        ${reviewRow("Customer", r.customer_label)}${reviewRow("Notes", r.notes || "—")}
+        ${reviewRow("Deleted", fmtDate(r.deleted_at))}${reviewRow("Reason", r.deleted_reason || "—")}
+      </div>
+      <div class="detail-section"><h4>Lines (${(r.lines || []).length})</h4>
+        ${(r.lines || []).length ? r.lines.map(l => `<div class="review-row"><span>${esc(l.our_product_id)}</span><span>qty ${l.quantity_returned} · ₹${l.line_calculated}</span></div>`).join("") : "<p style='color:var(--muted)'>None</p>"}
+      </div>`;
     }
 
-    const adminOnlyType = type === "receipt" || type === "debit_note";
+    const adminOnlyType = ["receipt", "debit_note", "customer_bill", "customer_placement", "customer_return"].includes(type);
     const canActOnThis = adminOnlyType ? isAdmin() : canWrite("recycle");
     openDetail(`Deleted ${type}`, body,
       `${canActOnThis ? `<button class="btn btn-primary" style="flex:1;" onclick="App.restoreItem('${type}',${id})">Restore</button>
@@ -2157,7 +2195,7 @@ const App = (() => {
     );
   }
 
-  const RESTORE_PATHS = { route: "routes", city: "cities", customer: "customers", vendor: "vendors", catalog_product: "catalog-products", addon: "addons", staff: "staff", receipt: "receipts", debit_note: "debit-notes" };
+  const RESTORE_PATHS = { route: "routes", city: "cities", customer: "customers", vendor: "vendors", catalog_product: "catalog-products", addon: "addons", staff: "staff", receipt: "receipts", debit_note: "debit-notes", customer_bill: "customer-bills", customer_placement: "customer-placements", customer_return: "customer-returns" };
 
   async function restoreItem(type, id) {
     if (!confirm(`Restore this ${type}?`)) return;
@@ -2166,9 +2204,14 @@ const App = (() => {
       await api(`/recycle-bin/${path}/${id}/restore`, { method: "POST" });
       closeDetail();
       invalidateCache();
-      if (type === "receipt" || type === "debit_note") {
+      if (["receipt", "debit_note"].includes(type)) {
         invalidateCache("/vendor-orders");
         invalidateCache("/accounts-payable");
+      }
+      if (["customer_bill", "customer_placement", "customer_return"].includes(type)) {
+        invalidateCache("/customer-orders");
+        invalidateCache("/accounts-receivable");
+        invalidateCache("/customer-returns");
       }
       await refreshAll();
       if (peopleTab === "vendors") await Vendors.load();
@@ -2178,7 +2221,8 @@ const App = (() => {
       if (document.getElementById("view-recycle") && !document.getElementById("view-recycle").classList.contains("hidden")) {
         await loadRecycleBin();
       }
-      toast(`${type === "receipt" ? "Receipt/bill" : type === "debit_note" ? "Debit note" : type} restored`, "success");
+      const LABELS = { receipt: "Receipt/bill", debit_note: "Debit note", customer_bill: "Bill", customer_placement: "Order", customer_return: "Return" };
+      toast(`${LABELS[type] || type} restored`, "success");
     } catch (e) { toast(e.message, "error"); }
   }
 
@@ -2189,9 +2233,14 @@ const App = (() => {
       await api(`/recycle-bin/${path}/${id}`, { method: "DELETE" });
       closeDetail();
       invalidateCache();
-      if (type === "receipt" || type === "debit_note") {
+      if (["receipt", "debit_note"].includes(type)) {
         invalidateCache("/vendor-orders");
         invalidateCache("/accounts-payable");
+      }
+      if (["customer_bill", "customer_placement", "customer_return"].includes(type)) {
+        invalidateCache("/customer-orders");
+        invalidateCache("/accounts-receivable");
+        invalidateCache("/customer-returns");
       }
       await loadRecycleBin();
       await updateHubCounts();

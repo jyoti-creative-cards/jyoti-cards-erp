@@ -124,6 +124,7 @@ def init_db() -> None:
         _migrate_vendor_billing_terms()
         _migrate_vendor_billing_v2()
         _migrate_void_recycle()
+        _migrate_void_recycle_customer()
         with engine.begin() as conn:
             conn.execute(text("SELECT 1"))
         _DB_READY = True
@@ -222,6 +223,32 @@ def _migrate_void_recycle() -> None:
         "ALTER TABLE jc_debit_notes ADD COLUMN IF NOT EXISTS deleted_reason TEXT",
         "ALTER TABLE jc_debit_notes ADD COLUMN IF NOT EXISTS deleted_by_name VARCHAR(200)",
         "ALTER TABLE jc_ap_ledger_entries ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ",
+    ]
+    for stmt in stmts:
+        try:
+            with engine.begin() as conn:
+                s = stmt.replace(" ADD COLUMN IF NOT EXISTS ", " ADD COLUMN ") if _is_sqlite else stmt
+                conn.execute(text(s))
+        except Exception:
+            log.warning("Migration step skipped", exc_info=True)
+
+
+def _migrate_void_recycle_customer() -> None:
+    """Void/restore/purge for customer bills, placements, returns, and AR entries.
+
+    Soft-delete via deleted_at; every "active" query elsewhere must exclude deleted_at IS NOT NULL.
+    """
+    stmts = [
+        "ALTER TABLE jc_customer_bills ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ",
+        "ALTER TABLE jc_customer_bills ADD COLUMN IF NOT EXISTS deleted_reason TEXT",
+        "ALTER TABLE jc_customer_bills ADD COLUMN IF NOT EXISTS deleted_by_name VARCHAR(200)",
+        "ALTER TABLE jc_customer_order_placements ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ",
+        "ALTER TABLE jc_customer_order_placements ADD COLUMN IF NOT EXISTS deleted_reason TEXT",
+        "ALTER TABLE jc_customer_order_placements ADD COLUMN IF NOT EXISTS deleted_by_name VARCHAR(200)",
+        "ALTER TABLE jc_customer_returns ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ",
+        "ALTER TABLE jc_customer_returns ADD COLUMN IF NOT EXISTS deleted_reason TEXT",
+        "ALTER TABLE jc_customer_returns ADD COLUMN IF NOT EXISTS deleted_by_name VARCHAR(200)",
+        "ALTER TABLE jc_ar_ledger_entries ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ",
     ]
     for stmt in stmts:
         try:

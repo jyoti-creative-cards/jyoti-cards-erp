@@ -257,7 +257,7 @@ def build_customer_ledger(db: Session, customer_id: int, *, show_actor: bool = T
     placements = (
         db.query(CustomerOrderPlacement, CustomerOrder)
         .join(CustomerOrder, CustomerOrderPlacement.customer_order_id == CustomerOrder.id)
-        .filter(CustomerOrder.customer_id == customer_id)
+        .filter(CustomerOrder.customer_id == customer_id, CustomerOrderPlacement.deleted_at.is_(None))
         .order_by(CustomerOrderPlacement.placed_at.desc())
         .all()
     )
@@ -307,7 +307,7 @@ def build_customer_ledger(db: Session, customer_id: int, *, show_actor: bool = T
 
     bills = (
         db.query(CustomerBill)
-        .filter(CustomerBill.customer_id == customer_id)
+        .filter(CustomerBill.customer_id == customer_id, CustomerBill.deleted_at.is_(None))
         .order_by(CustomerBill.created_at.desc())
         .all()
     )
@@ -356,7 +356,7 @@ def build_customer_ledger(db: Session, customer_id: int, *, show_actor: bool = T
 
     returns = (
         db.query(CustomerReturn)
-        .filter(CustomerReturn.customer_id == customer_id)
+        .filter(CustomerReturn.customer_id == customer_id, CustomerReturn.deleted_at.is_(None))
         .order_by(CustomerReturn.created_at.desc())
         .all()
     )
@@ -403,6 +403,7 @@ def build_customer_ledger(db: Session, customer_id: int, *, show_actor: bool = T
         .filter(
             ArLedgerEntry.customer_id == customer_id,
             ArLedgerEntry.entry_type.in_(("payment", "opening_balance")),
+            ArLedgerEntry.deleted_at.is_(None),
         )
         .order_by(ArLedgerEntry.created_at.desc())
         .all()

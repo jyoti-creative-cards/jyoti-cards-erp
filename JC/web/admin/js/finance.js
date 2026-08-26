@@ -181,6 +181,7 @@ const Finance = (() => {
 
   function showHub() {
     if (!ctx.isAdmin?.()) {
+      if (ctx.can?.("finance.write")) { showQuickEntry(); return; }
       ctx.toast?.("Finance is admin only", "error");
       ctx.showView?.("today");
       return;
@@ -201,6 +202,137 @@ const Finance = (() => {
     loadOverviewSilent();
     setChip(activeChip || "due", true);
     App.updateGlobalBack?.();
+  }
+
+  /** Entry-only view for accountant-role staff — no totals, no reports, no ledgers. */
+  function showQuickEntry() {
+    document.getElementById("finance-hub")?.classList.remove("hidden");
+    document.getElementById("finance-ap-detail")?.classList.add("hidden");
+    document.getElementById("finance-ar-detail")?.classList.add("hidden");
+    document.getElementById("finance-freight-detail")?.classList.add("hidden");
+    document.getElementById("finance-routes-detail")?.classList.add("hidden");
+    hideAllPanels();
+    const sub = document.getElementById("finance-hub-sub");
+    if (sub) sub.textContent = "Record entries — figures & reports are owner-only";
+    const strip = document.getElementById("finance-hub-strip");
+    if (strip) strip.innerHTML = "";
+    const chips = document.getElementById("finance-action-chips");
+    if (chips) chips.innerHTML = "";
+    const search = document.getElementById("finance-search-slot");
+    if (search) search.innerHTML = "";
+    const needs = document.getElementById("finance-needs");
+    if (needs) needs.innerHTML = `
+      <div class="card" style="padding:20px;max-width:440px;display:grid;gap:10px;">
+        <h3 style="margin:0 0 4px;">Quick entry</h3>
+        <p style="margin:0 0 10px;font-size:13px;color:var(--muted);">Record a transaction below. Running balances, dues, and reports aren't shown here — check with the owner if unsure of an amount.</p>
+        <button class="btn btn-primary" onclick="Finance.quickVendorPayment()">Record vendor payment</button>
+        <button class="btn btn-primary" onclick="Finance.quickCustomerPayment()">Record customer payment</button>
+        <button class="btn btn-primary" onclick="Finance.quickAddExpense()">+ Add expense</button>
+      </div>`;
+    App.updateGlobalBack?.();
+  }
+
+  async function _pickQuickParty(resource, noun) {
+    const q = prompt(`Search ${noun} by name or phone:`);
+    if (q == null || !q.trim()) return null;
+    let rows;
+    try {
+      rows = await ctx.api(`/${resource}?search=${encodeURIComponent(q.trim())}`, {}, 0);
+    } catch (e) { ctx.toast(e.message, "error"); return null; }
+    if (!rows || !rows.length) { ctx.toast("No match found", "error"); return null; }
+    if (rows.length === 1) return rows[0];
+    const listing = rows.slice(0, 8).map((r, i) => `${i + 1}. ${r.business_name}${r.city_name ? " — " + r.city_name : ""}`).join("\n");
+    const pick = prompt(`Multiple matches — enter the number:\n${listing}`);
+    const idx = parseInt(String(pick || "").trim(), 10) - 1;
+    if (!Number.isFinite(idx) || idx < 0 || idx >= rows.length) return null;
+    return rows[idx];
+  }
+
+  async function quickVendorPayment() {
+    const vendor = await _pickQuickParty("vendors", "vendor");
+    if (!vendor) return;
+    if (!confirm(`Record a payment for "${vendor.business_name}"?`)) return;
+    const amtRaw = prompt("Amount paid (₹):");
+    if (amtRaw == null) return;
+    const amount = Number(amtRaw);
+    if (!Number.isFinite(amount) || amount <= 0) return ctx.toast("Enter a valid amount", "error");
+    const ref = prompt("Payment reference (cheque no. / UTR / slip no.) *:");
+    if (ref == null || !ref.trim()) return ctx.toast("Reference required", "error");
+    const comment = prompt("Note (optional):") || "";
+    ctx.showLoading?.();
+    try {
+      const res = await ctx.api(`/accounts-payable/vendor/${vendor.id}/record-payment`, {
+        method: "POST",
+        body: JSON.stringify({ payment_ref: ref.trim(), amount, comment: comment.trim() || undefined }),
+      });
+      ctx.toast(res.message || "Payment recorded", "success");
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  async function quickCustomerPayment() {
+    const customer = await _pickQuickParty("customers", "customer");
+    if (!customer) return;
+    if (!confirm(`Record a payment for "${customer.business_name}"?`)) return;
+    const amtRaw = prompt("Amount collected (₹):");
+    if (amtRaw == null) return;
+    const amount = Number(amtRaw);
+    if (!Number.isFinite(amount) || amount <= 0) return ctx.toast("Enter a valid amount", "error");
+
+    let paymentModeId;
+    try {
+      const modes = await ctx.api("/payment-modes?active_only=true", {}, 0);
+      if (modes && modes.length) {
+        const listing = modes.map((m, i) => `${i + 1}. ${m.name}`).join("\n");
+        const pick = prompt(`Payment mode — enter the number:\n${listing}`);
+        const idx = parseInt(String(pick || "").trim(), 10) - 1;
+        if (!Number.isFinite(idx) || idx < 0 || idx >= modes.length) return ctx.toast("Payment mode required", "error");
+        paymentModeId = modes[idx].id;
+      }
+    } catch (e) { ctx.toast(e.message, "error"); return; }
+
+    const ref = prompt("Payment reference (optional):") || "";
+    const comment = prompt("Note (optional):") || "";
+    ctx.showLoading?.();
+    try {
+      const res = await ctx.api(`/accounts-receivable/customer/${customer.id}/record-payment`, {
+        method: "POST",
+        body: JSON.stringify({
+          payment_ref: ref.trim() || undefined,
+          payment_mode_id: paymentModeId,
+          amount,
+          comment: comment.trim() || undefined,
+        }),
+      });
+      ctx.toast(res.message || "Payment recorded", "success");
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  async function quickAddExpense() {
+    const category = prompt("Category (e.g. rent, salary, transport, misc):");
+    if (category == null || !category.trim()) return;
+    const amtRaw = prompt("Amount (₹):");
+    if (amtRaw == null) return;
+    const amount = Number(amtRaw);
+    if (!Number.isFinite(amount) || amount <= 0) return ctx.toast("Enter a valid amount", "error");
+    const description = prompt("Description (optional):") || "";
+    const today = new Date().toISOString().slice(0, 10);
+    const dateRaw = prompt("Date (YYYY-MM-DD):", today) || today;
+    ctx.showLoading?.();
+    try {
+      await ctx.api("/expenses", {
+        method: "POST",
+        body: JSON.stringify({
+          expense_date: dateRaw.trim(),
+          category: category.trim(),
+          description: description.trim() || undefined,
+          amount,
+        }),
+      });
+      ctx.toast("Expense recorded", "success");
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
   }
 
   function setHubMode(mode) {
@@ -2092,7 +2224,8 @@ const Finance = (() => {
   }
 
   return {
-    init, showHub, setHubMode, setChip, setHubSearch, setBrowseSection, setShowSettled, setReportTab,
+    init, showHub, showQuickEntry, quickVendorPayment, quickCustomerPayment, quickAddExpense,
+    setHubMode, setChip, setHubSearch, setBrowseSection, setShowSettled, setReportTab,
     showAp, showAr, showExpenses, showRevenue, showCost, showPnl, showFreight,
     showRouteCollections, openRouteCollection, openRouteCustomer, backRouteCustomers, printRouteCollection,
     showApFromVendor, showArFromCustomer, openVendorAp, openEntry, openSettle, closeSettle, submitSettle, setSettleFile,

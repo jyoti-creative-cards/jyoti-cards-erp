@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.deps import AuthContext, require_admin
+from app.deps import AuthContext, require_admin, require_permission
 from app.models.expense import Expense
 from app.services.activity import log_from_auth
 
@@ -68,7 +68,11 @@ def list_expenses(
 
 
 @router.post("", response_model=ExpensePublic, status_code=201)
-def create_expense(body: ExpenseIn, db: Session = Depends(get_db), auth: AuthContext = Depends(require_admin)):
+def create_expense(
+    body: ExpenseIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("finance.write")),
+):
     row = Expense(
         expense_date=body.expense_date,
         category=body.category.lower().strip(),

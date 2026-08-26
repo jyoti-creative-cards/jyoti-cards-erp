@@ -12,7 +12,9 @@ from app.models.stock import StockReceipt, StockReceiptLine
 from app.models.debit_note import DebitNote
 from app.models.accounts_payable import ApLedgerEntry
 from app.models.vendor_order import VendorOrder, VendorOrderLine, VendorOrderPlacement
+from app.deps import AuthContext
 from app.services.ap_ledger import debit_note_payable_effect
+from app.services.cost_visibility import hide_cost
 from app.schemas.ledger import EntityLedgerEntry, LedgerLineDetail
 from app.services.storage import presigned_url
 
@@ -29,7 +31,9 @@ def _actor_fields(actor_name: str, actor_type: str, show_actor: bool) -> dict:
     return {"actor_name": actor_name, "actor_type": actor_type}
 
 
-def build_vendor_ledger(db: Session, vendor_id: int, *, show_actor: bool = True, include_ap: bool = True) -> List[EntityLedgerEntry]:
+def build_vendor_ledger(
+    db: Session, vendor_id: int, *, auth: AuthContext, show_actor: bool = True, include_ap: bool = True
+) -> List[EntityLedgerEntry]:
     entries: list[tuple[datetime, EntityLedgerEntry]] = []
 
     placements = (
@@ -60,7 +64,7 @@ def build_vendor_ledger(db: Session, vendor_id: int, *, show_actor: bool = True,
                 quantity_remaining=ln.quantity if order.bucket == "placed" else None,
                 quantity_billed=ln.quantity_billed,
                 billed_amount=_fmt_amount(ln.billed_amount),
-                buying_price=format(ln.buying_price, "f"),
+                buying_price=hide_cost(format(ln.buying_price, "f"), auth),
             )
             for ln in lines
         ]
@@ -137,7 +141,7 @@ def build_vendor_ledger(db: Session, vendor_id: int, *, show_actor: bool = True,
                 our_product_id=ln.our_product_id, vendor_product_id=vendor_products.get(ln.catalog_product_id),
                 quantity_received=ln.quantity_received,
                 quantity_billed=ln.quantity_billed, billed_amount=_fmt_amount(ln.billed_amount),
-                buying_price=format(ln.buying_price, "f"),
+                buying_price=hide_cost(format(ln.buying_price, "f"), auth),
             )
             for ln in rlines
         ]

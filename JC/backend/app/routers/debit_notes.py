@@ -22,6 +22,7 @@ from app.services.debit_notes import (
 )
 from app.services.activity import log_from_auth
 from app.services.ap_ledger import debit_note_payable_effect
+from app.services.cost_visibility import hide_cost
 from app.services.void_service import void_debit_note
 
 router = APIRouter(prefix="/debit-notes", tags=["debit-notes"])
@@ -31,7 +32,7 @@ def _vendor_label(vendor: Vendor, city_name: Optional[str]) -> str:
     return f"{vendor.business_name} — {city_name}" if city_name else vendor.business_name
 
 
-def _debit_note_out(db: Session, note: DebitNote) -> DebitNoteOut:
+def _debit_note_out(db: Session, note: DebitNote, *, auth: AuthContext) -> DebitNoteOut:
     receipt = db.get(StockReceipt, note.receipt_id)
     vendor = db.get(Vendor, note.vendor_id)
     city_name = None
@@ -48,7 +49,8 @@ def _debit_note_out(db: Session, note: DebitNote) -> DebitNoteOut:
         catalog_product_id=note.catalog_product_id,
         our_product_id=note.our_product_id,
         quantity=note.quantity,
-        unit_price=format(note.unit_price, "f") if note.unit_price is not None else None,
+        # unit_price is the catalog buying_price at receive time — a cost hint, not just a DN amount.
+        unit_price=hide_cost(format(note.unit_price, "f") if note.unit_price is not None else None, auth),
         amount=format(note.amount, "f"),
         payable_effect=format(debit_note_payable_effect(note.amount, note.note_type), "f"),
         notes=note.notes,
@@ -76,7 +78,7 @@ def list_debit_notes(
         q = q.filter(DebitNote.vendor_id == vendor_id)
     if receipt_id is not None:
         q = q.filter(DebitNote.receipt_id == receipt_id)
-    return [_debit_note_out(db, n) for n in q.all()]
+    return [_debit_note_out(db, n, auth=auth) for n in q.all()]
 
 
 @router.get("/{note_id}", response_model=DebitNoteOut)
@@ -88,7 +90,7 @@ def get_debit_note(
     note = db.get(DebitNote, note_id)
     if not note:
         raise HTTPException(404, "debit note not found")
-    return _debit_note_out(db, note)
+    return _debit_note_out(db, note, auth=auth)
 
 
 @router.post("", response_model=DebitNoteOut, status_code=status.HTTP_201_CREATED)
@@ -102,7 +104,7 @@ def create_debit_note_endpoint(
     note = create_debit_note(db, auth, vendor_id=vendor_id, receipt_id=receipt_id, body=body)
     db.commit()
     db.refresh(note)
-    return _debit_note_out(db, note)
+    return _debit_note_out(db, note, auth=auth)
 
 
 @router.post("/{note_id}/void", dependencies=[Depends(require_admin)])
@@ -203,4 +205,4 @@ def update_debit_note(
     )
     db.commit()
     db.refresh(note)
-    return _debit_note_out(db, note)
+    return _debit_note_out(db, note, auth=auth)

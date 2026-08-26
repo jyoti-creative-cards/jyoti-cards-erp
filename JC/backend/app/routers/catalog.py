@@ -32,6 +32,7 @@ from app.schemas.catalog import (
     VendorOption,
 )
 from app.services.activity import log_from_auth
+from app.services.cost_visibility import can_see_cost, hide_cost, hide_cost_in_diff_summary
 from app.services.pricing import coerce_selling_price, effective_selling_price
 from app.services.history import (
     TRACKED_FIELDS,
@@ -83,6 +84,7 @@ def _to_public(
     row: CatalogProduct,
     db: Session,
     *,
+    auth: AuthContext,
     addon_count: Optional[int] = None,
     alt_count: Optional[int] = None,
     vendor_name: Optional[str] = None,
@@ -111,7 +113,7 @@ def _to_public(
         series=row.series,
         unit=row.unit,
         year_group=row.year_group,
-        buying_price=format(row.buying_price, "f") if row.buying_price is not None else None,
+        buying_price=hide_cost(format(row.buying_price, "f") if row.buying_price is not None else None, auth),
         selling_price=(
             format(eff, "f")
             if (eff := effective_selling_price(row.buying_price, row.selling_price)) is not None
@@ -245,7 +247,7 @@ def product_options(db: Session = Depends(get_db)) -> list[dict]:
 
 
 @router.get("/alternatives-board", dependencies=[Depends(require_permission("catalog.read"))])
-def alternatives_board(db: Session = Depends(get_db)) -> list[dict]:
+def alternatives_board(db: Session = Depends(get_db), auth: AuthContext = Depends(get_auth_context)) -> list[dict]:
     """Products with enriched alternatives for the manage-alternatives UI."""
     products = (
         db.query(CatalogProduct)
@@ -288,7 +290,7 @@ def alternatives_board(db: Session = Depends(get_db)) -> list[dict]:
                 "our_product_id": alt.our_product_id,
                 "vendor_name": avn,
                 "vendor_city": avc,
-                "buying_price": format(alt.buying_price, "f") if alt.buying_price is not None else None,
+                "buying_price": hide_cost(format(alt.buying_price, "f") if alt.buying_price is not None else None, auth),
                 "selling_price": format(alt.selling_price, "f") if alt.selling_price is not None else None,
                 "image_urls": presigned_urls((alt.image_keys or [])[:1]),
             })
@@ -297,7 +299,7 @@ def alternatives_board(db: Session = Depends(get_db)) -> list[dict]:
             "our_product_id": p.our_product_id,
             "vendor_name": vn,
             "vendor_city": vc,
-            "buying_price": format(p.buying_price, "f") if p.buying_price is not None else None,
+            "buying_price": hide_cost(format(p.buying_price, "f") if p.buying_price is not None else None, auth),
             "selling_price": format(p.selling_price, "f") if p.selling_price is not None else None,
             "image_urls": presigned_urls((p.image_keys or [])[:1]),
             "alt_count": len(alts),
@@ -309,6 +311,7 @@ def alternatives_board(db: Session = Depends(get_db)) -> list[dict]:
 @router.get("/products", response_model=CatalogListResponse, dependencies=[Depends(require_permission("catalog.read"))])
 def list_products(
     db: Session = Depends(get_db),
+    auth: AuthContext = Depends(get_auth_context),
     search: Optional[str] = Query(None),
     vendor_id: Optional[int] = Query(None),
     category: Optional[str] = Query(None),
@@ -324,6 +327,7 @@ def list_products(
     cache_key = (
         f"catalog:products:v3:{search or ''}:{vendor_id or ''}:{category or ''}:"
         f"{series or ''}:{year_group or ''}:{price_min}:{price_max}:{int(no_sell_price)}:{int(no_addons)}:{limit}:{offset}"
+        f":cost={int(can_see_cost(auth))}"
     )
     cached = response_cache.get(cache_key)
     if cached is not None:
@@ -396,6 +400,7 @@ def list_products(
             _to_public(
                 r,
                 db,
+                auth=auth,
                 addon_count=addon_counts.get(r.id, 0),
                 alt_count=alt_counts.get(r.id, 0),
                 vendor_name=vendor_map.get(r.vendor_id, (None, None))[0],
@@ -413,11 +418,11 @@ def list_products(
 
 
 @router.get("/products/{product_id}", response_model=CatalogDetail, dependencies=[Depends(require_permission("catalog.read"))])
-def get_product(product_id: int, db: Session = Depends(get_db)) -> CatalogDetail:
+def get_product(product_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(get_auth_context)) -> CatalogDetail:
     row = db.get(CatalogProduct, product_id)
     if not row:
         raise HTTPException(404, "product not found")
-    pub = _to_public(row, db)
+    pub = _to_public(row, db, auth=auth)
     alts = db.query(CatalogAlternative).filter(CatalogAlternative.product_id == product_id).all()
     alt_pub = []
     for a in alts:
@@ -428,7 +433,7 @@ def get_product(product_id: int, db: Session = Depends(get_db)) -> CatalogDetail
                 id=a.id, product_id=a.product_id, alternative_product_id=a.alternative_product_id,
                 alternative_our_product_id=alt.our_product_id, alternative_vendor_name=vn,
                 alternative_vendor_city=vc,
-                buying_price=format(alt.buying_price, "f"),
+                buying_price=hide_cost(format(alt.buying_price, "f"), auth),
                 selling_price=format(alt.selling_price, "f") if alt.selling_price is not None else None,
                 image_urls=presigned_urls(alt.image_keys or []),
             ))
@@ -442,8 +447,15 @@ def get_product(product_id: int, db: Session = Depends(get_db)) -> CatalogDetail
                 addon_our_product_id=addon.our_product_id, addon_name=addon.name or addon.our_product_id,
                 quantity=lk.quantity, image_urls=presigned_urls(addon.image_keys or []),
             ))
-    ph = [{"buying_price": format(p.buying_price, "f"), "selling_price": format(p.selling_price, "f") if p.selling_price else None, "recorded_at": p.recorded_at.isoformat()} for p in list_price_history(db, "catalog_product", product_id)]
-    eh = [{"change_summary": h.change_summary, "valid_from": h.valid_from.isoformat(), "snapshot_json": h.snapshot_json} for h in list_entity_history(db, "catalog_product", product_id)]
+    ph = [{"buying_price": hide_cost(format(p.buying_price, "f"), auth), "selling_price": format(p.selling_price, "f") if p.selling_price else None, "recorded_at": p.recorded_at.isoformat()} for p in list_price_history(db, "catalog_product", product_id)]
+    eh = [
+        {
+            "change_summary": hide_cost_in_diff_summary(h.change_summary, auth),
+            "valid_from": h.valid_from.isoformat(),
+            "snapshot_json": hide_cost_in_snapshot_json(h.snapshot_json, auth),
+        }
+        for h in list_entity_history(db, "catalog_product", product_id)
+    ]
     return CatalogDetail(**pub.model_dump(), alternatives=alt_pub, addon_links=link_pub, price_history=ph, change_history=eh)
 
 
@@ -529,7 +541,7 @@ def bulk_create(body: CatalogBulkCreate, db: Session = Depends(get_db), auth: Au
     response_cache.invalidate("stock:")
     for row in created:
         db.refresh(row)
-    return [_to_public(r, db) for r in created]
+    return [_to_public(r, db, auth=auth) for r in created]
 
 
 @router.patch("/products/{product_id}", response_model=CatalogProductPublic, dependencies=[Depends(require_permission("catalog.write"))])
@@ -618,7 +630,7 @@ def update_product(
     response_cache.invalidate("catalog:")
     response_cache.invalidate("stock:")
     db.refresh(row)
-    return _to_public(row, db)
+    return _to_public(row, db, auth=auth)
 
 
 class AlternativeLinkIn(BaseModel):

@@ -132,6 +132,22 @@ const StaffMgmt = (() => {
       hint: "Routes, cities, lookups",
       keys: ["setup.read", "setup.write", "recycle.read", "recycle.write"],
     },
+    {
+      id: "accountant",
+      label: "Accountant",
+      hint: "Runs day-to-day ops — no buying price, no finance figures, entry-only money",
+      keys: [
+        // Deliberately no customers.write / vendors.write / catalog.write / addons.write / setup.write / recycle.*:
+        // those permissions also gate "Delete" buttons in this app — read-only master data keeps this role delete-free.
+        "customers.read", "vendors.read",
+        "catalog.read", "addons.read", "setup.read",
+        "vendor_orders.read", "vendor_orders.write",
+        "customer_orders.read", "customer_orders.write",
+        "returns.read", "returns.write",
+        "stock.read", "stock.write",
+        "finance.write",
+      ],
+    },
   ];
 
   function applyRolePreset(roleId) {
@@ -174,7 +190,9 @@ const StaffMgmt = (() => {
       <div style="display:grid;gap:16px;">
         <div><label class="label">Full Name *</label><input id="sm-name" class="input" placeholder="e.g. Rahul Sharma" /></div>
         <div><label class="label">Mobile Number (Login ID) *</label><input id="sm-phone" class="input" type="tel" maxlength="10" placeholder="10-digit mobile" />
-          <p style="margin:6px 0 0;font-size:12px;color:var(--muted);">Password = last 4 digits. Sent via WhatsApp.</p></div>
+          <p style="margin:6px 0 0;font-size:12px;color:var(--muted);">Password = last 4 digits by default. Sent via WhatsApp.</p></div>
+        <div><label class="label">Custom Password (optional)</label><input id="sm-password" class="input" placeholder="Leave blank to use last 4 digits of phone" />
+          <p style="margin:6px 0 0;font-size:12px;color:var(--muted);">Set this if the phone number isn't real (e.g. no WhatsApp) — you'll need to share it yourself.</p></div>
         <div><label class="label">Permissions</label><div class="card" style="padding:16px;max-height:240px;overflow-y:auto;">${permCheckboxes([])}</div></div>
       </div>`;
     document.getElementById("staff-modal-footer").innerHTML = `
@@ -214,8 +232,13 @@ const StaffMgmt = (() => {
       } else {
         const phone = document.getElementById("sm-phone")?.value.trim();
         if (!/^\d{10}$/.test(phone.replace(/\D/g, ""))) return ctx.toast("Phone must be 10 digits", "error");
-        const res = await ctx.api("/staff", { method: "POST", body: JSON.stringify({ name, phone: phone.replace(/\D/g, ""), permissions: collectPerms() }) });
-        ctx.toast(res.whatsapp_sent ? "Created & WhatsApp sent!" : "Created (WA: " + (res.whatsapp_error || "failed") + ")", res.whatsapp_sent ? "success" : "error");
+        const password = document.getElementById("sm-password")?.value.trim();
+        const res = await ctx.api("/staff", { method: "POST", body: JSON.stringify({ name, phone: phone.replace(/\D/g, ""), permissions: collectPerms(), password: password || undefined }) });
+        if (res.whatsapp_sent) {
+          ctx.toast("Created & WhatsApp sent!", "success");
+        } else {
+          alert(`Staff created.\nLogin ID: ${res.phone}\nPassword: ${res.temp_password}\n\n(WhatsApp not sent: ${res.whatsapp_error || "unknown reason"} — share these credentials yourself.)`);
+        }
       }
       closeModal();
       await load();

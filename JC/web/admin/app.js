@@ -55,7 +55,7 @@ const App = (() => {
     document.getElementById("nav-today")?.classList.toggle("hidden", false);
     document.getElementById("nav-people")?.classList.toggle("hidden", !showPeople);
     document.getElementById("nav-products")?.classList.toggle("hidden", !showProducts);
-    document.getElementById("nav-money")?.classList.toggle("hidden", !isAdmin());
+    document.getElementById("nav-money")?.classList.toggle("hidden", !(isAdmin() || can("finance.write")));
     document.getElementById("nav-more")?.classList.toggle("hidden", false);
     document.getElementById("more-tile-buying")?.classList.toggle("hidden", !showBuying);
     document.getElementById("more-tile-selling")?.classList.toggle("hidden", !showSelling);
@@ -581,7 +581,7 @@ const App = (() => {
       Products.showHub();
       updateHubCounts();
     } else if (name === "money") {
-      if (!isAdmin()) {
+      if (!isAdmin() && !can("finance.write")) {
         showView("today", { replace: true });
         return;
       }

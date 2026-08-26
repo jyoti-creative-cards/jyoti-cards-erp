@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.deps import AuthContext, require_admin
+from app.deps import AuthContext, require_admin, require_permission
 from app.models.payment_mode import PaymentMode
 from app.services.activity import log_from_auth
 
@@ -43,7 +43,7 @@ def _out(row: PaymentMode) -> PaymentModePublic:
 def list_payment_modes(
     active_only: bool = False,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(require_admin),
+    auth: AuthContext = Depends(require_permission("finance.write")),
 ):
     q = db.query(PaymentMode).order_by(PaymentMode.sort_order.asc(), PaymentMode.name.asc())
     if active_only:

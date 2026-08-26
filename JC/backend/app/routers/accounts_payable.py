@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.deps import AuthContext, require_admin
+from app.deps import AuthContext, require_admin, require_permission
 from app.models.vendor import Vendor
 from app.schemas.accounts_payable import (
     ApLedgerEntryOut,
@@ -149,6 +149,51 @@ def settle_vendor_ap(
     if not match:
         raise HTTPException(500, "payment recorded but ledger entry missing")
     return ApLedgerEntryOut(**match)
+
+
+@router.post("/vendor/{vendor_id}/record-payment", status_code=status.HTTP_201_CREATED)
+def record_vendor_payment(
+    vendor_id: int,
+    body: ApSettlementIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("finance.write")),
+):
+    """Entry-only payment recording for accountant-role staff — never reveals outstanding/totals."""
+    vendor = db.get(Vendor, vendor_id)
+    if not vendor or vendor.deleted_at:
+        raise HTTPException(404, "vendor not found")
+    lock_ap_account(db, vendor_id)
+    totals = vendor_ap_totals(db, vendor_id)
+    outstanding = totals["outstanding"]
+    if outstanding <= 0:
+        raise HTTPException(400, "No outstanding balance on this vendor to record a payment against")
+    amount = body.amount.quantize(Decimal("0.01"))
+    if amount > outstanding:
+        raise HTTPException(400, "Amount seems higher than what's on record — please double-check with the owner")
+
+    entry = post_payment_entry(
+        db,
+        vendor_id=vendor_id,
+        amount=amount,
+        payment_ref=body.payment_ref.strip(),
+        payment_receipt_key=body.payment_receipt_key,
+        payment_comment=body.comment,
+        description=f"Payment {body.payment_ref.strip()} — ₹{amount}",
+        actor_type=auth.actor_type,
+        actor_id=auth.actor_id,
+        actor_name=auth.actor_name,
+    )
+    log_from_auth(
+        db,
+        auth,
+        action="ap_payment",
+        entity_type="accounts_payable",
+        entity_id=vendor_id,
+        entity_label=_vendor_label(db, vendor_id),
+        detail=f"₹{amount} ref {body.payment_ref.strip()} (entry-only)",
+    )
+    db.commit()
+    return {"ok": True, "message": f"Payment of ₹{amount} recorded for {vendor.business_name}"}
 
 
 def _ap_payment_out(db: Session, vendor_id: int, entry_id: int) -> ApLedgerEntryOut:

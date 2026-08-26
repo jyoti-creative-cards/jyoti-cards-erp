@@ -700,9 +700,14 @@ const Reports = (() => {
   async function renderPnl(body) {
     const data = await ctx.api(`/reports/pnl${rangeQs()}`, {}, 0);
     body.innerHTML = `<div class="review-grid">
-      ${ctx.reviewRow("Sales billed", fmtPrice(data.sales_billed))}
+      ${ctx.reviewRow("Sales billed (incl. GST)", fmtPrice(data.sales_billed))}
       ${ctx.reviewRow("GST on sales", fmtPrice(data.gst_on_sales))}
+      ${ctx.reviewRow("Sales, ex-GST", fmtPrice(data.sales_taxable))}
+      ${ctx.reviewRow("Customer returns", data.customer_returns && Number(data.customer_returns) > 0 ? "−" + fmtPrice(data.customer_returns) : fmtPrice(data.customer_returns))}
+      ${ctx.reviewRow("Net sales", fmtPrice(data.net_sales))}
       ${ctx.reviewRow("Purchases (COGS proxy)", fmtPrice(data.cogs_purchases))}
+      ${ctx.reviewRow("Vendor debit notes", fmtPrice(data.vendor_debit_notes))}
+      ${ctx.reviewRow("Net COGS", fmtPrice(data.cogs_net))}
       ${ctx.reviewRow("Gross profit", fmtPrice(data.gross_profit))}
       ${ctx.reviewRow("Expenses", fmtPrice(data.expenses))}
       ${ctx.reviewRow("Freight paid", fmtPrice(data.freight_paid))}
@@ -711,7 +716,7 @@ const Reports = (() => {
       ${ctx.reviewRow("Cash collected", fmtPrice(data.cash_collected))}
       ${ctx.reviewRow("Bill count", data.bill_count)}
     </div>
-    <p class="fin-panel-sub" style="margin-top:12px;">Gross = billed sales − purchase bills in period (not true inventory COGS).</p>`;
+    <p class="fin-panel-sub" style="margin-top:12px;">Net profit = net sales (ex-GST, net of returns) − net COGS (purchases, net of vendor debit notes) − expenses − manual losses. Still a management approximation, not true inventory-costed accounting.</p>`;
   }
 
   async function renderLedgers(body) {

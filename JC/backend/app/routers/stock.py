@@ -37,6 +37,7 @@ from app.schemas.stock import (
     OfflineVendorReceiptCreate,
     VoidIn,
 )
+from app.services.cost_visibility import can_see_cost, hide_cost
 from app.services.pricing import coerce_selling_price, effective_selling_price
 from app.services.stock_levels import stock_status_label
 from app.schemas.ledger import StockLedgerDetail
@@ -78,6 +79,7 @@ def _product_public(
     balance: int = 0,
     threshold: int = 5,
     *,
+    auth: AuthContext,
     addon_count: Optional[int] = None,
     alt_count: Optional[int] = None,
     vendor_name: Optional[str] = None,
@@ -117,7 +119,7 @@ def _product_public(
             if (eff := effective_selling_price(row.buying_price, row.selling_price)) is not None
             else None
         ),
-        "buying_price": format(row.buying_price, "f") if row.buying_price is not None else None,
+        "buying_price": hide_cost(format(row.buying_price, "f") if row.buying_price is not None else None, auth),
         "unit": row.unit,
         "image_urls": presigned_urls(keys),
         "addon_count": int(addon_count or 0),
@@ -150,7 +152,7 @@ def list_stock(
     auth: AuthContext = Depends(get_auth_context),
 ):
     yg = (year_group or "").replace("\x00", "").strip()
-    cache_key = f"stock:products:v2:{(search or '').replace(chr(0), '')}:{yg}:{int(lite)}"
+    cache_key = f"stock:products:v2:{(search or '').replace(chr(0), '')}:{yg}:{int(lite)}:cost={int(can_see_cost(auth))}"
     cached = response_cache.get(cache_key)
     if cached is not None:
         return cached
@@ -251,7 +253,7 @@ def list_stock(
                     if (eff := effective_selling_price(r["buying_price"], r["selling_price"])) is not None
                     else None
                 ),
-                buying_price=format(r["buying_price"], "f") if r["buying_price"] is not None else None,
+                buying_price=hide_cost(format(r["buying_price"], "f") if r["buying_price"] is not None else None, auth),
                 unit=r["unit"],
                 image_urls=presigned_urls(keys),
                 addon_count=int(r["addon_count"] or 0),
@@ -293,7 +295,7 @@ def get_stock_detail(
                 "our_product_id": alt.our_product_id,
                 "vendor_name": vendor.business_name if vendor else None,
                 "vendor_city": city_name,
-                "buying_price": format(alt.buying_price, "f"),
+                "buying_price": hide_cost(format(alt.buying_price, "f"), auth),
                 "selling_price": format(alt.selling_price, "f") if alt.selling_price is not None else None,
                 "image_urls": presigned_urls(alt.image_keys or []),
             })
@@ -320,7 +322,7 @@ def get_stock_detail(
         for e in ledger_rows
     ]
 
-    base = _product_public(row, db, qty, threshold)
+    base = _product_public(row, db, qty, threshold, auth=auth)
     return StockProductDetail(
         **base,
         alternatives=alt_pub,
@@ -364,7 +366,7 @@ def get_ledger_entry_detail(
                         "quantity_received": ln.quantity_received,
                         "quantity_billed": ln.quantity_billed,
                         "billed_amount": format(ln.billed_amount, "f"),
-                        "buying_price": format(ln.buying_price, "f"),
+                        "buying_price": hide_cost(format(ln.buying_price, "f"), auth),
                     }
                     for ln in rlines
                 ],
@@ -414,7 +416,7 @@ def update_selling_price(
     balance_row = db.query(StockBalance).filter(StockBalance.catalog_product_id == catalog_product_id).first()
     th = balance_row.low_stock_threshold if balance_row else 5
     qty = balance_row.quantity_on_hand if balance_row else 0
-    d = _product_public(row, db, qty, th)
+    d = _product_public(row, db, qty, th, auth=auth)
     return StockProductSummary(**d)
 
 
@@ -480,7 +482,7 @@ def update_stock_threshold(
     response_cache.invalidate("stock:")
     response_cache.invalidate("shop:")
     db.refresh(balance_row)
-    d = _product_public(row, db, balance_row.quantity_on_hand, balance_row.low_stock_threshold)
+    d = _product_public(row, db, balance_row.quantity_on_hand, balance_row.low_stock_threshold, auth=auth)
     return StockProductSummary(**d)
 
 
@@ -521,7 +523,7 @@ def adjust_stock(
     response_cache.invalidate("stock:")
     response_cache.invalidate("shop:")
     db.refresh(balance)
-    d = _product_public(row, db, balance.quantity_on_hand, balance.low_stock_threshold)
+    d = _product_public(row, db, balance.quantity_on_hand, balance.low_stock_threshold, auth=auth)
     return StockProductSummary(**d)
 
 
@@ -560,7 +562,7 @@ def get_placed_order_for_receipt(
                 category=prod.category,
                 quantity_ordered=int(placed_map.get(cat_id, 0)),
                 quantity_remaining=int(pending),
-                buying_price=format(prod.buying_price, "f"),
+                buying_price=hide_cost(format(prod.buying_price, "f"), auth),
                 unit=prod.unit,
                 image_urls=presigned_urls(prod.image_keys or []),
             )
@@ -642,7 +644,7 @@ def get_receipt_for_bill(
             our_product_id=ln.our_product_id,
             vendor_product_id=prod.vendor_product_id if prod else None,
             quantity_received=ln.quantity_received,
-            buying_price=format(ln.buying_price, "f"),
+            buying_price=hide_cost(format(ln.buying_price, "f"), auth),
             unit=prod.unit if prod else None,
             image_urls=presigned_urls(prod.image_keys or []) if prod else [],
         ))
@@ -834,7 +836,7 @@ def get_receipt_detail(
                 "quantity_received": ln.quantity_received,
                 "quantity_billed": ln.quantity_billed,
                 "billed_amount": format(ln.billed_amount, "f"),
-                "buying_price": format(ln.buying_price, "f"),
+                "buying_price": hide_cost(format(ln.buying_price, "f"), auth),
             }
             for ln in rlines
         ],
@@ -941,7 +943,7 @@ def get_receipt_lines(
             "catalog_product_id": ln.catalog_product_id,
             "our_product_id": ln.our_product_id,
             "vendor_product_id": (products.get(ln.catalog_product_id).vendor_product_id if products.get(ln.catalog_product_id) else None),
-            "buying_price": format(ln.buying_price, "f"),
+            "buying_price": hide_cost(format(ln.buying_price, "f"), auth),
             "quantity_received": ln.quantity_received,
         }
         for ln in lines

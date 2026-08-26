@@ -287,19 +287,19 @@ def restore_vendor(vendor_id: int, db: Session = Depends(get_db), auth: AuthCont
 
 
 @router.get("/catalog-products/{product_id}", response_model=CatalogProductPublic, dependencies=[Depends(require_permission("recycle.read"))])
-def get_deleted_catalog_product(product_id: int, db: Session = Depends(get_db)) -> CatalogProductPublic:
+def get_deleted_catalog_product(product_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(get_auth_context)) -> CatalogProductPublic:
     row = db.get(CatalogProduct, product_id)
     if not row or row.is_active:
         raise HTTPException(404, "deleted product not found")
-    return catalog_public(row, db)
+    return catalog_public(row, db, auth=auth)
 
 
 @router.get("/addons/{addon_id}", response_model=AddonPublic, dependencies=[Depends(require_permission("recycle.read"))])
-def get_deleted_addon(addon_id: int, db: Session = Depends(get_db)) -> AddonPublic:
+def get_deleted_addon(addon_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(get_auth_context)) -> AddonPublic:
     row = db.get(AddonProduct, addon_id)
     if not row or row.is_active:
         raise HTTPException(404, "deleted addon not found")
-    return addon_public(row, db)
+    return addon_public(row, db, auth=auth)
 
 
 @router.post("/catalog-products/{product_id}/restore", dependencies=[Depends(require_permission("recycle.write"))])

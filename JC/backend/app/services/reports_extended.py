@@ -690,16 +690,32 @@ def pnl_detail(db: Session, from_date: Optional[date], to_date: Optional[date]) 
     sales_bills = sales_q.all()
     sales_total = sum((Decimal(str(b.grand_total or 0)) for b in sales_bills), Decimal("0"))
     gst_total = sum((Decimal(str(b.gst_amount or 0)) for b in sales_bills), Decimal("0"))
+    # GST is a pass-through liability, not revenue — exclude from taxable sales
+    sales_taxable = sales_total - gst_total
 
-    # COGS approx = purchase billed in period
+    # Customer returns (credit notes) reduce net sales — stored signed negative on AR ledger
+    cn_q = db.query(ArLedgerEntry).filter(
+        ArLedgerEntry.entry_type == "credit_note", ArLedgerEntry.deleted_at.is_(None)
+    )
+    if start:
+        cn_q = cn_q.filter(ArLedgerEntry.created_at >= start)
+    if end:
+        cn_q = cn_q.filter(ArLedgerEntry.created_at <= end)
+    customer_returns = sum((abs(Decimal(str(e.amount or 0))) for e in cn_q.all()), Decimal("0"))
+    net_sales = sales_taxable - customer_returns
+
+    # COGS approx = purchase billed in period, net of vendor debit notes (signed: + increases payable/cost, - decreases)
     ap_q = db.query(ApLedgerEntry).filter(
-        ApLedgerEntry.entry_type == "bill", ApLedgerEntry.deleted_at.is_(None)
+        ApLedgerEntry.entry_type.in_(("bill", "debit_note")), ApLedgerEntry.deleted_at.is_(None)
     )
     if start:
         ap_q = ap_q.filter(ApLedgerEntry.created_at >= start)
     if end:
         ap_q = ap_q.filter(ApLedgerEntry.created_at <= end)
-    cogs = sum((Decimal(str(e.amount or 0)) for e in ap_q.all()), Decimal("0"))
+    ap_rows = ap_q.all()
+    cogs = sum((Decimal(str(e.amount or 0)) for e in ap_rows if e.entry_type == "bill"), Decimal("0"))
+    vendor_debit_notes = sum((Decimal(str(e.amount or 0)) for e in ap_rows if e.entry_type == "debit_note"), Decimal("0"))
+    cogs_net = cogs + vendor_debit_notes
 
     exp_q = db.query(Expense)
     if from_date:
@@ -731,19 +747,24 @@ def pnl_detail(db: Session, from_date: Optional[date], to_date: Optional[date]) 
         ar_pay = ar_pay.filter(ArLedgerEntry.created_at <= end)
     cash_in = sum((abs(Decimal(str(p.amount))) for p in ar_pay.all()), Decimal("0"))
 
-    gross = sales_total - cogs
+    gross = net_sales - cogs_net
     # expenses already includes freight settlements linked as transport expenses
     net = gross - expenses - losses
     return {
         "sales_billed": _fmt(sales_total),
         "gst_on_sales": _fmt(gst_total),
+        "sales_taxable": _fmt(sales_taxable),
+        "customer_returns": _fmt(customer_returns),
+        "net_sales": _fmt(net_sales),
         "cogs_purchases": _fmt(cogs),
+        "vendor_debit_notes": _fmt(vendor_debit_notes),
+        "cogs_net": _fmt(cogs_net),
         "gross_profit": _fmt(gross),
         "expenses": _fmt(expenses),
         "freight_paid": _fmt(freight_paid),
         "manual_losses": _fmt(losses),
         "net_profit": _fmt(net),
-        "note": "Management approx — freight settle counted once via expenses (not again via freight_paid)",
+        "note": "Excludes GST (pass-through) and nets customer returns + vendor debit notes. Freight settle counted once via expenses (not again via freight_paid).",
         "cash_collected": _fmt(cash_in),
         "bill_count": len(sales_bills),
     }

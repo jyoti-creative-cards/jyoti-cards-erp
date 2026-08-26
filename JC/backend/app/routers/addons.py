@@ -15,13 +15,14 @@ from app.models.addon_product import AddonProduct
 from app.models.vendor import Vendor
 from app.schemas.addon import AddonCreate, AddonDetail, AddonPublic, AddonUpdate
 from app.services.activity import log_from_auth
+from app.services.cost_visibility import hide_cost, hide_cost_in_diff_summary, hide_cost_in_snapshot_json
 from app.services.history import TRACKED_FIELDS, diff_summary, list_entity_history, list_price_history, record_entity_history, record_price_change, row_snapshot
 from app.services.storage import presigned_urls
 
 router = APIRouter(prefix="/addons", tags=["addons"])
 
 
-def _to_public(row: AddonProduct, db: Session) -> AddonPublic:
+def _to_public(row: AddonProduct, db: Session, *, auth: AuthContext) -> AddonPublic:
     v = db.get(Vendor, row.vendor_id)
     keys = row.image_keys or []
     return AddonPublic(
@@ -34,7 +35,7 @@ def _to_public(row: AddonProduct, db: Session) -> AddonPublic:
         description=row.description,
         category=row.category,
         unit=row.unit,
-        buying_price=format(row.buying_price, "f"),
+        buying_price=hide_cost(format(row.buying_price, "f"), auth),
         image_keys=keys,
         image_urls=presigned_urls(keys),
         is_active=row.is_active,
@@ -47,6 +48,7 @@ def _to_public(row: AddonProduct, db: Session) -> AddonPublic:
 @router.get("", response_model=List[AddonPublic], dependencies=[Depends(require_permission("addons.read"))])
 def list_addons(
     db: Session = Depends(get_db),
+    auth: AuthContext = Depends(get_auth_context),
     search: Optional[str] = Query(None),
     vendor_id: Optional[int] = Query(None),
 ) -> List[AddonPublic]:
@@ -60,17 +62,24 @@ def list_addons(
             func.lower(AddonProduct.name).like(s),
             func.lower(AddonProduct.vendor_product_id).like(s),
         ))
-    return [_to_public(r, db) for r in q.order_by(AddonProduct.id.desc()).all()]
+    return [_to_public(r, db, auth=auth) for r in q.order_by(AddonProduct.id.desc()).all()]
 
 
 @router.get("/{addon_id}", response_model=AddonDetail, dependencies=[Depends(require_permission("addons.read"))])
-def get_addon(addon_id: int, db: Session = Depends(get_db)) -> AddonDetail:
+def get_addon(addon_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(get_auth_context)) -> AddonDetail:
     row = db.get(AddonProduct, addon_id)
     if not row:
         raise HTTPException(404, "addon not found")
-    pub = _to_public(row, db)
-    ph = [{"buying_price": format(p.buying_price, "f"), "recorded_at": p.recorded_at.isoformat()} for p in list_price_history(db, "addon_product", addon_id)]
-    eh = [{"change_summary": h.change_summary, "valid_from": h.valid_from.isoformat(), "snapshot_json": h.snapshot_json} for h in list_entity_history(db, "addon_product", addon_id)]
+    pub = _to_public(row, db, auth=auth)
+    ph = [{"buying_price": hide_cost(format(p.buying_price, "f"), auth), "recorded_at": p.recorded_at.isoformat()} for p in list_price_history(db, "addon_product", addon_id)]
+    eh = [
+        {
+            "change_summary": hide_cost_in_diff_summary(h.change_summary, auth),
+            "valid_from": h.valid_from.isoformat(),
+            "snapshot_json": hide_cost_in_snapshot_json(h.snapshot_json, auth),
+        }
+        for h in list_entity_history(db, "addon_product", addon_id)
+    ]
     return AddonDetail(**pub.model_dump(), price_history=ph, change_history=eh)
 
 
@@ -104,7 +113,7 @@ def create_addon(body: AddonCreate, db: Session = Depends(get_db), auth: AuthCon
     record_price_change(db, "addon_product", row.id, row.buying_price)
     log_from_auth(db, auth, action="create", entity_type="addon", entity_id=row.id, entity_label=row.our_product_id)
     db.commit()
-    return _to_public(row, db)
+    return _to_public(row, db, auth=auth)
 
 
 @router.patch("/{addon_id}", response_model=AddonPublic, dependencies=[Depends(require_permission("addons.write"))])
@@ -138,7 +147,7 @@ def update_addon(addon_id: int, body: AddonUpdate, db: Session = Depends(get_db)
     )
     db.commit()
     db.refresh(row)
-    return _to_public(row, db)
+    return _to_public(row, db, auth=auth)
 
 
 @router.delete("/{addon_id}", status_code=204, dependencies=[Depends(require_permission("addons.write"))])

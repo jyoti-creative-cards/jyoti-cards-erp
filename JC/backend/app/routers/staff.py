@@ -96,7 +96,7 @@ def create_staff(
     if existing:
         raise HTTPException(409, "phone already registered")
 
-    plain = phone[-4:]
+    plain = (body.password or "").strip() or phone[-4:]
     perms = dump_permissions(body.permissions)
     row = Staff(
         name=body.name.strip(),

@@ -51,6 +51,7 @@ from app.schemas.vendor_order import (
 )
 from app.services.activity import log_from_auth
 from app.services.ap_ledger import receipt_bill_amount, receipt_debit_note_total
+from app.services.cost_visibility import hide_cost
 from app.services.open_lines import add_to_open, cancel_open_qty, close_open_line, cancel_open_line, open_lines_for_vendor, reduce_from_open
 from app.services.order_summary import pending_qty_by_product, placed_qty_by_product, received_qty_by_product
 from app.services.stock_receipt import get_or_create_open_order
@@ -103,7 +104,7 @@ def _placement_color_map(placements: list[VendorOrderPlacement]) -> dict[int, in
     return {p.id: idx for idx, p in enumerate(ordered)}
 
 
-def _build_detail(db: Session, order: VendorOrder, *, open_only: bool = False) -> VendorOrderDetail:
+def _build_detail(db: Session, order: VendorOrder, *, auth: AuthContext, open_only: bool = False) -> VendorOrderDetail:
     vendor, city_name, label = _vendor_context(db, order.vendor_id, require_active=False)
     placements = (
         db.query(VendorOrderPlacement)
@@ -191,7 +192,7 @@ def _build_detail(db: Session, order: VendorOrder, *, open_only: bool = False) -
                     "total_placed": 0,
                     "total_received": 0,
                     "total_pending": 0,
-                    "buying_price": str(ln.buying_price),
+                    "buying_price": hide_cost(str(ln.buying_price), auth),
                     "unit": prod.unit if prod else None,
                     "image_urls": presigned_urls(prod.image_keys or []) if prod else [],
                     "breakdown": [],
@@ -210,7 +211,7 @@ def _build_detail(db: Session, order: VendorOrder, *, open_only: bool = False) -
                     quantity_remaining=ln.quantity_remaining,
                     quantity_billed=ln.quantity_billed,
                     billed_amount=format(ln.billed_amount, "f") if ln.billed_amount is not None else None,
-                    buying_price=str(ln.buying_price),
+                    buying_price=hide_cost(str(ln.buying_price), auth),
                     placed_at=p.placed_at,
                     placed_by_name=p.placed_by_name,
                     placed_by_type=p.placed_by_type,
@@ -764,7 +765,7 @@ def get_vendor_order_summary(
                 total_pending=pending_map.get(cat_id, 0),
                 total_cancelled=cancelled_map.get(cat_id, 0),
                 total_closed=closed_map.get(cat_id, 0),
-                buying_price=str(prod.buying_price),
+                buying_price=hide_cost(str(prod.buying_price), auth),
                 unit=prod.unit,
                 image_urls=presigned_urls(prod.image_keys or []),
                 open_line_id=open_line_map.get(cat_id),
@@ -947,7 +948,7 @@ def get_vendor_order(
     if not order:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="vendor order not found")
     open_only = order.bucket == "placed" and view == "open"
-    return _build_detail(db, order, open_only=open_only)
+    return _build_detail(db, order, auth=auth, open_only=open_only)
 
 
 @router.get("/vendor/{vendor_id}/products", response_model=List[CatalogProductForOrder])
@@ -989,14 +990,14 @@ def list_vendor_products_for_order(
                 id=p.id,
                 our_product_id=p.our_product_id,
                 vendor_product_id=p.vendor_product_id,
-                buying_price=str(p.buying_price),
+                buying_price=hide_cost(str(p.buying_price), auth),
                 unit=p.unit,
                 image_urls=presigned_urls(p.image_keys or []),
                 alternatives=[
                     {
                         "catalog_product_id": a.id,
                         "our_product_id": a.our_product_id,
-                        "buying_price": str(a.buying_price),
+                        "buying_price": hide_cost(str(a.buying_price), auth),
                     }
                     for a in sorted(alts_by_product.get(p.id, []), key=lambda x: x.our_product_id.lower())
                 ],
@@ -1074,10 +1075,10 @@ def create_placement(
     # PDF on demand via GET .../document — sync gen here hung Place Save
     db.commit()
     db.refresh(order)
-    return _build_detail(db, order)
+    return _build_detail(db, order, auth=auth)
 
 
-def _open_line_out(db: Session, row: VendorOpenLine) -> OpenLineOut:
+def _open_line_out(db: Session, row: VendorOpenLine, *, auth: AuthContext) -> OpenLineOut:
     prod = db.get(CatalogProduct, row.catalog_product_id)
     return OpenLineOut(
         id=row.id,
@@ -1085,21 +1086,21 @@ def _open_line_out(db: Session, row: VendorOpenLine) -> OpenLineOut:
         our_product_id=row.our_product_id,
         vendor_product_id=prod.vendor_product_id if prod else None,
         quantity=row.quantity,
-        buying_price=str(row.buying_price),
+        buying_price=hide_cost(str(row.buying_price), auth),
         unit=prod.unit if prod else None,
         image_urls=presigned_urls(prod.image_keys or []) if prod else [],
         status=row.status,
     )
 
 
-def _open_vendor_detail(db: Session, vendor_id: int) -> OpenVendorDetail:
+def _open_vendor_detail(db: Session, vendor_id: int, *, auth: AuthContext) -> OpenVendorDetail:
     _, _, label = _vendor_context(db, vendor_id)
     lines = open_lines_for_vendor(db, vendor_id, status="open")
     lines = [ln for ln in lines if ln.quantity > 0]
     return OpenVendorDetail(
         vendor_id=vendor_id,
         vendor_label=label,
-        lines=[_open_line_out(db, ln) for ln in lines],
+        lines=[_open_line_out(db, ln, auth=auth) for ln in lines],
     )
 
 
@@ -1144,7 +1145,7 @@ def get_vendor_open_order(
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("vendor_orders.read")),
 ):
-    return _open_vendor_detail(db, vendor_id)
+    return _open_vendor_detail(db, vendor_id, auth=auth)
 
 
 @router.get("/vendor/{vendor_id}/closed", response_model=List[ClosedLineOut])
@@ -1167,7 +1168,7 @@ def get_vendor_closed_lines(
                 catalog_product_id=row.catalog_product_id,
                 our_product_id=row.our_product_id,
                 quantity=row.quantity,
-                buying_price=str(row.buying_price),
+                buying_price=hide_cost(str(row.buying_price), auth),
                 source="open",
                 closed_at=row.updated_at,
                 bill_number=None,
@@ -1197,7 +1198,7 @@ def get_vendor_closed_lines(
                         catalog_product_id=ln.catalog_product_id,
                         our_product_id=ln.our_product_id,
                         quantity=ln.quantity,
-                        buying_price=str(ln.buying_price),
+                        buying_price=hide_cost(str(ln.buying_price), auth),
                         source="billed",
                         closed_at=p.closed_at,
                         bill_number=receipt.bill_number if receipt else None,
@@ -1253,7 +1254,7 @@ def update_open_line(
             entity_label=label, detail=f"open line #{line_id}: {', '.join(changes)}",
         )
     db.commit()
-    return _open_vendor_detail(db, row.vendor_id)
+    return _open_vendor_detail(db, row.vendor_id, auth=auth)
 
 
 
@@ -1339,7 +1340,7 @@ def close_open_line_endpoint(
         entity_label=label, detail=f"closed open line: {row.our_product_id}×{row.quantity} — {reason[:120]}",
     )
     db.commit()
-    return _open_vendor_detail(db, row.vendor_id)
+    return _open_vendor_detail(db, row.vendor_id, auth=auth)
 
 
 @router.post("/open-lines/{line_id}/cancel", response_model=OpenVendorDetail)
@@ -1366,7 +1367,7 @@ def cancel_open_line_endpoint(
         entity_label=label, detail=f"cancelled open line: {row.our_product_id}×{qty} — {reason[:120]}",
     )
     db.commit()
-    return _open_vendor_detail(db, row.vendor_id)
+    return _open_vendor_detail(db, row.vendor_id, auth=auth)
 
 
 @router.post("/placements/{placement_id}/close", response_model=VendorOrderDetail)
@@ -1395,7 +1396,7 @@ def close_billed_placement(
     )
     db.commit()
     db.refresh(order)
-    return _build_detail(db, order)
+    return _build_detail(db, order, auth=auth)
 
 
 @router.post("/placements/{placement_id}/cancel", response_model=VendorOrderDetail)
@@ -1467,7 +1468,7 @@ def cancel_placement(
     )
     db.commit()
     db.refresh(order)
-    return _build_detail(db, order)
+    return _build_detail(db, order, auth=auth)
 @router.patch("/lines/{line_id}", response_model=VendorOrderDetail)
 def update_line(
     line_id: int,
@@ -1526,7 +1527,7 @@ def update_line(
         line.buying_price = prod.buying_price
 
     if not changes:
-        return _build_detail(db, order)
+        return _build_detail(db, order, auth=auth)
 
     # Keep Open pending in sync with placed line edits
     new_pid = line.catalog_product_id
@@ -1559,7 +1560,7 @@ def update_line(
     )
     db.commit()
     db.refresh(order)
-    return _build_detail(db, order)
+    return _build_detail(db, order, auth=auth)
 @router.delete("/lines/{line_id}", response_model=VendorOrderDetail)
 def delete_line(
     line_id: int,
@@ -1584,7 +1585,7 @@ def delete_line(
     log_from_auth(db, auth, action="delete_line", entity_type="vendor_order", entity_id=order.id, entity_label=label, detail=detail)
     db.commit()
     db.refresh(order)
-    return _build_detail(db, order)
+    return _build_detail(db, order, auth=auth)
 
 
 @router.get("/placements/{placement_id}/document")

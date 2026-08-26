@@ -20,6 +20,7 @@ class StaffCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     phone: str = Field(..., min_length=10, max_length=15)
     permissions: List[str] = Field(default_factory=list)
+    password: Optional[str] = Field(None, min_length=4, max_length=64)
 
 
 class StaffUpdate(BaseModel):

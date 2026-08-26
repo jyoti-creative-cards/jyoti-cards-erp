@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.deps import AuthContext, require_admin
+from app.deps import AuthContext, require_admin, require_permission
 from app.models.customer import Customer
 from app.schemas.accounts_receivable import (
     ArCustomerDetail,
@@ -169,6 +169,70 @@ def settle_customer_ar(
     if not match:
         raise HTTPException(500, "payment recorded but ledger entry missing")
     return ArLedgerEntryOut(**match)
+
+
+@router.post("/customer/{customer_id}/record-payment", status_code=status.HTTP_201_CREATED)
+def record_customer_payment(
+    customer_id: int,
+    body: ArSettlementIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("finance.write")),
+):
+    """Entry-only payment recording for accountant-role staff — never reveals outstanding/totals."""
+    customer = db.get(Customer, customer_id)
+    if not customer or customer.deleted_at:
+        raise HTTPException(404, "customer not found")
+    lock_ar_account(db, customer_id)
+    totals = customer_ar_totals(db, customer_id)
+    outstanding = totals["outstanding"]
+    if outstanding <= 0:
+        raise HTTPException(400, "No outstanding balance on this customer to record a payment against")
+    amount = body.amount.quantize(Decimal("0.01"))
+    if amount > outstanding:
+        raise HTTPException(400, "Amount seems higher than what's on record — please double-check with the owner")
+
+    from app.models.payment_mode import PaymentMode
+
+    mode_name = None
+    if body.payment_mode_id:
+        mode = db.get(PaymentMode, body.payment_mode_id)
+        if not mode or not mode.is_active:
+            raise HTTPException(400, "invalid payment mode")
+        mode_name = mode.name
+    else:
+        active_modes = db.query(PaymentMode).filter(PaymentMode.is_active.is_(True)).count()
+        if active_modes:
+            raise HTTPException(400, "select a payment mode")
+
+    ref = (body.payment_ref or "").strip() or (mode_name or "Payment")
+    desc_bits = [f"Payment {ref}"]
+    if mode_name:
+        desc_bits.append(f"via {mode_name}")
+    desc_bits.append(f"— ₹{amount}")
+
+    post_payment_entry(
+        db,
+        customer_id=customer_id,
+        amount=amount,
+        payment_ref=ref,
+        payment_mode=mode_name,
+        payment_comment=body.comment,
+        description=" ".join(desc_bits),
+        actor_type=auth.actor_type,
+        actor_id=auth.actor_id,
+        actor_name=auth.actor_name,
+    )
+    log_from_auth(
+        db,
+        auth,
+        action="ar_payment",
+        entity_type="accounts_receivable",
+        entity_id=customer_id,
+        entity_label=customer.business_name,
+        detail=f"₹{amount} {mode_name or ''} ref {ref} (entry-only)".strip(),
+    )
+    db.commit()
+    return {"ok": True, "message": f"Payment of ₹{amount} recorded for {customer.business_name}"}
 
 
 def _ar_payment_out(db: Session, customer_id: int, entry_id: int) -> ArLedgerEntryOut:

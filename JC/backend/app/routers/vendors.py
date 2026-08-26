@@ -196,7 +196,7 @@ def get_vendor_ledger(
     row = db.get(Vendor, vendor_id)
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="vendor not found")
-    items = build_vendor_ledger(db, vendor_id, show_actor=auth.is_admin, include_ap=auth.is_admin)
+    items = build_vendor_ledger(db, vendor_id, auth=auth, show_actor=auth.is_admin, include_ap=auth.is_admin)
     return EntityLedgerResponse(items=items, total=len(items))
 
 

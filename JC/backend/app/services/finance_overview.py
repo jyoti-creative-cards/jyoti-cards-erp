@@ -31,7 +31,17 @@ def _fmt(v: Decimal) -> str:
 def _sum_type(db: Session, model, entry_type: str) -> Decimal:
     raw = (
         db.query(func.coalesce(func.sum(model.amount), 0))
-        .filter(model.entry_type == entry_type)
+        .filter(model.entry_type == entry_type, model.deleted_at.is_(None))
+        .scalar()
+    )
+    return Decimal(str(raw or 0)).quantize(Decimal("0.01"))
+
+
+def _sum_types(db: Session, model, entry_types: tuple[str, ...]) -> Decimal:
+    """Sum multiple entry types together — used to net payments against their reversals."""
+    raw = (
+        db.query(func.coalesce(func.sum(model.amount), 0))
+        .filter(model.entry_type.in_(entry_types), model.deleted_at.is_(None))
         .scalar()
     )
     return Decimal(str(raw or 0)).quantize(Decimal("0.01"))
@@ -50,8 +60,9 @@ def finance_overview(db: Session) -> dict:
         "convention": "signed_ledger_sum",
     }
 
-    # SQL aggregates — never load full ledgers into Python
-    ar_payment_sum = _sum_type(db, ArLedgerEntry, "payment")  # signed negative
+    # SQL aggregates — never load full ledgers into Python.
+    # Net "payment" against "payment_reversal" so voided/reversed payments don't inflate cash moved.
+    ar_payment_sum = _sum_types(db, ArLedgerEntry, ("payment", "payment_reversal"))  # signed negative
     revenue = mag(ar_payment_sum)
     ar_billed = mag(_sum_type(db, ArLedgerEntry, "bill"))
     ar_credit_total = mag(_sum_type(db, ArLedgerEntry, "credit_note"))
@@ -60,7 +71,7 @@ def finance_overview(db: Session) -> dict:
     expense_total = Decimal(
         str(db.query(func.coalesce(func.sum(Expense.amount), 0)).scalar() or 0)
     ).quantize(Decimal("0.01"))
-    ap_payment_sum = _sum_type(db, ApLedgerEntry, "payment")
+    ap_payment_sum = _sum_types(db, ApLedgerEntry, ("payment", "payment_reversal"))
     ap_paid = mag(ap_payment_sum)
     cash_out = (expense_total + ap_paid).quantize(Decimal("0.01"))
     ap_billed = _sum_type(db, ApLedgerEntry, "bill")
@@ -70,18 +81,18 @@ def finance_overview(db: Session) -> dict:
     ).quantize(Decimal("0.01"))
     net_cash = (revenue - cash_out - loss_total).quantize(Decimal("0.01"))
 
-    # Monthly cash series (last 6) via date_trunc
+    # Monthly cash series (last 6) via date_trunc — net payments against reversals, exclude voided rows
     month_expr_ar = func.date_trunc("month", ArLedgerEntry.created_at)
     ar_by_month = (
         db.query(month_expr_ar, func.coalesce(func.sum(ArLedgerEntry.amount), 0))
-        .filter(ArLedgerEntry.entry_type == "payment")
+        .filter(ArLedgerEntry.entry_type.in_(("payment", "payment_reversal")), ArLedgerEntry.deleted_at.is_(None))
         .group_by(month_expr_ar)
         .all()
     )
     month_expr_ap = func.date_trunc("month", ApLedgerEntry.created_at)
     ap_by_month = (
         db.query(month_expr_ap, func.coalesce(func.sum(ApLedgerEntry.amount), 0))
-        .filter(ApLedgerEntry.entry_type == "payment")
+        .filter(ApLedgerEntry.entry_type.in_(("payment", "payment_reversal")), ApLedgerEntry.deleted_at.is_(None))
         .group_by(month_expr_ap)
         .all()
     )

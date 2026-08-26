@@ -75,6 +75,28 @@ def resolve_invoice_date(bill_date: date | datetime | None) -> date:
     return as_biz_date(bill_date) or today_ist()
 
 
+def ist_day_bounds_utc(d: date) -> tuple[datetime, datetime]:
+    """Inclusive [start, end] of an IST calendar day, as UTC datetimes.
+
+    Use this (not naive `datetime.combine(d, time.min/max, tzinfo=utc)`) whenever a
+    plain `date` from a report filter or date-picker needs to bound a `created_at`
+    (UTC) column with `>= start` / `<= end` — otherwise the window is off by the
+    IST offset (+5:30) and can put created_at rows near midnight in the wrong
+    calendar day vs. same-day Date columns like expense_date/loss_date (which
+    aren't shifted).
+    """
+    start_local = datetime(d.year, d.month, d.day, 0, 0, 0, tzinfo=_BIZ_TZ)
+    end_local = datetime(d.year, d.month, d.day, 23, 59, 59, 999999, tzinfo=_BIZ_TZ)
+    return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
+
+
+def ist_range_bounds_utc(from_date: date | None, to_date: date | None) -> tuple[datetime | None, datetime | None]:
+    """UTC datetime bounds for an inclusive [from_date, to_date] IST calendar range."""
+    start = ist_day_bounds_utc(from_date)[0] if from_date else None
+    end = ist_day_bounds_utc(to_date)[1] if to_date else None
+    return start, end
+
+
 def bill_invoice_date(bill) -> date:
     """Invoice date on a stored bill — never invent a customer name / hardcoded day."""
     stored = getattr(bill, "bill_date", None)

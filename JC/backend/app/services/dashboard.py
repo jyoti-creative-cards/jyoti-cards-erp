@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, time, timezone
+from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import func, text
@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.models.activity_log import ActivityLog
 from app.models.freight_agent import FreightAgent
+from app.services.biz_date import ist_day_bounds_utc
 from app.services.money import mag
 
 
@@ -19,10 +20,9 @@ def _fmt(v: Decimal | int | float | None) -> str:
     return format(Decimal(str(v)).quantize(Decimal("0.01")), "f")
 
 
-def _day_bounds(d: date) -> tuple[datetime, datetime]:
-    start = datetime.combine(d, time.min, tzinfo=timezone.utc)
-    end = datetime.combine(d, time.max, tzinfo=timezone.utc)
-    return start, end
+def _day_bounds(d: date) -> tuple:
+    """IST calendar day → UTC bounds ("today" pulse must mean the IST business day)."""
+    return ist_day_bounds_utc(d)
 
 
 def build_dashboard(db: Session) -> dict:

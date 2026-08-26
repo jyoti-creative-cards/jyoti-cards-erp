@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
@@ -18,18 +18,16 @@ from app.models.vendor import Vendor
 from app.models.city import City
 from app.services.ap_ledger import _vendor_label, vendor_ap_totals
 from app.services.ar_ledger import _customer_label, customer_ar_totals
+from app.services.biz_date import ist_day_bounds_utc, ist_range_bounds_utc
 
 
 def _day_bounds(d: date) -> tuple[datetime, datetime]:
-    start = datetime.combine(d, time.min, tzinfo=timezone.utc)
-    end = datetime.combine(d, time.max, tzinfo=timezone.utc)
-    return start, end
+    """IST calendar day → UTC bounds (aligns with plain-Date columns like expense_date)."""
+    return ist_day_bounds_utc(d)
 
 
 def _range_bounds(from_date: Optional[date], to_date: Optional[date]) -> tuple[Optional[datetime], Optional[datetime]]:
-    start = datetime.combine(from_date, time.min, tzinfo=timezone.utc) if from_date else None
-    end = datetime.combine(to_date, time.max, tzinfo=timezone.utc) if to_date else None
-    return start, end
+    return ist_range_bounds_utc(from_date, to_date)
 
 
 def _batch_labels(db: Session, model, ids: set[int]) -> dict[int, "object"]:

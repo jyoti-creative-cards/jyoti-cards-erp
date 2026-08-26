@@ -260,8 +260,10 @@ def bill_receipt(db: Session, auth: AuthContext, receipt_id: int, body: VendorBi
 
 def preview_bill_deviations(
     db: Session, vendor: Vendor, lines: list[StockReceiptLine], billed_qty_by_pid: dict[int, int], entered_total: Decimal,
+    products: dict[int, CatalogProduct] | None = None,
 ) -> dict:
     """Returns expected totals + suggested (unsaved) debit notes for the bill-review UI."""
+    products = products or {}
     suggestions = []
     total_actual_value = Decimal("0")
     for ln in lines:
@@ -272,9 +274,11 @@ def preview_bill_deviations(
             buying_price=ln.buying_price, billing_pct=vendor.billing_pct,
         )
         if dn:
+            prod = products.get(ln.catalog_product_id)
             suggestions.append({
                 "note_type": "value", "direction": dn["direction"], "amount": str(abs(dn["amount"])),
                 "catalog_product_id": ln.catalog_product_id, "our_product_id": ln.our_product_id,
+                "vendor_product_id": prod.vendor_product_id if prod else None,
                 "notes": f"Auto: billed {bq} vs received {ln.quantity_received} for {ln.our_product_id}",
                 "source": "auto",
             })
@@ -287,7 +291,7 @@ def preview_bill_deviations(
     if amt_dn:
         suggestions.append({
             "note_type": "value", "direction": amt_dn["direction"], "amount": str(abs(amt_dn["amount"])),
-            "catalog_product_id": None, "our_product_id": None,
+            "catalog_product_id": None, "our_product_id": None, "vendor_product_id": None,
             "notes": f"Auto: entered total ₹{entered_total} vs expected ₹{bill_total}",
             "source": "auto",
         })

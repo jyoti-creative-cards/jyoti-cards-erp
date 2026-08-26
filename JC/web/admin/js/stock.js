@@ -108,10 +108,11 @@ const Stock = (() => {
           ${img ? `<img src="${ctx.esc(img)}" class="stock-detail-img" onclick="Products.enlargeImage(decodeURIComponent('${encodeURIComponent(img)}'))" style="cursor:zoom-in;" />` : ""}
           <div>
             <div style="font-size:13px;color:var(--muted);">${ctx.esc(p.vendor_label)}${p.year_group ? ` · ${ctx.esc(p.year_group)}` : ""}</div>
-            <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+            <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
               <span class="badge badge-blue">On hand: ${p.quantity_on_hand}</span>
               <span class="badge ${statusBadge}">${ctx.esc((p.stock_status || "").replace(/_/g, " "))}</span>
               <span class="badge badge-gray">Pending order: ${p.quantity_pending}</span>
+              ${ctx.isAdmin?.() ? `<button class="btn btn-secondary btn-sm" onclick="Stock.adjustStock(${p.catalog_product_id}, ${p.quantity_on_hand})">Adjust stock</button>` : ""}
             </div>
           </div>
         </div>
@@ -422,7 +423,7 @@ const Stock = (() => {
           notes: s.notes,
           source: "auto",
           _auto_suggested: true,
-          _label: s.our_product_id,
+          _label: s.our_product_id ? productIdLabel(s) : null,
           _amount: amt,
           _payable_effect: s.direction === "over" ? -amt : amt,
         });
@@ -467,7 +468,7 @@ const Stock = (() => {
               <th>Product</th><th>Received</th>
             </tr></thead><tbody>
               ${wizardLines.map((l, i) => `<tr>
-                <td><strong>${ctx.esc(l.our_product_id)}</strong></td>
+                <td><strong>${ctx.esc(productIdLabel(l))}</strong></td>
                 <td><input type="number" min="0" class="input stock-qty-input" value="${l.quantity_received || ""}" onchange="Stock.setLine(${i},'quantity_received',this.value)" /></td>
               </tr>`).join("")}
             </tbody></table>
@@ -500,7 +501,7 @@ const Stock = (() => {
             <th>Product</th>${isBillEdit ? "" : "<th>Received</th>"}<th>Billed</th>
           </tr></thead><tbody>
             ${wizardLines.map((l, i) => `<tr>
-              <td><strong>${ctx.esc(l.our_product_id)}</strong></td>
+              <td><strong>${ctx.esc(productIdLabel(l))}</strong></td>
               ${isBillEdit ? "" : `<td><input type="number" min="0" class="input stock-qty-input" value="${l.quantity_received || ""}" onchange="Stock.setLine(${i},'quantity_received',this.value)" /></td>`}
               <td><input type="number" min="0" class="input stock-qty-input stock-billed-input" value="${l.quantity_billed || ""}" onchange="Stock.setLine(${i},'quantity_billed',this.value)" /></td>
             </tr>`).join("")}
@@ -935,7 +936,7 @@ const Stock = (() => {
                 : "";
               return `<tr>
                 <td>${thumb(img)}</td>
-                <td><strong>${ctx.esc(l.our_product_id)}</strong>${diffBadge}</td>
+                <td><strong>${ctx.esc(productIdLabel(l))}</strong>${diffBadge}</td>
                 <td style="text-align:right;color:var(--muted);">${l.quantity_received || 0}</td>
                 <td style="text-align:right;">${fmtPrice(l.buying_price)}</td>
                 <td style="text-align:right;"><input type="number" min="0" class="input stock-qty-input stock-billed-input" value="${l.quantity_billed ?? ""}" onchange="Stock.setLine(${i},'quantity_billed',this.value)" /></td>
@@ -1134,7 +1135,7 @@ const Stock = (() => {
               ? `<span class="badge ${diff > 0 ? "badge-amber" : "badge-blue"}" style="font-size:10px;">${diff > 0 ? "+" : ""}${diff}</span>`
               : `<span style="color:var(--muted);">—</span>`;
             return `<tr>
-              <td><strong>${ctx.esc(l.our_product_id)}</strong>${!(l.quantity_received || 0) && (l.quantity_billed || 0) ? ` <span class="badge badge-amber" style="font-size:10px;">Billed only</span>` : ""}</td>
+              <td><strong>${ctx.esc(productIdLabel(l))}</strong>${!(l.quantity_received || 0) && (l.quantity_billed || 0) ? ` <span class="badge badge-amber" style="font-size:10px;">Billed only</span>` : ""}</td>
               <td style="text-align:right;">${l.quantity_received || 0}</td>
               <td style="text-align:right;">${l.quantity_billed || 0}</td>
               <td style="text-align:right;">${diffCell}</td>
@@ -1160,6 +1161,7 @@ const Stock = (() => {
       receivingLines: active.map(l => ({
         catalog_product_id: l.catalog_product_id,
         our_product_id: l.our_product_id,
+        vendor_product_id: l.vendor_product_id,
         buying_price: l.buying_price || placedOrder?.lines?.find(x => x.catalog_product_id === l.catalog_product_id)?.buying_price,
         quantity_received: l.quantity_received || 0,
         quantity_billed: l.quantity_billed || 0,
@@ -1174,7 +1176,7 @@ const Stock = (() => {
           direction: payload.direction,
           _direction: payload.direction,
           _direction_label: payload._direction_label,
-          _label: line?.our_product_id,
+          _label: productIdLabel(line),
           _amount: Math.abs(amt),
           _payable_effect: payload.note_type === "item" ? -amt : amt,
         });
@@ -1196,6 +1198,7 @@ const Stock = (() => {
       receivingLines: active.map(l => ({
         catalog_product_id: l.catalog_product_id,
         our_product_id: l.our_product_id,
+        vendor_product_id: l.vendor_product_id,
         buying_price: l.buying_price || placedOrder?.lines?.find(x => x.catalog_product_id === l.catalog_product_id)?.buying_price,
         quantity_received: l.quantity_received || 0,
         quantity_billed: l.quantity_billed || 0,
@@ -1214,7 +1217,7 @@ const Stock = (() => {
           direction: payload.direction,
           _direction: payload.direction,
           _direction_label: payload._direction_label,
-          _label: line?.our_product_id || existing._label,
+          _label: (line ? productIdLabel(line) : null) || existing._label,
           _amount: Math.abs(amt),
           _payable_effect: payload.note_type === "item" ? -amt : amt,
         };
@@ -1547,7 +1550,7 @@ const Stock = (() => {
       }
       if (isReceive) {
         const lineHtml = `<table class="data" style="font-size:13px;margin-top:12px;"><thead><tr><th>Product</th><th>Received</th></tr></thead><tbody>
-          ${active.map(l => `<tr><td>${ctx.esc(l.our_product_id)}</td><td>${l.quantity_received || 0}</td></tr>`).join("")}
+          ${active.map(l => `<tr><td>${ctx.esc(productIdLabel(l))}</td><td>${l.quantity_received || 0}</td></tr>`).join("")}
         </tbody></table>`;
         const nextHint = savedMode === "offline_vendor"
           ? "In <strong>Received</strong> (unbilled). Next: Bill when vendor invoice arrives."
@@ -1590,7 +1593,7 @@ const Stock = (() => {
             }).join("")}
           </tbody></table>` : "";
       const lineHtml = `<table class="data" style="font-size:13px;margin-top:12px;"><thead><tr><th>Product</th><th>Received</th><th>Billed</th></tr></thead><tbody>
-        ${active.map(l => `<tr><td>${ctx.esc(l.our_product_id)}</td><td>${l.quantity_received || 0}</td><td>${l.quantity_billed || 0}</td></tr>`).join("")}
+        ${active.map(l => `<tr><td>${ctx.esc(productIdLabel(l))}</td><td>${l.quantity_received || 0}</td><td>${l.quantity_billed || 0}</td></tr>`).join("")}
       </tbody></table>`;
       const pdfBtns = docUrl
         ? `<div class="doc-actions">
@@ -1737,7 +1740,7 @@ const Stock = (() => {
     if (receipt?.lines?.length) {
       const showAmt = receipt.lines.some(l => l.billed_amount && Number(l.billed_amount) !== 0);
       const lineRows = receipt.lines.map(l =>
-        `<tr><td>${ctx.esc(l.our_product_id)}</td><td>${l.quantity_received}</td><td>${l.quantity_billed || 0}</td>${showAmt ? `<td>${l.billed_amount ? fmtPrice(l.billed_amount) : "—"}</td>` : ""}</tr>`
+        `<tr><td>${ctx.esc(productIdLabel(l))}</td><td>${l.quantity_received}</td><td>${l.quantity_billed || 0}</td>${showAmt ? `<td>${l.billed_amount ? fmtPrice(l.billed_amount) : "—"}</td>` : ""}</tr>`
       ).join("");
       table = `<table class="data" style="font-size:13px;"><thead><tr><th>Product</th><th>Received</th><th>Billed Qty</th>${showAmt ? "<th>Billed Amt</th>" : ""}</tr></thead><tbody>${lineRows}</tbody></table>`;
     }
@@ -1746,7 +1749,7 @@ const Stock = (() => {
         <table class="data" style="font-size:13px;margin-top:6px;"><thead><tr><th>Note</th><th>Effect</th></tr></thead><tbody>
         ${receipt.debit_notes.map(dn => {
           const label = dn.note_type === "item"
-            ? `${ctx.esc(dn.our_product_id || "")} × ${dn.quantity} (${ctx.esc(dn.direction || "")})`
+            ? `${ctx.esc(productIdLabel(dn))} × ${dn.quantity} (${ctx.esc(dn.direction || "")})`
             : `Value ₹${ctx.esc(dn.amount)} (${ctx.esc(dn.direction || "")})`;
           return `<tr><td>${label}${dn.notes ? ` — ${ctx.esc(dn.notes)}` : ""}</td><td>${fmtPrice(dn.payable_effect)}</td></tr>`;
         }).join("")}
@@ -1800,6 +1803,28 @@ const Stock = (() => {
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
   }
+  async function adjustStock(catalogProductId, currentQty) {
+    const raw = prompt(`Adjust stock for this product.\nCurrent on hand: ${currentQty ?? 0}\n\nEnter quantity change (e.g. 5 to add 5, -3 to remove 3):`);
+    if (raw == null) return;
+    const delta = parseInt(String(raw).trim(), 10);
+    if (!Number.isFinite(delta) || delta === 0) return ctx.toast("Enter a non-zero whole number", "error");
+    const reason = prompt("Reason for this correction (required):");
+    if (reason == null) return;
+    const reasonTrimmed = reason.trim();
+    if (!reasonTrimmed) return ctx.toast("Reason is required", "error");
+    ctx.showLoading?.();
+    try {
+      await ctx.api(`/stock/products/${catalogProductId}/adjust`, {
+        method: "POST",
+        body: JSON.stringify({ quantity_delta: delta, reason: reasonTrimmed }),
+      });
+      ctx.invalidateCache?.("/stock");
+      ctx.toast(`Stock ${delta > 0 ? "increased" : "decreased"} by ${Math.abs(delta)}`, "success");
+      openDetail(catalogProductId);
+      if (typeof Products !== "undefined") await Products.refreshHub?.();
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
   async function setSellingPrice(catalogProductId, current) {
     const raw = prompt("Selling price (₹). Leave blank to clear:", current == null ? "" : String(current));
     if (raw == null) return;
@@ -1829,7 +1854,7 @@ const Stock = (() => {
     openAddWizard, openReceiveForVendor, openBillForVendor, openOfflineWizard, openOfflineForVendor, closeWizard, pickMode, pickVendor, setLine, setBillFile,
     toggleOfflineProduct, setOfflineLine, onOfflineProductSearch, onOfflineVendorSearch,
     openOfflineQtyPopup, closeOfflineQtyPopup, confirmOfflineQty, removeOfflineLine, bumpOfflineQty,
-    wizardBack, wizardNext, submitReceipt, openDebitNote, removeDebitNote, editThreshold, setSellingPrice,
+    wizardBack, wizardNext, submitReceipt, openDebitNote, removeDebitNote, editThreshold, setSellingPrice, adjustStock,
     openReceiptPdf, fetchReceiptPdf, openEditReceipt, selectPendingReceipt, changePendingReceipt,
     voidReceipt, editPendingDebitNote,
   };

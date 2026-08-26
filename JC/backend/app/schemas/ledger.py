@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 class LedgerLineDetail(BaseModel):
     our_product_id: str
+    vendor_product_id: Optional[str] = None
     quantity: Optional[int] = None
     quantity_remaining: Optional[int] = None
     quantity_received: Optional[int] = None

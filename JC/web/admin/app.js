@@ -2349,7 +2349,7 @@ const App = (() => {
   function setVendors(list) { vendors = list || []; }
 
   const sharedCtx = () => ({
-    api, toast, esc, fmtDate, fmtDay, timeAgo, reviewRow, changeHistoryTable, openDetail,
+    api, toast, esc, fmtDate, fmtDay, timeAgo, reviewRow, productIdLabel, changeHistoryTable, openDetail,
     closeDetail: () => closeDetail(), detailBack, detailFooterChild, ledgerDetailCard, bindLedgerRowClicks,
     entityLedgerTableHtml, activityTableHtml, loadActivity,
     getCities: () => cities,
@@ -2508,6 +2508,15 @@ const App = (() => {
     }
     const content = rawHtml ? val : esc(String(val));
     return `<div class="review-row"><span class="review-label">${label}</span><span class="review-value">${content}</span></div>`;
+  }
+
+  // Vendor bills using their own product id, we track ours — show both so nothing gets
+  // mismatched. Returns a plain (unescaped) string; wrap with esc()/ctx.esc() at the call site.
+  function productIdLabel(p) {
+    const our = p?.our_product_id || "";
+    const year = p?.year_group ? ` [${p.year_group}]` : "";
+    const vid = p?.vendor_product_id;
+    return vid ? `${our}${year} / (${vid})` : `${our}${year}`;
   }
 
   function changeHistoryTable(history) {

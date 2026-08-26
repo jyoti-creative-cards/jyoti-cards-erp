@@ -7,6 +7,7 @@ from typing import List, Optional
 
 from sqlalchemy.orm import Session
 
+from app.models.catalog_product import CatalogProduct
 from app.models.stock import StockReceipt, StockReceiptLine
 from app.models.debit_note import DebitNote
 from app.models.accounts_payable import ApLedgerEntry
@@ -43,11 +44,18 @@ def build_vendor_ledger(db: Session, vendor_id: int, *, show_actor: bool = True,
     if placement_ids:
         for ln in db.query(VendorOrderLine).filter(VendorOrderLine.placement_id.in_(placement_ids)).all():
             plines_by[ln.placement_id].append(ln)
+    vendor_products = {
+        p.id: p.vendor_product_id
+        for p in db.query(CatalogProduct.id, CatalogProduct.vendor_product_id)
+        .filter(CatalogProduct.vendor_id == vendor_id)
+        .all()
+    }
     for placement, order in placements:
         lines = plines_by.get(placement.id) or []
         line_details = [
             LedgerLineDetail(
                 our_product_id=ln.our_product_id,
+                vendor_product_id=vendor_products.get(ln.catalog_product_id),
                 quantity=ln.quantity,
                 quantity_remaining=ln.quantity if order.bucket == "placed" else None,
                 quantity_billed=ln.quantity_billed,
@@ -126,7 +134,8 @@ def build_vendor_ledger(db: Session, vendor_id: int, *, show_actor: bool = True,
         rlines = rlines_by.get(receipt.id) or []
         line_details = [
             LedgerLineDetail(
-                our_product_id=ln.our_product_id, quantity_received=ln.quantity_received,
+                our_product_id=ln.our_product_id, vendor_product_id=vendor_products.get(ln.catalog_product_id),
+                quantity_received=ln.quantity_received,
                 quantity_billed=ln.quantity_billed, billed_amount=_fmt_amount(ln.billed_amount),
                 buying_price=format(ln.buying_price, "f"),
             )
@@ -188,6 +197,7 @@ def build_vendor_ledger(db: Session, vendor_id: int, *, show_actor: bool = True,
                         "bill_number": receipt.bill_number if receipt else None,
                         "note_type": note.note_type,
                         "our_product_id": note.our_product_id,
+                        "vendor_product_id": vendor_products.get(note.catalog_product_id) if note.catalog_product_id else None,
                         "quantity": note.quantity,
                         "amount": format(note.amount, "f"),
                         "notes": note.notes,

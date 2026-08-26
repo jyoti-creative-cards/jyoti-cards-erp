@@ -224,7 +224,7 @@ const Vendors = (() => {
         </button>
         ${open ? `<div class="vled-body">
           <table class="data fin-mini"><thead><tr><th>Product</th><th>Qty</th><th>Price</th></tr></thead><tbody>
-            ${lines.map(l => `<tr><td>${ctx.esc(l.our_product_id)}</td><td>${l.quantity ?? "—"}</td><td>${fmtMoney(l.buying_price)}</td></tr>`).join("") || "<tr><td colspan=3>—</td></tr>"}
+            ${lines.map(l => `<tr><td>${ctx.esc(ctx.productIdLabel(l))}</td><td>${l.quantity ?? "—"}</td><td>${fmtMoney(l.buying_price)}</td></tr>`).join("") || "<tr><td colspan=3>—</td></tr>"}
           </tbody></table>
           <div class="vled-actions">
             <button class="btn btn-secondary btn-sm" onclick="Vendors.openOrderFromLedger('${e.id}')">Open in Orders</button>
@@ -252,13 +252,13 @@ const Vendors = (() => {
         </button>
         ${open ? `<div class="vled-body">
           <table class="data fin-mini"><thead><tr><th>Product</th><th>Recv</th><th>Billed</th></tr></thead><tbody>
-            ${lines.map(l => `<tr><td>${ctx.esc(l.our_product_id)}</td><td>${l.quantity_received ?? l.quantity ?? "—"}</td><td>${l.quantity_billed ?? "—"}</td></tr>`).join("") || "<tr><td colspan=3>—</td></tr>"}
+            ${lines.map(l => `<tr><td>${ctx.esc(ctx.productIdLabel(l))}</td><td>${l.quantity_received ?? l.quantity ?? "—"}</td><td>${l.quantity_billed ?? "—"}</td></tr>`).join("") || "<tr><td colspan=3>—</td></tr>"}
           </tbody></table>
           ${dns.length ? `<div class="fin-dn-block"><div class="fin-dn-title">Debit notes</div>
             ${dns.map(dn => {
               const nd = dn.details || {};
               return `<div class="fin-dn-row">
-                <div><strong>${ctx.esc(nd.our_product_id || nd.note_type || "Note")}${nd.quantity != null ? ` × ${nd.quantity}` : ""}</strong>
+                <div><strong>${ctx.esc(nd.our_product_id ? ctx.productIdLabel(nd) : (nd.note_type || "Note"))}${nd.quantity != null ? ` × ${nd.quantity}` : ""}</strong>
                   ${nd.notes ? `<div class="fin-dn-note">${ctx.esc(nd.notes)}</div>` : ""}
                 </div>
                 <strong>${fmtMoney(nd.amount)}</strong>

@@ -186,6 +186,7 @@ def _build_detail(db: Session, order: VendorOrder, *, open_only: bool = False) -
                 {
                     "catalog_product_id": ln.catalog_product_id,
                     "our_product_id": ln.our_product_id,
+                    "vendor_product_id": prod.vendor_product_id if prod else None,
                     "total_quantity": 0,
                     "total_placed": 0,
                     "total_received": 0,
@@ -204,6 +205,7 @@ def _build_detail(db: Session, order: VendorOrder, *, open_only: bool = False) -
                     placement_id=p.id,
                     catalog_product_id=ln.catalog_product_id,
                     our_product_id=ln.our_product_id,
+                    vendor_product_id=prod.vendor_product_id if prod else None,
                     quantity=qty,
                     quantity_remaining=ln.quantity_remaining,
                     quantity_billed=ln.quantity_billed,
@@ -756,6 +758,7 @@ def get_vendor_order_summary(
             OrderSummaryLine(
                 catalog_product_id=cat_id,
                 our_product_id=prod.our_product_id,
+                vendor_product_id=prod.vendor_product_id,
                 total_placed=placed_map.get(cat_id, 0),
                 total_received=received_map.get(cat_id, 0),
                 total_pending=pending_map.get(cat_id, 0),
@@ -1080,6 +1083,7 @@ def _open_line_out(db: Session, row: VendorOpenLine) -> OpenLineOut:
         id=row.id,
         catalog_product_id=row.catalog_product_id,
         our_product_id=row.our_product_id,
+        vendor_product_id=prod.vendor_product_id if prod else None,
         quantity=row.quantity,
         buying_price=str(row.buying_price),
         unit=prod.unit if prod else None,
@@ -1150,10 +1154,13 @@ def get_vendor_closed_lines(
     auth: AuthContext = Depends(require_permission("vendor_orders.read")),
 ):
     _vendor_context(db, vendor_id)
-    out: list[ClosedLineOut] = []
-    for row in db.query(VendorOpenLine).filter(
+    open_rows = db.query(VendorOpenLine).filter(
         VendorOpenLine.vendor_id == vendor_id, VendorOpenLine.status == "closed"
-    ).order_by(VendorOpenLine.updated_at.desc()).all():
+    ).order_by(VendorOpenLine.updated_at.desc()).all()
+    products: dict[int, CatalogProduct] = {}
+    pids = {r.catalog_product_id for r in open_rows}
+    out: list[ClosedLineOut] = []
+    for row in open_rows:
         out.append(
             ClosedLineOut(
                 id=row.id,
@@ -1182,6 +1189,7 @@ def get_vendor_closed_lines(
                 StockReceipt.billed_placement_id == p.id, StockReceipt.deleted_at.is_(None)
             ).first()
             plines = db.query(VendorOrderLine).filter(VendorOrderLine.placement_id == p.id).all()
+            pids.update(ln.catalog_product_id for ln in plines)
             for ln in plines:
                 out.append(
                     ClosedLineOut(
@@ -1197,6 +1205,11 @@ def get_vendor_closed_lines(
                         placement_id=p.id,
                     )
                 )
+    if pids:
+        products = {row.id: row for row in db.query(CatalogProduct).filter(CatalogProduct.id.in_(pids)).all()}
+    for item in out:
+        prod = products.get(item.catalog_product_id)
+        item.vendor_product_id = prod.vendor_product_id if prod else None
     return out
 
 

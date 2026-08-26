@@ -38,6 +38,7 @@ class PlacementLineDetail(BaseModel):
     placement_id: int
     catalog_product_id: int
     our_product_id: str
+    vendor_product_id: Optional[str] = None
     quantity: int
     quantity_remaining: Optional[int] = None
     quantity_billed: Optional[int] = None
@@ -52,6 +53,7 @@ class PlacementLineDetail(BaseModel):
 class AggregatedLine(BaseModel):
     catalog_product_id: int
     our_product_id: str
+    vendor_product_id: Optional[str] = None
     total_quantity: int
     total_placed: int = 0
     total_received: int = 0
@@ -118,6 +120,7 @@ class VendorOrderDetail(BaseModel):
 class OrderSummaryLine(BaseModel):
     catalog_product_id: int
     our_product_id: str
+    vendor_product_id: Optional[str] = None
     total_placed: int
     total_received: int
     total_pending: int
@@ -168,6 +171,7 @@ class OpenLineOut(BaseModel):
     id: int
     catalog_product_id: int
     our_product_id: str
+    vendor_product_id: Optional[str] = None
     quantity: int
     buying_price: str
     unit: Optional[str] = None
@@ -185,6 +189,7 @@ class ClosedLineOut(BaseModel):
     id: int
     catalog_product_id: int
     our_product_id: str
+    vendor_product_id: Optional[str] = None
     quantity: int
     buying_price: str
     source: str  # open | billed

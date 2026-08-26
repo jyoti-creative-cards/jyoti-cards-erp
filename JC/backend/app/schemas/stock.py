@@ -4,13 +4,25 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.debit_note import DebitNoteIn
 
 
 class VoidIn(BaseModel):
     reason: Optional[str] = None
+
+
+class StockAdjustIn(BaseModel):
+    quantity_delta: int = Field(..., description="Positive to add stock, negative to remove")
+    reason: str = Field(..., min_length=1, max_length=500)
+
+    @field_validator("quantity_delta")
+    @classmethod
+    def _nonzero(cls, v: int) -> int:
+        if v == 0:
+            raise ValueError("quantity_delta must not be zero")
+        return v
 
 
 class StockProductSummary(BaseModel):
@@ -160,6 +172,7 @@ class VendorPendingBillList(BaseModel):
 class ReceiptLineForBill(BaseModel):
     catalog_product_id: int
     our_product_id: str
+    vendor_product_id: Optional[str] = None
     quantity_received: int
     buying_price: str
     unit: Optional[str] = None

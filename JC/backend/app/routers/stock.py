@@ -24,6 +24,7 @@ from app.schemas.stock import (
     ReceiptForBillDetail,
     ReceiptLineForBill,
     SellingPriceUpdate,
+    StockAdjustIn,
     StockThresholdUpdate,
     StockLedgerEntry,
     StockProductDetail,
@@ -343,6 +344,12 @@ def get_ledger_entry_detail(
         receipt = db.get(StockReceipt, entry.reference_id)
         if receipt:
             rlines = db.query(StockReceiptLine).filter(StockReceiptLine.receipt_id == receipt.id).all()
+            rproducts = {
+                p.id: p
+                for p in db.query(CatalogProduct).filter(
+                    CatalogProduct.id.in_([ln.catalog_product_id for ln in rlines])
+                ).all()
+            } if rlines else {}
             receipt_data = {
                 "id": receipt.id,
                 "vendor_id": receipt.vendor_id,
@@ -353,6 +360,7 @@ def get_ledger_entry_detail(
                 "lines": [
                     {
                         "our_product_id": ln.our_product_id,
+                        "vendor_product_id": (rproducts.get(ln.catalog_product_id).vendor_product_id if rproducts.get(ln.catalog_product_id) else None),
                         "quantity_received": ln.quantity_received,
                         "quantity_billed": ln.quantity_billed,
                         "billed_amount": format(ln.billed_amount, "f"),
@@ -476,6 +484,47 @@ def update_stock_threshold(
     return StockProductSummary(**d)
 
 
+@router.post("/products/{catalog_product_id}/adjust", response_model=StockProductSummary, dependencies=[Depends(require_admin)])
+def adjust_stock(
+    catalog_product_id: int,
+    body: StockAdjustIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(get_auth_context),
+):
+    """Manual stock correction — no order/receipt involved. Admin-only; full ledger trail kept."""
+    row = db.get(CatalogProduct, catalog_product_id)
+    if not row or not row.is_active:
+        raise HTTPException(404, "product not found")
+    from app.services.stock_receipt import add_stock
+
+    balance = add_stock(
+        db,
+        catalog_product_id=catalog_product_id,
+        our_product_id=row.our_product_id,
+        quantity=body.quantity_delta,
+        entry_type="manual_adjustment",
+        reference_type="manual_adjustment",
+        reference_id=catalog_product_id,
+        party=auth.actor_name,
+        notes=body.reason.strip(),
+    )
+    log_from_auth(
+        db,
+        auth,
+        action="adjust",
+        entity_type="catalog",
+        entity_id=row.id,
+        entity_label=row.our_product_id,
+        detail=f"stock {'+' if body.quantity_delta > 0 else ''}{body.quantity_delta} — {body.reason.strip()[:120]}",
+    )
+    db.commit()
+    response_cache.invalidate("stock:")
+    response_cache.invalidate("shop:")
+    db.refresh(balance)
+    d = _product_public(row, db, balance.quantity_on_hand, balance.low_stock_threshold)
+    return StockProductSummary(**d)
+
+
 @router.get("/vendor-order/{vendor_id}/placed", response_model=VendorPlacedOrderForReceipt)
 def get_placed_order_for_receipt(
     vendor_id: int,
@@ -591,6 +640,7 @@ def get_receipt_for_bill(
         lines.append(ReceiptLineForBill(
             catalog_product_id=ln.catalog_product_id,
             our_product_id=ln.our_product_id,
+            vendor_product_id=prod.vendor_product_id if prod else None,
             quantity_received=ln.quantity_received,
             buying_price=format(ln.buying_price, "f"),
             unit=prod.unit if prod else None,
@@ -635,8 +685,15 @@ def preview_receipt_bill(
         for ln_in in (body.lines or [])
         if ln_in.quantity_billed is not None
     }
+    products = {
+        p.id: p
+        for p in db.query(CatalogProduct).filter(
+            CatalogProduct.id.in_([ln.catalog_product_id for ln in rlines])
+        ).all()
+    } if rlines else {}
     result = preview_bill_deviations(
         db, vendor, rlines, billed_qty_by_pid, body.total_billed_amount.quantize(Decimal("0.01")),
+        products=products,
     )
     return BillPreviewOut(**result)
 
@@ -744,6 +801,12 @@ def get_receipt_detail(
         .all()
     )
     history = list_entity_history(db, "stock_receipt", receipt.id)
+    products = {
+        p.id: p
+        for p in db.query(CatalogProduct).filter(
+            CatalogProduct.id.in_([ln.catalog_product_id for ln in rlines])
+        ).all()
+    } if rlines else {}
     data = {
         "id": receipt.id,
         "vendor_id": receipt.vendor_id,
@@ -767,6 +830,7 @@ def get_receipt_detail(
             {
                 "catalog_product_id": ln.catalog_product_id,
                 "our_product_id": ln.our_product_id,
+                "vendor_product_id": (products.get(ln.catalog_product_id).vendor_product_id if products.get(ln.catalog_product_id) else None),
                 "quantity_received": ln.quantity_received,
                 "quantity_billed": ln.quantity_billed,
                 "billed_amount": format(ln.billed_amount, "f"),
@@ -781,6 +845,7 @@ def get_receipt_detail(
                 "direction": n.direction,
                 "catalog_product_id": n.catalog_product_id,
                 "our_product_id": n.our_product_id,
+                "vendor_product_id": (products.get(n.catalog_product_id).vendor_product_id if n.catalog_product_id and products.get(n.catalog_product_id) else None),
                 "quantity": n.quantity,
                 "amount": format(n.amount, "f"),
                 "payable_effect": format(debit_note_payable_effect(n.amount, n.note_type), "f"),
@@ -865,10 +930,17 @@ def get_receipt_lines(
     if not receipt:
         raise HTTPException(404, "receipt not found")
     lines = db.query(StockReceiptLine).filter(StockReceiptLine.receipt_id == receipt_id).all()
+    products = {
+        p.id: p
+        for p in db.query(CatalogProduct).filter(
+            CatalogProduct.id.in_([ln.catalog_product_id for ln in lines])
+        ).all()
+    } if lines else {}
     return [
         {
             "catalog_product_id": ln.catalog_product_id,
             "our_product_id": ln.our_product_id,
+            "vendor_product_id": (products.get(ln.catalog_product_id).vendor_product_id if products.get(ln.catalog_product_id) else None),
             "buying_price": format(ln.buying_price, "f"),
             "quantity_received": ln.quantity_received,
         }

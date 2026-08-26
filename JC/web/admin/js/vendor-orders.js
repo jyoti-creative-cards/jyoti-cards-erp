@@ -374,7 +374,7 @@ const VendorOrders = (() => {
         const img = (l.image_urls && l.image_urls[0]) || "";
         return `<tr>
           <td>${thumb(img, "vo-thumb-sm")}</td>
-          <td><strong>${ctx.esc(l.our_product_id)}</strong></td>
+          <td><strong>${ctx.esc(ctx.productIdLabel(l))}</strong></td>
           <td><strong>${l.quantity}</strong></td>
           <td>${fmtPrice(l.buying_price)}</td>
         </tr>`;
@@ -465,7 +465,7 @@ const VendorOrders = (() => {
           </div>` : ""}
         </div>
         ${plines.length ? `<table class="data vo-hub-table"><thead><tr><th>Product</th><th>Qty</th><th>Unbilled</th></tr></thead><tbody>
-          ${plines.map(l => `<tr><td>${ctx.esc(l.our_product_id)}</td><td>${l.quantity}</td><td>${l.quantity_remaining != null ? l.quantity_remaining : "—"}</td></tr>`).join("")}
+          ${plines.map(l => `<tr><td>${ctx.esc(ctx.productIdLabel(l))}</td><td>${l.quantity}</td><td>${l.quantity_remaining != null ? l.quantity_remaining : "—"}</td></tr>`).join("")}
         </tbody></table>` : ""}
         ${p.bill_file_url ? `<p style="margin:8px 0 0;"><a class="btn btn-secondary btn-sm" href="${ctx.esc(p.bill_file_url)}" target="_blank" rel="noopener">View receipt file</a></p>` : ""}
       </div>`;
@@ -514,7 +514,7 @@ const VendorOrders = (() => {
     return `<table class="data vo-hub-table"><thead><tr><th></th><th>Product</th><th>Qty</th><th>Price</th>${canEdit ? "<th></th>" : ""}</tr></thead><tbody>
       ${lines.map(l => `<tr>
         <td>${thumb((l.image_urls && l.image_urls[0]) || "", "vo-thumb-sm")}</td>
-        <td><strong>${ctx.esc(l.our_product_id)}</strong></td>
+        <td><strong>${ctx.esc(ctx.productIdLabel(l))}</strong></td>
         <td><strong>${l.quantity}</strong></td>
         <td>${fmtPrice(l.buying_price)}</td>
         ${canEdit ? `<td style="white-space:nowrap;">
@@ -585,7 +585,7 @@ const VendorOrders = (() => {
     let html = `<table class="data vo-hub-table"><thead><tr><th></th><th>Product</th><th>Recv</th><th>Billed qty</th>${showAmt ? "<th>Amount</th>" : ""}</tr></thead><tbody>
       ${lines.map(l => `<tr>
         <td>${thumb((l.image_urls && l.image_urls[0]) || "", "vo-thumb-sm")}</td>
-        <td><strong>${ctx.esc(l.our_product_id)}</strong></td>
+        <td><strong>${ctx.esc(ctx.productIdLabel(l))}</strong></td>
         <td>${l.quantity}</td>
         <td>${l.quantity_billed ?? "—"}</td>
         ${showAmt ? `<td>${fmtAmtOrDash(l.billed_amount)}</td>` : ""}
@@ -692,7 +692,7 @@ const VendorOrders = (() => {
         ${open ? `<div class="vo-nested-expand">
           <table class="data vo-hub-table"><thead><tr><th>Product</th><th>Qty</th><th>Price</th></tr></thead><tbody>
             ${bill.lines.map(l => `<tr>
-              <td><strong>${ctx.esc(l.our_product_id)}</strong></td>
+              <td><strong>${ctx.esc(ctx.productIdLabel(l))}</strong></td>
               <td>${l.quantity}</td>
               <td>${fmtPrice(l.buying_price)}</td>
             </tr>`).join("")}
@@ -704,7 +704,7 @@ const VendorOrders = (() => {
       html += `<div class="vo-section-label">Closed from Open</div>`;
       html += `<table class="data vo-hub-table"><thead><tr><th>Product</th><th>Qty</th><th>Note</th><th>Closed</th></tr></thead><tbody>
         ${openClosed.map(l => `<tr>
-          <td><strong>${ctx.esc(l.our_product_id)}</strong></td>
+          <td><strong>${ctx.esc(ctx.productIdLabel(l))}</strong></td>
           <td>${l.quantity}</td>
           <td>${l.close_reason ? `<span class="vo-note-inline">${ctx.esc(l.close_reason)}</span>` : "—"}</td>
           <td class="vo-muted">${l.closed_at ? new Date(l.closed_at).toLocaleString() : "—"}</td>
@@ -997,7 +997,7 @@ const VendorOrders = (() => {
             open: !!lines.length,
             canWrite: !!canWrite,
             expandHtml: lines.length ? `<table class="data vo-hub-table"><thead><tr><th>Product</th><th>Qty</th><th>Unbilled</th></tr></thead><tbody>
-              ${lines.map(l => `<tr><td>${ctx.esc(l.our_product_id)}</td><td>${l.quantity}</td><td>${l.quantity_remaining != null ? l.quantity_remaining : "—"}</td></tr>`).join("")}
+              ${lines.map(l => `<tr><td>${ctx.esc(ctx.productIdLabel(l))}</td><td>${l.quantity}</td><td>${l.quantity_remaining != null ? l.quantity_remaining : "—"}</td></tr>`).join("")}
             </tbody></table>` : "",
           });
         }).join("") : HubUI.emptyState({ title: "No receives yet", sub: "Receive goods from the Open or Placed stage." })}</div>`;
@@ -1162,6 +1162,7 @@ const VendorOrders = (() => {
         if (b.placement_id === placementId) {
           out.push({
             our_product_id: agg.our_product_id,
+            vendor_product_id: agg.vendor_product_id,
             image_urls: agg.image_urls,
             buying_price: agg.buying_price,
             quantity: b.quantity,
@@ -1212,7 +1213,7 @@ const VendorOrders = (() => {
           const img = (l.image_urls && l.image_urls[0]) || "";
           return `<tr>
             <td>${thumb(img, "vo-thumb-sm")}</td>
-            <td><strong>${ctx.esc(l.our_product_id)}</strong></td>
+            <td><strong>${ctx.esc(ctx.productIdLabel(l))}</strong></td>
             <td>${l.quantity}</td>
             <td>${l.quantity_billed ?? "—"}</td>
             ${showAmt ? `<td>${fmtAmtOrDash(l.billed_amount)}</td>` : ""}
@@ -1378,7 +1379,7 @@ const VendorOrders = (() => {
   function openLinesConfirmRows(lines, vendorLabel) {
     const rows = [["Vendor", ctx.esc(vendorLabel || "—")]];
     (lines || []).slice(0, 8).forEach(l => {
-      rows.push(["Product", `${ctx.esc(l.our_product_id)} — ${l.quantity} @ ${fmtPrice(l.buying_price)}`]);
+      rows.push(["Product", `${ctx.esc(ctx.productIdLabel(l))} — ${l.quantity} @ ${fmtPrice(l.buying_price)}`]);
     });
     if ((lines || []).length > 8) rows.push(["More", `${lines.length - 8} additional lines`]);
     rows.push(["Total pending", String((lines || []).reduce((s, l) => s + (l.quantity || 0), 0))]);
@@ -2174,7 +2175,7 @@ const VendorOrders = (() => {
     document.getElementById("vo-edit-body").innerHTML = `
       <label class="label">Product</label>
       <select class="input" id="vo-edit-product" style="margin-bottom:12px;">
-        ${vendorProductsCache.map(p => `<option value="${p.id}" ${p.id === line.catalog_product_id ? "selected" : ""}>${ctx.esc(p.our_product_id)}</option>`).join("")}
+        ${vendorProductsCache.map(p => `<option value="${p.id}" ${p.id === line.catalog_product_id ? "selected" : ""}>${ctx.esc(ctx.productIdLabel(p))}</option>`).join("")}
       </select>
       <label class="label">Quantity</label>
       <input type="number" min="1" class="input" id="vo-edit-qty" value="${line.quantity}" />`;

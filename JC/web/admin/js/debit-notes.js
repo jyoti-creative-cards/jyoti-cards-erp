@@ -120,7 +120,7 @@ const DebitNotes = (() => {
       if (recv != null || billed != null) {
         hint += ` · recv ${recv ?? 0} / bill ${billed ?? 0}`;
       }
-      return `<option value="${l.catalog_product_id}" ${note?.catalog_product_id === l.catalog_product_id ? "selected" : ""}>${ctx.esc(l.our_product_id)} · ${hint}</option>`;
+      return `<option value="${l.catalog_product_id}" ${note?.catalog_product_id === l.catalog_product_id ? "selected" : ""}>${ctx.esc(ctx.productIdLabel(l))} · ${hint}</option>`;
     }).join("");
 
     body.innerHTML = `
@@ -251,7 +251,7 @@ const DebitNotes = (() => {
     const info = calcEffect();
     if (!info) return;
     const summary = info.type === "item"
-      ? `${info.label}: ${info.line.our_product_id} × ${info.qtyAbs}`
+      ? `${info.label}: ${ctx.productIdLabel(info.line)} × ${info.qtyAbs}`
       : `${info.label}: ${fmtPrice(info.valAbs)}`;
     if (!confirm(`${summary}\nYou ${info.effect < 0 ? "pay less" : "pay more"} by ${fmtPrice(Math.abs(info.effect))}.\n\nAdd this debit note?`)) return;
     // Wizard queue (no receipt yet): hand payload to parent
@@ -377,7 +377,7 @@ const DebitNotes = (() => {
         const effect = n.payable_effect != null ? n.payable_effect : (n.note_type === "item" ? -Number(n.amount) : Number(n.amount));
         const payLess = Number(effect) < 0;
         const title = n.note_type === "item"
-          ? `${ctx.esc(n.our_product_id || "Item")} × ${n.quantity}${n.direction ? ` (${ctx.esc(n.direction)})` : ""}`
+          ? `${ctx.esc(n.our_product_id ? ctx.productIdLabel(n) : "Item")} × ${n.quantity}${n.direction ? ` (${ctx.esc(n.direction)})` : ""}`
           : `Value ${ctx.esc(n.direction || "adj.")}`;
         const autoTag = n.source === "auto" ? ` <span class="badge badge-blue" style="font-size:10px;">auto</span>` : "";
         const voided = !!n.deleted_at;

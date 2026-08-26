@@ -133,19 +133,25 @@ const Finance = (() => {
     const sub = document.getElementById("finance-hub-sub");
     if (sub) sub.textContent = CHIP_SUB[activeChip] || "Collect, pay, and track cash";
 
+    const scopedArAp = !ctx.isAdmin?.() && (ctx.can?.("ar.read") || ctx.can?.("ap.read"));
+    const allChips = [
+      { id: "due", label: "To do", count: chipCounts.due || undefined },
+      { id: "ar", label: "To collect", count: chipCounts.ar || undefined },
+      { id: "ap", label: "To pay", count: chipCounts.ap || undefined },
+      { id: "freight", label: "Freight", count: chipCounts.freight || undefined },
+      { id: "expenses", label: "Other spend" },
+      { id: "routes", label: "Routes" },
+      { id: "reports", label: "Cash snapshot" },
+    ];
+    const items = scopedArAp
+      ? allChips.filter(i =>
+        (i.id === "ar" && ctx.can?.("ar.read")) || (i.id === "ap" && ctx.can?.("ap.read")))
+      : allChips;
     OrdersUI.actionChips({
       hostId: "finance-action-chips",
       active: activeChip,
       onclickFn: "Finance.setChip",
-      items: [
-        { id: "due", label: "To do", count: chipCounts.due || undefined },
-        { id: "ar", label: "To collect", count: chipCounts.ar || undefined },
-        { id: "ap", label: "To pay", count: chipCounts.ap || undefined },
-        { id: "freight", label: "Freight", count: chipCounts.freight || undefined },
-        { id: "expenses", label: "Other spend" },
-        { id: "routes", label: "Routes" },
-        { id: "reports", label: "Cash snapshot" },
-      ],
+      items,
     });
 
     const needs = document.getElementById("finance-needs");
@@ -181,6 +187,7 @@ const Finance = (() => {
 
   function showHub() {
     if (!ctx.isAdmin?.()) {
+      if (ctx.can?.("ar.read") || ctx.can?.("ap.read")) { showArApHub(); return; }
       if (ctx.can?.("finance.write")) { showQuickEntry(); return; }
       ctx.toast?.("Finance is admin only", "error");
       ctx.showView?.("today");
@@ -229,6 +236,24 @@ const Finance = (() => {
         <button class="btn btn-primary" onclick="Finance.quickCustomerPayment()">Record customer payment</button>
         <button class="btn btn-primary" onclick="Finance.quickAddExpense()">+ Add expense</button>
       </div>`;
+    App.updateGlobalBack?.();
+  }
+
+  /** AR/AP-scoped view — full ledgers, outstanding & payments for AR/AP only. No P&L, revenue, freight or reports. */
+  function showArApHub() {
+    document.getElementById("finance-hub")?.classList.remove("hidden");
+    document.getElementById("finance-ap-detail")?.classList.add("hidden");
+    document.getElementById("finance-ar-detail")?.classList.add("hidden");
+    document.getElementById("finance-freight-detail")?.classList.add("hidden");
+    document.getElementById("finance-routes-detail")?.classList.add("hidden");
+    currentVendor = null;
+    currentCustomer = null;
+    apDetail = null;
+    arDetail = null;
+    const strip = document.getElementById("finance-hub-strip");
+    if (strip) strip.innerHTML = "";
+    const startChip = ctx.can?.("ar.read") ? "ar" : "ap";
+    setChip(startChip, true);
     App.updateGlobalBack?.();
   }
 
@@ -755,7 +780,7 @@ const Finance = (() => {
   }
 
   async function openVendorAp(vendorId, opts = {}) {
-    if (!ctx.isAdmin?.()) return ctx.toast?.("Finance is admin only", "error");
+    if (!ctx.isAdmin?.() && !ctx.can?.("ap.read")) return ctx.toast?.("Not permitted", "error");
     ctx.showLoading?.();
     try {
       apDetail = await ctx.api(`/accounts-payable/vendor/${vendorId}`, {}, 0);
@@ -791,9 +816,9 @@ const Finance = (() => {
         title: apDetail.vendor_label,
         sub: `Pay vendors · ${outstanding > 0 ? `${fmtPrice(outstanding)} due` : "Clear"}`,
         actionsHtml: `
-            ${outstanding > 0 ? `<button class="btn btn-primary" onclick="Finance.openSettle()">Pay</button>` : ""}
+            ${outstanding > 0 && (ctx.isAdmin?.() || ctx.can?.("ap.write")) ? `<button class="btn btn-primary" onclick="Finance.openSettle()">Pay</button>` : ""}
             <button class="btn btn-secondary" onclick="Finance.shareApStatement()">Print / PDF / WA</button>
-            <button class="btn btn-secondary" onclick="Finance.setApOpeningBalance()">Set opening</button>
+            ${ctx.isAdmin?.() ? `<button class="btn btn-secondary" onclick="Finance.setApOpeningBalance()">Set opening</button>` : ""}
             ${typeof Vendors !== "undefined" ? `<button class="btn btn-secondary" onclick="App.showView('people');Vendors.openDetail(${currentVendor})">Open vendor</button>` : ""}`,
       });
     }
@@ -974,6 +999,7 @@ const Finance = (() => {
 
   function openSettle() {
     if (!apDetail) return;
+    if (!ctx.isAdmin?.() && !ctx.can?.("ap.write")) return ctx.toast?.("Not permitted", "error");
     const outstanding = Number(apDetail.outstanding) || 0;
     const title = document.querySelector("#settle-modal h3");
     if (title) title.textContent = "Pay";
@@ -1054,14 +1080,14 @@ const Finance = (() => {
   }
 
   function showApFromVendor(vendorId) {
-    if (!ctx.isAdmin?.()) return ctx.toast?.("Finance is admin only", "error");
+    if (!ctx.isAdmin?.() && !ctx.can?.("ap.read")) return ctx.toast?.("Not permitted", "error");
     App.closeDetail?.();
     ctx.showView?.("money");
     openVendorAp(vendorId);
   }
 
   function showArFromCustomer(customerId) {
-    if (!ctx.isAdmin?.()) return ctx.toast?.("Finance is admin only", "error");
+    if (!ctx.isAdmin?.() && !ctx.can?.("ar.read")) return ctx.toast?.("Not permitted", "error");
     App.closeDetail?.();
     ctx.showView?.("money");
     openCustomerAr(customerId);
@@ -1130,7 +1156,7 @@ const Finance = (() => {
   }
 
   async function openCustomerAr(customerId, opts = {}) {
-    if (!ctx.isAdmin?.()) return;
+    if (!ctx.isAdmin?.() && !ctx.can?.("ar.read")) return ctx.toast?.("Not permitted", "error");
     ctx.showLoading?.();
     try {
       arDetail = await ctx.api(`/accounts-receivable/customer/${customerId}`, {}, 0);
@@ -1160,9 +1186,9 @@ const Finance = (() => {
         title: arDetail.customer_label,
         sub: `Collect · ${outstanding > 0 ? `${fmtPrice(outstanding)} due` : "Clear"}`,
         actionsHtml: `
-            ${outstanding > 0 ? `<button class="btn btn-primary" onclick="Finance.openArSettle()">Collect</button>` : ""}
+            ${outstanding > 0 && (ctx.isAdmin?.() || ctx.can?.("ar.write")) ? `<button class="btn btn-primary" onclick="Finance.openArSettle()">Collect</button>` : ""}
             <button class="btn btn-secondary" onclick="Finance.shareArStatement()">Print / PDF / WA</button>
-            <button class="btn btn-secondary" onclick="Finance.setArOpeningBalance()">Set opening</button>
+            ${ctx.isAdmin?.() ? `<button class="btn btn-secondary" onclick="Finance.setArOpeningBalance()">Set opening</button>` : ""}
             <button class="btn btn-secondary" onclick="App.openCustomerDetail(${currentCustomer})">Open customer</button>`,
       });
     }
@@ -1421,6 +1447,7 @@ const Finance = (() => {
 
   async function openArSettle() {
     if (!arDetail) return;
+    if (!ctx.isAdmin?.() && !ctx.can?.("ar.write")) return ctx.toast?.("Not permitted", "error");
     const outstanding = Number(arDetail.outstanding) || 0;
     try {
       paymentModes = await ctx.api("/payment-modes?active_only=true", {}, 30000) || [];
@@ -2224,7 +2251,7 @@ const Finance = (() => {
   }
 
   return {
-    init, showHub, showQuickEntry, quickVendorPayment, quickCustomerPayment, quickAddExpense,
+    init, showHub, showQuickEntry, showArApHub, quickVendorPayment, quickCustomerPayment, quickAddExpense,
     setHubMode, setChip, setHubSearch, setBrowseSection, setShowSettled, setReportTab,
     showAp, showAr, showExpenses, showRevenue, showCost, showPnl, showFreight,
     showRouteCollections, openRouteCollection, openRouteCustomer, backRouteCustomers, printRouteCollection,

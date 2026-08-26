@@ -141,7 +141,9 @@ const Vendors = (() => {
     const el = document.getElementById("vendor-actions-wrap");
     if (!el) return;
     const canBuy = !!(ctx.canWrite?.("vendors") || ctx.canWrite?.("vendor_orders"));
-    const due = ctx.isAdmin?.() && vendorAp && Number(vendorAp.outstanding) > 0;
+    const canSeeAp = !!(ctx.isAdmin?.() || ctx.can?.("ap.read"));
+    const canPayAp = !!(ctx.isAdmin?.() || ctx.can?.("ap.write"));
+    const due = canSeeAp && vendorAp && Number(vendorAp.outstanding) > 0;
     const bits = [];
     // Everyday jobs stay visible — place first, or goods already here (offline).
     if (canBuy) {
@@ -149,16 +151,16 @@ const Vendors = (() => {
       bits.push(`<button class="btn btn-secondary btn-sm" onclick="Vendors.stockIn(${id})">Stock in</button>`);
       bits.push(`<button class="btn btn-secondary btn-sm" onclick="Vendors.openBuying(${id})">Orders</button>`);
     }
-    if (due) {
+    if (due && canPayAp) {
       bits.push(`<button class="btn btn-secondary btn-sm" onclick="Vendors.settlePayment(${id})">Pay</button>`);
     }
     const more = [];
     if (canBuy) {
       more.push(`<button type="button" onclick="Vendors.receiveGoods(${id})">Receive against order</button>`);
     }
+    if (canPayAp && !due) more.push(`<button type="button" onclick="Vendors.settlePayment(${id})">Pay</button>`);
+    if (canSeeAp) more.push(`<button type="button" onclick="Vendors.openMoney(${id})">Money statement</button>`);
     if (ctx.isAdmin?.()) {
-      if (!due) more.push(`<button type="button" onclick="Vendors.settlePayment(${id})">Pay</button>`);
-      more.push(`<button type="button" onclick="Vendors.openMoney(${id})">Money statement</button>`);
       more.push(`<button type="button" onclick="Vendors.setOpeningBalance(${id})">Opening</button>`);
     }
     if (more.length) {
@@ -173,7 +175,7 @@ const Vendors = (() => {
     try {
       const [ledgerRes, ap] = await Promise.all([
         ctx.api(`/vendors/${id}/ledger`, {}, 0),
-        ctx.isAdmin?.() ? ctx.api(`/accounts-payable/vendor/${id}`, {}, 0).catch(() => null) : Promise.resolve(null),
+        (ctx.isAdmin?.() || ctx.can?.("ap.read")) ? ctx.api(`/accounts-payable/vendor/${id}`, {}, 0).catch(() => null) : Promise.resolve(null),
       ]);
       vendorLedger = ledgerRes.items || [];
       vendorAp = ap;
@@ -294,7 +296,7 @@ const Vendors = (() => {
           </div>
           <div class="vled-actions">
             ${d.payment_receipt_url ? `<a class="btn btn-secondary btn-sm" href="${ctx.esc(d.payment_receipt_url)}" target="_blank">Payment receipt</a>` : ""}
-            ${ctx.isAdmin?.() ? `<button class="btn btn-primary btn-sm" onclick="Vendors.settlePayment(${vendorId})">Pay again</button>` : ""}
+            ${(ctx.isAdmin?.() || ctx.can?.("ap.write")) ? `<button class="btn btn-primary btn-sm" onclick="Vendors.settlePayment(${vendorId})">Pay again</button>` : ""}
             ${ctx.isAdmin?.() && d.ledger_entry_id && !d.reversed ? `
               <button class="btn btn-secondary btn-sm" onclick="Finance.undoApPayment(${d.ledger_entry_id},'reverse',${vendorId})">Reverse</button>
               <button class="btn btn-ghost btn-sm" onclick="Finance.undoApPayment(${d.ledger_entry_id},'void',${vendorId})">Void</button>
@@ -346,7 +348,7 @@ const Vendors = (() => {
 
   function settlePayment(vendorId) {
     if (typeof Finance === "undefined") return;
-    if (!ctx.isAdmin?.()) return ctx.toast?.("Finance is admin only", "error");
+    if (!ctx.isAdmin?.() && !ctx.can?.("ap.write")) return ctx.toast?.("Not permitted", "error");
     App.closeDetail();
     App.showView("money");
     Finance.openVendorAp?.(vendorId, { settle: true });

@@ -17,6 +17,14 @@ PERMISSION_GROUPS = [
     ("Stock", [("stock.read", "View stock"), ("stock.write", "Receive stock & edit prices")]),
     ("Costs", [("costs.read", "See our buying price / cost & margins")]),
     ("Finance", [("finance.write", "Record vendor/customer payments & add expenses — no totals or reports")]),
+    ("Accounts Receivable", [
+        ("ar.read", "See customer outstanding, ledger & statements"),
+        ("ar.write", "Collect customer payments with full figures"),
+    ]),
+    ("Accounts Payable", [
+        ("ap.read", "See vendor outstanding, bills & statements"),
+        ("ap.write", "Pay vendors & upload payment receipts"),
+    ]),
 ]
 
 ALL_STAFF_PERMISSIONS: List[str] = [p for _, perms in PERMISSION_GROUPS for p, _ in perms]

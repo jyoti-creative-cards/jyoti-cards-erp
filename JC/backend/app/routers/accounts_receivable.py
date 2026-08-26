@@ -38,12 +38,12 @@ def _customer_label(db: Session, customer_id: int) -> str:
 
 
 @router.get("", response_model=List[ArCustomerSummary])
-def list_accounts_receivable(db: Session = Depends(get_db), auth: AuthContext = Depends(require_admin)):
+def list_accounts_receivable(db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("ar.read"))):
     return [ArCustomerSummary(**row) for row in list_ar_customers(db)]
 
 
 @router.get("/customer/{customer_id}", response_model=ArCustomerDetail)
-def get_customer_ar(customer_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_admin)):
+def get_customer_ar(customer_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("ar.read"))):
     customer = db.get(Customer, customer_id)
     if not customer or customer.deleted_at:
         raise HTTPException(404, "customer not found")
@@ -108,7 +108,7 @@ def settle_customer_ar(
     customer_id: int,
     body: ArSettlementIn,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(require_admin),
+    auth: AuthContext = Depends(require_permission("ar.write")),
 ):
     customer = db.get(Customer, customer_id)
     if not customer or customer.deleted_at:

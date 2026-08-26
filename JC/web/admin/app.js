@@ -55,7 +55,7 @@ const App = (() => {
     document.getElementById("nav-today")?.classList.toggle("hidden", false);
     document.getElementById("nav-people")?.classList.toggle("hidden", !showPeople);
     document.getElementById("nav-products")?.classList.toggle("hidden", !showProducts);
-    document.getElementById("nav-money")?.classList.toggle("hidden", !(isAdmin() || can("finance.write")));
+    document.getElementById("nav-money")?.classList.toggle("hidden", !(isAdmin() || can("finance.write") || canRead("ar") || canRead("ap")));
     document.getElementById("nav-more")?.classList.toggle("hidden", false);
     document.getElementById("more-tile-buying")?.classList.toggle("hidden", !showBuying);
     document.getElementById("more-tile-selling")?.classList.toggle("hidden", !showSelling);
@@ -581,7 +581,7 @@ const App = (() => {
       Products.showHub();
       updateHubCounts();
     } else if (name === "money") {
-      if (!isAdmin() && !can("finance.write")) {
+      if (!isAdmin() && !can("finance.write") && !canRead("ar") && !canRead("ap")) {
         showView("today", { replace: true });
         return;
       }
@@ -1500,7 +1500,9 @@ const App = (() => {
     const el = document.getElementById("customer-actions-wrap");
     if (!el) return;
     const canSell = canWrite("customer_orders");
-    const due = isAdmin() && customerAr && Number(customerAr.outstanding) > 0;
+    const canSeeAr = isAdmin() || can("ar.read");
+    const canCollectAr = isAdmin() || can("ar.write");
+    const due = canSeeAr && customerAr && Number(customerAr.outstanding) > 0;
     const bits = [];
     // Everyday jobs: phone/offline order + bill + their order list.
     if (canSell) {
@@ -1508,16 +1510,16 @@ const App = (() => {
       bits.push(`<button class="btn btn-secondary btn-sm" onclick="App.billCustomer(${id})">Bill</button>`);
       bits.push(`<button class="btn btn-secondary btn-sm" onclick="App.openSelling(${id})">Orders</button>`);
     }
-    if (due) {
+    if (due && canCollectAr) {
       bits.push(`<button class="btn btn-secondary btn-sm" onclick="App.collectCustomer(${id})">Collect</button>`);
     }
     const more = [];
     if (canSell) {
       more.push(`<button type="button" onclick="App.closeDetail();App.showView('returns');Returns.openCreate?.(${id})">Return</button>`);
     }
+    if (canCollectAr && !due) more.push(`<button type="button" onclick="App.collectCustomer(${id})">Collect</button>`);
+    if (canSeeAr) more.push(`<button type="button" onclick="App.openCustomerMoney(${id})">Money statement</button>`);
     if (isAdmin()) {
-      if (!due) more.push(`<button type="button" onclick="App.collectCustomer(${id})">Collect</button>`);
-      more.push(`<button type="button" onclick="App.openCustomerMoney(${id})">Money statement</button>`);
       more.push(`<button type="button" onclick="App.setCustomerOpeningBalance(${id}, '${esc(openingDue || "")}', '${esc(openingAsOn || "")}')">Opening</button>`);
     }
     if (more.length) {
@@ -1532,7 +1534,7 @@ const App = (() => {
     try {
       const [ledgerRes, ar, cust] = await Promise.all([
         api(`/customers/${id}/ledger`, {}, 0),
-        isAdmin() ? api(`/accounts-receivable/customer/${id}`, {}, 0).catch(() => null) : Promise.resolve(null),
+        (isAdmin() || can("ar.read")) ? api(`/accounts-receivable/customer/${id}`, {}, 0).catch(() => null) : Promise.resolve(null),
         api(`/customers/${id}`, {}, 0).catch(() => null),
       ]);
       customerLedger = ledgerRes.items || [];
@@ -1634,8 +1636,8 @@ const App = (() => {
               <button class="btn btn-ghost btn-sm" onclick="Finance.undoArPayment(${d.ledger_entry_id},'void',${customerId})">Void</button>
             ` : ""}
             ${d.reversed ? `<span class="badge badge-amber">Reversed</span>` : ""}
-            ${isAdmin() ? `<button class="btn btn-secondary btn-sm" onclick="App.collectCustomer(${customerId})">Collect again</button>` : ""}
-            ${isAdmin() ? `<button class="btn btn-secondary btn-sm" onclick="Finance.showArFromCustomer(${customerId})">Open AR</button>` : ""}
+            ${(isAdmin() || can("ar.write")) ? `<button class="btn btn-secondary btn-sm" onclick="App.collectCustomer(${customerId})">Collect again</button>` : ""}
+            ${(isAdmin() || can("ar.read")) ? `<button class="btn btn-secondary btn-sm" onclick="Finance.showArFromCustomer(${customerId})">Open AR</button>` : ""}
           </div>
         </div>` : ""}
       </div>`;
@@ -1702,14 +1704,14 @@ const App = (() => {
   }
 
   function collectCustomer(customerId) {
-    if (!isAdmin()) return toast("Finance is admin only", "error");
+    if (!isAdmin() && !can("ar.write")) return toast("Not permitted", "error");
     closeDetail();
     showView("money");
     Finance.openCustomerAr?.(customerId, { settle: true });
   }
 
   function openCustomerMoney(customerId) {
-    if (!isAdmin()) return toast("Finance is admin only", "error");
+    if (!isAdmin() && !can("ar.read")) return toast("Not permitted", "error");
     closeDetail();
     showView("money");
     Finance.openCustomerAr?.(customerId);

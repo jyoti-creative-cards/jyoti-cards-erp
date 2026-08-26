@@ -38,7 +38,7 @@ router = APIRouter(prefix="/accounts-payable", tags=["accounts-payable"])
 @router.get("", response_model=List[ApVendorSummary])
 def list_accounts_payable(
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(require_admin),
+    auth: AuthContext = Depends(require_permission("ap.read")),
 ):
     return [ApVendorSummary(**row) for row in list_ap_vendors(db)]
 
@@ -47,7 +47,7 @@ def list_accounts_payable(
 def get_vendor_ap(
     vendor_id: int,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(require_admin),
+    auth: AuthContext = Depends(require_permission("ap.read")),
 ):
     vendor = db.get(Vendor, vendor_id)
     if not vendor or vendor.deleted_at:
@@ -107,7 +107,7 @@ def settle_vendor_ap(
     vendor_id: int,
     body: ApSettlementIn,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(require_admin),
+    auth: AuthContext = Depends(require_permission("ap.write")),
 ):
     vendor = db.get(Vendor, vendor_id)
     if not vendor or vendor.deleted_at:
@@ -272,7 +272,7 @@ async def upload_payment_receipt(
     payment_ref: str = Form(...),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(require_admin),
+    auth: AuthContext = Depends(require_permission("ap.write")),
 ) -> dict:
     if not storage_configured():
         raise HTTPException(503, "S3 not configured")

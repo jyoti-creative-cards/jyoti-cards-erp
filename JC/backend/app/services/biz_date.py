@@ -14,8 +14,10 @@ def resolve_biz_dt(d: date | datetime | None) -> datetime:
     """Resolve optional client date to UTC datetime.
 
     - None → now (UTC)
-    - date → noon that day in Asia/Kolkata (stable for IST day filters)
+    - date → that IST calendar day at the current IST clock (not noon/midnight)
     - datetime → converted to UTC (naive treated as Kolkata wall time)
+
+    Day-range filters must still use `ist_day_bounds_utc`, not this stamp.
     """
     if d is None:
         return datetime.now(timezone.utc)
@@ -25,7 +27,8 @@ def resolve_biz_dt(d: date | datetime | None) -> datetime:
         else:
             local = d.astimezone(_BIZ_TZ)
     else:
-        local = datetime(d.year, d.month, d.day, 12, 0, 0, tzinfo=_BIZ_TZ)
+        now_local = datetime.now(_BIZ_TZ)
+        local = now_local.replace(year=d.year, month=d.month, day=d.day)
 
     today = datetime.now(_BIZ_TZ).date()
     if local.date() > today + timedelta(days=1):

@@ -119,8 +119,6 @@ def settle_customer_ar(
     if outstanding <= 0:
         raise HTTPException(400, "no outstanding balance to settle")
     amount = body.amount.quantize(Decimal("0.01"))
-    if amount > outstanding:
-        raise HTTPException(400, f"payment cannot exceed outstanding ₹{outstanding}")
 
     from app.models.payment_mode import PaymentMode
 
@@ -188,8 +186,6 @@ def record_customer_payment(
     if outstanding <= 0:
         raise HTTPException(400, "No outstanding balance on this customer to record a payment against")
     amount = body.amount.quantize(Decimal("0.01"))
-    if amount > outstanding:
-        raise HTTPException(400, "Amount seems higher than what's on record — please double-check with the owner")
 
     from app.models.payment_mode import PaymentMode
 

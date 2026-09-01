@@ -118,8 +118,6 @@ def settle_vendor_ap(
     if outstanding <= 0:
         raise HTTPException(400, "no outstanding balance to settle")
     amount = body.amount.quantize(Decimal("0.01"))
-    if amount > outstanding:
-        raise HTTPException(400, f"payment cannot exceed outstanding ₹{outstanding}")
 
     entry = post_payment_entry(
         db,
@@ -168,8 +166,6 @@ def record_vendor_payment(
     if outstanding <= 0:
         raise HTTPException(400, "No outstanding balance on this vendor to record a payment against")
     amount = body.amount.quantize(Decimal("0.01"))
-    if amount > outstanding:
-        raise HTTPException(400, "Amount seems higher than what's on record — please double-check with the owner")
 
     entry = post_payment_entry(
         db,

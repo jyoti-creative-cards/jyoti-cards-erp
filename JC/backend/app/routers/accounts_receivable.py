@@ -17,6 +17,7 @@ from app.schemas.accounts_receivable import (
     OpeningBalanceIn,
 )
 from app.services.activity import log_from_auth
+from app.services.biz_date import today_ist
 from app.services.ar_ledger import (
     build_ar_ledger,
     customer_ar_totals,
@@ -139,6 +140,7 @@ def settle_customer_ar(
         desc_bits.append(f"via {mode_name}")
     desc_bits.append(f"— ₹{amount}")
 
+    pay_day = body.value_date or today_ist()
     entry = post_payment_entry(
         db,
         customer_id=customer_id,
@@ -150,6 +152,7 @@ def settle_customer_ar(
         actor_type=auth.actor_type,
         actor_id=auth.actor_id,
         actor_name=auth.actor_name,
+        value_date=pay_day,
     )
     log_from_auth(
         db,
@@ -206,6 +209,7 @@ def record_customer_payment(
         desc_bits.append(f"via {mode_name}")
     desc_bits.append(f"— ₹{amount}")
 
+    pay_day = body.value_date or today_ist()
     post_payment_entry(
         db,
         customer_id=customer_id,
@@ -217,6 +221,7 @@ def record_customer_payment(
         actor_type=auth.actor_type,
         actor_id=auth.actor_id,
         actor_name=auth.actor_name,
+        value_date=pay_day,
     )
     log_from_auth(
         db,

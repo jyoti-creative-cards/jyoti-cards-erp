@@ -67,6 +67,7 @@ class ApSettlementIn(BaseModel):
     amount: Decimal = Field(..., gt=0)
     payment_receipt_key: Optional[str] = None
     comment: Optional[str] = None
+    value_date: Optional[date] = None
 
 
 class OpeningBalanceIn(BaseModel):

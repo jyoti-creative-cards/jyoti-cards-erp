@@ -348,6 +348,7 @@ def post_payment_entry(
     actor_type: str,
     actor_id: Optional[int],
     actor_name: str,
+    value_date: Optional[date] = None,
 ) -> ApLedgerEntry:
     get_or_create_ap_account(db, vendor_id)
     entry = ApLedgerEntry(
@@ -358,6 +359,7 @@ def post_payment_entry(
         payment_receipt_key=payment_receipt_key,
         payment_comment=payment_comment,
         description=description,
+        value_date=value_date,
         created_by_type=actor_type,
         created_by_id=actor_id,
         created_by_name=actor_name,

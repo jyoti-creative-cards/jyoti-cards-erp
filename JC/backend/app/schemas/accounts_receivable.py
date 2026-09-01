@@ -63,6 +63,7 @@ class ArSettlementIn(BaseModel):
     payment_mode_id: Optional[int] = None
     amount: Decimal = Field(..., gt=0)
     comment: Optional[str] = None
+    value_date: Optional[date] = None
 
 
 class OpeningBalanceIn(BaseModel):

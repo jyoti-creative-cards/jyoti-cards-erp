@@ -227,6 +227,7 @@ def post_payment_entry(
     actor_id: Optional[int],
     actor_name: str,
     payment_mode: Optional[str] = None,
+    value_date: Optional[date] = None,
 ) -> ArLedgerEntry:
     get_or_create_ar_account(db, customer_id)
     entry = ArLedgerEntry(
@@ -237,6 +238,7 @@ def post_payment_entry(
         payment_mode=payment_mode,
         payment_comment=payment_comment,
         description=description,
+        value_date=value_date,
         created_by_type=actor_type,
         created_by_id=actor_id,
         created_by_name=actor_name,

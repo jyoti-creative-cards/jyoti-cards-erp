@@ -4,6 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.models.accounts_payable import ApLedgerEntry
@@ -28,6 +29,38 @@ def _day_bounds(d: date) -> tuple[datetime, datetime]:
 
 def _range_bounds(from_date: Optional[date], to_date: Optional[date]) -> tuple[Optional[datetime], Optional[datetime]]:
     return ist_range_bounds_utc(from_date, to_date)
+
+
+def _payment_on_ist_day(model, day: date):
+    start, end = _day_bounds(day)
+    return or_(
+        model.value_date == day,
+        and_(
+            model.value_date.is_(None),
+            model.created_at >= start,
+            model.created_at <= end,
+        ),
+    )
+
+
+def _payment_in_ist_range(model, from_date: Optional[date], to_date: Optional[date]):
+    start, end = _range_bounds(from_date, to_date)
+    created_clause = True
+    if start is not None:
+        created_clause = and_(created_clause, model.created_at >= start)
+    if end is not None:
+        created_clause = and_(created_clause, model.created_at <= end)
+    value_clause = True
+    if from_date is not None:
+        value_clause = and_(value_clause, model.value_date >= from_date)
+    if to_date is not None:
+        value_clause = and_(value_clause, model.value_date <= to_date)
+    if from_date is None and to_date is None:
+        return True
+    return or_(
+        and_(model.value_date.isnot(None), value_clause),
+        and_(model.value_date.is_(None), created_clause),
+    )
 
 
 def _batch_labels(db: Session, model, ids: set[int]) -> dict[int, "object"]:
@@ -143,11 +176,11 @@ def list_payments(db: Session, from_date: Optional[date] = None, to_date: Option
     start, end = _range_bounds(from_date, to_date)
     out: list[dict] = []
 
-    ar_q = db.query(ArLedgerEntry).filter(ArLedgerEntry.entry_type == "payment", ArLedgerEntry.deleted_at.is_(None))
-    if start:
-        ar_q = ar_q.filter(ArLedgerEntry.created_at >= start)
-    if end:
-        ar_q = ar_q.filter(ArLedgerEntry.created_at <= end)
+    ar_q = db.query(ArLedgerEntry).filter(
+        ArLedgerEntry.entry_type == "payment",
+        ArLedgerEntry.deleted_at.is_(None),
+        _payment_in_ist_range(ArLedgerEntry, from_date, to_date),
+    )
     ar_rows = ar_q.order_by(ArLedgerEntry.created_at.desc()).limit(300).all()
     ar_labels = _customer_labels(db, {e.customer_id for e in ar_rows})
     for e in ar_rows:
@@ -160,19 +193,17 @@ def list_payments(db: Session, from_date: Optional[date] = None, to_date: Option
                 "party_id": e.customer_id,
                 "party_label": ar_labels.get(e.customer_id) or f"Customer #{e.customer_id}",
                 "amount": format(abs(e.amount), "f"),
-                "date": e.created_at.date().isoformat() if e.created_at else None,
+                "date": (e.value_date.isoformat() if e.value_date else (e.created_at.date().isoformat() if e.created_at else None)),
                 "created_at": e.created_at.isoformat() if e.created_at else None,
                 "description": e.description,
             }
         )
 
     ap_q = db.query(ApLedgerEntry).filter(
-        ApLedgerEntry.entry_type == "payment", ApLedgerEntry.deleted_at.is_(None)
+        ApLedgerEntry.entry_type == "payment",
+        ApLedgerEntry.deleted_at.is_(None),
+        _payment_in_ist_range(ApLedgerEntry, from_date, to_date),
     )
-    if start:
-        ap_q = ap_q.filter(ApLedgerEntry.created_at >= start)
-    if end:
-        ap_q = ap_q.filter(ApLedgerEntry.created_at <= end)
     ap_rows = ap_q.order_by(ApLedgerEntry.created_at.desc()).limit(300).all()
     ap_labels = _vendor_labels(db, {e.vendor_id for e in ap_rows})
     for e in ap_rows:
@@ -185,7 +216,7 @@ def list_payments(db: Session, from_date: Optional[date] = None, to_date: Option
                 "party_id": e.vendor_id,
                 "party_label": ap_labels.get(e.vendor_id) or f"Vendor #{e.vendor_id}",
                 "amount": format(abs(e.amount), "f"),
-                "date": e.created_at.date().isoformat() if e.created_at else None,
+                "date": (e.value_date.isoformat() if e.value_date else (e.created_at.date().isoformat() if e.created_at else None)),
                 "created_at": e.created_at.isoformat() if e.created_at else None,
                 "description": e.description,
             }
@@ -257,8 +288,7 @@ def daybook(db: Session, day: date) -> dict:
     for e in db.query(ArLedgerEntry).filter(
         ArLedgerEntry.entry_type == "payment",
         ArLedgerEntry.deleted_at.is_(None),
-        ArLedgerEntry.created_at >= start,
-        ArLedgerEntry.created_at <= end,
+        _payment_on_ist_day(ArLedgerEntry, day),
     ).all():
         rows.append(
             {
@@ -275,8 +305,7 @@ def daybook(db: Session, day: date) -> dict:
     for e in db.query(ApLedgerEntry).filter(
         ApLedgerEntry.entry_type == "payment",
         ApLedgerEntry.deleted_at.is_(None),
-        ApLedgerEntry.created_at >= start,
-        ApLedgerEntry.created_at <= end,
+        _payment_on_ist_day(ApLedgerEntry, day),
     ).all():
         rows.append(
             {

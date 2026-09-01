@@ -18,6 +18,7 @@ from app.schemas.accounts_payable import (
     OpeningBalanceIn,
 )
 from app.services.activity import log_from_auth
+from app.services.biz_date import today_ist
 from app.services.ap_ledger import (
     build_ap_ledger,
     build_ap_statement,
@@ -119,6 +120,7 @@ def settle_vendor_ap(
         raise HTTPException(400, "no outstanding balance to settle")
     amount = body.amount.quantize(Decimal("0.01"))
 
+    pay_day = body.value_date or today_ist()
     entry = post_payment_entry(
         db,
         vendor_id=vendor_id,
@@ -130,6 +132,7 @@ def settle_vendor_ap(
         actor_type=auth.actor_type,
         actor_id=auth.actor_id,
         actor_name=auth.actor_name,
+        value_date=pay_day,
     )
     log_from_auth(
         db,
@@ -167,6 +170,7 @@ def record_vendor_payment(
         raise HTTPException(400, "No outstanding balance on this vendor to record a payment against")
     amount = body.amount.quantize(Decimal("0.01"))
 
+    pay_day = body.value_date or today_ist()
     entry = post_payment_entry(
         db,
         vendor_id=vendor_id,
@@ -178,6 +182,7 @@ def record_vendor_payment(
         actor_type=auth.actor_type,
         actor_id=auth.actor_id,
         actor_name=auth.actor_name,
+        value_date=pay_day,
     )
     log_from_auth(
         db,

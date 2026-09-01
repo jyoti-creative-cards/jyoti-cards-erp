@@ -92,6 +92,7 @@ class VendorOrderSummary(BaseModel):
     vendor_name: str
     vendor_city: Optional[str]
     vendor_label: str
+    alias: Optional[str] = None
     status: str
     bucket: str
     is_open: bool
@@ -108,6 +109,7 @@ class VendorOrderDetail(BaseModel):
     vendor_name: str
     vendor_city: Optional[str]
     vendor_label: str
+    alias: Optional[str] = None
     status: str
     bucket: str
     is_open: bool

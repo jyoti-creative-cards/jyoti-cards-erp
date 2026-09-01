@@ -160,6 +160,7 @@ const VendorOrders = (() => {
         city_name: o.city_name || (String(o.vendor_label || "").includes("—")
           ? String(o.vendor_label).split("—").slice(1).join("—").trim()
           : ""),
+        alias: o.alias || "",
       })),
       hubSearch,
     );
@@ -170,6 +171,16 @@ const VendorOrders = (() => {
     const name = v.business_name || v.alias || `Vendor #${v.id}`;
     const city = v.city_name || v.vendor_city;
     return city ? `${name} — ${city}` : name;
+  }
+
+  function aliasUnderTitle(o) {
+    const alias = String(o?.alias || "").trim();
+    return alias ? ctx.esc(alias) : "";
+  }
+
+  function hubCardMeta(o, restHtml) {
+    const alias = aliasUnderTitle(o);
+    return alias ? `${alias} · ${restHtml}` : restHtml;
   }
 
   function fmtPrice(val) {
@@ -349,7 +360,7 @@ const VendorOrders = (() => {
       : `${o.line_count} products · <strong>${o.total_quantity}</strong> to receive`;
     return OrdersUI.partyCard({
       title: o.vendor_label,
-      meta,
+      meta: hubCardMeta(o, meta),
       pillHtml: OrdersUI.pill(isBill ? "To bill" : "To receive", isBill ? "info" : "warn"),
       primaryLabel: isBill ? "Bill vendor" : "Receive goods",
       primaryOnclick,
@@ -410,7 +421,7 @@ const VendorOrders = (() => {
     const cache = hubExpandCache[`placed-${o.vendor_id}`];
     return OrdersUI.partyCard({
       title: o.vendor_label,
-      meta: `${o.placement_count} placements · ${o.line_count} lines · <strong>${o.total_quantity}</strong> placed`,
+      meta: hubCardMeta(o, `${o.placement_count} placements · ${o.line_count} lines · <strong>${o.total_quantity}</strong> placed`),
       pillHtml: OrdersUI.pill("Placed", "muted"),
       primaryLabel: "Receive",
       primaryOnclick: `VendorOrders.receiveVendor(${o.vendor_id})`,
@@ -431,7 +442,7 @@ const VendorOrders = (() => {
     const cache = hubExpandCache[`received-${o.vendor_id}`];
     return OrdersUI.partyCard({
       title: o.vendor_label,
-      meta: `${o.placement_count} receives · ${o.line_count} lines · <strong>${o.total_quantity}</strong> received`,
+      meta: hubCardMeta(o, `${o.placement_count} receives · ${o.line_count} lines · <strong>${o.total_quantity}</strong> received`),
       pillHtml: OrdersUI.pill("Unbilled", "info"),
       primaryLabel: "Bill",
       primaryOnclick: `VendorOrders.billVendor(${o.vendor_id})`,
@@ -530,7 +541,7 @@ const VendorOrders = (() => {
     const cache = hubExpandCache[`billed-${o.vendor_id}`];
     return OrdersUI.partyCard({
       title: o.vendor_label,
-      meta: `${o.placement_count} bills · ${o.line_count} products · <strong>${o.total_quantity}</strong> qty`,
+      meta: hubCardMeta(o, `${o.placement_count} bills · ${o.line_count} products · <strong>${o.total_quantity}</strong> qty`),
       pillHtml: OrdersUI.pill("Billed", "ok"),
       primaryLabel: "Close",
       primaryOnclick: `VendorOrders.openCloseBatch(${o.vendor_id})`,
@@ -614,7 +625,7 @@ const VendorOrders = (() => {
       : `${o.placement_count || 0} bills · ${o.line_count || 0} lines · ${o.total_quantity || 0} qty`;
     return OrdersUI.partyCard({
       title: o.vendor_label,
-      meta,
+      meta: hubCardMeta(o, meta),
       pillHtml: OrdersUI.pill(bucket === "cancelled" ? "Cancelled" : "Closed", "muted"),
       primaryLabel: "View",
       primaryOnclick: `VendorOrders.openDetail(${o.id || 0}, '${bucket}', ${o.vendor_id})`,
@@ -1739,7 +1750,7 @@ const VendorOrders = (() => {
     // Always refetch when opening place-order — avoids stale cache after vendor create.
     try {
       ctx.invalidateCache?.("/vendors");
-      wizardVendorsCache = await ctx.api("/vendors", {}, 0);
+      wizardVendorsCache = (await ctx.api("/vendors", {}, 0) || []).map(v => ({ ...v, alias: v.alias || "" }));
     } catch (_) {
       if (!wizardVendorsCache.length) wizardVendorsCache = [];
     }
@@ -1822,7 +1833,7 @@ const VendorOrders = (() => {
         </div>
         <div class="vo-wiz-search-wrap">
           <span class="vo-wiz-search-icon" aria-hidden="true">⌕</span>
-          <input id="vo-vendor-search" class="input vo-wiz-search" type="search" placeholder="Search vendor name or phone…" value="${ctx.esc(wizardVendorSearch)}" oninput="VendorOrders.onVendorSearch(this.value)" autocomplete="off" />
+          <input id="vo-vendor-search" class="input vo-wiz-search" type="search" placeholder="Search vendor name, alias, city, or phone…" value="${ctx.esc(wizardVendorSearch)}" oninput="VendorOrders.onVendorSearch(this.value)" autocomplete="off" />
           ${wizardVendorSearch ? `<button type="button" class="vo-wiz-search-clear" onclick="VendorOrders.onVendorSearch('')">×</button>` : ""}
         </div>
         ${selected ? `<div class="vo-wiz-selected-banner">
@@ -1836,10 +1847,12 @@ const VendorOrders = (() => {
           ${filtered.length ? filtered.map(v => {
             const selectedCls = wizardVendorId === v.id ? " selected" : "";
             const city = v.city_name || v.city || "";
+            const alias = (v.alias || "").trim();
             return `<button type="button" class="vo-wiz-vendor-card${selectedCls}" onclick="VendorOrders.pickVendor(${v.id})">
               <span class="vo-wiz-vendor-letter">${ctx.esc((v.business_name || "?").slice(0, 1).toUpperCase())}</span>
               <span class="vo-wiz-vendor-meta">
                 <strong>${ctx.esc(v.business_name || "Vendor")}</strong>
+                ${alias ? `<span>${ctx.esc(alias)}</span>` : ""}
                 <span>${city ? ctx.esc(city) : "No city"}${v.phone ? ` · ${ctx.esc(v.phone)}` : ""}</span>
               </span>
               <span class="vo-wiz-vendor-check">${wizardVendorId === v.id ? "✓" : ""}</span>

@@ -552,8 +552,8 @@ const Stock = (() => {
       const isRecv = wizardMode === "receive_goods";
       setStockWizardChrome(isRecv ? "Receive Goods" : "Bill Order", "Step 1 — select vendor");
       if (!offlineVendorsCache.length) {
-        try { offlineVendorsCache = await ctx.api("/catalog/vendors", {}, 0) || []; } catch (_) {
-          try { offlineVendorsCache = await ctx.api("/vendors", {}, 0) || []; } catch (e2) {
+        try { offlineVendorsCache = (await ctx.api("/catalog/vendors", {}, 0) || []).map(v => ({ ...v, alias: v.alias || "" })); } catch (_) {
+          try { offlineVendorsCache = (await ctx.api("/vendors", {}, 0) || []).map(v => ({ ...v, alias: v.alias || "" })); } catch (e2) {
             offlineVendorsCache = [];
             ctx.toast(e2.message, "error");
           }
@@ -569,15 +569,17 @@ const Stock = (() => {
         </div>
         <div class="vo-wiz-search-wrap">
           <span class="vo-wiz-search-icon" aria-hidden="true">⌕</span>
-          <input id="stock-receive-vendor-search" class="input vo-wiz-search" type="search" placeholder="Search vendor name, city, phone…" value="${ctx.esc(offlineVendorSearch)}" oninput="Stock.onOfflineVendorSearch(this.value)" autocomplete="off" />
+          <input id="stock-receive-vendor-search" class="input vo-wiz-search" type="search" placeholder="Search vendor name, alias, city, or phone…" value="${ctx.esc(offlineVendorSearch)}" oninput="Stock.onOfflineVendorSearch(this.value)" autocomplete="off" />
         </div>
         <div class="vo-wiz-vendor-list">
           ${filtered.length ? filtered.map(v => {
             const selected = wizardVendorId === v.id;
+            const alias = (v.alias || "").trim();
             return `<button type="button" class="vo-wiz-vendor-card${selected ? " selected" : ""}" onclick="Stock.pickVendor(${v.id})">
               <span class="vo-wiz-vendor-letter">${ctx.esc((v.business_name || "?").slice(0, 1).toUpperCase())}</span>
               <span class="vo-wiz-vendor-meta">
                 <strong>${ctx.esc(v.business_name || "Vendor")}</strong>
+                ${alias ? `<span>${ctx.esc(alias)}</span>` : ""}
                 <span>${ctx.esc(v.city_name || "No city")}</span>
               </span>
               <span class="vo-wiz-vendor-check">${selected ? "✓" : ""}</span>
@@ -600,7 +602,7 @@ const Stock = (() => {
       if (wizardMode === "offline_vendor") {
         setStockWizardChrome("Receive without order", "Step 1 — choose the vendor");
         if (!offlineVendorsCache.length) {
-          try { offlineVendorsCache = await ctx.api("/vendors", {}, 0) || []; } catch (_) { offlineVendorsCache = []; }
+          try { offlineVendorsCache = (await ctx.api("/vendors", {}, 0) || []).map(v => ({ ...v, alias: v.alias || "" })); } catch (_) { offlineVendorsCache = []; }
         }
         const q = offlineVendorSearch.trim();
         const active = offlineVendorsCache.filter(v => v.is_active !== false && !v.deleted_at);
@@ -612,16 +614,18 @@ const Stock = (() => {
           </div>
           <div class="vo-wiz-search-wrap">
             <span class="vo-wiz-search-icon" aria-hidden="true">⌕</span>
-            <input id="stock-offline-vendor-search" class="input vo-wiz-search" type="search" placeholder="Search vendor name, city, phone…" value="${ctx.esc(offlineVendorSearch)}" oninput="Stock.onOfflineVendorSearch(this.value)" autocomplete="off" />
+            <input id="stock-offline-vendor-search" class="input vo-wiz-search" type="search" placeholder="Search vendor name, alias, city, or phone…" value="${ctx.esc(offlineVendorSearch)}" oninput="Stock.onOfflineVendorSearch(this.value)" autocomplete="off" />
           </div>
           <div class="vo-wiz-vendor-list">
             ${filtered.length ? filtered.map(v => {
               const selected = wizardVendorId === v.id;
               const lbl = v.city_name ? `${v.business_name} — ${v.city_name}` : v.business_name;
+              const alias = (v.alias || "").trim();
               return `<button type="button" class="vo-wiz-vendor-card${selected ? " selected" : ""}" onclick="Stock.pickVendor(${v.id})">
                 <span class="vo-wiz-vendor-letter">${ctx.esc((v.business_name || "?").slice(0, 1).toUpperCase())}</span>
                 <span class="vo-wiz-vendor-meta">
                   <strong>${ctx.esc(v.business_name || "Vendor")}</strong>
+                  ${alias ? `<span>${ctx.esc(alias)}</span>` : ""}
                   <span>${ctx.esc(v.city_name || "No city")}</span>
                 </span>
                 <span class="vo-wiz-vendor-check">${selected ? "✓" : ""}</span>

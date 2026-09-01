@@ -562,7 +562,10 @@ def get_placed_order_for_receipt(
                 category=prod.category,
                 quantity_ordered=int(placed_map.get(cat_id, 0)),
                 quantity_remaining=int(pending),
-                buying_price=hide_cost(format(prod.buying_price, "f"), auth),
+                buying_price=hide_cost(
+                    format(prod.buying_price, "f") if prod.buying_price is not None else None,
+                    auth,
+                ),
                 unit=prod.unit,
                 image_urls=presigned_urls(prod.image_keys or []),
             )

@@ -810,7 +810,9 @@ const Stock = (() => {
             vendor_product_id: l.vendor_product_id || "",
             category: l.category || "",
             quantity_ordered: l.quantity_remaining,
-            buying_price: l.buying_price,
+            buying_price: l.buying_price != null && l.buying_price !== ""
+              ? l.buying_price
+              : null,
             unit: l.unit,
             image_urls: l.image_urls,
             quantity_received: 0,

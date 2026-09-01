@@ -69,6 +69,11 @@ const Finance = (() => {
     return prefix + Math.abs(n).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
   }
 
+  function localToday() {
+    const n = new Date();
+    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
+  }
+
   function matchSearch(label) {
     const q = hubSearch.trim().toLowerCase();
     if (!q) return true;
@@ -1012,8 +1017,11 @@ const Finance = (() => {
       </div>
       <label class="label">Payment reference / ID</label>
       <input class="input" id="settle-ref" style="margin-bottom:12px;" placeholder="UTR, cheque #, etc." />
+      <label class="label">Payment date</label>
+      <input type="date" class="input" id="settle-date" value="${ctx.esc(localToday())}" required style="margin-bottom:12px;" />
       <label class="label">Amount (₹)</label>
-      <input type="number" step="0.01" class="input" id="settle-amount" value="" placeholder="Enter amount" style="margin-bottom:12px;" />
+      <input type="number" step="0.01" class="input" id="settle-amount" value="" placeholder="Enter amount" style="margin-bottom:8px;" oninput="Finance.onApSettleAmount()" />
+      <p id="settle-over-hint" class="hidden" style="font-size:12px;color:var(--muted);margin:0 0 12px;">Extra will sit as credit on this vendor.</p>
       <label class="label">Comment (optional)</label>
       <input class="input" id="settle-comment" style="margin-bottom:12px;" />
       <label class="label">Upload payment receipt (optional)</label>
@@ -1021,6 +1029,13 @@ const Finance = (() => {
       <span id="settle-file-label" style="font-size:12px;color:var(--muted);"></span>`;
     document.getElementById("settle-modal").classList.remove("hidden");
     settleFile = null;
+  }
+
+  function onApSettleAmount() {
+    const due = Number(apDetail?.outstanding) || 0;
+    const amount = parseFloat(document.getElementById("settle-amount")?.value || "0");
+    const hint = document.getElementById("settle-over-hint");
+    if (hint) hint.classList.toggle("hidden", !(due > 0 && amount > due));
   }
 
   function setSettleFile(file) {
@@ -1038,6 +1053,8 @@ const Finance = (() => {
     const comment = (document.getElementById("settle-comment")?.value || "").trim() || null;
     if (!ref) return ctx.toast("Enter payment reference", "error");
     if (!amount || amount <= 0) return ctx.toast("Enter valid amount", "error");
+    const valueDate = (document.getElementById("settle-date")?.value || "").trim();
+    if (!valueDate) return ctx.toast("Enter payment date", "error");
     const party = apDetail.vendor_label;
     const vid = currentVendor;
     ctx.showLoading?.();
@@ -1058,7 +1075,7 @@ const Finance = (() => {
       }
       await ctx.api(`/accounts-payable/vendor/${currentVendor}/settle`, {
         method: "POST",
-        body: JSON.stringify({ payment_ref: ref, amount, payment_receipt_key: key, comment }),
+        body: JSON.stringify({ payment_ref: ref, amount, payment_receipt_key: key, comment, value_date: valueDate }),
       });
       ctx.invalidateCache?.("/accounts-payable");
       ctx.invalidateCache?.("/finance");
@@ -1466,8 +1483,11 @@ const Finance = (() => {
         ${ctx.reviewRow("Due", fmtPrice(outstanding))}
       </div>
       ${modeOpts}
+      <label class="label">Collection date</label>
+      <input type="date" class="input" id="ar-settle-date" value="${ctx.esc(localToday())}" required style="margin-bottom:12px;" />
       <label class="label">Amount (₹)</label>
-      <input type="number" step="0.01" class="input" id="ar-settle-amount" value="" placeholder="Enter amount" style="margin-bottom:12px;" />
+      <input type="number" step="0.01" class="input" id="ar-settle-amount" value="" placeholder="Enter amount" style="margin-bottom:8px;" oninput="Finance.onArSettleAmount()" />
+      <p id="ar-settle-over-hint" class="hidden" style="font-size:12px;color:var(--muted);margin:0 0 12px;">Extra will sit as credit on this customer.</p>
       <label class="label">Payment reference (optional)</label>
       <input class="input" id="ar-settle-ref" style="margin-bottom:12px;" placeholder="UTR, cheque #…" />
       <label class="label">Comment (optional)</label>
@@ -1477,6 +1497,13 @@ const Finance = (() => {
     if (title) title.textContent = "Collect";
     const footerBtn = document.querySelector("#ar-settle-modal .btn-primary");
     if (footerBtn) footerBtn.textContent = "Collect";
+  }
+
+  function onArSettleAmount() {
+    const due = Number(arDetail?.outstanding) || 0;
+    const amount = parseFloat(document.getElementById("ar-settle-amount")?.value || "0");
+    const hint = document.getElementById("ar-settle-over-hint");
+    if (hint) hint.classList.toggle("hidden", !(due > 0 && amount > due));
   }
 
   function closeArSettle() { document.getElementById("ar-settle-modal")?.classList.add("hidden"); }
@@ -1490,11 +1517,13 @@ const Finance = (() => {
     const payment_mode_id = modeRaw ? parseInt(modeRaw, 10) : null;
     if (paymentModes.length && !payment_mode_id) return ctx.toast("Select payment mode", "error");
     if (!amount || amount <= 0) return ctx.toast("Enter valid amount", "error");
+    const valueDate = (document.getElementById("ar-settle-date")?.value || "").trim();
+    if (!valueDate) return ctx.toast("Enter collection date", "error");
     const party = arDetail.customer_label;
     const cid = currentCustomer;
     ctx.showLoading?.();
     try {
-      const body = { amount, comment, payment_ref: ref || null };
+      const body = { amount, comment, payment_ref: ref || null, value_date: valueDate };
       if (payment_mode_id) body.payment_mode_id = payment_mode_id;
       await ctx.api(`/accounts-receivable/customer/${currentCustomer}/settle`, {
         method: "POST",
@@ -2255,9 +2284,9 @@ const Finance = (() => {
     setHubMode, setChip, setHubSearch, setBrowseSection, setShowSettled, setReportTab,
     showAp, showAr, showExpenses, showRevenue, showCost, showPnl, showFreight,
     showRouteCollections, openRouteCollection, openRouteCustomer, backRouteCustomers, printRouteCollection,
-    showApFromVendor, showArFromCustomer, openVendorAp, openEntry, openSettle, closeSettle, submitSettle, setSettleFile,
+    showApFromVendor, showArFromCustomer, openVendorAp, openEntry, openSettle, closeSettle, submitSettle, setSettleFile, onApSettleAmount,
     setApTab, toggleBill, addDebitNote,
-    openCustomerAr, setArTab, openArSettle, closeArSettle, submitArSettle,
+    openCustomerAr, setArTab, openArSettle, closeArSettle, submitArSettle, onArSettleAmount,
     undoArPayment, undoApPayment,
     shareArStatement, shareApStatement,
     setArOpeningBalance, setApOpeningBalance, saveArOpeningBalance, saveApOpeningBalance,

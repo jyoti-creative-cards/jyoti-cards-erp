@@ -1626,9 +1626,11 @@ const Stock = (() => {
         ${lineHtml}
         ${dnHtml}
         ${pdfBtns}`,
-        `<button class="btn btn-primary" style="flex:1;" onclick="App.closeDetail()">Done</button>`, "md");
+        `<button class="btn btn-primary" style="flex:1;" onclick="App.closeDetail(); if(typeof VendorOrders!=='undefined'){ App.showView('buying'); VendorOrders.setBucket('received'); }">Done</button>`, "md");
       ctx.toast(savedMode === "offline_vendor" ? "Offline order created" : "Bill created", "success");
-      if (typeof VendorOrders !== "undefined" && VendorOrders.refreshIfOpen) VendorOrders.refreshIfOpen(savedVendorId);
+      if (typeof VendorOrders !== "undefined" && VendorOrders.refreshIfOpen) {
+        await VendorOrders.refreshIfOpen(savedVendorId);
+      }
       await load();
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }

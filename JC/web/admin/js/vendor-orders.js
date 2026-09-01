@@ -259,6 +259,7 @@ const VendorOrders = (() => {
   async function loadList() {
     ctx.showLoading?.();
     try {
+      ctx.invalidateCache?.("/vendor-orders");
       if (!PAST_BUCKETS.includes(currentBucket)) currentBucket = "placed";
       const day = dayParam();
       orders = await ctx.api(`/vendor-orders?bucket=${currentBucket}&day=${day}`, {}, 0);
@@ -1335,22 +1336,16 @@ const VendorOrders = (() => {
     if (!vendorId) return;
     clearHubCacheForVendor(vendorId);
     ctx.invalidateCache?.("/vendor-orders");
-    // After bill, Open/Placed/Summary/Billed may all change
+    ctx.invalidateCache?.("/stock");
     if (isDetailVisible() && detailVendorId === vendorId) {
-      const bucket = currentBucket === "cancelled" || currentBucket === "closed" ? "billed" : currentBucket;
-      await openDetail(0, bucket, vendorId);
-      return;
+      await openDetail(0, currentBucket === "received" ? "billed" : currentBucket, vendorId);
     }
-    if (["summary", "open", "placed", "received", "billed"].includes(currentBucket)) {
-      const wasExpanded = hubExpandedVendorId === vendorId;
-      const keepBucket = currentBucket;
+    const hubEl = document.getElementById("orders-hub");
+    const hubVisible = hubEl && !hubEl.classList.contains("hidden");
+    if (hubVisible) {
       hubExpandedVendorId = null;
       hubExpandedPlacementId = null;
       await loadList();
-      if (wasExpanded && keepBucket !== "summary") {
-        const match = orders.find(o => o.vendor_id === vendorId);
-        if (match || keepBucket === "open") await toggleHubVendor(vendorId, keepBucket, match?.id || 0);
-      }
     }
   }
 

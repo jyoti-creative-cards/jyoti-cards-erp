@@ -16,7 +16,7 @@ from app.models.accounts_receivable import ArLedgerEntry
 from app.models.bill_series import BillSeries
 from app.models.catalog_product import CatalogProduct
 from app.models.customer import Customer
-from app.models.stock import StockBalance
+from app.models.stock import StockBalance, StockReceipt, StockReceiptLine
 from app.models.vendor import Vendor
 from app.services.customer_bill_process import process_offline_customer_order
 from app.services.pricing import coerce_selling_price, effective_selling_price
@@ -29,7 +29,9 @@ from app.services.ap_ledger import post_bill_entry as post_ap_bill, vendor_ap_to
 from app.services.ar_ledger import post_bill_entry as post_ar_bill, customer_ar_totals
 from app.services.biz_date import today_ist
 from app.services.money import as_signed_decrease
+from app.schemas.stock import VendorBillIn, VendorBillLineIn
 from app.services.reports import daybook, list_payments
+from app.services.vendor_receive_bill import bill_receipt
 
 AUTH = AuthContext(actor_type="admin", actor_id=1, actor_name="Test Admin")
 
@@ -284,3 +286,57 @@ def test_foc_rejects_unset_sell_price(db):
         )
     assert ei.value.status_code == 400
     assert "sell price not set" in str(ei.value.detail)
+
+
+def _pending_receipt(db, vendor_id: int, qty: int = 10, price=Decimal("10")):
+    r = StockReceipt(
+        vendor_id=vendor_id, receipt_type="vendor_order", bill_status="pending_bill",
+        received_by_type="admin", received_by_name="Test",
+    )
+    db.add(r)
+    db.flush()
+    ln = StockReceiptLine(
+        receipt_id=r.id, catalog_product_id=1, our_product_id="P1",
+        quantity_received=qty, buying_price=price,
+    )
+    db.add(ln)
+    db.flush()
+    add_stock(db, catalog_product_id=1, our_product_id="P1", quantity=qty, entry_type="receive",
+              reference_type="stock_receipt", reference_id=r.id)
+    db.commit()
+    return r, ln
+
+
+def test_bill_receipt_flips_pending_bill_to_billed(db):
+    v = _vendor(db)
+    r, ln = _pending_receipt(db, v.id)
+    body = VendorBillIn(
+        total_billed_amount=Decimal("100.00"),
+        lines=[VendorBillLineIn(catalog_product_id=ln.catalog_product_id, quantity_billed=10)],
+    )
+    bill_receipt(db, AUTH, r.id, body)
+    r2 = db.get(StockReceipt, r.id)
+    assert r2.bill_status == "billed"
+    still = (
+        db.query(StockReceipt)
+        .filter(
+            StockReceipt.vendor_id == v.id,
+            StockReceipt.bill_status == "pending_bill",
+            StockReceipt.deleted_at.is_(None),
+        )
+        .count()
+    )
+    assert still == 0
+
+
+def test_bill_receipt_keeps_vendor_when_other_pending_exists(db):
+    v = _vendor(db)
+    r1, ln1 = _pending_receipt(db, v.id)
+    r2, ln2 = _pending_receipt(db, v.id)
+    body = VendorBillIn(
+        total_billed_amount=Decimal("100.00"),
+        lines=[VendorBillLineIn(catalog_product_id=ln1.catalog_product_id, quantity_billed=10)],
+    )
+    bill_receipt(db, AUTH, r1.id, body)
+    assert db.get(StockReceipt, r1.id).bill_status == "billed"
+    assert db.get(StockReceipt, r2.id).bill_status == "pending_bill"

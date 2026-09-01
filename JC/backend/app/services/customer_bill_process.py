@@ -697,7 +697,7 @@ def process_offline_customer_order(
         prod = db.get(CatalogProduct, cid)
         if not prod or not prod.is_active:
             raise HTTPException(400, f"product {cid} not found")
-        if prod.selling_price is None or prod.selling_price <= 0:
+        if prod.selling_price is None:
             raise HTTPException(400, f"sell price not set for {prod.our_product_id}")
         bal = db.query(StockBalance).filter(StockBalance.catalog_product_id == cid).first()
         on_hand = bal.quantity_on_hand if bal else 0
@@ -1126,10 +1126,8 @@ def edit_customer_bill(
         prod = db.get(CatalogProduct, cid)
         if not prod or not prod.is_active:
             raise HTTPException(400, f"product {cid} not found")
-        unit_price = old.unit_price if old else (
-            effective_selling_price(prod.buying_price, prod.selling_price) or Decimal("0")
-        )
-        if unit_price <= 0:
+        unit_price = old.unit_price if old else effective_selling_price(prod.buying_price, prod.selling_price)
+        if unit_price is None:
             raise HTTPException(400, f"sell price not set for {prod.our_product_id}")
         bill_items.append(
             {

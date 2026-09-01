@@ -428,8 +428,8 @@ def replace_received_placement(
             raise ValueError(f"product {cid} not found")
         from app.services.pricing import effective_selling_price
 
-        unit_price = effective_selling_price(prod.buying_price, prod.selling_price) or Decimal("0")
-        if unit_price <= 0:
+        unit_price = effective_selling_price(prod.buying_price, prod.selling_price)
+        if unit_price is None:
             raise ValueError(f"sell price not set for {prod.our_product_id}")
         if cid in by_cat:
             billed = int(by_cat[cid].quantity_billed or 0)
@@ -695,9 +695,10 @@ def create_received_placement(
 
         unit_price = raw.get("unit_price")
         if unit_price is None:
-            unit_price = effective_selling_price(prod.buying_price, prod.selling_price) or Decimal("0")
-        unit_price = Decimal(str(unit_price))
-        if unit_price <= 0:
+            unit_price = effective_selling_price(prod.buying_price, prod.selling_price)
+        else:
+            unit_price = Decimal(str(unit_price))
+        if unit_price is None:
             raise ValueError(f"sell price not set for {prod.our_product_id}")
         addons = raw.get("addons_json")
         if addons is None:

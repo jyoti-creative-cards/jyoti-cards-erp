@@ -13,8 +13,14 @@ from app.db.session import Base
 from app.deps import AuthContext
 from app.models.accounts_payable import ApLedgerEntry
 from app.models.accounts_receivable import ArLedgerEntry
+from app.models.bill_series import BillSeries
+from app.models.catalog_product import CatalogProduct
 from app.models.customer import Customer
+from app.models.stock import StockBalance
 from app.models.vendor import Vendor
+from app.services.customer_bill_process import process_offline_customer_order
+from app.services.pricing import coerce_selling_price, effective_selling_price
+from app.services.stock_receipt import add_stock
 from app.routers.accounts_payable import record_vendor_payment, settle_vendor_ap
 from app.routers.accounts_receivable import record_customer_payment, settle_customer_ar
 from app.schemas.accounts_payable import ApSettlementIn
@@ -194,3 +200,87 @@ def test_list_payments_includes_value_date_day(db):
     )
     rows = list_payments(db, from_date=past, to_date=past)
     assert any(r["doc_type"] == "ar_payment" for r in rows)
+
+
+def test_effective_selling_price_keeps_explicit_zero():
+    assert effective_selling_price(Decimal("10"), None) is None
+    assert effective_selling_price(Decimal("0"), Decimal("0")) == Decimal("0")
+    assert effective_selling_price(Decimal("10"), Decimal("0")) == Decimal("0")
+    assert effective_selling_price(Decimal("50"), Decimal("50")) is None
+    assert coerce_selling_price(Decimal("0"), Decimal("0")) == Decimal("0.00")
+    assert coerce_selling_price(Decimal("50"), Decimal("50")) is None
+
+
+def test_foc_offline_bill_moves_stock_and_posts_zero_ar(db):
+    c = _customer(db)
+    v = _vendor(db)
+    series = BillSeries(name="FOC", prefix="F", start_num=1, end_num=99, current_num=0, is_active=True)
+    db.add(series)
+    db.flush()
+    prod = CatalogProduct(
+        our_product_id="FOC-1", vendor_id=v.id, vendor_product_id="V-FOC",
+        buying_price=Decimal("0"), selling_price=Decimal("0"), is_active=True,
+    )
+    db.add(prod)
+    db.flush()
+    add_stock(db, catalog_product_id=prod.id, our_product_id="FOC-1", quantity=5,
+              entry_type="receive", reference_type="seed", reference_id=0)
+    db.commit()
+    bill, _ = process_offline_customer_order(
+        db,
+        customer_id=c.id,
+        customer_name=c.business_name,
+        lines_in=[{"catalog_product_id": prod.id, "quantity": 2}],
+        overall_discount_percent=None,
+        gst_enabled=False,
+        gst_rate_percent=Decimal("0"),
+        additional_charges=None,
+        bill_series_id=series.id,
+        narration="sample",
+        actor_type="admin",
+        actor_id=1,
+        actor_name="Test",
+    )
+    db.commit()
+    assert bill.grand_total == Decimal("0")
+    bal = db.query(StockBalance).filter(StockBalance.catalog_product_id == prod.id).one()
+    assert bal.quantity_on_hand == 3
+    ar = db.query(ArLedgerEntry).filter(
+        ArLedgerEntry.bill_id == bill.id, ArLedgerEntry.entry_type == "bill"
+    ).one()
+    assert ar.amount == Decimal("0.00")
+
+
+def test_foc_rejects_unset_sell_price(db):
+    c = _customer(db)
+    v = _vendor(db)
+    series = BillSeries(name="FOC2", prefix="G", start_num=1, end_num=99, current_num=0, is_active=True)
+    db.add(series)
+    db.flush()
+    prod = CatalogProduct(
+        our_product_id="NO-SELL", vendor_id=v.id, vendor_product_id="V-NS",
+        buying_price=Decimal("10"), selling_price=None, is_active=True,
+    )
+    db.add(prod)
+    db.flush()
+    add_stock(db, catalog_product_id=prod.id, our_product_id="NO-SELL", quantity=5,
+              entry_type="receive", reference_type="seed", reference_id=0)
+    db.commit()
+    with pytest.raises(HTTPException) as ei:
+        process_offline_customer_order(
+            db,
+            customer_id=c.id,
+            customer_name=c.business_name,
+            lines_in=[{"catalog_product_id": prod.id, "quantity": 1}],
+            overall_discount_percent=None,
+            gst_enabled=False,
+            gst_rate_percent=Decimal("0"),
+            additional_charges=None,
+            bill_series_id=series.id,
+            narration=None,
+            actor_type="admin",
+            actor_id=1,
+            actor_name="Test",
+        )
+    assert ei.value.status_code == 400
+    assert "sell price not set" in str(ei.value.detail)

@@ -311,22 +311,35 @@ def _edit_bill(db: Session, auth: AuthContext, receipt: StockReceipt, body: Vend
     label = _vendor_label(db, receipt.vendor_id)
     before = _receipt_snapshot(db, receipt)
 
+    # Reuse the % that was actually applied when this bill was created (which may have
+    # been a one-off override, e.g. 25% instead of the vendor's usual 50%) — never fall
+    # back to the vendor's CURRENT profile setting, since that may have changed since.
+    # An explicit override on this edit call takes precedence over both.
+    billing_pct = (
+        Decimal(str(body.billing_pct_override)).quantize(Decimal("0.01"))
+        if body.billing_pct_override is not None
+        else (receipt.billing_pct_applied if receipt.billing_pct_applied is not None else vendor.billing_pct)
+    )
+    if not (Decimal("0") < billing_pct <= Decimal("100")):
+        raise HTTPException(400, "billing % override must be between 0 and 100")
+
     total_actual_value = sum((raw_amt for _, _, raw_amt in normalized), Decimal("0"))
     bill_total, extra_cash = compute_bill_totals(
         total_actual_value=total_actual_value,
-        billing_pct=vendor.billing_pct, additional_charge=vendor.additional_charge,
+        billing_pct=billing_pct, additional_charge=vendor.additional_charge,
         discount_pct=vendor.discount_pct, gst_included=vendor.gst_included, gst_rate_pct=vendor.gst_rate_pct,
     )
     entered_total = (body.total_billed_amount if body.total_billed_amount is not None else bill_total).quantize(Decimal("0.01"))
-    is_split = vendor.billing_pct < 100
+    is_split = billing_pct < 100
 
     for ln, bq, raw_amt in normalized:
         ln.quantity_billed = bq
-        ln.billed_amount = (raw_amt * vendor.billing_pct / 100).quantize(Decimal("0.01"))
+        ln.billed_amount = (raw_amt * billing_pct / 100).quantize(Decimal("0.01"))
 
     old_bill_key = receipt.bill_file_key
     old_doc_key = receipt.receipt_document_key
     receipt.bill_number = (body.bill_number or "").strip() or None
+    receipt.billing_pct_applied = billing_pct
     receipt.additional_charges = vendor.additional_charge.quantize(Decimal("0.01"))
     receipt.total_billed_amount = entered_total
     receipt.actual_ap_amount = (entered_total + extra_cash).quantize(Decimal("0.01")) if extra_cash > 0 else None

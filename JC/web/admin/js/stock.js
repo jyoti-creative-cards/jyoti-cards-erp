@@ -11,7 +11,7 @@ const Stock = (() => {
   let billFile = null;
   let billFileKey = null;
   let pendingDebitNotes = [];
-  let receiptMeta = { billNumber: "", orderReceiptNumber: "", additionalCharges: "", totalBilledAmount: "", notes: "", eventDate: "" };
+  let receiptMeta = { billNumber: "", orderReceiptNumber: "", additionalCharges: "", totalBilledAmount: "", billingPct: "", notes: "", eventDate: "" };
   let wizardReceiptId = null; // selected pending-bill receipt (bill_received mode)
   let wizardPendingBillList = null; // { vendor_id, vendor_label, receipts } from /stock/vendor-order/{id}/received
   let billingTerms = null; // vendor's typed billing terms, loaded with the chosen receipt
@@ -170,7 +170,7 @@ const Stock = (() => {
     wizardLines = []; billFile = null; billFileKey = null; pendingDebitNotes = [];
     offlineVendorsCache = []; wizardProducts = []; // always fetch fresh on open
     enteredFromAddStock = true;
-    receiptMeta = { billNumber: "", orderReceiptNumber: "", additionalCharges: "", totalBilledAmount: "", notes: "", eventDate: localToday() };
+    receiptMeta = { billNumber: "", orderReceiptNumber: "", additionalCharges: "", totalBilledAmount: "", billingPct: "", notes: "", eventDate: localToday() };
     document.getElementById("stock-wizard")?.classList.remove("hidden");
     renderWizard();
   }
@@ -197,7 +197,7 @@ const Stock = (() => {
     offlineVendorsCache = [];
     receivePrefill = prefill || null;
     enteredFromAddStock = false;
-    receiptMeta = { billNumber: "", orderReceiptNumber: "", additionalCharges: "", totalBilledAmount: "", notes: "", eventDate: localToday() };
+    receiptMeta = { billNumber: "", orderReceiptNumber: "", additionalCharges: "", totalBilledAmount: "", billingPct: "", notes: "", eventDate: localToday() };
     document.getElementById("stock-wizard")?.classList.remove("hidden");
     document.querySelector("#stock-wizard .modal-header h3").textContent = "Receive Goods";
     await renderWizard();
@@ -219,7 +219,7 @@ const Stock = (() => {
     wizardPendingBillList = null;
     billingTerms = null;
     billPreview = null;
-    receiptMeta = { billNumber: "", orderReceiptNumber: "", additionalCharges: "", totalBilledAmount: "", notes: "", eventDate: localToday() };
+    receiptMeta = { billNumber: "", orderReceiptNumber: "", additionalCharges: "", totalBilledAmount: "", billingPct: "", notes: "", eventDate: localToday() };
     document.getElementById("stock-wizard")?.classList.remove("hidden");
     document.querySelector("#stock-wizard .modal-header h3").textContent = "Bill Order";
     await renderWizard();
@@ -237,7 +237,7 @@ const Stock = (() => {
     billFile = null;
     billFileKey = null;
     pendingDebitNotes = [];
-    receiptMeta = { billNumber: "", orderReceiptNumber: "", additionalCharges: "", totalBilledAmount: "", notes: "", eventDate: localToday() };
+    receiptMeta = { billNumber: "", orderReceiptNumber: "", additionalCharges: "", totalBilledAmount: "", billingPct: "", notes: "", eventDate: localToday() };
     document.getElementById("stock-wizard")?.classList.remove("hidden");
     document.querySelector("#stock-wizard .modal-header h3").textContent = "Receive without order";
     if (vendorId) {
@@ -302,7 +302,7 @@ const Stock = (() => {
       billFile = null;
       billFileKey = null;
       pendingDebitNotes = [];
-      receiptMeta = { billNumber: "", orderReceiptNumber: "", additionalCharges: "", totalBilledAmount: "", notes: "", eventDate: localToday() };
+      receiptMeta = { billNumber: "", orderReceiptNumber: "", additionalCharges: "", totalBilledAmount: "", billingPct: "", notes: "", eventDate: localToday() };
       document.querySelector("#stock-wizard .modal-header h3").textContent = "Receive without order";
       renderWizard();
       return;
@@ -317,7 +317,7 @@ const Stock = (() => {
       billFileKey = null;
       pendingDebitNotes = [];
       enteredFromAddStock = true;
-      receiptMeta = { billNumber: "", orderReceiptNumber: "", additionalCharges: "", totalBilledAmount: "", notes: "", eventDate: localToday() };
+      receiptMeta = { billNumber: "", orderReceiptNumber: "", additionalCharges: "", totalBilledAmount: "", billingPct: "", notes: "", eventDate: localToday() };
       document.querySelector("#stock-wizard .modal-header h3").textContent = "Receive Goods";
       renderWizard();
       return;
@@ -397,11 +397,13 @@ const Stock = (() => {
         quantity_received: l.quantity_received,
         quantity_billed: l.quantity_received,
         billed_amount: (Number(l.quantity_received) || 0) * (Number(l.buying_price) || 0),
+        billed_rate: l.buying_price,
         buying_price: l.buying_price,
         unit: l.unit,
         image_urls: l.image_urls || [],
       }));
       receiptMeta.totalBilledAmount = detail.expected_bill_amount || "";
+      receiptMeta.billingPct = billingTerms ? String(Number(billingTerms.billing_pct)) : "";
       billPreview = null;
       pendingDebitNotes = [];
     } catch (e) {
@@ -418,6 +420,10 @@ const Stock = (() => {
     pendingDebitNotes = [];
     renderWizard();
   }
+  function billingPctOverridePayload() {
+    const pct = parseFloat(receiptMeta.billingPct);
+    return (pct > 0 && pct <= 100) ? { billing_pct_override: pct } : {};
+  }
   async function refreshBillPreview() {
     const total = parseFloat(receiptMeta.totalBilledAmount) || 0;
     try {
@@ -430,6 +436,7 @@ const Stock = (() => {
             quantity_billed: l.quantity_billed || 0,
             billed_amount: l.billed_amount || 0,
           })),
+          ...billingPctOverridePayload(),
         }),
       }, 0);
       billPreview = preview;
@@ -476,7 +483,7 @@ const Stock = (() => {
       const isBillEdit = editReceiptType === "vendor_bill";
       setStockWizardChrome(
         isRecvEdit ? "Edit Receive" : "Edit Vendor Bill",
-        `Receipt #${editReceiptId} — ${ctx.esc(placedOrder?.vendor_label || "")}`
+        `${receiptMeta.orderReceiptNumber ? `Receipt ${ctx.esc(receiptMeta.orderReceiptNumber)}` : `Receipt #${editReceiptId}`} — ${ctx.esc(placedOrder?.vendor_label || "")}`
       );
       const totals = calcReviewTotals(isBillEdit ? wizardLines.filter(l => (l.quantity_billed || 0) > 0) : billableLines());
       if (isRecvEdit) {
@@ -556,22 +563,33 @@ const Stock = (() => {
         </div>
         <div class="stock-receive-table-wrap">
           <table class="data stock-receive-table"><thead><tr>
-            <th>Product</th>${isBillEdit ? "" : "<th>Received</th>"}<th>Billed</th>${isBillEdit ? "<th>Amount billed</th>" : ""}
+            <th>Product</th>${isBillEdit ? "" : "<th>Received</th>"}<th>Billed</th>${isBillEdit ? "<th>Rate billed</th><th>Amount billed</th>" : ""}
           </tr></thead><tbody>
             ${wizardLines.map((l, i) => `<tr>
               <td><strong>${ctx.esc(productIdLabel(l))}</strong></td>
               ${isBillEdit ? "" : `<td><input type="number" min="0" class="input stock-qty-input" value="${l.quantity_received || ""}" onchange="Stock.setLine(${i},'quantity_received',this.value)" /></td>`}
               <td><input type="number" min="0" class="input stock-qty-input stock-billed-input" value="${l.quantity_billed || ""}" onchange="Stock.setLine(${i},'quantity_billed',this.value)" /></td>
+              ${isBillEdit ? `<td><input type="number" min="0" step="0.01" class="input stock-qty-input stock-rate-input" value="${l.billed_rate ? Number(l.billed_rate).toFixed(2) : (l.buying_price ? Number(l.buying_price).toFixed(2) : "")}" onchange="Stock.setLineRate(${i},this.value)" title="Defaults to our catalog rate — edit if the vendor's paper bill states a different rate" /></td>` : ""}
               ${isBillEdit ? `<td><input type="number" min="0" step="0.01" class="input stock-qty-input stock-amount-input" value="${l.billed_amount ? Number(l.billed_amount).toFixed(2) : ""}" onchange="Stock.setLineAmount(${i},this.value)" title="Defaults to qty x our rate — edit if the vendor's paper bill states a different rate/amount" /></td>` : ""}
             </tr>`).join("")}
-          </tbody></table>
+          </tbody>
+          ${isBillEdit ? `<tfoot><tr class="stock-qty-tfoot">
+            <td>Total</td>
+            <td style="text-align:right;" id="stock-tfoot-billed">${wizardQtySum("quantity_billed")}</td>
+            <td></td>
+            <td style="text-align:right;" id="stock-tfoot-amount">${fmtPrice(wizardQtySum("billed_amount"))}</td>
+          </tr></tfoot>` : ""}
+          </table>
         </div>
+        ${isBillEdit ? renderVendorBillingTermsCard() : ""}
         <div class="stock-bill-card" style="margin-top:16px;">
           <h4>Vendor bill</h4>
           <div class="stock-bill-grid">
             <div><label class="label">Bill number</label><input class="input" id="stock-bill-number" value="${ctx.esc(receiptMeta.billNumber)}" /></div>
             <div class="stock-bill-total"><label class="label">Total bill amount *</label>
               <input type="number" min="0" step="0.01" class="input" id="stock-total-billed" value="${ctx.esc(receiptMeta.totalBilledAmount)}" required /></div>
+            ${isBillEdit ? `<div><label class="label">Billing % (this bill only)</label>
+              <input type="number" min="0.01" max="100" step="0.01" class="input" id="stock-billing-pct" value="${ctx.esc(receiptMeta.billingPct)}" title="Override the vendor's usual billing % for this bill only — vendor profile stays unchanged" /></div>` : ""}
             <div><label class="label">Replace bill file</label>
               <input type="file" class="input" accept=".pdf,image/*" onchange="Stock.setBillFile(this.files[0])" />
               ${billFile ? `<span class="stock-file-name">${ctx.esc(billFile.name)}</span>` : (billFileKey ? `<span class="stock-file-name">Current file kept</span>` : "")}
@@ -637,7 +655,7 @@ const Stock = (() => {
             return `<button type="button" class="vo-wiz-vendor-card${selected ? " selected" : ""}" onclick="Stock.pickVendor(${v.id})">
               <span class="vo-wiz-vendor-letter">${ctx.esc((v.business_name || "?").slice(0, 1).toUpperCase())}</span>
               <span class="vo-wiz-vendor-meta">
-                <strong>${ctx.esc(v.business_name || "Vendor")}</strong>
+                <strong>${v.vendor_number ? `<span style="color:var(--muted);font-weight:600;margin-right:4px;">#${v.vendor_number}</span>` : ""}${ctx.esc(v.business_name || "Vendor")}</strong>
                 ${alias ? `<span>${ctx.esc(alias)}</span>` : ""}
                 <span>${ctx.esc(v.city_name || "No city")}</span>
               </span>
@@ -683,7 +701,7 @@ const Stock = (() => {
               return `<button type="button" class="vo-wiz-vendor-card${selected ? " selected" : ""}" onclick="Stock.pickVendor(${v.id})">
                 <span class="vo-wiz-vendor-letter">${ctx.esc((v.business_name || "?").slice(0, 1).toUpperCase())}</span>
                 <span class="vo-wiz-vendor-meta">
-                  <strong>${ctx.esc(v.business_name || "Vendor")}</strong>
+                  <strong>${v.vendor_number ? `<span style="color:var(--muted);font-weight:600;margin-right:4px;">#${v.vendor_number}</span>` : ""}${ctx.esc(v.business_name || "Vendor")}</strong>
                   ${alias ? `<span>${ctx.esc(alias)}</span>` : ""}
                   <span>${ctx.esc(v.city_name || "No city")}</span>
                 </span>
@@ -997,7 +1015,7 @@ const Stock = (() => {
         </div>
         <div class="stock-receive-table-wrap">
           <table class="data stock-receive-table"><thead><tr>
-            <th></th><th>Product</th><th style="text-align:right;">Received</th><th style="text-align:right;">Price</th><th style="text-align:right;">Billed qty</th><th style="text-align:right;">Amount billed</th>
+            <th></th><th>Product</th><th style="text-align:right;">Received</th><th style="text-align:right;">Price</th><th style="text-align:right;">Billed qty</th><th style="text-align:right;">Rate billed</th><th style="text-align:right;">Amount billed</th>
           </tr></thead><tbody>
             ${wizardLines.map((l, i) => {
               const img = (l.image_urls && l.image_urls[0]) || "";
@@ -1011,6 +1029,7 @@ const Stock = (() => {
                 <td style="text-align:right;color:var(--muted);">${l.quantity_received || 0}</td>
                 <td style="text-align:right;">${fmtPrice(l.buying_price)}</td>
                 <td style="text-align:right;"><input type="number" min="0" class="input stock-qty-input stock-billed-input" value="${l.quantity_billed ?? ""}" onchange="Stock.setLine(${i},'quantity_billed',this.value)" /></td>
+                <td style="text-align:right;"><input type="number" min="0" step="0.01" class="input stock-qty-input stock-rate-input" value="${l.billed_rate ? Number(l.billed_rate).toFixed(2) : (l.buying_price ? Number(l.buying_price).toFixed(2) : "")}" onchange="Stock.setLineRate(${i},this.value)" title="Defaults to our catalog rate — edit if the vendor's paper bill states a different rate" /></td>
                 <td style="text-align:right;"><input type="number" min="0" step="0.01" class="input stock-qty-input stock-amount-input" value="${l.billed_amount ? Number(l.billed_amount).toFixed(2) : ""}" onchange="Stock.setLineAmount(${i},this.value)" title="Defaults to qty x our rate — edit if the vendor's paper bill states a different rate/amount for this line" /></td>
               </tr>`;
             }).join("")}
@@ -1021,6 +1040,7 @@ const Stock = (() => {
             <td style="text-align:right;" id="stock-tfoot-received">${wizardQtySum("quantity_received")}</td>
             <td></td>
             <td style="text-align:right;" id="stock-tfoot-billed">${wizardQtySum("quantity_billed")}</td>
+            <td></td>
             <td style="text-align:right;" id="stock-tfoot-amount">${fmtPrice(wizardQtySum("billed_amount"))}</td>
           </tr></tfoot></table>
         </div>
@@ -1033,6 +1053,8 @@ const Stock = (() => {
               <input type="date" class="input" id="stock-event-date" value="${ctx.esc(receiptMeta.eventDate || localToday())}" /></div>
             <div class="stock-bill-total"><label class="label">Total bill amount *</label>
               <input type="number" min="0" step="0.01" class="input" id="stock-total-billed" value="${ctx.esc(receiptMeta.totalBilledAmount)}" placeholder="₹ total on vendor bill" required /></div>
+            <div><label class="label">Billing % (this bill only)</label>
+              <input type="number" min="0.01" max="100" step="0.01" class="input" id="stock-billing-pct" value="${ctx.esc(receiptMeta.billingPct)}" title="Override the vendor's usual billing % for this bill only — vendor profile stays unchanged" /></div>
             <div><label class="label">Upload bill</label>
               <input type="file" class="input" accept=".pdf,image/*" onchange="Stock.setBillFile(this.files[0])" />
               ${billFile ? `<span class="stock-file-name">${ctx.esc(billFile.name)}</span>` : ""}
@@ -1098,6 +1120,8 @@ const Stock = (() => {
     if (billEl) receiptMeta.billNumber = (billEl.value || "").trim();
     const totalEl = document.getElementById("stock-total-billed");
     if (totalEl && totalEl.tagName === "INPUT") receiptMeta.totalBilledAmount = totalEl.value || "";
+    const pctEl = document.getElementById("stock-billing-pct");
+    if (pctEl) receiptMeta.billingPct = pctEl.value || "";
     const ornEl = document.getElementById("stock-order-receipt-number");
     if (ornEl) receiptMeta.orderReceiptNumber = (ornEl.value || "").trim();
     const notesEl = document.getElementById("stock-receive-notes");
@@ -1424,7 +1448,8 @@ const Stock = (() => {
       if (billedEl) billedEl.value = wizardLines[idx].quantity_billed || "";
     }
     if (field === "quantity_billed" && !wizardLines[idx]._amountDirty) {
-      const amt = (Number(wizardLines[idx].quantity_billed) || 0) * (Number(wizardLines[idx].buying_price) || 0);
+      const rate = Number(wizardLines[idx].billed_rate ?? wizardLines[idx].buying_price) || 0;
+      const amt = (Number(wizardLines[idx].quantity_billed) || 0) * rate;
       wizardLines[idx].billed_amount = amt;
       const row = document.querySelectorAll(".stock-receive-table tbody tr")[idx];
       const amtEl = row?.querySelector(".stock-amount-input");
@@ -1432,11 +1457,35 @@ const Stock = (() => {
     }
     refreshQtyFooter();
   }
+  // Rate billed — defaults to our catalog rate but the vendor's paper bill can
+  // state a different rate; editing it recomputes amount = qty x rate. Amount
+  // stays independently editable (setLineAmount) for whole-total mismatches.
+  function setLineRate(idx, raw) {
+    if (!wizardLines[idx]) return;
+    const v = parseFloat(raw);
+    const rate = Number.isFinite(v) && v >= 0 ? v : (Number(wizardLines[idx].buying_price) || 0);
+    wizardLines[idx].billed_rate = rate;
+    wizardLines[idx]._amountDirty = false;
+    const amt = (Number(wizardLines[idx].quantity_billed) || 0) * rate;
+    wizardLines[idx].billed_amount = amt;
+    const row = document.querySelectorAll(".stock-receive-table tbody tr")[idx];
+    const amtEl = row?.querySelector(".stock-amount-input");
+    if (amtEl) amtEl.value = amt ? amt.toFixed(2) : "";
+    refreshQtyFooter();
+  }
   function setLineAmount(idx, raw) {
     if (!wizardLines[idx]) return;
     const v = parseFloat(raw);
     wizardLines[idx].billed_amount = Number.isFinite(v) && v >= 0 ? v : 0;
     wizardLines[idx]._amountDirty = true;
+    // Keep the rate field in sync so it doesn't show a stale, inconsistent value.
+    const qty = Number(wizardLines[idx].quantity_billed) || 0;
+    if (qty > 0) {
+      wizardLines[idx].billed_rate = wizardLines[idx].billed_amount / qty;
+      const row = document.querySelectorAll(".stock-receive-table tbody tr")[idx];
+      const rateEl = row?.querySelector(".stock-rate-input");
+      if (rateEl) rateEl.value = wizardLines[idx].billed_rate ? wizardLines[idx].billed_rate.toFixed(2) : "";
+    }
     refreshQtyFooter();
   }
   function removeEditLine(idx) {
@@ -1645,6 +1694,7 @@ const Stock = (() => {
             bill_date: eventDate,
             notes: receiptMeta.notes || null,
             debit_notes: debitNotesPayload,
+            ...billingPctOverridePayload(),
           }
         : {
             vendor_id: wizardVendorId,
@@ -1661,6 +1711,7 @@ const Stock = (() => {
               billed_amount: l.billed_amount || 0,
             })),
             debit_notes: debitNotesPayload,
+            ...(isBill ? billingPctOverridePayload() : {}),
           };
       const res = await ctx.api(endpoint, {
         method: isEdit ? "PATCH" : "POST",
@@ -1815,6 +1866,7 @@ const Stock = (() => {
         quantity_received: l.quantity_received || 0,
         quantity_billed: l.quantity_billed || 0,
         billed_amount: (Number(l.quantity_billed) || 0) * (Number(l.buying_price) || 0),
+        billed_rate: l.buying_price,
       }));
       billFile = null;
       billFileKey = receipt.bill_file_key || null;
@@ -1833,6 +1885,7 @@ const Stock = (() => {
         orderReceiptNumber: receipt.order_receipt_number || "",
         additionalCharges: receipt.additional_charges || "",
         totalBilledAmount: receipt.total_billed_amount || receipt.bill_amount || "",
+        billingPct: receipt.billing_pct_applied || "",
         notes: receipt.notes || "",
       };
       try {
@@ -1841,6 +1894,12 @@ const Stock = (() => {
           vendor_id: receipt.vendor_id,
           vendor_label: v.city_name ? `${v.business_name} — ${v.city_name}` : v.business_name,
         };
+        billingTerms = {
+          billing_pct: v.billing_pct, additional_charge: v.additional_charge,
+          additional_charge_label: v.additional_charge_label, discount_pct: v.discount_pct,
+          gst_included: v.gst_included, gst_rate_pct: v.gst_rate_pct, billing_notes: v.billing_notes,
+        };
+        if (!receiptMeta.billingPct) receiptMeta.billingPct = String(Number(v.billing_pct));
       } catch (_) {
         placedOrder = { vendor_id: receipt.vendor_id, vendor_label: `Vendor #${receipt.vendor_id}` };
       }
@@ -1999,7 +2058,7 @@ const Stock = (() => {
   }
   return {
     init, load, setViewMode, render, openDetail, openLedgerDetail, openReceiptDetail,
-    openAddWizard, openReceiveForVendor, openBillForVendor, openOfflineWizard, openOfflineForVendor, closeWizard, pickMode, pickVendor, setLine, setLineAmount, setBillFile,
+    openAddWizard, openReceiveForVendor, openBillForVendor, openOfflineWizard, openOfflineForVendor, closeWizard, pickMode, pickVendor, setLine, setLineAmount, setLineRate, setBillFile,
     toggleOfflineProduct, setOfflineLine, onOfflineProductSearch, onOfflineVendorSearch,
     openOfflineQtyPopup, closeOfflineQtyPopup, confirmOfflineQty, removeOfflineLine, bumpOfflineQty,
     wizardBack, wizardNext, submitReceipt, openDebitNote, removeDebitNote, editThreshold, setSellingPrice, adjustStock,

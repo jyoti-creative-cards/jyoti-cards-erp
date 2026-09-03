@@ -10,13 +10,15 @@ const OrdersUI = (() => {
 
   /** Search tokens from a query string. */
   function partySearchTokens(q) {
-    return String(q || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+    return String(q || "").trim().toLowerCase().replace(/^#/, "").split(/\s+/).filter(Boolean);
   }
 
   /**
    * Rank party for search display:
-   * 0 = business name hit, 1 = city, 2 = person/alias, 3 = phone/other.
+   * 0 = business name / party # hit, 1 = city, 2 = person/alias, 3 = phone/other.
    * Returns null if tokens don't all match somewhere.
+   * Purely-numeric tokens (e.g. "1") only match the party's unique # field
+   * exactly — they must NOT substring-match into other numbers (e.g. "11").
    */
   function partySearchRank(party, tokens) {
     const biz = String(party.business_name || "").toLowerCase();
@@ -25,17 +27,22 @@ const OrdersUI = (() => {
     const phone = `${party.phone || ""} ${party.secondary_phone || ""}`.toLowerCase();
     const address = String(party.address || "").toLowerCase();
     const label = String(party.customer_label || party.vendor_label || party.customer_name || "").toLowerCase();
-    const allHay = [biz, city, person, phone, address, label].join(" ");
+    const partyNum = party.party_number ?? party.vendor_number;
+    const partyNumStr = partyNum != null ? String(partyNum) : "";
+    const textHay = [biz, city, person, phone, address, label].join(" ");
     if (!tokens.length) return [0, 0, 0, biz];
-    if (!tokens.every(t => allHay.includes(t))) return null;
 
-    const bizHits = tokens.filter(t => biz.includes(t)).length;
-    const cityHits = tokens.filter(t => city.includes(t)).length;
-    const personHits = tokens.filter(t => person.includes(t)).length;
+    const tokenMatches = (t) => /^\d+$/.test(t) ? partyNumStr === t : textHay.includes(t);
+    if (!tokens.every(tokenMatches)) return null;
+
+    const numHits = tokens.filter(t => /^\d+$/.test(t) && partyNumStr === t).length;
+    const bizHits = tokens.filter(t => !/^\d+$/.test(t) && biz.includes(t)).length;
+    const cityHits = tokens.filter(t => !/^\d+$/.test(t) && city.includes(t)).length;
+    const personHits = tokens.filter(t => !/^\d+$/.test(t) && person.includes(t)).length;
 
     let tier;
     let hits;
-    if (bizHits) { tier = 0; hits = bizHits; }
+    if (numHits || bizHits) { tier = 0; hits = numHits + bizHits; }
     else if (cityHits) { tier = 1; hits = cityHits; }
     else if (personHits) { tier = 2; hits = personHits; }
     else { tier = 3; hits = 0; }

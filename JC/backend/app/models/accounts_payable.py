@@ -41,6 +41,7 @@ class ApLedgerEntry(Base):
     payment_ref: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     payment_receipt_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     payment_comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    payment_mode: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
     description: Mapped[str] = mapped_column(String(500), nullable=False)
     value_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     reverses_entry_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)

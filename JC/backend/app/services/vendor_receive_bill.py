@@ -208,24 +208,34 @@ def bill_receipt(db: Session, auth: AuthContext, receipt_id: int, body: VendorBi
     if not any(bq > 0 for _, bq, _ in normalized):
         raise HTTPException(400, "enter billed quantity on at least one row")
 
+    # One-off billing % override for this bill only — never mutates the vendor
+    # profile, so it can't affect any other (past or future) bill for this vendor.
+    billing_pct = (
+        Decimal(str(body.billing_pct_override)).quantize(Decimal("0.01"))
+        if body.billing_pct_override is not None else vendor.billing_pct
+    )
+    if not (Decimal("0") < billing_pct <= Decimal("100")):
+        raise HTTPException(400, "billing % override must be between 0 and 100")
+
     total_actual_value = sum((raw_amt for _, _, raw_amt in normalized), Decimal("0"))
     bill_total, extra_cash = compute_bill_totals(
         total_actual_value=total_actual_value,
-        billing_pct=vendor.billing_pct, additional_charge=vendor.additional_charge,
+        billing_pct=billing_pct, additional_charge=vendor.additional_charge,
         discount_pct=vendor.discount_pct, gst_included=vendor.gst_included, gst_rate_pct=vendor.gst_rate_pct,
     )
     entered_total = body.total_billed_amount.quantize(Decimal("0.01"))
-    is_split = vendor.billing_pct < 100
+    is_split = billing_pct < 100
 
     from app.services.biz_date import as_biz_date, resolve_biz_dt
     now = resolve_biz_dt(body.bill_date)
 
     for ln, bq, raw_amt in normalized:
         ln.quantity_billed = bq
-        ln.billed_amount = (raw_amt * vendor.billing_pct / 100).quantize(Decimal("0.01"))
+        ln.billed_amount = (raw_amt * billing_pct / 100).quantize(Decimal("0.01"))
 
     receipt.bill_number = (body.bill_number or "").strip() or None
     receipt.bill_file_key = body.bill_file_key
+    receipt.billing_pct_applied = billing_pct
     receipt.additional_charges = vendor.additional_charge.quantize(Decimal("0.01"))
     receipt.total_billed_amount = entered_total
     receipt.actual_ap_amount = (entered_total + extra_cash).quantize(Decimal("0.01")) if extra_cash > 0 else None
@@ -270,10 +280,17 @@ def preview_bill_deviations(
     db: Session, vendor: Vendor, lines: list[StockReceiptLine], billed_qty_by_pid: dict[int, int], entered_total: Decimal,
     products: dict[int, CatalogProduct] | None = None,
     billed_amount_by_pid: dict[int, Decimal] | None = None,
+    billing_pct: Decimal | None = None,
 ) -> dict:
-    """Returns expected totals + suggested (unsaved) debit notes for the bill-review UI."""
+    """Returns expected totals + suggested (unsaved) debit notes for the bill-review UI.
+
+    `billing_pct` — one-off override for this bill only (e.g. vendor is normally
+    50% split but this particular invoice is 25%). Defaults to the vendor's
+    profile setting; never mutates the vendor record.
+    """
     products = products or {}
     billed_amount_by_pid = billed_amount_by_pid or {}
+    billing_pct = billing_pct if billing_pct is not None else vendor.billing_pct
     suggestions = []
     total_actual_value = Decimal("0")
     for ln in lines:
@@ -283,7 +300,7 @@ def preview_bill_deviations(
         total_actual_value += raw_amt
         dn = line_value_deviation_debit_note(
             billed_amount=raw_amt, received_qty=int(ln.quantity_received or 0),
-            buying_price=ln.buying_price, billing_pct=vendor.billing_pct,
+            buying_price=ln.buying_price, billing_pct=billing_pct,
         )
         if dn:
             prod = products.get(ln.catalog_product_id)
@@ -302,7 +319,7 @@ def preview_bill_deviations(
                 "source": "auto",
             })
     bill_total, extra_cash = compute_bill_totals(
-        total_actual_value=total_actual_value, billing_pct=vendor.billing_pct,
+        total_actual_value=total_actual_value, billing_pct=billing_pct,
         additional_charge=vendor.additional_charge, discount_pct=vendor.discount_pct,
         gst_included=vendor.gst_included, gst_rate_pct=vendor.gst_rate_pct,
     )
@@ -315,6 +332,6 @@ def preview_bill_deviations(
             "source": "auto",
         })
     return {
-        "expected_bill_total": str(bill_total), "expected_extra_cash": str(extra_cash) if vendor.billing_pct < 100 else None,
+        "expected_bill_total": str(bill_total), "expected_extra_cash": str(extra_cash) if billing_pct < 100 else None,
         "suggested_debit_notes": suggestions,
     }

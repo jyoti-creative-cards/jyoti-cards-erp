@@ -286,6 +286,19 @@ const Finance = (() => {
     if (amtRaw == null) return;
     const amount = Number(amtRaw);
     if (!Number.isFinite(amount) || amount <= 0) return ctx.toast("Enter a valid amount", "error");
+
+    let paymentModeId;
+    try {
+      const modes = await ctx.api("/payment-modes?active_only=true", {}, 0);
+      if (modes && modes.length) {
+        const listing = modes.map((m, i) => `${i + 1}. ${m.name}`).join("\n");
+        const pick = prompt(`Payment mode (Cash / Bank) — enter the number:\n${listing}`);
+        const idx = parseInt(String(pick || "").trim(), 10) - 1;
+        if (!Number.isFinite(idx) || idx < 0 || idx >= modes.length) return ctx.toast("Payment mode required", "error");
+        paymentModeId = modes[idx].id;
+      }
+    } catch (e) { ctx.toast(e.message, "error"); return; }
+
     const ref = prompt("Payment reference (cheque no. / UTR / slip no.) *:");
     if (ref == null || !ref.trim()) return ctx.toast("Reference required", "error");
     const comment = prompt("Note (optional):") || "";
@@ -293,7 +306,7 @@ const Finance = (() => {
     try {
       const res = await ctx.api(`/accounts-payable/vendor/${vendor.id}/record-payment`, {
         method: "POST",
-        body: JSON.stringify({ payment_ref: ref.trim(), amount, comment: comment.trim() || undefined }),
+        body: JSON.stringify({ payment_ref: ref.trim(), payment_mode_id: paymentModeId, amount, comment: comment.trim() || undefined }),
       });
       ctx.toast(res.message || "Payment recorded", "success");
     } catch (e) { ctx.toast(e.message, "error"); }
@@ -1002,7 +1015,7 @@ const Finance = (() => {
       `${undoBtns}<button class="btn btn-primary" style="flex:1;" onclick="App.closeDetail()">Close</button>`, "md");
   }
 
-  function openSettle() {
+  async function openSettle() {
     if (!apDetail) return;
     if (!ctx.isAdmin?.() && !ctx.can?.("ap.write")) return ctx.toast?.("Not permitted", "error");
     const outstanding = Number(apDetail.outstanding) || 0;
@@ -1010,11 +1023,23 @@ const Finance = (() => {
     if (title) title.textContent = "Pay";
     const footerBtn = document.querySelector("#settle-modal .btn-primary");
     if (footerBtn) footerBtn.textContent = "Pay";
+    try {
+      paymentModes = await ctx.api("/payment-modes?active_only=true", {}, 30000) || [];
+    } catch (_) { paymentModes = []; }
+    const modeOpts = paymentModes.length
+      ? `<label class="label">Payment mode</label>
+        <select class="input" id="settle-mode" style="margin-bottom:12px;width:100%;">
+          <option value="">— Select mode —</option>
+          ${paymentModes.map(m => `<option value="${m.id}">${ctx.esc(m.name)}</option>`).join("")}
+        </select>
+        <p style="font-size:12px;color:var(--muted);margin:-4px 0 12px;">Add modes in Setup → Payment Modes.</p>`
+      : `<p style="font-size:13px;color:var(--muted);margin:0 0 12px;">No payment modes yet — <button type="button" class="btn btn-ghost btn-sm" onclick="Finance.closeSettle();App.showView('setup');App.showSetupTab('paymodes')">add in Setup</button></p>`;
     document.getElementById("settle-body").innerHTML = `
       <div class="review-block" style="margin-bottom:16px;">
         ${ctx.reviewRow("Vendor", apDetail.vendor_label)}
         ${ctx.reviewRow("Due", fmtPrice(outstanding))}
       </div>
+      ${modeOpts}
       <label class="label">Payment reference / ID</label>
       <input class="input" id="settle-ref" style="margin-bottom:12px;" placeholder="UTR, cheque #, etc." />
       <label class="label">Payment date</label>
@@ -1051,6 +1076,9 @@ const Finance = (() => {
     const ref = (document.getElementById("settle-ref")?.value || "").trim();
     const amount = parseFloat(document.getElementById("settle-amount")?.value || "0");
     const comment = (document.getElementById("settle-comment")?.value || "").trim() || null;
+    const modeRaw = document.getElementById("settle-mode")?.value || "";
+    const payment_mode_id = modeRaw ? parseInt(modeRaw, 10) : null;
+    if (paymentModes.length && !payment_mode_id) return ctx.toast("Select payment mode", "error");
     if (!ref) return ctx.toast("Enter payment reference", "error");
     if (!amount || amount <= 0) return ctx.toast("Enter valid amount", "error");
     const valueDate = (document.getElementById("settle-date")?.value || "").trim();
@@ -1073,9 +1101,11 @@ const Finance = (() => {
         if (!res.ok) throw new Error("Receipt upload failed");
         key = (await res.json()).key;
       }
+      const body = { payment_ref: ref, amount, payment_receipt_key: key, comment, value_date: valueDate };
+      if (payment_mode_id) body.payment_mode_id = payment_mode_id;
       await ctx.api(`/accounts-payable/vendor/${currentVendor}/settle`, {
         method: "POST",
-        body: JSON.stringify({ payment_ref: ref, amount, payment_receipt_key: key, comment, value_date: valueDate }),
+        body: JSON.stringify(body),
       });
       ctx.invalidateCache?.("/accounts-payable");
       ctx.invalidateCache?.("/finance");

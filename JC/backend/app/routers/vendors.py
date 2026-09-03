@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -55,6 +55,7 @@ def _to_public(row: Vendor, db: Session, include_history: bool = False) -> Vendo
         city_id=row.city_id,
         city_name=city_name,
         gst_number=row.gst_number,
+        vendor_number=row.vendor_number,
         is_active=row.is_active,
         opening_balance_due=format(opening.amount, "f") if opening else None,
         opening_balance_as_on=opening.value_date.isoformat() if opening and opening.value_date else None,
@@ -88,9 +89,11 @@ def list_vendors(
     if search:
         from app.services.token_search import sort_parties_by_search, token_match
 
+        # Strip leading # so "#12" searches vendor_number 12
+        search_clean = search.lstrip("#").strip()
         q = q.outerjoin(City, Vendor.city_id == City.id)
         clause = token_match(
-            search,
+            search_clean,
             [
                 Vendor.business_name,
                 Vendor.person_name,
@@ -99,6 +102,7 @@ def list_vendors(
                 Vendor.address,
                 City.name,
             ],
+            exact_int_columns=[Vendor.vendor_number],
         )
         if clause is not None:
             q = q.filter(clause)
@@ -108,7 +112,7 @@ def list_vendors(
             c.id: c.name
             for c in (db.query(City).filter(City.id.in_(city_ids)).all() if city_ids else [])
         }
-        rows = sort_parties_by_search(rows, search, city_lookup=cities)
+        rows = sort_parties_by_search(rows, search_clean, city_lookup=cities)
     else:
         rows = q.order_by(Vendor.id.desc()).all()
         city_ids = sorted({r.city_id for r in rows if r.city_id})
@@ -131,6 +135,7 @@ def list_vendors(
                 city_id=r.city_id,
                 city_name=city_name,
                 gst_number=r.gst_number,
+                vendor_number=r.vendor_number,
                 is_active=r.is_active,
                 billing_terms=VendorBillingTerms(
                     billing_pct=float(r.billing_pct), additional_charge=float(r.additional_charge),
@@ -221,6 +226,9 @@ def create_vendor(body: VendorCreate, db: Session = Depends(get_db), auth: AuthC
         alias=(body.alias.strip() if body.alias else None),
         address=(body.address.strip() if body.address else None),
         gst_number=(body.gst_number.strip().upper() if body.gst_number else None),
+        vendor_number=body.vendor_number if body.vendor_number is not None else (
+            db.execute(text("SELECT COALESCE(MAX(vendor_number), 0) + 1 FROM jc_vendors")).scalar()
+        ),
     )
     db.add(row)
     try:

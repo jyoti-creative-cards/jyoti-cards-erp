@@ -308,7 +308,8 @@ def generate_vendor_receipt_document(db: Session, receipt_id: int) -> str | None
         })
     total = receipt.total_billed_amount or bill_amt
     extra_cash = None
-    if vendor.billing_pct < 100:
+    billed_pct = receipt.billing_pct_applied if receipt.billing_pct_applied is not None else vendor.billing_pct
+    if billed_pct < 100:
         if receipt.actual_ap_amount is not None and total is not None:
             extra_cash = (receipt.actual_ap_amount - total).quantize(Decimal("0.01"))
         elif receipt.expected_extra_cash is not None:

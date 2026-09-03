@@ -329,6 +329,18 @@ def test_bill_receipt_flips_pending_bill_to_billed(db):
     assert still == 0
 
 
+def test_to_bill_bucket_lists_vendor_with_pending_receipt(db):
+    """Regression: VendorOrder.bucket never becomes "received" anywhere in the
+    codebase, so the "To bill" hub tab must source from StockReceipt directly —
+    not the legacy (permanently-empty) VendorOrder.bucket == "received" query."""
+    from app.routers.vendor_orders import list_vendor_orders
+
+    v = _vendor(db)
+    _pending_receipt(db, v.id)
+    rows = list_vendor_orders(bucket="received", view="default", day="all", db=db, auth=AUTH)
+    assert any(r.vendor_id == v.id and r.open_kind == "to_bill" for r in rows)
+
+
 def test_bill_receipt_keeps_vendor_when_other_pending_exists(db):
     v = _vendor(db)
     r1, ln1 = _pending_receipt(db, v.id)
@@ -340,3 +352,53 @@ def test_bill_receipt_keeps_vendor_when_other_pending_exists(db):
     bill_receipt(db, AUTH, r1.id, body)
     assert db.get(StockReceipt, r1.id).bill_status == "billed"
     assert db.get(StockReceipt, r2.id).bill_status == "pending_bill"
+
+
+def test_bill_receipt_one_off_billing_pct_override_ignores_vendor_default(db):
+    """Vendor defaults to 100% billing, but this one invoice is split at 50% —
+    override must apply split math without touching the vendor's profile."""
+    v = _vendor(db)
+    assert v.billing_pct == Decimal("100")
+    r, ln = _pending_receipt(db, v.id, qty=100, price=Decimal("10"))
+    body = VendorBillIn(
+        total_billed_amount=Decimal("500.00"),
+        lines=[VendorBillLineIn(catalog_product_id=ln.catalog_product_id, quantity_billed=100)],
+        billing_pct_override=Decimal("50"),
+    )
+    bill_receipt(db, AUTH, r.id, body)
+    r2 = db.get(StockReceipt, r.id)
+    assert r2.bill_status == "billed"
+    assert r2.billing_pct_applied == Decimal("50.00")
+    assert r2.actual_ap_amount == Decimal("1000.00")  # 500 on-paper + 500 extra cash
+    line = db.get(StockReceiptLine, ln.id)
+    assert line.billed_amount == Decimal("500.00")  # 100 x 10 x 50%
+    db.refresh(v)
+    assert v.billing_pct == Decimal("100")  # vendor profile untouched
+
+
+def test_edit_bill_reuses_originally_applied_pct_not_current_vendor_default(db):
+    """After billing at a one-off 25% override, later edits to that same receipt
+    must keep using 25% even if the vendor's profile has since changed back."""
+    from app.services.receipt_edit import update_vendor_receipt
+    from app.schemas.stock import VendorReceiptCreate, VendorReceiptLineIn
+
+    v = _vendor(db)
+    r, ln = _pending_receipt(db, v.id, qty=100, price=Decimal("10"))
+    bill_receipt(db, AUTH, r.id, VendorBillIn(
+        total_billed_amount=Decimal("250.00"),
+        lines=[VendorBillLineIn(catalog_product_id=ln.catalog_product_id, quantity_billed=100)],
+        billing_pct_override=Decimal("25"),
+    ))
+    assert db.get(StockReceipt, r.id).billing_pct_applied == Decimal("25.00")
+
+    # Vendor's own billing_pct never changed from 100, simulating "someone else's"
+    # concurrent bill or a later profile edit — the historical bill must not shift.
+    update_vendor_receipt(db, AUTH, r.id, VendorReceiptCreate(
+        vendor_id=v.id,
+        lines=[VendorReceiptLineIn(catalog_product_id=ln.catalog_product_id, quantity_received=100, quantity_billed=100)],
+        total_billed_amount=Decimal("250.00"),
+    ))
+    r2 = db.get(StockReceipt, r.id)
+    assert r2.billing_pct_applied == Decimal("25.00")
+    line = db.get(StockReceiptLine, ln.id)
+    assert line.billed_amount == Decimal("250.00")  # still 100 x 10 x 25%, not x 100%

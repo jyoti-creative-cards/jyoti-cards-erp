@@ -15,6 +15,7 @@ class VendorCreate(BaseModel):
     alias: Optional[str] = Field(None, max_length=200)
     address: Optional[str] = None
     gst_number: Optional[str] = Field(None, max_length=20)
+    vendor_number: Optional[int] = None
     opening_balance_due: Optional[float] = Field(None, ge=0)
     opening_balance_as_on: Optional[date] = None
 
@@ -52,6 +53,7 @@ class VendorPublic(BaseModel):
     city_id: Optional[int] = None
     city_name: Optional[str] = None
     gst_number: Optional[str]
+    vendor_number: Optional[int] = None
     is_active: bool
     opening_balance_due: Optional[str] = None
     opening_balance_as_on: Optional[str] = None

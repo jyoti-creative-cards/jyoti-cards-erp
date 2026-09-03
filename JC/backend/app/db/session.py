@@ -125,6 +125,8 @@ def init_db() -> None:
         _migrate_vendor_billing_v2()
         _migrate_void_recycle()
         _migrate_void_recycle_customer()
+        _migrate_vendor_number()
+        _migrate_receipt_billing_pct()
         with engine.begin() as conn:
             conn.execute(text("SELECT 1"))
         _DB_READY = True
@@ -133,6 +135,32 @@ def init_db() -> None:
         _DB_READY = False
         log.exception("init_db FAILED")
         raise
+
+
+def _migrate_vendor_number() -> None:
+    """Unique vendor # (like customer party_number) — backfill existing rows by id order."""
+    with engine.begin() as conn:
+        if _is_sqlite:
+            _exec_sql(conn, "ALTER TABLE jc_vendors ADD COLUMN vendor_number INTEGER", critical=False)
+        else:
+            _exec_sql(conn, "ALTER TABLE jc_vendors ADD COLUMN IF NOT EXISTS vendor_number INTEGER", critical=False)
+            _exec_sql(
+                conn,
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_jc_vendors_vendor_number ON jc_vendors (vendor_number) WHERE vendor_number IS NOT NULL",
+                critical=False,
+            )
+        conn.execute(text(
+            "UPDATE jc_vendors SET vendor_number = id WHERE vendor_number IS NULL"
+        ))
+
+
+def _migrate_receipt_billing_pct() -> None:
+    """Per-receipt snapshot of the billing % actually applied (supports one-off overrides)."""
+    with engine.begin() as conn:
+        if _is_sqlite:
+            _exec_sql(conn, "ALTER TABLE jc_stock_receipts ADD COLUMN billing_pct_applied NUMERIC(5,2)", critical=False)
+        else:
+            _exec_sql(conn, "ALTER TABLE jc_stock_receipts ADD COLUMN IF NOT EXISTS billing_pct_applied NUMERIC(5,2)", critical=False)
 
 
 def _migrate_vendor_city_optional() -> None:
@@ -318,14 +346,20 @@ def _migrate_freight_docs() -> None:
 
 
 def _migrate_payment_modes() -> None:
-    """Payment modes setup + AR payment_mode column."""
+    """Payment modes setup + AR/AP payment_mode columns."""
     with engine.begin() as conn:
         if _is_sqlite:
             _exec_sql(conn, "ALTER TABLE jc_ar_ledger_entries ADD COLUMN payment_mode VARCHAR(80)", critical=False)
+            _exec_sql(conn, "ALTER TABLE jc_ap_ledger_entries ADD COLUMN payment_mode VARCHAR(80)", critical=False)
         else:
             _exec_sql(
                 conn,
                 "ALTER TABLE jc_ar_ledger_entries ADD COLUMN IF NOT EXISTS payment_mode VARCHAR(80)",
+                critical=False,
+            )
+            _exec_sql(
+                conn,
+                "ALTER TABLE jc_ap_ledger_entries ADD COLUMN IF NOT EXISTS payment_mode VARCHAR(80)",
                 critical=False,
             )
 

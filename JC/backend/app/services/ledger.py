@@ -249,6 +249,7 @@ def build_vendor_ledger(
                         "amount": format(abs(ap.amount), "f"),
                         "payment_receipt_url": presigned_url(ap.payment_receipt_key) if ap.payment_receipt_key else None,
                         "comment": ap.payment_comment,
+                        "payment_mode": ap.payment_mode,
                         "reversed": ap.id in reversed_ap_ids,
                     },
                 ),

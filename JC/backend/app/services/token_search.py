@@ -12,18 +12,30 @@ def search_tokens(q: str | None) -> list[str]:
     return [t for t in str(q).strip().lower().split() if t]
 
 
-def token_match(q: str | None, columns: Iterable) -> ColumnElement | None:
-    """AND of tokens; each token ORs across columns (lowercased LIKE %token%)."""
+def token_match(
+    q: str | None, columns: Iterable, *, exact_int_columns: Iterable = (),
+) -> ColumnElement | None:
+    """AND of tokens; each token ORs across columns (lowercased LIKE %token%).
+
+    `exact_int_columns` (e.g. party_number / vendor_number) use exact equality for
+    purely-numeric tokens instead of substring LIKE — searching "1" should not also
+    surface "11" / "111" against a party's unique # field.
+    """
     tokens = search_tokens(q)
     if not tokens:
         return None
     cols = list(columns)
-    if not cols:
+    exact_cols = list(exact_int_columns)
+    if not cols and not exact_cols:
         return None
     parts = []
     for tok in tokens:
         pat = f"%{tok}%"
-        parts.append(or_(*[func.lower(c).like(pat) for c in cols]))
+        ors = [func.lower(c).like(pat) for c in cols]
+        if tok.isdigit():
+            for c in exact_cols:
+                ors.append(c == int(tok))
+        parts.append(or_(*ors))
     return and_(*parts) if len(parts) > 1 else parts[0]
 
 

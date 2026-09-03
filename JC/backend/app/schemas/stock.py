@@ -105,6 +105,9 @@ class VendorReceiptCreate(BaseModel):
     debit_notes: List[DebitNoteIn] = []
     bill_date: Optional[date] = None  # vendor bill backdate
     received_on: Optional[date] = None  # receive backdate (goods in)
+    # One-off billing % override, only used when editing an already-billed receipt.
+    # None = keep whatever % was originally applied to this bill (or vendor default if unset).
+    billing_pct_override: Optional[Decimal] = Field(None, gt=0, le=100)
 
 
 class VendorBillLineIn(BaseModel):
@@ -123,6 +126,9 @@ class VendorBillIn(BaseModel):
     bill_date: Optional[date] = None  # vendor's paper invoice date; default = today
     notes: Optional[str] = None
     debit_notes: List[DebitNoteIn] = []
+    # One-off billing % for THIS bill only (e.g. vendor is normally 50% split but this
+    # invoice is 25%). None = use the vendor profile's billing_pct. Never mutates the vendor.
+    billing_pct_override: Optional[Decimal] = Field(None, gt=0, le=100)
 
 
 class VendorReceiveCreate(BaseModel):
@@ -198,6 +204,7 @@ class ReceiptForBillDetail(BaseModel):
 class BillPreviewIn(BaseModel):
     total_billed_amount: Decimal = Field(..., ge=0)
     lines: List[VendorBillLineIn] = []
+    billing_pct_override: Optional[Decimal] = Field(None, gt=0, le=100)
 
 
 class BillPreviewOut(BaseModel):

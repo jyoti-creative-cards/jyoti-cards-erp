@@ -244,8 +244,8 @@ def list_customers(
                 Customer.alias,
                 Customer.address,
                 City.name,
-                sa_cast(Customer.party_number, SAString),
             ],
+            exact_int_columns=[Customer.party_number],
         )
         if clause is not None:
             q = q.filter(clause)

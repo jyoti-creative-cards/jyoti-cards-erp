@@ -120,6 +120,15 @@ def settle_vendor_ap(
         raise HTTPException(400, "no outstanding balance to settle")
     amount = body.amount.quantize(Decimal("0.01"))
 
+    from app.models.payment_mode import PaymentMode
+
+    mode_name = None
+    if body.payment_mode_id:
+        mode = db.get(PaymentMode, body.payment_mode_id)
+        if not mode or not mode.is_active:
+            raise HTTPException(400, "invalid payment mode")
+        mode_name = mode.name
+
     pay_day = body.value_date or today_ist()
     entry = post_payment_entry(
         db,
@@ -128,6 +137,7 @@ def settle_vendor_ap(
         payment_ref=body.payment_ref.strip(),
         payment_receipt_key=body.payment_receipt_key,
         payment_comment=body.comment,
+        payment_mode=mode_name,
         description=f"Payment {body.payment_ref.strip()} — ₹{amount}",
         actor_type=auth.actor_type,
         actor_id=auth.actor_id,
@@ -170,6 +180,15 @@ def record_vendor_payment(
         raise HTTPException(400, "No outstanding balance on this vendor to record a payment against")
     amount = body.amount.quantize(Decimal("0.01"))
 
+    from app.models.payment_mode import PaymentMode
+
+    mode_name = None
+    if body.payment_mode_id:
+        mode = db.get(PaymentMode, body.payment_mode_id)
+        if not mode or not mode.is_active:
+            raise HTTPException(400, "invalid payment mode")
+        mode_name = mode.name
+
     pay_day = body.value_date or today_ist()
     entry = post_payment_entry(
         db,
@@ -178,6 +197,7 @@ def record_vendor_payment(
         payment_ref=body.payment_ref.strip(),
         payment_receipt_key=body.payment_receipt_key,
         payment_comment=body.comment,
+        payment_mode=mode_name,
         description=f"Payment {body.payment_ref.strip()} — ₹{amount}",
         actor_type=auth.actor_type,
         actor_id=auth.actor_id,

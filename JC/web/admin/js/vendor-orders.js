@@ -454,7 +454,7 @@ const VendorOrders = (() => {
       rowOnclick: `VendorOrders.toggleHubVendor(${o.vendor_id}, 'received', ${o.id})`,
       canWrite,
       expandHtml: open
-        ? `<div id="vo-hub-expand-${o.vendor_id}">${cache ? renderReceivedExpand(cache, canWrite) : `<p class="vo-muted" style="margin:0;padding:8px 0;">Loading…</p>`}</div>`
+        ? `<div id="vo-hub-expand-${o.vendor_id}">${cache ? renderOpenBillExpand(cache, canWrite) : `<p class="vo-muted" style="margin:0;padding:8px 0;">Loading…</p>`}</div>`
         : "",
     });
   }
@@ -750,7 +750,7 @@ const VendorOrders = (() => {
     try {
       if (bucket === "open") {
         hubExpandCache[key] = await ctx.api(`/vendor-orders/vendor/${vendorId}/open`, {}, 0);
-      } else if (bucket === "open-bill") {
+      } else if (bucket === "open-bill" || bucket === "received") {
         const recv = await ctx.api(`/stock/vendor-order/${vendorId}/received`, {}, 0);
         hubExpandCache[key] = {
           vendor_id: vendorId,

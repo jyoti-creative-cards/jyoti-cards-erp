@@ -99,6 +99,72 @@ def _vendor_contexts(db: Session, vendor_ids: set[int]) -> dict[int, tuple[Vendo
     return out
 
 
+def _to_bill_summaries(
+    db: Session, *, day_start: datetime | None = None, day_end: datetime | None = None,
+    only_vendor_ids: set[int] | None = None,
+) -> list["VendorOrderSummary"]:
+    """Vendors with a StockReceipt still pending_bill (one-to-one receive→bill model).
+
+    `VendorOrder.bucket` never transitions to "received"/"billed" anywhere in the
+    codebase — those legacy bucket values are dead. This is the real source of truth
+    for the "To bill" queue.
+    """
+    from sqlalchemy import func
+
+    q = (
+        db.query(
+            StockReceipt.vendor_id,
+            func.count(func.distinct(StockReceipt.id)),
+            func.count(StockReceiptLine.id),
+            func.coalesce(func.sum(StockReceiptLine.quantity_received), 0),
+        )
+        .join(StockReceiptLine, StockReceiptLine.receipt_id == StockReceipt.id)
+        .filter(StockReceipt.bill_status == "pending_bill", StockReceipt.deleted_at.is_(None))
+    )
+    if day_start is not None and day_end is not None:
+        q = q.filter(StockReceipt.received_at >= day_start, StockReceipt.received_at < day_end)
+    if only_vendor_ids is not None:
+        q = q.filter(StockReceipt.vendor_id.in_(only_vendor_ids)) if only_vendor_ids else q.filter(False)
+    rows = q.group_by(StockReceipt.vendor_id).all()
+    vctx = _vendor_contexts(db, {int(vendor_id) for vendor_id, _, _, _ in rows})
+    out: list[VendorOrderSummary] = []
+    for vendor_id, receipt_count, line_count, total_qty in rows:
+        vid = int(vendor_id)
+        ctx = vctx.get(vid)
+        if ctx is None:
+            continue
+        vendor, city_name, label = ctx
+        latest = (
+            db.query(func.max(StockReceipt.received_at))
+            .filter(
+                StockReceipt.vendor_id == vid,
+                StockReceipt.bill_status == "pending_bill",
+                StockReceipt.deleted_at.is_(None),
+            )
+            .scalar()
+        )
+        out.append(
+            VendorOrderSummary(
+                id=0,
+                vendor_id=vid,
+                vendor_name=vendor.business_name,
+                vendor_city=city_name,
+                vendor_label=label,
+                alias=vendor.alias,
+                status="to_bill",
+                bucket="open",
+                is_open=True,
+                placement_count=int(receipt_count),
+                line_count=int(line_count),
+                total_quantity=int(total_qty or 0),
+                updated_at=latest or datetime.now(timezone.utc),
+                open_kind="to_bill",
+            )
+        )
+    out.sort(key=lambda x: x.updated_at or datetime.min.replace(tzinfo=timezone.utc))
+    return out
+
+
 def _placement_color_map(placements: list[VendorOrderPlacement]) -> dict[int, int]:
     ordered = sorted(placements, key=lambda p: (p.placed_at, p.id))
     return {p.id: idx for idx, p in enumerate(ordered)}
@@ -514,53 +580,7 @@ def list_vendor_orders(
             )
 
         # Yet to bill (pending StockReceipts, one-to-one model)
-        pending_rows = (
-            db.query(
-                StockReceipt.vendor_id,
-                func.count(StockReceipt.id),
-                func.coalesce(func.sum(StockReceiptLine.quantity_received), 0),
-            )
-            .join(StockReceiptLine, StockReceiptLine.receipt_id == StockReceipt.id)
-            .filter(StockReceipt.bill_status == "pending_bill", StockReceipt.deleted_at.is_(None))
-            .group_by(StockReceipt.vendor_id)
-            .all()
-        )
-        bill_vctx = _vendor_contexts(db, {int(vendor_id) for vendor_id, _, _ in pending_rows})
-        for vendor_id, receipt_count, total_qty in pending_rows:
-            vid = int(vendor_id)
-            if today_bill is not None and vid not in today_bill:
-                continue
-            ctx = bill_vctx.get(vid)
-            if ctx is None:
-                continue
-            vendor, city_name, label = ctx
-            latest = (
-                db.query(func.max(StockReceipt.received_at))
-                .filter(
-                    StockReceipt.vendor_id == vid,
-                    StockReceipt.bill_status == "pending_bill",
-                    StockReceipt.deleted_at.is_(None),
-                )
-                .scalar()
-            )
-            out.append(
-                VendorOrderSummary(
-                    id=0,
-                    vendor_id=vid,
-                    vendor_name=vendor.business_name,
-                    vendor_city=city_name,
-                    vendor_label=label,
-                    alias=vendor.alias,
-                    status="to_bill",
-                    bucket="open",
-                    is_open=True,
-                    placement_count=int(receipt_count),
-                    line_count=int(receipt_count),
-                    total_quantity=int(total_qty or 0),
-                    updated_at=latest or datetime.now(timezone.utc),
-                    open_kind="to_bill",
-                )
-            )
+        out.extend(_to_bill_summaries(db, only_vendor_ids=today_bill))
         out.sort(key=lambda x: x.updated_at or datetime.min.replace(tzinfo=timezone.utc))
         return out
 
@@ -667,21 +687,10 @@ def list_vendor_orders(
             summaries = [s for s in summaries if s.total_quantity > 0]
         return summaries
 
-    if bucket == "received" and day_start is not None:
-        today_vids = _vids_with_placement_today(("received",))
-        if not today_vids:
-            return []
-        orders = (
-            db.query(VendorOrder)
-            .filter(
-                VendorOrder.is_open.is_(True),
-                VendorOrder.bucket == "received",
-                VendorOrder.vendor_id.in_(today_vids),
-            )
-            .order_by(VendorOrder.updated_at.asc())
-            .all()
-        )
-        return _summaries_from_orders(db, orders)
+    if bucket == "received":
+        # "To bill" stage — VendorOrder.bucket never becomes "received" (see
+        # _to_bill_summaries); source from StockReceipt.bill_status instead.
+        return _to_bill_summaries(db, day_start=day_start, day_end=day_end)
 
     if bucket == "billed" and day_start is not None:
         today_vids = _vids_with_placement_today(("billed",))

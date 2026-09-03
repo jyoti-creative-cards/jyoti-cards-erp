@@ -19,6 +19,7 @@ class ApLedgerEntryOut(BaseModel):
     payment_ref: Optional[str] = None
     payment_receipt_url: Optional[str] = None
     payment_comment: Optional[str] = None
+    payment_mode: Optional[str] = None
     bill_number: Optional[str] = None
     bill_amount: Optional[str] = None
     debit_note_total: Optional[str] = None
@@ -68,6 +69,7 @@ class ApSettlementIn(BaseModel):
     payment_receipt_key: Optional[str] = None
     comment: Optional[str] = None
     value_date: Optional[date] = None
+    payment_mode_id: Optional[int] = None
 
 
 class OpeningBalanceIn(BaseModel):

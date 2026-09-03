@@ -704,6 +704,7 @@ def preview_receipt_bill(
     result = preview_bill_deviations(
         db, vendor, rlines, billed_qty_by_pid, body.total_billed_amount.quantize(Decimal("0.01")),
         products=products, billed_amount_by_pid=billed_amount_by_pid,
+        billing_pct=body.billing_pct_override,
     )
     return BillPreviewOut(**result)
 
@@ -829,6 +830,7 @@ def get_receipt_detail(
         "notes": receipt.notes,
         "bill_file_key": receipt.bill_file_key,
         "additional_charges": format(receipt.additional_charges, "f") if receipt.additional_charges is not None else None,
+        "billing_pct_applied": format(receipt.billing_pct_applied, "f") if receipt.billing_pct_applied is not None else None,
         "total_billed_amount": format(receipt.total_billed_amount, "f") if receipt.total_billed_amount is not None else None,
         "bill_amount": format(bill_amt, "f"),
         "debit_note_total": format(dn_total, "f"),

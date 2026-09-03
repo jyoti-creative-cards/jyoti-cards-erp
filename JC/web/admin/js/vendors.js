@@ -9,6 +9,7 @@ const Vendors = (() => {
   let editingId = null;
 
   const VENDOR_COLS = [
+    { key: "vendor_number", label: "#", get: v => v.vendor_number || 0 },
     { key: "business", label: "Business", get: v => `${v.business_name} ${v.alias || ""}` },
     { key: "phone", label: "Phone", get: v => v.phone },
     { key: "city", label: "City", get: v => v.city_name || "" },
@@ -71,6 +72,7 @@ const Vendors = (() => {
     const rows = TableUtils.apply(vendors, "vendors", VENDOR_COLS);
     el.innerHTML = `<table class="data">${TableUtils.headerHtml("vendors", VENDOR_COLS)}<tbody>
       ${rows.map(v => `<tr class="clickable" onclick="Vendors.openDetail(${v.id})">
+        <td style="text-align:center;color:var(--muted);font-size:12px;font-weight:700;white-space:nowrap;padding-right:4px;">${v.vendor_number ? `#${v.vendor_number}` : "—"}</td>
         <td><strong>${ctx.esc(v.business_name)}</strong>${v.alias ? `<br><span style="font-size:12px;color:var(--muted);">${ctx.esc(v.alias)}</span>` : ""}</td>
         <td>${ctx.esc(v.phone)}</td>
         <td>${ctx.esc(v.city_name || "—")}</td>
@@ -82,6 +84,18 @@ const Vendors = (() => {
 
   let vendorAp = null;
   let vendorLedgerExpanded = null;
+  let vendorPayModeFilter = "all"; // "all" | "cash" | "bank"
+
+  function setVendorPayModeFilter(mode) {
+    vendorPayModeFilter = mode;
+    const wrap = document.getElementById("vendor-ledger-wrap");
+    if (wrap && currentVendorId) wrap.innerHTML = renderVendorStatement(currentVendorId);
+  }
+
+  function payModeBucket(mode) {
+    if (!mode) return null;
+    return /cash/i.test(mode) ? "cash" : "bank";
+  }
 
   function fmtMoney(val) {
     if (val == null || val === "") return "—";
@@ -102,7 +116,7 @@ const Vendors = (() => {
     vendorLedger = [];
     ctx.openDetail(v.business_name, `
       <div class="profile-hero" style="margin:-24px -24px 16px;border-radius:0;">
-        <h2>${ctx.esc(v.business_name)}</h2>
+        <h2>${v.vendor_number ? `<span style="color:var(--muted);font-size:16px;font-weight:600;margin-right:6px;">#${v.vendor_number}</span>` : ""}${ctx.esc(v.business_name)}</h2>
         <p>${ctx.esc(v.person_name || "No contact person")}</p>
         <div class="profile-meta">
           <span class="badge badge-blue">${ctx.esc(v.phone)}</span>
@@ -202,6 +216,14 @@ const Vendors = (() => {
     const orders = vendorLedger.filter(e => e.event_type === "order_placed" || e.event_type === "order_cancelled");
     const bills = vendorLedger.filter(e => e.event_type === "stock_received");
     const payments = vendorLedger.filter(e => e.event_type === "ap_payment");
+    // "stock_received" only carries the receipt note; the actual bill_number/amount
+    // live on a separate "vendor_bill" event once billed — merge by receipt_id so
+    // the ledger card shows the real bill number instead of falling back to the id.
+    const billInfoByReceipt = {};
+    for (const e of vendorLedger.filter(x => x.event_type === "vendor_bill")) {
+      const rid = e.details?.receipt_id;
+      if (rid) billInfoByReceipt[rid] = e.details || {};
+    }
     // Nest debit notes under matching bill/receipt
     const dnsByReceipt = {};
     for (const e of vendorLedger.filter(x => x.event_type === "debit_note")) {
@@ -239,16 +261,20 @@ const Vendors = (() => {
       const d = e.details || {};
       const open = vendorLedgerExpanded === e.id;
       const rid = d.receipt_id;
+      const bi = rid ? (billInfoByReceipt[rid] || {}) : {};
       const dns = rid ? (dnsByReceipt[rid] || []) : [];
       const lines = d.lines || [];
+      // Always lead with the receipt note number entered at receive time — the
+      // vendor's bill number (once billed) is shown alongside, not instead of it.
+      const title = d.order_receipt_number ? `Receipt ${ctx.esc(d.order_receipt_number)}` : `Receipt #${rid || d.placement_id || ""}`;
       return `<div class="vled-card ${open ? "is-open" : ""}">
         <button type="button" class="vled-head" onclick="Vendors.toggleLedgerRow('${e.id}')">
           <div>
-            <div class="vled-title">Bill ${ctx.esc(d.bill_number || `#${rid || d.placement_id || ""}`)}</div>
+            <div class="vled-title">${title}${bi.bill_number ? ` · Bill ${ctx.esc(bi.bill_number)}` : ""}</div>
             <div class="vled-meta">${ctx.fmtDate(e.occurred_at)} · ${lines.length} lines
-              ${d.bill_amount != null ? ` · Bill ${fmtMoney(d.bill_amount)}` : ""}
+              ${bi.bill_amount != null ? ` · Bill ${fmtMoney(bi.bill_amount)}` : ""}
               ${dns.length ? ` · ${dns.length} debit note${dns.length === 1 ? "" : "s"}` : ""}
-              ${d.net_payable != null ? ` · Net ${fmtMoney(d.net_payable)}` : ""}</div>
+              ${bi.net_payable != null ? ` · Net ${fmtMoney(bi.net_payable)}` : ""}</div>
           </div>
           <span class="vled-chevron">${open ? "▾" : "▸"}</span>
         </button>
@@ -269,7 +295,7 @@ const Vendors = (() => {
           </div>` : ""}
           <div class="vled-actions">
             ${rid ? `<button class="btn btn-primary btn-sm" onclick="VendorOrders.openReceiptDoc(${rid})">Bill Receipt</button>` : ""}
-            ${d.bill_file_url ? `<button class="btn btn-secondary btn-sm" onclick="window.open('${ctx.esc(d.bill_file_url)}','_blank')">Vendor Bill</button>` : ""}
+            ${(bi.bill_file_url || d.bill_file_url) ? `<button class="btn btn-secondary btn-sm" onclick="window.open('${ctx.esc(bi.bill_file_url || d.bill_file_url)}','_blank')">Vendor Bill</button>` : ""}
             ${rid ? `<button class="btn btn-secondary btn-sm" onclick="Vendors.openBillDebitNotes(${vendorId}, ${rid})">Debit Note</button>` : ""}
             <button class="btn btn-secondary btn-sm" onclick="Vendors.openOrderFromLedger('${e.id}')">Open in Orders</button>
           </div>
@@ -277,13 +303,28 @@ const Vendors = (() => {
       </div>`;
     }));
 
-    sections.push(renderLedgerGroup("Payments", payments, "pay", (e) => {
+    const paymentsFiltered = vendorPayModeFilter === "all"
+      ? payments
+      : payments.filter(e => payModeBucket(e.details?.payment_mode) === vendorPayModeFilter);
+    const payFilterChips = payments.length ? `<div class="vled-group">
+      <div class="vled-group-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <span>Payments</span>
+        <span class="ord-mode-toggle" style="margin:0;">
+          <button type="button" class="ord-mode-btn${vendorPayModeFilter === "all" ? " active" : ""}" onclick="Vendors.setVendorPayModeFilter('all')">All</button>
+          <button type="button" class="ord-mode-btn${vendorPayModeFilter === "cash" ? " active" : ""}" onclick="Vendors.setVendorPayModeFilter('cash')">Cash</button>
+          <button type="button" class="ord-mode-btn${vendorPayModeFilter === "bank" ? " active" : ""}" onclick="Vendors.setVendorPayModeFilter('bank')">Bank</button>
+        </span>
+      </div>
+    </div>` : "";
+    const payEmptyHtml = payments.length && !paymentsFiltered.length
+      ? `<p class="vo-muted" style="margin:0 0 12px;">No ${vendorPayModeFilter} payments.</p>` : "";
+    sections.push(payFilterChips + payEmptyHtml + renderLedgerGroup("", paymentsFiltered, "pay", (e) => {
       const d = e.details || {};
       const open = vendorLedgerExpanded === e.id;
       return `<div class="vled-card ${open ? "is-open" : ""}">
         <button type="button" class="vled-head" onclick="Vendors.toggleLedgerRow('${e.id}')">
           <div>
-            <div class="vled-title">Payment ${ctx.esc(d.payment_ref || "")}</div>
+            <div class="vled-title">Payment ${ctx.esc(d.payment_ref || "")}${d.payment_mode ? ` <span class="badge badge-blue" style="font-size:10px;">${ctx.esc(d.payment_mode)}</span>` : ""}</div>
             <div class="vled-meta">${ctx.fmtDate(e.occurred_at)} · ${fmtMoney(d.amount)}${d.comment ? ` · ${ctx.esc(d.comment)}` : ""}</div>
           </div>
           <span class="vled-chevron">${open ? "▾" : "▸"}</span>
@@ -292,6 +333,7 @@ const Vendors = (() => {
           <div class="review-grid">
             ${ctx.reviewRow("Reference", d.payment_ref || "—")}
             ${ctx.reviewRow("Amount", fmtMoney(d.amount))}
+            ${d.payment_mode ? ctx.reviewRow("Mode", d.payment_mode) : ""}
             ${d.comment ? ctx.reviewRow("Comment", d.comment) : ""}
           </div>
           <div class="vled-actions">
@@ -784,6 +826,7 @@ const Vendors = (() => {
   return {
     init, load, reload, openDetail, openLedgerEntry, openDebitNote,
     toggleLedgerRow, openOrderFromLedger, openBillDebitNotes, settlePayment, setOpeningBalance, saveOpeningBalance,
+    setVendorPayModeFilter,
     openWizard, closeWizard, wizardBack, wizardNext, create, openEdit, closeEdit, save, deleteVendor,
     placeOrder, stockIn, createOrder, receiveGoods, openMoney, openBuying,
     onWizardCityChange, onEditCityChange, finishOpen, finishPlaceOrder, finishAddProducts,

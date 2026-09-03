@@ -22,6 +22,7 @@ class Vendor(Base):
     address: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     city_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("jc_cities.id", ondelete="RESTRICT"), nullable=True, index=True)
     gst_number: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    vendor_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, unique=True, index=True)
     billing_context: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     billing_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False, default=Decimal("100"), server_default="100")
     additional_charge: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=Decimal("100"), server_default="100")

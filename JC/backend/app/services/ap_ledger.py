@@ -349,6 +349,7 @@ def post_payment_entry(
     actor_id: Optional[int],
     actor_name: str,
     value_date: Optional[date] = None,
+    payment_mode: Optional[str] = None,
 ) -> ApLedgerEntry:
     get_or_create_ap_account(db, vendor_id)
     entry = ApLedgerEntry(
@@ -358,6 +359,7 @@ def post_payment_entry(
         payment_ref=payment_ref,
         payment_receipt_key=payment_receipt_key,
         payment_comment=payment_comment,
+        payment_mode=payment_mode,
         description=description,
         value_date=value_date,
         created_by_type=actor_type,
@@ -575,6 +577,7 @@ def build_ap_ledger(db: Session, vendor_id: int) -> list[dict]:
                 "payment_ref": e.payment_ref,
                 "payment_receipt_url": presigned_url(e.payment_receipt_key) if e.payment_receipt_key else None,
                 "payment_comment": e.payment_comment,
+                "payment_mode": e.payment_mode,
                 "bill_number": receipt.bill_number if receipt else None,
                 "bill_amount": format(bill_amount, "f") if bill_amount is not None else None,
                 "debit_note_total": format(receipt_debit_total, "f") if receipt_debit_total is not None else None,

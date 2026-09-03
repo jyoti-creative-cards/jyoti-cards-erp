@@ -1,6 +1,7 @@
 from decimal import Decimal
 from app.services.vendor_billing_math import (
     compute_bill_totals, qty_deviation_debit_note, amount_deviation_debit_note,
+    line_value_deviation_debit_note,
 )
 
 def test_100pct_no_discount_with_gst():
@@ -69,3 +70,33 @@ def test_amount_deviation_none_when_equal():
     assert amount_deviation_debit_note(
         expected_bill_total=Decimal("1180.00"), entered_bill_total=Decimal("1180.00"),
     ) is None
+
+def test_line_value_deviation_matches_qty_deviation_when_default():
+    # No manual override: billed_amount defaults to billed_qty * buying_price — same as qty check.
+    dn = line_value_deviation_debit_note(
+        billed_amount=Decimal("110") * Decimal("10"), received_qty=100,
+        buying_price=Decimal("10"), billing_pct=Decimal("100"),
+    )
+    assert dn == {"direction": "over", "amount": Decimal("-100.00")}
+
+def test_line_value_deviation_catches_pure_rate_mismatch():
+    # Same qty (100) received & billed, but vendor billed at 4.2 instead of catalog rate 4.1.
+    dn = line_value_deviation_debit_note(
+        billed_amount=Decimal("100") * Decimal("4.2"), received_qty=100,
+        buying_price=Decimal("4.1"), billing_pct=Decimal("100"),
+    )
+    assert dn == {"direction": "over", "amount": Decimal("-10.00")}
+
+def test_line_value_deviation_none_when_matches_expected():
+    dn = line_value_deviation_debit_note(
+        billed_amount=Decimal("1000"), received_qty=100,
+        buying_price=Decimal("10"), billing_pct=Decimal("100"),
+    )
+    assert dn is None
+
+def test_line_value_deviation_applies_billing_pct():
+    dn = line_value_deviation_debit_note(
+        billed_amount=Decimal("110") * Decimal("10"), received_qty=100,
+        buying_price=Decimal("10"), billing_pct=Decimal("50"),
+    )
+    assert dn == {"direction": "over", "amount": Decimal("-50.00")}

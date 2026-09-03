@@ -433,22 +433,13 @@ def _build_bill_story(
     if customer_notes:
         story.append(Paragraph(f"<b>Customer notes:</b> {escape(_safe(customer_notes, 500))}", notes_style))
 
-    if credit_limit is not None and outstanding is not None:
-        try:
-            bill_total = float(totals.get("rounded_grand_total") or totals.get("grand_total") or 0)
-        except (TypeError, ValueError):
-            bill_total = 0.0
-        pending_after = outstanding + bill_total
-        remaining = credit_limit - pending_after
-        cl_color = "#dc2626" if remaining < 0 else "#1d4ed8"
-        cl_text = (
-            f"Credit Limit: Rs.{credit_limit:,.2f}  |  "
-            f"Pending (incl. this bill): Rs.{pending_after:,.2f}  |  "
-            f"Available: Rs.{remaining:,.2f}"
-        )
-        story.append(Paragraph(escape(cl_text), ParagraphStyle(
-            "credit_line", parent=styles["Normal"], fontSize=8,
-            textColor=colors.HexColor(cl_color), spaceBefore=6, spaceAfter=4,
+    if outstanding is not None:
+        # Customer-facing: only the amount outstanding (incl. this bill) — no internal
+        # credit-limit figures on the printed bill.
+        out_text = f"Outstanding (incl. this bill): Rs.{outstanding:,.2f}"
+        story.append(Paragraph(escape(out_text), ParagraphStyle(
+            "outstanding_line", parent=styles["Normal"], fontSize=8.5, fontName="Helvetica-Bold",
+            textColor=colors.HexColor("#1d4ed8"), spaceBefore=6, spaceAfter=4,
         )))
 
     foot = (

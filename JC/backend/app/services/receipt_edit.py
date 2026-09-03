@@ -292,21 +292,26 @@ def _edit_bill(db: Session, auth: AuthContext, receipt: StockReceipt, body: Vend
 
     lines = db.query(StockReceiptLine).filter(StockReceiptLine.receipt_id == receipt.id).all()
     billed_qty_in = {ln.catalog_product_id: ln.quantity_billed for ln in body.lines}
+    billed_amt_in = {ln.catalog_product_id: ln.billed_amount for ln in body.lines if ln.billed_amount is not None}
 
-    normalized: list[tuple[StockReceiptLine, int]] = []
+    normalized: list[tuple[StockReceiptLine, int, Decimal]] = []
     for ln in lines:
         bq = billed_qty_in.get(ln.catalog_product_id)
         bq = int(bq) if bq is not None else int(ln.quantity_billed or 0)
         if bq < 0:
             raise HTTPException(400, f"billed qty for {ln.our_product_id} cannot be negative")
-        normalized.append((ln, bq))
-    if not any(bq > 0 for _, bq in normalized):
+        # Raw (pre-billing_pct) line value — defaults to qty x our catalog rate, but the
+        # vendor's actual paper-bill rate/amount can override it per line.
+        raw_amt = billed_amt_in.get(ln.catalog_product_id)
+        raw_amt = raw_amt if raw_amt is not None else (ln.buying_price * bq)
+        normalized.append((ln, bq, raw_amt))
+    if not any(bq > 0 for _, bq, _ in normalized):
         raise HTTPException(400, "enter billed quantity on at least one row")
 
     label = _vendor_label(db, receipt.vendor_id)
     before = _receipt_snapshot(db, receipt)
 
-    total_actual_value = sum((ln.buying_price * bq for ln, bq in normalized), Decimal("0"))
+    total_actual_value = sum((raw_amt for _, _, raw_amt in normalized), Decimal("0"))
     bill_total, extra_cash = compute_bill_totals(
         total_actual_value=total_actual_value,
         billing_pct=vendor.billing_pct, additional_charge=vendor.additional_charge,
@@ -315,9 +320,9 @@ def _edit_bill(db: Session, auth: AuthContext, receipt: StockReceipt, body: Vend
     entered_total = (body.total_billed_amount if body.total_billed_amount is not None else bill_total).quantize(Decimal("0.01"))
     is_split = vendor.billing_pct < 100
 
-    for ln, bq in normalized:
+    for ln, bq, raw_amt in normalized:
         ln.quantity_billed = bq
-        ln.billed_amount = (ln.buying_price * vendor.billing_pct / 100 * bq).quantize(Decimal("0.01"))
+        ln.billed_amount = (raw_amt * vendor.billing_pct / 100).quantize(Decimal("0.01"))
 
     old_bill_key = receipt.bill_file_key
     old_doc_key = receipt.receipt_document_key
@@ -339,7 +344,7 @@ def _edit_bill(db: Session, auth: AuthContext, receipt: StockReceipt, body: Vend
         db.delete(n)
     db.flush()
 
-    bill_product_ids = {ln.catalog_product_id for ln, _ in normalized}
+    bill_product_ids = {ln.catalog_product_id for ln, _, _ in normalized}
     for dn_in in body.debit_notes or []:
         if dn_in.note_type == "item" and dn_in.catalog_product_id not in bill_product_ids:
             raise HTTPException(400, "debit note item must be from billed lines")

@@ -87,7 +87,9 @@ class VendorReceiptLineIn(BaseModel):
     catalog_product_id: int
     quantity_received: int = Field(0, ge=0)
     quantity_billed: int = Field(0, ge=0)
-    billed_amount: Decimal = Field(Decimal("0"), ge=0)
+    # Raw (pre-billing_pct) line value the vendor's paper bill states — qty x their rate.
+    # None = not overridden, fall back to quantity_billed x our catalog buying_price.
+    billed_amount: Optional[Decimal] = Field(None, ge=0)
 
 
 class VendorReceiptCreate(BaseModel):
@@ -108,6 +110,9 @@ class VendorReceiptCreate(BaseModel):
 class VendorBillLineIn(BaseModel):
     catalog_product_id: int
     quantity_billed: Optional[int] = Field(None, ge=0)
+    # Raw (pre-billing_pct) line value the vendor's paper bill states — qty x their rate.
+    # None = not overridden, fall back to quantity_billed x our catalog buying_price.
+    billed_amount: Optional[Decimal] = Field(None, ge=0)
 
 
 class VendorBillIn(BaseModel):

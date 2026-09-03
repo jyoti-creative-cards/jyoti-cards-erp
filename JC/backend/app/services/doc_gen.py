@@ -65,12 +65,17 @@ def generate_customer_order_document(db: Session, placement_id: int) -> str | No
         pdf_lines.append({
             "catalog_product_id": ln.catalog_product_id,
             "our_product_id": ln.our_product_id,
-            "name": prod.vendor_product_id if prod else ln.our_product_id,
+            # Customer-facing doc — never show the vendor's internal product code.
+            "name": ln.our_product_id,
             "quantity": ln.quantity,
             "unit_price": format(ln.unit_price, "f"),
             "line_total": format(Decimal(str(unit)) * ln.quantity, "f"),
             "addons": addons,
         })
+    from app.services.ar_ledger import customer_ar_totals
+
+    ar = customer_ar_totals(db, customer_id)
+    outstanding = float(ar["outstanding"])
     pdf = render_customer_order_pdf(
         placement_id=placement.id,
         customer_name=customer.business_name,
@@ -81,6 +86,7 @@ def generate_customer_order_document(db: Session, placement_id: int) -> str | No
         image_urls=image_urls,
         customer_notes=placement.customer_notes,
         placed_at=placement.placed_at,
+        outstanding=outstanding,
     )
     key = customer_order_key(slug, placement.id)
     upload_bytes(key, pdf, "application/pdf")
@@ -148,8 +154,8 @@ def generate_customer_bill_document(db: Session, bill_id: int) -> str | None:
     from app.services.ar_ledger import customer_ar_totals
 
     ar = customer_ar_totals(db, bill.customer_id)
-    # outstanding already includes this bill; show limit + current due on PDF
-    credit_limit = float(customer.credit_limit) if customer.credit_limit is not None else None
+    # Outstanding already includes this bill — shown on the PDF. Credit limit is
+    # internal-only and is intentionally not sent to render_customer_bill_pdf.
     outstanding = float(ar["outstanding"])
     pdf = render_customer_bill_pdf(
         bill_id=bill.id,
@@ -167,7 +173,6 @@ def generate_customer_bill_document(db: Session, bill_id: int) -> str | None:
         narration=bill.narration,
         item_image_urls=image_urls,
         order_created_at=placement.placed_at if placement else bill.created_at,
-        credit_limit=credit_limit,
         outstanding=outstanding,
     )
     key = customer_bill_key(slug, bill.bill_number)
@@ -302,6 +307,12 @@ def generate_vendor_receipt_document(db: Session, receipt_id: int) -> str | None
             "direction": direction,
         })
     total = receipt.total_billed_amount or bill_amt
+    extra_cash = None
+    if vendor.billing_pct < 100:
+        if receipt.actual_ap_amount is not None and total is not None:
+            extra_cash = (receipt.actual_ap_amount - total).quantize(Decimal("0.01"))
+        elif receipt.expected_extra_cash is not None:
+            extra_cash = receipt.expected_extra_cash
     pdf = render_vendor_receipt_pdf(
         receipt_id=receipt.id,
         vendor_name=vendor.business_name,
@@ -318,6 +329,9 @@ def generate_vendor_receipt_document(db: Session, receipt_id: int) -> str | None
         net_payable=format(net, "f"),
         received_by=receipt.received_by_name,
         received_at=receipt.received_at,
+        gst_included=vendor.gst_included,
+        gst_rate_pct=vendor.gst_rate_pct,
+        extra_cash=format(extra_cash, "f") if extra_cash is not None else None,
     )
     key = vendor_receipt_key(slug, receipt.bill_number or f"receipt_{receipt.id}", receipt.id)
     upload_bytes(key, pdf, "application/pdf")

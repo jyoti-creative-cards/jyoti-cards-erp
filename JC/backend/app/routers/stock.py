@@ -690,6 +690,11 @@ def preview_receipt_bill(
         for ln_in in (body.lines or [])
         if ln_in.quantity_billed is not None
     }
+    billed_amount_by_pid = {
+        ln_in.catalog_product_id: ln_in.billed_amount
+        for ln_in in (body.lines or [])
+        if ln_in.billed_amount is not None
+    }
     products = {
         p.id: p
         for p in db.query(CatalogProduct).filter(
@@ -698,7 +703,7 @@ def preview_receipt_bill(
     } if rlines else {}
     result = preview_bill_deviations(
         db, vendor, rlines, billed_qty_by_pid, body.total_billed_amount.quantize(Decimal("0.01")),
-        products=products,
+        products=products, billed_amount_by_pid=billed_amount_by_pid,
     )
     return BillPreviewOut(**result)
 

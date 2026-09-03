@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import urllib.request
 from datetime import datetime, timezone
+from decimal import Decimal
 from io import BytesIO
 from typing import Any, Dict, List, Optional
 from xml.sax.saxutils import escape
@@ -53,11 +54,12 @@ def _ist_fmt(dt: datetime | None) -> str:
 
 
 def _code_pair(vendor_code: str | None, our_code: str | None) -> str:
+    """Vendor's item number first, ours in brackets — matches vendor's paper bill/challan."""
     v = _safe(vendor_code, 24)
     o = _safe(our_code, 24)
     if v != "-" and o != "-":
-        return f"{v}/{o}"
-    return o if o != "-" else v
+        return f"{v} ({o})"
+    return v if v != "-" else o
 
 
 def _party_blocks(our_lines: List[str], vendor_lines: List[str]) -> Table:
@@ -357,6 +359,7 @@ def render_customer_order_pdf(
     image_urls: Dict[int, str | None],
     customer_notes: str | None = None,
     placed_at: datetime | None = None,
+    outstanding: float | None = None,
 ) -> bytes:
     buf = BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=1.5 * cm, rightMargin=1.5 * cm, topMargin=1.5 * cm, bottomMargin=1.5 * cm)
@@ -384,6 +387,11 @@ def render_customer_order_pdf(
         story.append(Paragraph(f"<b>Customer notes:</b> {escape(_safe(customer_notes, 500))}", ParagraphStyle(
             "notes", parent=styles["Normal"], fontSize=9, textColor=colors.HexColor("#92400e"),
             backColor=colors.HexColor("#fffbeb"), borderPadding=8, spaceAfter=8,
+        )))
+    if outstanding is not None:
+        story.append(Paragraph(escape(f"Outstanding: Rs. {outstanding:,.2f}"), ParagraphStyle(
+            "outstanding_line", parent=styles["Normal"], fontSize=8.5, fontName="Helvetica-Bold",
+            textColor=colors.HexColor("#1d4ed8"), spaceBefore=6, spaceAfter=4,
         )))
     story.append(Spacer(1, 0.5 * cm))
     story.append(Paragraph("Thank you — our team will process your order shortly.", ParagraphStyle(
@@ -454,6 +462,9 @@ def render_vendor_receipt_pdf(
     net_payable: str | None = None,
     received_by: str,
     received_at: datetime | None = None,
+    gst_included: bool = False,
+    gst_rate_pct: Decimal | None = None,
+    extra_cash: str | None = None,
 ) -> bytes:
     buf = BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=1.5 * cm, rightMargin=1.5 * cm, topMargin=1.5 * cm, bottomMargin=1.5 * cm)
@@ -476,6 +487,16 @@ def render_vendor_receipt_pdf(
     story.append(Spacer(1, 0.35 * cm))
     story.append(_vendor_receipt_table(lines, image_urls))
     totals: list[list[str]] = []
+    if total_billed and gst_included and gst_rate_pct and gst_rate_pct > 0:
+        try:
+            total_dec = Decimal(str(total_billed))
+            rate = Decimal(str(gst_rate_pct))
+            taxable = (total_dec / (Decimal("100") + rate) * Decimal("100")).quantize(Decimal("0.01"))
+            gst_amt = (total_dec - taxable).quantize(Decimal("0.01"))
+            totals.append(["Taxable Value", f"Rs. {taxable:,.2f}"])
+            totals.append([f"GST ({rate}%)", f"Rs. {gst_amt:,.2f}"])
+        except Exception:
+            pass
     if total_billed:
         totals.append(["Total Bill", f"Rs. {_safe(total_billed)}"])
     dn_rows = debit_notes or []
@@ -510,6 +531,15 @@ def render_vendor_receipt_pdf(
         totals.append(["Net Payable", f"Rs. {_safe(net_payable)}"])
     elif total_billed and not dn_rows:
         totals.append(["Net Payable", f"Rs. {_safe(total_billed)}"])
+    if extra_cash:
+        try:
+            extra_dec = Decimal(str(extra_cash))
+            if extra_dec != 0:
+                base = Decimal(str(net_payable or total_billed or "0"))
+                totals.append(["Extra Cash (untaxed, half-price balance)", f"Rs. {extra_dec:,.2f}"])
+                totals.append(["Total Payable (incl. extra cash)", f"Rs. {(base + extra_dec):,.2f}"])
+        except Exception:
+            pass
     if totals:
         story.append(Spacer(1, 0.3 * cm))
         story.append(_totals_block(totals))

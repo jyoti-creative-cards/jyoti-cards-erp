@@ -29,6 +29,8 @@ const Stock = (() => {
   let offlineQtyPopupId = null; // legacy; product pick now uses inline qty
   let editReceiptId = null;
   let editReceiptType = null; // vendor_receive | vendor_bill | offline_vendor | vendor_order
+  let editAddPickerOpen = false;
+  let editAddSearch = "";
   const STOCK_COLS = [
     { key: "our_product_id", label: "Product ID", get: p => p.our_product_id },
     { key: "vendor", label: "Vendor", get: p => p.vendor_label || "" },
@@ -179,6 +181,8 @@ const Stock = (() => {
     offlineQtyPopupId = null;
     editReceiptId = null;
     editReceiptType = null;
+    editAddPickerOpen = false;
+    editAddSearch = "";
   }
   async function openReceiveForVendor(vendorId, prefill) {
     wizardStep = vendorId ? 2 : 1;
@@ -356,6 +360,8 @@ const Stock = (() => {
     if (recv) recv.textContent = String(wizardQtySum("quantity_received"));
     const pending = document.getElementById("stock-tfoot-pending");
     if (pending) pending.textContent = String(wizardQtySum("quantity_ordered"));
+    const amt = document.getElementById("stock-tfoot-amount");
+    if (amt) amt.textContent = fmtPrice(wizardQtySum("billed_amount"));
   }
   function receivedLines() {
     return wizardLines.filter(l => (l.quantity_received || 0) > 0);
@@ -390,6 +396,7 @@ const Stock = (() => {
         our_product_id: l.our_product_id,
         quantity_received: l.quantity_received,
         quantity_billed: l.quantity_received,
+        billed_amount: (Number(l.quantity_received) || 0) * (Number(l.buying_price) || 0),
         buying_price: l.buying_price,
         unit: l.unit,
         image_urls: l.image_urls || [],
@@ -418,7 +425,11 @@ const Stock = (() => {
         method: "POST",
         body: JSON.stringify({
           total_billed_amount: total,
-          lines: wizardLines.map(l => ({ catalog_product_id: l.catalog_product_id, quantity_billed: l.quantity_billed || 0 })),
+          lines: wizardLines.map(l => ({
+            catalog_product_id: l.catalog_product_id,
+            quantity_billed: l.quantity_billed || 0,
+            billed_amount: l.billed_amount || 0,
+          })),
         }),
       }, 0);
       billPreview = preview;
@@ -469,21 +480,57 @@ const Stock = (() => {
       );
       const totals = calcReviewTotals(isBillEdit ? wizardLines.filter(l => (l.quantity_billed || 0) > 0) : billableLines());
       if (isRecvEdit) {
+        if (editAddPickerOpen && !wizardProducts.length) {
+          try { wizardProducts = await ctx.api(`/vendor-orders/vendor/${wizardVendorId}/products`, {}, 60000); }
+          catch (e) { ctx.toast(e.message, "error"); }
+        }
+        const pickedIds = new Set(wizardLines.map(l => l.catalog_product_id));
+        const q = editAddSearch.trim().toLowerCase();
+        const pickerList = wizardProducts.filter(p => {
+          if (pickedIds.has(p.id)) return false;
+          if (!q) return true;
+          return String(p.our_product_id || "").toLowerCase().includes(q)
+            || String(p.vendor_product_id || "").toLowerCase().includes(q);
+        }).slice(0, 30);
         bodyEl.innerHTML = `
           <div class="vo-wiz-step-head">
             <h4>Edit received quantities</h4>
-            <p>Stock and open pending update on save. Cannot go below already-billed qty. Old PDF removed; history kept.</p>
+            <p>Stock and open pending update on save. Cannot go below already-billed qty. Add, remove or edit any line. Old PDF removed; history kept.</p>
           </div>
           <div class="stock-receive-table-wrap">
             <table class="data stock-receive-table"><thead><tr>
-              <th>Product</th><th>Received</th>
+              <th>Product</th><th>Received</th><th></th>
             </tr></thead><tbody>
               ${wizardLines.map((l, i) => `<tr>
                 <td><strong>${ctx.esc(productIdLabel(l))}</strong></td>
                 <td><input type="number" min="0" class="input stock-qty-input" value="${l.quantity_received || ""}" onchange="Stock.setLine(${i},'quantity_received',this.value)" /></td>
+                <td><button type="button" class="btn btn-secondary btn-sm" title="Remove item" onclick="Stock.removeEditLine(${i})">✕</button></td>
               </tr>`).join("")}
+              ${!wizardLines.length ? `<tr><td colspan="3" style="color:var(--muted);">No items — add one below.</td></tr>` : ""}
             </tbody></table>
           </div>
+          ${editAddPickerOpen ? `
+            <div class="stock-bill-card" style="margin-top:12px;">
+              <h4>Add product</h4>
+              <input class="input" placeholder="Search product ID, vendor ID…" value="${ctx.esc(editAddSearch)}" oninput="Stock.onEditAddSearch(this.value)" autofocus />
+              <div class="vo-wiz-products" style="max-height:220px;overflow-y:auto;margin-top:10px;">
+                ${pickerList.length ? pickerList.map(p => {
+                  const img = (p.image_urls && p.image_urls[0]) || "";
+                  return `<div class="vo-wiz-product" onclick="Stock.addEditLine(${p.id})">
+                    <div class="vo-wiz-product-main">
+                      ${thumb(img)}
+                      <div class="vo-wiz-product-info">
+                        <strong>${ctx.esc(productIdLabel(p))}</strong>
+                        <span class="vo-wiz-product-sub">${fmtPrice(p.buying_price)}</span>
+                      </div>
+                    </div>
+                    <button type="button" class="btn btn-secondary btn-sm">+ Add</button>
+                  </div>`;
+                }).join("") : `<p style="color:var(--muted);font-size:13px;">${wizardProducts.length ? "No matches." : "Loading…"}</p>`}
+              </div>
+              <button type="button" class="btn btn-secondary btn-sm" style="margin-top:10px;" onclick="Stock.toggleEditAddPicker(false)">Close</button>
+            </div>
+          ` : `<button type="button" class="btn btn-secondary" style="margin-top:12px;" onclick="Stock.toggleEditAddPicker(true)">+ Add product</button>`}
           <div class="stock-bill-card" style="margin-top:16px;">
             <h4>Order receipt</h4>
             <div class="stock-bill-grid">
@@ -509,12 +556,13 @@ const Stock = (() => {
         </div>
         <div class="stock-receive-table-wrap">
           <table class="data stock-receive-table"><thead><tr>
-            <th>Product</th>${isBillEdit ? "" : "<th>Received</th>"}<th>Billed</th>
+            <th>Product</th>${isBillEdit ? "" : "<th>Received</th>"}<th>Billed</th>${isBillEdit ? "<th>Amount billed</th>" : ""}
           </tr></thead><tbody>
             ${wizardLines.map((l, i) => `<tr>
               <td><strong>${ctx.esc(productIdLabel(l))}</strong></td>
               ${isBillEdit ? "" : `<td><input type="number" min="0" class="input stock-qty-input" value="${l.quantity_received || ""}" onchange="Stock.setLine(${i},'quantity_received',this.value)" /></td>`}
               <td><input type="number" min="0" class="input stock-qty-input stock-billed-input" value="${l.quantity_billed || ""}" onchange="Stock.setLine(${i},'quantity_billed',this.value)" /></td>
+              ${isBillEdit ? `<td><input type="number" min="0" step="0.01" class="input stock-qty-input stock-amount-input" value="${l.billed_amount ? Number(l.billed_amount).toFixed(2) : ""}" onchange="Stock.setLineAmount(${i},this.value)" title="Defaults to qty x our rate — edit if the vendor's paper bill states a different rate/amount" /></td>` : ""}
             </tr>`).join("")}
           </tbody></table>
         </div>
@@ -949,7 +997,7 @@ const Stock = (() => {
         </div>
         <div class="stock-receive-table-wrap">
           <table class="data stock-receive-table"><thead><tr>
-            <th></th><th>Product</th><th style="text-align:right;">Received</th><th style="text-align:right;">Price</th><th style="text-align:right;">Billed qty</th>
+            <th></th><th>Product</th><th style="text-align:right;">Received</th><th style="text-align:right;">Price</th><th style="text-align:right;">Billed qty</th><th style="text-align:right;">Amount billed</th>
           </tr></thead><tbody>
             ${wizardLines.map((l, i) => {
               const img = (l.image_urls && l.image_urls[0]) || "";
@@ -963,15 +1011,17 @@ const Stock = (() => {
                 <td style="text-align:right;color:var(--muted);">${l.quantity_received || 0}</td>
                 <td style="text-align:right;">${fmtPrice(l.buying_price)}</td>
                 <td style="text-align:right;"><input type="number" min="0" class="input stock-qty-input stock-billed-input" value="${l.quantity_billed ?? ""}" onchange="Stock.setLine(${i},'quantity_billed',this.value)" /></td>
+                <td style="text-align:right;"><input type="number" min="0" step="0.01" class="input stock-qty-input stock-amount-input" value="${l.billed_amount ? Number(l.billed_amount).toFixed(2) : ""}" onchange="Stock.setLineAmount(${i},this.value)" title="Defaults to qty x our rate — edit if the vendor's paper bill states a different rate/amount for this line" /></td>
               </tr>`;
             }).join("")}
           </tbody>
           <tfoot><tr class="stock-qty-tfoot">
             <td></td>
-            <td>Total qty</td>
+            <td>Total qty / amount</td>
             <td style="text-align:right;" id="stock-tfoot-received">${wizardQtySum("quantity_received")}</td>
             <td></td>
             <td style="text-align:right;" id="stock-tfoot-billed">${wizardQtySum("quantity_billed")}</td>
+            <td style="text-align:right;" id="stock-tfoot-amount">${fmtPrice(wizardQtySum("billed_amount"))}</td>
           </tr></tfoot></table>
         </div>
         ${renderVendorBillingTermsCard()}
@@ -1373,7 +1423,55 @@ const Stock = (() => {
       const billedEl = row?.querySelector(".stock-billed-input");
       if (billedEl) billedEl.value = wizardLines[idx].quantity_billed || "";
     }
+    if (field === "quantity_billed" && !wizardLines[idx]._amountDirty) {
+      const amt = (Number(wizardLines[idx].quantity_billed) || 0) * (Number(wizardLines[idx].buying_price) || 0);
+      wizardLines[idx].billed_amount = amt;
+      const row = document.querySelectorAll(".stock-receive-table tbody tr")[idx];
+      const amtEl = row?.querySelector(".stock-amount-input");
+      if (amtEl) amtEl.value = amt ? amt.toFixed(2) : "";
+    }
     refreshQtyFooter();
+  }
+  function setLineAmount(idx, raw) {
+    if (!wizardLines[idx]) return;
+    const v = parseFloat(raw);
+    wizardLines[idx].billed_amount = Number.isFinite(v) && v >= 0 ? v : 0;
+    wizardLines[idx]._amountDirty = true;
+    refreshQtyFooter();
+  }
+  function removeEditLine(idx) {
+    if (!wizardLines[idx]) return;
+    if ((wizardLines[idx].quantity_billed || 0) > 0) {
+      return ctx.toast("Already billed on this line — reduce billed qty on the bill first", "error");
+    }
+    wizardLines.splice(idx, 1);
+    renderWizard();
+  }
+  function toggleEditAddPicker(open) {
+    editAddPickerOpen = !!open;
+    if (!open) editAddSearch = "";
+    renderWizard();
+  }
+  function onEditAddSearch(val) {
+    editAddSearch = val || "";
+    renderWizard();
+  }
+  function addEditLine(catalogProductId) {
+    const p = wizardProducts.find(x => x.id === catalogProductId);
+    if (!p) return;
+    if (wizardLines.some(l => l.catalog_product_id === catalogProductId)) return;
+    wizardLines.push({
+      catalog_product_id: p.id,
+      our_product_id: p.our_product_id,
+      vendor_product_id: p.vendor_product_id || "",
+      buying_price: p.buying_price,
+      quantity_received: 1,
+      quantity_billed: 0,
+      image_urls: p.image_urls || [],
+    });
+    editAddPickerOpen = false;
+    editAddSearch = "";
+    renderWizard();
   }
   function setBillFile(file) { billFile = file || null; billFileKey = null; }
   function wizardBack() {
@@ -1540,6 +1638,7 @@ const Stock = (() => {
             lines: active.map(l => ({
               catalog_product_id: l.catalog_product_id,
               quantity_billed: l.quantity_billed || 0,
+              billed_amount: l.billed_amount || 0,
             })),
             bill_number: billNum,
             bill_file_key: key,
@@ -1559,7 +1658,7 @@ const Stock = (() => {
               catalog_product_id: l.catalog_product_id,
               quantity_received: l.quantity_received || l.quantity_billed || 0,
               quantity_billed: l.quantity_billed || 0,
-              billed_amount: 0,
+              billed_amount: l.billed_amount || 0,
             })),
             debit_notes: debitNotesPayload,
           };
@@ -1707,12 +1806,15 @@ const Stock = (() => {
       wizardStep = 1;
       wizardVendorId = receipt.vendor_id;
       wizardProducts = [];
+      editAddPickerOpen = false;
+      editAddSearch = "";
       wizardLines = (receipt.lines || []).map(l => ({
         catalog_product_id: l.catalog_product_id,
         our_product_id: l.our_product_id,
         buying_price: l.buying_price,
         quantity_received: l.quantity_received || 0,
         quantity_billed: l.quantity_billed || 0,
+        billed_amount: (Number(l.quantity_billed) || 0) * (Number(l.buying_price) || 0),
       }));
       billFile = null;
       billFileKey = receipt.bill_file_key || null;
@@ -1897,11 +1999,12 @@ const Stock = (() => {
   }
   return {
     init, load, setViewMode, render, openDetail, openLedgerDetail, openReceiptDetail,
-    openAddWizard, openReceiveForVendor, openBillForVendor, openOfflineWizard, openOfflineForVendor, closeWizard, pickMode, pickVendor, setLine, setBillFile,
+    openAddWizard, openReceiveForVendor, openBillForVendor, openOfflineWizard, openOfflineForVendor, closeWizard, pickMode, pickVendor, setLine, setLineAmount, setBillFile,
     toggleOfflineProduct, setOfflineLine, onOfflineProductSearch, onOfflineVendorSearch,
     openOfflineQtyPopup, closeOfflineQtyPopup, confirmOfflineQty, removeOfflineLine, bumpOfflineQty,
     wizardBack, wizardNext, submitReceipt, openDebitNote, removeDebitNote, editThreshold, setSellingPrice, adjustStock,
     openReceiptPdf, fetchReceiptPdf, openEditReceipt, selectPendingReceipt, changePendingReceipt,
     voidReceipt, editPendingDebitNote,
+    removeEditLine, toggleEditAddPicker, onEditAddSearch, addEditLine,
   };
 })();

@@ -20,7 +20,7 @@ from app.services.stock_receipt import add_stock, get_open_order
 from app.services.vendor_billing_math import (
     amount_deviation_debit_note,
     compute_bill_totals,
-    qty_deviation_debit_note,
+    line_value_deviation_debit_note,
 )
 
 
@@ -189,18 +189,26 @@ def bill_receipt(db: Session, auth: AuthContext, receipt_id: int, body: VendorBi
 
     lines = db.query(StockReceiptLine).filter(StockReceiptLine.receipt_id == receipt_id).all()
     billed_qty_in = {ln_in.catalog_product_id: ln_in.quantity_billed for ln_in in (body.lines or [])}
+    billed_amt_in = {
+        ln_in.catalog_product_id: ln_in.billed_amount
+        for ln_in in (body.lines or []) if ln_in.billed_amount is not None
+    }
 
-    normalized: list[tuple[StockReceiptLine, int]] = []
+    normalized: list[tuple[StockReceiptLine, int, Decimal]] = []
     for ln in lines:
         bq = billed_qty_in.get(ln.catalog_product_id)
         bq = int(bq) if bq is not None else int(ln.quantity_received or 0)
         if bq < 0:
             raise HTTPException(400, f"billed qty for {ln.our_product_id} cannot be negative")
-        normalized.append((ln, bq))
-    if not any(bq > 0 for _, bq in normalized):
+        # Raw (pre-billing_pct) line value — defaults to qty x our catalog rate, but the
+        # vendor's actual paper-bill rate/amount can override it per line.
+        raw_amt = billed_amt_in.get(ln.catalog_product_id)
+        raw_amt = raw_amt if raw_amt is not None else (ln.buying_price * bq)
+        normalized.append((ln, bq, raw_amt))
+    if not any(bq > 0 for _, bq, _ in normalized):
         raise HTTPException(400, "enter billed quantity on at least one row")
 
-    total_actual_value = sum((ln.buying_price * bq for ln, bq in normalized), Decimal("0"))
+    total_actual_value = sum((raw_amt for _, _, raw_amt in normalized), Decimal("0"))
     bill_total, extra_cash = compute_bill_totals(
         total_actual_value=total_actual_value,
         billing_pct=vendor.billing_pct, additional_charge=vendor.additional_charge,
@@ -212,9 +220,9 @@ def bill_receipt(db: Session, auth: AuthContext, receipt_id: int, body: VendorBi
     from app.services.biz_date import as_biz_date, resolve_biz_dt
     now = resolve_biz_dt(body.bill_date)
 
-    for ln, bq in normalized:
+    for ln, bq, raw_amt in normalized:
         ln.quantity_billed = bq
-        ln.billed_amount = (ln.buying_price * vendor.billing_pct / 100 * bq).quantize(Decimal("0.01"))
+        ln.billed_amount = (raw_amt * vendor.billing_pct / 100).quantize(Decimal("0.01"))
 
     receipt.bill_number = (body.bill_number or "").strip() or None
     receipt.bill_file_key = body.bill_file_key
@@ -241,7 +249,7 @@ def bill_receipt(db: Session, auth: AuthContext, receipt_id: int, body: VendorBi
             value_date=as_biz_date(now), created_at=now,
         )
 
-    bill_product_ids = {ln.catalog_product_id for ln, _ in normalized}
+    bill_product_ids = {ln.catalog_product_id for ln, _, _ in normalized}
     for dn_in in body.debit_notes or []:
         if dn_in.note_type == "item" and dn_in.catalog_product_id not in bill_product_ids:
             raise HTTPException(400, "debit note item must be from billed lines")
@@ -261,25 +269,36 @@ def bill_receipt(db: Session, auth: AuthContext, receipt_id: int, body: VendorBi
 def preview_bill_deviations(
     db: Session, vendor: Vendor, lines: list[StockReceiptLine], billed_qty_by_pid: dict[int, int], entered_total: Decimal,
     products: dict[int, CatalogProduct] | None = None,
+    billed_amount_by_pid: dict[int, Decimal] | None = None,
 ) -> dict:
     """Returns expected totals + suggested (unsaved) debit notes for the bill-review UI."""
     products = products or {}
+    billed_amount_by_pid = billed_amount_by_pid or {}
     suggestions = []
     total_actual_value = Decimal("0")
     for ln in lines:
         bq = billed_qty_by_pid.get(ln.catalog_product_id, int(ln.quantity_received or 0))
-        total_actual_value += ln.buying_price * bq
-        dn = qty_deviation_debit_note(
-            billed_qty=bq, received_qty=int(ln.quantity_received or 0),
+        raw_amt = billed_amount_by_pid.get(ln.catalog_product_id)
+        raw_amt = raw_amt if raw_amt is not None else (ln.buying_price * bq)
+        total_actual_value += raw_amt
+        dn = line_value_deviation_debit_note(
+            billed_amount=raw_amt, received_qty=int(ln.quantity_received or 0),
             buying_price=ln.buying_price, billing_pct=vendor.billing_pct,
         )
         if dn:
             prod = products.get(ln.catalog_product_id)
+            expected_raw = Decimal(int(ln.quantity_received or 0)) * ln.buying_price
+            if bq != int(ln.quantity_received or 0) and raw_amt == (ln.buying_price * bq):
+                reason = f"billed qty {bq} vs received {ln.quantity_received}"
+            elif raw_amt != expected_raw:
+                reason = f"billed amount ₹{raw_amt} vs expected ₹{expected_raw} (qty {bq})"
+            else:
+                reason = f"billed {bq} vs received {ln.quantity_received}"
             suggestions.append({
                 "note_type": "value", "direction": dn["direction"], "amount": str(abs(dn["amount"])),
                 "catalog_product_id": ln.catalog_product_id, "our_product_id": ln.our_product_id,
                 "vendor_product_id": prod.vendor_product_id if prod else None,
-                "notes": f"Auto: billed {bq} vs received {ln.quantity_received} for {ln.our_product_id}",
+                "notes": f"Auto: {reason} for {ln.our_product_id}",
                 "source": "auto",
             })
     bill_total, extra_cash = compute_bill_totals(

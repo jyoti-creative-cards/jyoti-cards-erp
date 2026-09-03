@@ -1046,9 +1046,9 @@ const Products = (() => {
         <div class="prod-detail-pane" data-pane="catalog" style="${sec === "catalog" ? "" : "display:none;"}">${catalogPane}</div>
         <div class="prod-detail-pane" data-pane="addons" style="${sec === "addons" ? "" : "display:none;"}">${addonPane}</div>
         <div class="prod-detail-pane" data-pane="alts" style="${sec === "alts" ? "" : "display:none;"}">${altPane}</div>`,
-        `${ctx.canWrite?.("catalog") && cat
+        `${(ctx.canWrite?.("catalog") || ctx.isAdmin?.())
           ? `<button class="btn btn-danger btn-sm" onclick="Catalog.deleteProduct(${id})">Delete</button>
-             <button class="btn btn-secondary btn-sm" onclick="Catalog.openEdit(${id}, '${sec === "stock" ? "stock" : "catalog"}')">Edit</button>`
+             <button type="button" class="btn btn-secondary btn-sm" onclick="event.stopPropagation();Catalog.openEdit(${id}, '${sec === "stock" ? "stock" : "catalog"}')">Edit</button>`
           : ""}
          <button class="btn btn-primary" style="flex:1;" onclick="App.closeDetail()">Close</button>`,
         "lg"

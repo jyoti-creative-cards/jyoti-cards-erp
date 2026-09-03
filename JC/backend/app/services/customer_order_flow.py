@@ -211,6 +211,9 @@ def edit_customer_placement_line_qty(
     order = db.get(CustomerOrder, placement.customer_order_id)
     if not order:
         raise ValueError("order not found")
+    # NB: this only ever edits a still-"received" (not yet confirmed) placement line —
+    # CustomerOpenLine rows are created at confirm time (see confirm_received_order), so
+    # there is nothing to touch on that table here. Stock reservation still moves live.
     if delta > 0:
         reserve_stock(
             db,
@@ -221,7 +224,6 @@ def edit_customer_placement_line_qty(
             party=customer_name,
             allow_negative=allow_negative_stock,
         )
-        add_to_customer_open(db, order.customer_id, [(line.catalog_product_id, delta, line.unit_price)])
     else:
         restore_stock(
             db,
@@ -232,20 +234,6 @@ def edit_customer_placement_line_qty(
             party=customer_name,
             notes=f"Received qty edit {old}→{new_qty}",
         )
-        open_row = (
-            db.query(CustomerOpenLine)
-            .filter(
-                CustomerOpenLine.customer_id == order.customer_id,
-                CustomerOpenLine.catalog_product_id == line.catalog_product_id,
-            )
-            .first()
-        )
-        if open_row:
-            reduce = min(-delta, int(open_row.quantity_open))
-            open_row.quantity_open = max(0, int(open_row.quantity_open) - reduce)
-            open_row.quantity_received = max(open_row.quantity_billed, int(open_row.quantity_received) - reduce)
-            if open_row.quantity_open <= 0 and open_row.quantity_billed <= 0:
-                open_row.status = "cancelled"
     line.quantity = new_qty
     return line
 
@@ -302,6 +290,8 @@ def cancel_customer_placement(
 
     now = datetime.now(timezone.utc)
     for ln, unbilled, billed in cancellable:
+        # NB: only "received" (not yet confirmed) placements reach here — CustomerOpenLine
+        # rows are created at confirm time, so there's nothing on that table to unwind.
         restore_stock(
             db,
             catalog_product_id=ln.catalog_product_id,
@@ -311,24 +301,6 @@ def cancel_customer_placement(
             party=customer_name,
             notes=f"Cancelled placement open: {reason}",
         )
-        open_row = (
-            db.query(CustomerOpenLine)
-            .filter(
-                CustomerOpenLine.customer_id == order.customer_id,
-                CustomerOpenLine.catalog_product_id == ln.catalog_product_id,
-            )
-            .first()
-        )
-        if open_row and open_row.status == "open":
-            reduce = min(unbilled, int(open_row.quantity_open))
-            open_row.quantity_open = max(0, int(open_row.quantity_open) - reduce)
-            open_row.quantity_received = max(
-                int(open_row.quantity_billed),
-                int(open_row.quantity_received) - reduce,
-            )
-            if open_row.quantity_open <= 0 and int(open_row.quantity_billed) <= 0:
-                open_row.status = "cancelled"
-                open_row.cancel_reason = reason
 
         if billed > 0:
             ln.quantity = billed
@@ -468,7 +440,7 @@ def replace_received_placement(
                 party=customer_name,
                 allow_negative=allow_negative_stock,
             )
-            add_to_customer_open(db, order.customer_id, [(prod.id, qty, unit_price)])
+            # CustomerOpenLine is populated at confirm time, not here — see confirm_received_order.
 
     placement.customer_notes = customer_notes
     order.updated_at = datetime.now(timezone.utc)
@@ -476,11 +448,12 @@ def replace_received_placement(
 
 
 def confirm_received_order(db: Session, customer_id: int) -> bool:
-    """Move a customer's received (portal) order to the open (confirmed) bucket.
+    """Move a customer's received (New) order to the open (Confirmed) bucket.
 
     Returns True if something was confirmed, False if there was nothing to confirm.
-    The open lines are already in CustomerOpenLine (added during placement creation),
-    so we just update the bucket and placement statuses.
+    CustomerOpenLine (the running unbilled tally used for the Confirmed list + billing)
+    is only populated here, at confirm time — never at placement time — so a fresh order
+    only ever shows under "New" until someone explicitly confirms it.
     """
     received = get_open_customer_order(db, customer_id, "received")
     if not received:
@@ -506,6 +479,17 @@ def confirm_received_order(db: Session, customer_id: int) -> bool:
 
     if not active_lines:
         return False
+
+    # Only now does this order's qty become part of the billable "open" tally.
+    add_to_customer_open(
+        db,
+        customer_id,
+        [
+            (int(ln.catalog_product_id), int(ln.quantity) - int(ln.quantity_billed or 0), ln.unit_price)
+            for ln in active_lines
+            if int(ln.quantity) - int(ln.quantity_billed or 0) > 0
+        ],
+    )
 
     # Move the order bucket from received → open
     # Get or create the open order for this customer
@@ -626,7 +610,7 @@ def append_or_create_portal_placement(
             reference_id=placement.id,
             party=customer_name,
         )
-        add_to_customer_open(db, customer_id, [(prod.id, int(quantity), unit_price)])
+        # CustomerOpenLine is populated at confirm time — see confirm_received_order.
 
     note = (customer_notes or "").strip()
     if note:
@@ -740,7 +724,6 @@ def create_received_placement(
     db.add(placement)
     db.flush()
 
-    open_lines: list[tuple[int, int, Decimal]] = []
     for item in cleaned:
         prod = item["prod"]
         qty = item["quantity"]
@@ -765,8 +748,9 @@ def create_received_placement(
             party=customer_name,
             allow_negative=allow_negative_stock,
         )
-        open_lines.append((prod.id, qty, item["unit_price"]))
 
-    add_to_customer_open(db, customer_id, open_lines, as_of=when)
+    # CustomerOpenLine (the "Confirmed" bucket tally used for billing) is only populated
+    # once staff explicitly confirms this order — see confirm_received_order. Until then it
+    # only lives in "New" (received bucket), so it can't double-show under Confirmed.
     received.updated_at = when
     return placement

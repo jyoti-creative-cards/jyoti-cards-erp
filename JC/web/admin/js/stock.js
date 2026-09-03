@@ -151,7 +151,7 @@ const Stock = (() => {
           <tr style="opacity:0.5;"><td colspan="5" style="font-size:12px;font-style:italic;">Sales entries will appear here later</td></tr>
           </tbody></table>
         </div>`,
-        `${ctx.canWrite?.("catalog") ? `<button class="btn btn-secondary btn-sm" onclick="Catalog.openEdit(${p.catalog_product_id}, 'stock')">Edit</button>` : ""}
+        `${(ctx.canWrite?.("catalog") || ctx.isAdmin?.()) ? `<button type="button" class="btn btn-secondary btn-sm" onclick="event.stopPropagation();Catalog.openEdit(${p.catalog_product_id}, 'stock')">Edit</button>` : ""}
          <button class="btn btn-secondary btn-sm" onclick="Catalog.openDetail(${p.catalog_product_id})">Catalog view</button>
          <button class="btn btn-primary" style="flex:1;" onclick="App.closeDetail()">Close</button>`,
         "lg"
@@ -345,6 +345,17 @@ const Stock = (() => {
   /** Lines eligible for debit notes: received or billed > 0 */
   function billableLines() {
     return wizardLines.filter(l => (l.quantity_received || 0) > 0 || (l.quantity_billed || 0) > 0);
+  }
+  function wizardQtySum(field) {
+    return wizardLines.reduce((s, l) => s + (Number(l[field]) || 0), 0);
+  }
+  function refreshQtyFooter() {
+    const billed = document.getElementById("stock-tfoot-billed");
+    if (billed) billed.textContent = String(wizardQtySum("quantity_billed"));
+    const recv = document.getElementById("stock-tfoot-received");
+    if (recv) recv.textContent = String(wizardQtySum("quantity_received"));
+    const pending = document.getElementById("stock-tfoot-pending");
+    if (pending) pending.textContent = String(wizardQtySum("quantity_ordered"));
   }
   function receivedLines() {
     return wizardLines.filter(l => (l.quantity_received || 0) > 0);
@@ -857,7 +868,13 @@ const Stock = (() => {
                 <td><input type="number" min="0" class="input stock-qty-input" value="${l.quantity_received || ""}" onchange="Stock.setLine(${i},'quantity_received',this.value)" /></td>
               </tr>`;
             }).join("")}
-          </tbody></table>
+          </tbody>
+          <tfoot><tr class="stock-qty-tfoot">
+            <td colspan="3">Total qty</td>
+            <td>${wizardQtySum("quantity_ordered")}</td>
+            <td></td>
+            <td id="stock-tfoot-received">${wizardQtySum("quantity_received")}</td>
+          </tr></tfoot></table>
         </div>
         <div class="stock-bill-card" style="margin-top:16px;">
           <h4>Order receipt</h4>
@@ -948,7 +965,14 @@ const Stock = (() => {
                 <td style="text-align:right;"><input type="number" min="0" class="input stock-qty-input stock-billed-input" value="${l.quantity_billed ?? ""}" onchange="Stock.setLine(${i},'quantity_billed',this.value)" /></td>
               </tr>`;
             }).join("")}
-          </tbody></table>
+          </tbody>
+          <tfoot><tr class="stock-qty-tfoot">
+            <td></td>
+            <td>Total qty</td>
+            <td style="text-align:right;" id="stock-tfoot-received">${wizardQtySum("quantity_received")}</td>
+            <td></td>
+            <td style="text-align:right;" id="stock-tfoot-billed">${wizardQtySum("quantity_billed")}</td>
+          </tr></tfoot></table>
         </div>
         ${renderVendorBillingTermsCard()}
         <div class="stock-bill-card">
@@ -1349,6 +1373,7 @@ const Stock = (() => {
       const billedEl = row?.querySelector(".stock-billed-input");
       if (billedEl) billedEl.value = wizardLines[idx].quantity_billed || "";
     }
+    refreshQtyFooter();
   }
   function setBillFile(file) { billFile = file || null; billFileKey = null; }
   function wizardBack() {
@@ -1807,7 +1832,12 @@ const Stock = (() => {
       });
       ctx.invalidateCache?.("/stock");
       ctx.toast("Threshold updated", "success");
-      openDetail(catalogProductId);
+      if (typeof Products !== "undefined" && Products.openProductDetail) {
+        await Products.openProductDetail(catalogProductId, "stock");
+        Products.refreshHub?.();
+      } else {
+        openDetail(catalogProductId);
+      }
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
   }
@@ -1828,8 +1858,12 @@ const Stock = (() => {
       });
       ctx.invalidateCache?.("/stock");
       ctx.toast(`Stock ${delta > 0 ? "increased" : "decreased"} by ${Math.abs(delta)}`, "success");
-      openDetail(catalogProductId);
-      if (typeof Products !== "undefined") await Products.refreshHub?.();
+      if (typeof Products !== "undefined" && Products.openProductDetail) {
+        await Products.openProductDetail(catalogProductId, "stock");
+        Products.refreshHub?.();
+      } else {
+        openDetail(catalogProductId);
+      }
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
   }
@@ -1852,8 +1886,12 @@ const Stock = (() => {
       ctx.invalidateCache?.("/stock");
       ctx.invalidateCache?.("/catalog");
       ctx.toast("Sell price updated", "success");
-      openDetail(catalogProductId);
-      if (typeof Products !== "undefined") await Products.refreshHub?.();
+      if (typeof Products !== "undefined" && Products.openProductDetail) {
+        await Products.openProductDetail(catalogProductId, "stock");
+        Products.refreshHub?.();
+      } else {
+        openDetail(catalogProductId);
+      }
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
   }

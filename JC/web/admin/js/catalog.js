@@ -283,8 +283,8 @@ const Catalog = (() => {
       ${stockHtml}
       <div class="detail-section"><h4>Price History</h4>${priceHist}</div>
       ${changeHist}`,
-      `${ctx.canWrite?.("catalog") ? `<button class="btn btn-danger btn-sm" onclick="Catalog.deleteProduct(${p.id})">Delete</button>
-       <button class="btn btn-secondary btn-sm" onclick="Catalog.openEdit(${p.id})">Edit</button>` : ""}
+      `${(ctx.canWrite?.("catalog") || ctx.isAdmin?.()) ? `<button class="btn btn-danger btn-sm" onclick="Catalog.deleteProduct(${p.id})">Delete</button>
+       <button type="button" class="btn btn-secondary btn-sm" onclick="event.stopPropagation();Catalog.openEdit(${p.id})">Edit</button>` : ""}
        <button class="btn btn-primary" style="flex:1;" onclick="App.closeDetail()">Close</button>`,
       "lg"
     );
@@ -844,12 +844,15 @@ const Catalog = (() => {
   async function openEdit(id, returnTo) {
     editingId = id;
     editReturnTo = returnTo || null;
-    const [p, optRes] = await Promise.all([
-      ctx.api(`/catalog/products/${id}`),
-      ctx.api("/catalog/product-options", {}, 120000).catch(() => []),
-      loadAddons(),
-    ]);
-    const altOptions = (Array.isArray(optRes) ? optRes : []).filter(x => x.id !== p.id);
+    ctx.showLoading?.();
+    try {
+      const [p, optRes] = await Promise.all([
+        ctx.api(`/catalog/products/${id}`, {}, 0),
+        ctx.api("/catalog/product-options", {}, 120000).catch(() => []),
+        loadAddons(),
+      ]);
+      if (!p || !p.id) throw new Error("Product not found");
+      const altOptions = (Array.isArray(optRes) ? optRes : []).filter(x => x.id !== p.id);
 
     const imgPreview = p.image_urls && p.image_urls[0]
       ? `<img id="ce-preview" src="${ctx.esc(p.image_urls[0])}" alt="" style="width:80px;height:80px;object-fit:cover;border-radius:8px;border:1px solid var(--border);" />`
@@ -916,9 +919,14 @@ const Catalog = (() => {
       </div>`;
 
     document.getElementById("catalog-edit-footer").innerHTML = `
-      <button class="btn btn-secondary" onclick="Catalog.closeEdit()">Cancel</button>
-      <button class="btn btn-primary" style="flex:1;" onclick="Catalog.saveEdit()">Save Changes</button>`;
-    document.getElementById("catalog-edit-modal").classList.remove("hidden");
+      <button type="button" class="btn btn-secondary" onclick="Catalog.closeEdit()">Cancel</button>
+      <button type="button" class="btn btn-primary" style="flex:1;" onclick="Catalog.saveEdit()">Save Changes</button>`;
+    document.getElementById("catalog-edit-modal")?.classList.remove("hidden");
+    } catch (e) {
+      ctx.toast(e.message || "Could not open editor", "error");
+    } finally {
+      ctx.hideLoading?.();
+    }
   }
 
   function addEditAddonRow() {
@@ -992,17 +1000,21 @@ const Catalog = (() => {
         }),
       });
       const id = editingId;
-      const ret = editReturnTo;
+      const ret = editReturnTo === "stock" ? "stock" : "catalog";
       closeEdit();
-      App.closeDetail();
-      await load();
       ctx.invalidateCache?.("/stock");
       ctx.invalidateCache?.("/catalog");
       ctx.toast("Product updated", "success");
       if (typeof Products !== "undefined" && Products.openProductDetail) {
-        await Products.openProductDetail(id, ret === "stock" ? "stock" : "catalog");
-      } else if (ret === "stock") Stock.openDetail(id);
-      else openDetail(id);
+        await Products.openProductDetail(id, ret);
+        Products.refreshHub?.();
+      } else if (ret === "stock") {
+        await load();
+        Stock.openDetail(id);
+      } else {
+        await load();
+        openDetail(id);
+      }
     } catch (e) {
       ctx.toast(e.message, "error");
     }

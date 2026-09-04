@@ -182,7 +182,11 @@ def _billed_summaries(
             func.max(StockReceipt.billed_at),
         )
         .join(StockReceiptLine, StockReceiptLine.receipt_id == StockReceipt.id)
-        .filter(StockReceipt.bill_status == "billed", StockReceipt.deleted_at.is_(None))
+        .filter(
+            StockReceipt.bill_status == "billed",
+            StockReceipt.deleted_at.is_(None),
+            StockReceipt.closed_at.is_(None),
+        )
     )
     if day_start is not None and day_end is not None:
         q = q.filter(StockReceipt.billed_at >= day_start, StockReceipt.billed_at < day_end)
@@ -719,17 +723,13 @@ def list_vendor_orders(
         summaries.sort(key=lambda x: x.updated_at or datetime.min.replace(tzinfo=timezone.utc))
         return summaries
 
-    if bucket == "placed" and day_start is not None:
-        today_vids = _vids_with_placement_today(("placed",)) | _vids_open_created_today()
-        if not today_vids:
-            return []
+    if bucket == "placed":
+        # "To receive" is an unactioned-order backlog, not a daily log — never day-scope
+        # it away, or an order placed yesterday and not yet received silently disappears
+        # from the default "Today" queue view (staff never sees it to receive it).
         orders = (
             db.query(VendorOrder)
-            .filter(
-                VendorOrder.is_open.is_(True),
-                VendorOrder.bucket == "placed",
-                VendorOrder.vendor_id.in_(today_vids),
-            )
+            .filter(VendorOrder.is_open.is_(True), VendorOrder.bucket == "placed")
             .order_by(VendorOrder.updated_at.asc())
             .all()
         )
@@ -740,8 +740,9 @@ def list_vendor_orders(
 
     if bucket == "received":
         # "To bill" stage — VendorOrder.bucket never becomes "received" (see
-        # _to_bill_summaries); source from StockReceipt.bill_status instead.
-        return _to_bill_summaries(db, day_start=day_start, day_end=day_end)
+        # _to_bill_summaries); source from StockReceipt.bill_status instead. Also a
+        # pending-action backlog — never day-scope it away (same reasoning as "placed").
+        return _to_bill_summaries(db)
 
     if bucket == "billed":
         # Same story as "received" — VendorOrder.bucket never becomes "billed" either.
@@ -935,30 +936,51 @@ def list_closeable_billed(
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("vendor_orders.read")),
 ):
-    q = (
-        db.query(VendorOrderPlacement, VendorOrder)
-        .join(VendorOrder, VendorOrderPlacement.vendor_order_id == VendorOrder.id)
-        .filter(VendorOrder.bucket == "billed", VendorOrderPlacement.status == "billed", VendorOrderPlacement.closed_at.is_(None))
+    """Billed receipts not yet archived off the "Billed" tab. NB: VendorOrder.bucket /
+    VendorOrderPlacement.status never become "billed" in the one-receipt-per-bill model
+    (see _billed_summaries) — this used to source from that dead state and always
+    returned empty, so "Close Billed Shipments" silently did nothing. Sources from
+    StockReceipt directly instead."""
+    q = db.query(StockReceipt).filter(
+        StockReceipt.bill_status == "billed",
+        StockReceipt.deleted_at.is_(None),
+        StockReceipt.closed_at.is_(None),
     )
     if vendor_id is not None:
-        q = q.filter(VendorOrder.vendor_id == vendor_id)
-    rows = q.order_by(VendorOrderPlacement.placed_at.desc()).all()
+        q = q.filter(StockReceipt.vendor_id == vendor_id)
+    receipts = q.order_by(StockReceipt.billed_at.desc()).all()
+    from sqlalchemy import func
+
+    line_counts = {
+        int(rid): (cnt, qty)
+        for rid, cnt, qty in (
+            db.query(
+                StockReceiptLine.receipt_id, func.count(StockReceiptLine.id),
+                func.coalesce(func.sum(StockReceiptLine.quantity_received), 0),
+            )
+            .filter(StockReceiptLine.receipt_id.in_([r.id for r in receipts]))
+            .group_by(StockReceiptLine.receipt_id)
+            .all()
+        )
+    } if receipts else {}
+    vctx = _vendor_contexts(db, {r.vendor_id for r in receipts})
     out: list[CloseableVendorItemOut] = []
-    for placement, order in rows:
-        vendor, city_name, label = _vendor_context(db, order.vendor_id)
-        lines = db.query(VendorOrderLine).filter(VendorOrderLine.placement_id == placement.id).all()
-        receipt = db.query(StockReceipt).filter(
-            StockReceipt.billed_placement_id == placement.id, StockReceipt.deleted_at.is_(None)
-        ).first()
+    for r in receipts:
+        ctx = vctx.get(r.vendor_id)
+        if ctx is None:
+            continue
+        _vendor, _city_name, label = ctx
+        cnt, qty = line_counts.get(r.id, (0, 0))
         out.append(
             CloseableVendorItemOut(
-                id=placement.id,
-                vendor_id=order.vendor_id,
+                id=r.id,
+                item_type="receipt",
+                vendor_id=r.vendor_id,
                 vendor_label=label,
-                bill_number=receipt.bill_number if receipt else None,
-                line_count=len(lines),
-                total_qty=sum(ln.quantity for ln in lines),
-                placed_at=placement.placed_at,
+                bill_number=r.bill_number,
+                line_count=int(cnt),
+                total_qty=int(qty),
+                placed_at=r.billed_at,
             )
         )
     return out
@@ -970,22 +992,22 @@ def close_batch_placements(
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("vendor_orders.write")),
 ):
+    """Archive billed receipts off the "Billed" tab (they stay visible under "Closed").
+    `placement_ids` now holds StockReceipt ids (see list_closeable_billed)."""
     closed = 0
     now = datetime.now(timezone.utc)
-    for pid in body.placement_ids:
-        placement = db.get(VendorOrderPlacement, pid)
-        if not placement or placement.closed_at:
+    reason = body.reason.strip()
+    for rid in body.placement_ids:
+        receipt = db.get(StockReceipt, rid)
+        if not receipt or receipt.closed_at or receipt.bill_status != "billed" or receipt.deleted_at:
             continue
-        order = db.get(VendorOrder, placement.vendor_order_id)
-        if not order or order.bucket != "billed":
-            continue
-        vendor, _, label = _vendor_context(db, order.vendor_id)
-        placement.closed_at = now
-        placement.close_reason = body.reason.strip()
-        order.updated_at = now
+        vendor, _, label = _vendor_context(db, receipt.vendor_id, require_active=False)
+        receipt.closed_at = now
+        receipt.close_reason = reason
+        receipt.closed_by_name = auth.actor_name
         log_from_auth(
-            db, auth, action="close", entity_type="vendor_order", entity_id=order.id,
-            entity_label=label, detail=f"batch closed placement #{pid}: {body.reason[:120]}",
+            db, auth, action="close", entity_type="stock_receipt", entity_id=receipt.id,
+            entity_label=label, detail=f"batch closed receipt #{rid}: {reason[:120]}",
         )
         closed += 1
     db.commit()

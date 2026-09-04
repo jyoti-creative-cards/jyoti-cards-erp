@@ -237,7 +237,11 @@ def list_parcels(
         q = q.filter(CustomerBill.freight_picked_at.is_(None))
     elif status == "picked":
         q = q.filter(CustomerBill.freight_picked_at.isnot(None))
-    if day == "today":
+    # NB: "pending" is an actionable backlog (awaiting pickup), not a daily log — never
+    # day-scope it away, or a bill created yesterday and still unpicked silently
+    # disappears from the default "Today" dispatch queue. Only "picked"/"all" (already
+    # actioned / full history) are meaningful to scope by day.
+    if day == "today" and status != "pending":
         local_now = datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Kolkata"))
         start_local = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
         day_start = start_local.astimezone(timezone.utc)

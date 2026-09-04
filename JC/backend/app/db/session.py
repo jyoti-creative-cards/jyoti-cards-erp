@@ -127,6 +127,7 @@ def init_db() -> None:
         _migrate_void_recycle_customer()
         _migrate_vendor_number()
         _migrate_receipt_billing_pct()
+        _migrate_receipt_closed()
         with engine.begin() as conn:
             conn.execute(text("SELECT 1"))
         _DB_READY = True
@@ -161,6 +162,22 @@ def _migrate_receipt_billing_pct() -> None:
             _exec_sql(conn, "ALTER TABLE jc_stock_receipts ADD COLUMN billing_pct_applied NUMERIC(5,2)", critical=False)
         else:
             _exec_sql(conn, "ALTER TABLE jc_stock_receipts ADD COLUMN IF NOT EXISTS billing_pct_applied NUMERIC(5,2)", critical=False)
+
+
+def _migrate_receipt_closed() -> None:
+    """Explicit close/archive flag for billed receipts — the old "close billed shipments"
+    feature relied on VendorOrder.bucket/VendorOrderPlacement.status flipping to "billed",
+    which never happens in the one-receipt-per-bill model, so it silently no-opped. Give
+    StockReceipt its own closed_at instead."""
+    with engine.begin() as conn:
+        if _is_sqlite:
+            _exec_sql(conn, "ALTER TABLE jc_stock_receipts ADD COLUMN closed_at TIMESTAMP", critical=False)
+            _exec_sql(conn, "ALTER TABLE jc_stock_receipts ADD COLUMN close_reason TEXT", critical=False)
+            _exec_sql(conn, "ALTER TABLE jc_stock_receipts ADD COLUMN closed_by_name VARCHAR(200)", critical=False)
+        else:
+            _exec_sql(conn, "ALTER TABLE jc_stock_receipts ADD COLUMN IF NOT EXISTS closed_at TIMESTAMPTZ", critical=False)
+            _exec_sql(conn, "ALTER TABLE jc_stock_receipts ADD COLUMN IF NOT EXISTS close_reason TEXT", critical=False)
+            _exec_sql(conn, "ALTER TABLE jc_stock_receipts ADD COLUMN IF NOT EXISTS closed_by_name VARCHAR(200)", critical=False)
 
 
 def _migrate_vendor_city_optional() -> None:

@@ -67,6 +67,17 @@ const AddonProducts = (() => {
     return "₹" + n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
+  function stockBadge(a) {
+    const map = {
+      in_stock: ["badge-green", "In stock"],
+      low_stock: ["badge-amber", "Low stock"],
+      out_of_stock: ["badge-gray", "Out of stock"],
+      negative_stock: ["badge-red", "Negative"],
+    };
+    const [cls, label] = map[a.stock_status] || ["badge-gray", "—"];
+    return `<span class="badge ${cls}">${ctx.esc(a.quantity_on_hand ?? 0)} on hand · ${label}</span>`;
+  }
+
   function thumbHtml(a, size) {
     const s = size || 40;
     if (a.image_urls && a.image_urls[0]) {
@@ -140,6 +151,18 @@ const AddonProducts = (() => {
       ? ctx.changeHistoryTable(a.change_history)
       : '<p style="color:var(--muted);font-size:14px;margin:0;">No field changes recorded yet.</p>';
 
+    const moveRows = (a.stock_movements || []).length
+      ? `<table class="data"><thead><tr><th>When</th><th>Type</th><th>Δ</th><th>Balance</th><th>Note</th></tr></thead><tbody>
+          ${a.stock_movements.map(m => `<tr>
+            <td style="font-size:13px;color:var(--muted);">${ctx.fmtDate(m.created_at)}</td>
+            <td>${ctx.esc((m.entry_type || "").replace(/_/g, " "))}</td>
+            <td><strong style="color:${m.quantity_delta < 0 ? "var(--danger, #dc2626)" : "var(--brand-green, #16a34a)"};">${m.quantity_delta > 0 ? "+" : ""}${m.quantity_delta}</strong></td>
+            <td>${m.balance_after}</td>
+            <td style="font-size:13px;color:var(--muted);">${ctx.esc(m.notes || m.party || "")}</td>
+          </tr>`).join("")}
+        </tbody></table>`
+      : '<p style="color:var(--muted);font-size:14px;margin:0;">No stock movements recorded yet.</p>';
+
     ctx.openDetail("Addon Product", `
       <div class="profile-hero" style="margin:-24px -24px 24px;border-radius:0;">
         <div style="display:flex;align-items:center;gap:16px;">
@@ -152,6 +175,7 @@ const AddonProducts = (() => {
               <span class="badge badge-gray">${ctx.esc(a.unit)}</span>
               ${a.category ? `<span class="badge badge-green">${ctx.esc(a.category)}</span>` : ""}
               <span class="badge badge-amber">${fmtPrice(a.buying_price)}</span>
+              ${stockBadge(a)}
             </div>
           </div>
         </div>
@@ -160,8 +184,13 @@ const AddonProducts = (() => {
         ${ctx.reviewRow("Vendor Product ID", a.vendor_product_id)}
         ${ctx.reviewRow("Description", a.description)}
         ${ctx.reviewRow("Category", a.category)}
+        ${ctx.reviewRow("Low Stock Threshold", a.low_stock_threshold)}
         ${ctx.reviewRow("Created", ctx.fmtDate(a.created_at))}
         ${ctx.reviewRow("Last Updated", ctx.fmtDate(a.updated_at))}
+      </div>
+      <div class="detail-section">
+        <h4>Stock Movements</h4>
+        ${moveRows}
       </div>
       <div class="detail-section">
         <h4>Price History</h4>
@@ -169,10 +198,50 @@ const AddonProducts = (() => {
       </div>
       ${changeHist}`,
       `${ctx.canWrite?.("addons") ? `<button class="btn btn-danger btn-sm" onclick="AddonProducts.deleteAddon(${a.id})">Delete</button>
+       <button class="btn btn-secondary btn-sm" onclick="AddonProducts.openAdjustStock(${a.id})">Adjust Stock</button>
+       <button class="btn btn-secondary btn-sm" onclick="AddonProducts.openReceiveStock(${a.id})">Receive Stock</button>
        <button class="btn btn-secondary btn-sm" onclick="AddonProducts.openEdit(${a.id})">Edit</button>` : ""}
        <button class="btn btn-primary" style="flex:1;" onclick="App.closeDetail()">Close</button>`,
       "lg"
     );
+  }
+
+  async function openReceiveStock(id) {
+    const qty = prompt("Quantity received:");
+    if (qty == null) return;
+    const q = parseInt(qty, 10);
+    if (!Number.isFinite(q) || q <= 0) return ctx.toast("Enter a valid quantity", "error");
+    const costRaw = prompt("Total cost paid for this (optional — logs as an Expense; leave blank to skip):");
+    const total_cost = costRaw && costRaw.trim() !== "" ? parseFloat(costRaw) : null;
+    if (total_cost != null && (Number.isNaN(total_cost) || total_cost < 0)) return ctx.toast("Enter a valid amount", "error");
+    const note = prompt("Note (optional):") || null;
+    try {
+      await ctx.api(`/addons/${id}/receive-stock`, { method: "POST", body: JSON.stringify({ quantity: q, total_cost, note }) });
+      App.closeDetail();
+      await refreshAfterMutation();
+      ctx.toast("Stock received", "success");
+      openDetail(id);
+    } catch (e) {
+      ctx.toast(e.message, "error");
+    }
+  }
+
+  async function openAdjustStock(id) {
+    const delta = prompt("Adjustment (e.g. -3 or 10):");
+    if (delta == null) return;
+    const d = parseInt(delta, 10);
+    if (!Number.isFinite(d) || d === 0) return ctx.toast("Enter a non-zero number", "error");
+    const reason = prompt("Reason for adjustment:");
+    if (!reason || !reason.trim()) return ctx.toast("Reason required", "error");
+    try {
+      await ctx.api(`/addons/${id}/adjust-stock`, { method: "POST", body: JSON.stringify({ delta: d, reason: reason.trim() }) });
+      App.closeDetail();
+      await refreshAfterMutation();
+      ctx.toast("Stock adjusted", "success");
+      openDetail(id);
+    } catch (e) {
+      ctx.toast(e.message, "error");
+    }
   }
 
   async function openWizard() {
@@ -505,6 +574,7 @@ const AddonProducts = (() => {
   return {
     init, load, setViewMode, openDetail, openWizard, closeWizard,
     wizardBack, wizardNext, onWizardImagePick, syncField, create,
-    openEdit, closeEdit, save, deleteAddon,
+    openEdit, closeEdit, save, deleteAddon, openReceiveStock, openAdjustStock,
+    stockBadge,
   };
 })();

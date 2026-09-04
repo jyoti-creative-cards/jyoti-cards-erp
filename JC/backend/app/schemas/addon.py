@@ -20,6 +20,9 @@ class AddonPublic(BaseModel):
     buying_price: str
     image_keys: List[str]
     image_urls: List[str] = []
+    quantity_on_hand: int = 0
+    low_stock_threshold: int = 5
+    stock_status: str = "in_stock"  # in_stock | low_stock | out_of_stock | negative_stock
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -29,6 +32,19 @@ class AddonPublic(BaseModel):
 class AddonDetail(AddonPublic):
     price_history: List[dict] = []
     change_history: List[dict] = []
+    stock_movements: List[dict] = []
+
+
+class AddonReceiveStockIn(BaseModel):
+    quantity: int = Field(..., gt=0)
+    total_cost: Optional[Decimal] = Field(None, ge=0)
+    expense_date: Optional[str] = None  # ISO date, defaults to today
+    note: Optional[str] = None
+
+
+class AddonAdjustStockIn(BaseModel):
+    delta: int = Field(..., ne=0)
+    reason: str = Field(..., min_length=1)
 
 
 class AddonCreate(BaseModel):

@@ -24,6 +24,8 @@ class AddonProduct(Base):
     unit: Mapped[str] = mapped_column(String(50), nullable=False)
     buying_price: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     image_keys: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    quantity_on_hand: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    low_stock_threshold: Mapped[int] = mapped_column(Integer, nullable=False, default=5, server_default="5")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=sql_true())
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

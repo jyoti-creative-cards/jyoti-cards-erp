@@ -194,6 +194,27 @@ const Products = (() => {
   function syncActionChips(items) {
     const host = document.getElementById("products-action-chips");
     if (!host || typeof OrdersUI === "undefined") return;
+    if (typeFilter === "addons") {
+      const addonItems = (items || []).filter(it => it.kind === "addon");
+      const ac = {
+        all: addonItems.length,
+        low_stock: addonItems.filter(it => it.stock_status === "low_stock").length,
+        out_of_stock: addonItems.filter(it => it.stock_status === "out_of_stock").length,
+        negative_stock: addonItems.filter(it => it.stock_status === "negative_stock").length,
+      };
+      OrdersUI.actionChips({
+        hostId: "products-action-chips",
+        active: attentionFilter,
+        onclickFn: "Products.setAttentionFilter",
+        items: [
+          { id: "all", label: "All", count: ac.all },
+          { id: "low_stock", label: "Low", count: ac.low_stock },
+          { id: "out_of_stock", label: "Out", count: ac.out_of_stock },
+          { id: "negative_stock", label: "Negative", count: ac.negative_stock },
+        ],
+      });
+      return;
+    }
     const c = attentionCounts(items);
     if (mainTab === "stock") {
       OrdersUI.actionChips({
@@ -562,8 +583,8 @@ const Products = (() => {
           price: a.buying_price,
           buying_price: a.buying_price,
           selling_price: null,
-          qty: null,
-          stock_status: null,
+          qty: a.quantity_on_hand,
+          stock_status: a.stock_status,
           image_urls: a.image_urls,
           open: () => AddonProducts.openDetail(a.id),
         }));
@@ -605,8 +626,8 @@ const Products = (() => {
           price: a.buying_price,
           buying_price: a.buying_price,
           selling_price: null,
-          qty: null,
-          stock_status: null,
+          qty: a.quantity_on_hand,
+          stock_status: a.stock_status,
           image_urls: a.image_urls,
           open: () => AddonProducts.openDetail(a.id),
         }));
@@ -634,7 +655,7 @@ const Products = (() => {
         : Number(it.price);
       if (filters.price_min && !Number.isNaN(sellOrBuy) && sellOrBuy < Number(filters.price_min)) return false;
       if (filters.price_max && !Number.isNaN(sellOrBuy) && sellOrBuy > Number(filters.price_max)) return false;
-      if (!ignoreStockStatus && mainTab === "stock" && filters.stock_status && it.stock_status !== filters.stock_status) return false;
+      if (!ignoreStockStatus && filters.stock_status && (mainTab === "stock" || it.kind === "addon") && it.stock_status !== filters.stock_status) return false;
       if (filters.no_sell_price && it.kind === "product") {
         if (hasRealSell(it)) return false;
       }
@@ -792,8 +813,9 @@ const Products = (() => {
     if (viewMode === "grid") {
       const cards = items.map(it => {
         const isStockProduct = mainTab === "stock" && it.kind === "product";
-        const st = isStockProduct ? stockStatusMeta(it.stock_status) : null;
-        return `<button type="button" class="prod-card${isStockProduct ? ` prod-card-stock ${st.cls}` : ""}" onclick="Products.openItem('${it.kind}', ${it.id})">
+        const showsAddonStock = it.kind === "addon";
+        const st = (isStockProduct || showsAddonStock) ? stockStatusMeta(it.stock_status) : null;
+        return `<button type="button" class="prod-card${st ? ` prod-card-stock ${st.cls}` : ""}" onclick="Products.openItem('${it.kind}', ${it.id})">
           <div class="prod-card-media">
             ${cardImage(it)}
             ${st
@@ -806,7 +828,7 @@ const Products = (() => {
             ${it.category
               ? `<div class="prod-card-cat"><span class="prod-cat-badge">${ctx.esc(it.category)}</span>${it.series ? `<span class="prod-card-series">${ctx.esc(it.series)}</span>` : ""}</div>`
               : `<div class="prod-card-cat"><span class="prod-cat-badge is-empty">No category</span></div>`}
-            ${isStockProduct ? `<div class="prod-card-qty-block">
+            ${(isStockProduct || showsAddonStock) ? `<div class="prod-card-qty-block">
               <span class="prod-card-qty-num">${fmtQty(it.qty ?? 0)}</span>
               <span class="prod-card-qty-label">on hand</span>
             </div>` : ""}
@@ -839,7 +861,7 @@ const Products = (() => {
           <td><span class="badge ${it.kind === "addon" ? "badge-amber" : "badge-blue"}">${it.kind === "addon" ? "Add-on" : "Product"}</span></td>
           <td>${ctx.esc(vendorLine(it))}</td>
           <td>${ctx.esc(it.category || "—")}</td>
-          ${mainTab === "stock" ? `<td class="prod-list-qty-cell">${it.kind === "product" ? `<strong class="prod-list-qty-big">${it.qty ?? 0}</strong>` : "—"}</td>
+          ${mainTab === "stock" ? `<td class="prod-list-qty-cell">${(it.kind === "product" || it.kind === "addon") ? `<strong class="prod-list-qty-big">${it.qty ?? 0}</strong>` : "—"}</td>
           <td>${st ? `<span class="badge ${st.cls === "is-ok" ? "badge-green" : st.cls === "is-low" ? "badge-amber" : st.cls === "is-neg" ? "badge-red" : "badge-gray"}">${st.label}</span>` : "—"}</td>` : ""}
           <td class="prod-list-price">${it.kind === "product" ? (hasRealSell(it) ? fmtPrice(it.selling_price) : '<span class="prod-price-missing">Not set</span>') : "—"}</td>
           <td class="prod-list-price is-buy">${it.buying_price != null && it.buying_price !== "" ? fmtPrice(it.buying_price) : "—"}</td>

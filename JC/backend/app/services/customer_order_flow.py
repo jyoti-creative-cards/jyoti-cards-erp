@@ -9,6 +9,7 @@ from app.models.catalog_product import CatalogProduct
 from app.models.customer_order import CustomerOpenLine, CustomerOrder, CustomerOrderLine, CustomerOrderPlacement
 from app.models.stock import StockBalance
 from app.services.stock_receipt import add_stock
+from app.services.addon_stock import deduct_addons_for_product
 
 
 def get_open_customer_order(db: Session, customer_id: int, bucket: str) -> CustomerOrder | None:
@@ -131,6 +132,15 @@ def reserve_stock(
         party=party,
         notes=note,
     )
+    deduct_addons_for_product(
+        db,
+        catalog_product_id=catalog_product_id,
+        units=quantity,
+        reference_type="customer_placement",
+        reference_id=reference_id,
+        party=party,
+        note=f"Order for {our_product_id} x{quantity}",
+    )
 
 
 def restore_stock(db: Session, *, catalog_product_id: int, our_product_id: str, quantity: int, reference_id: int, party: str, notes: str) -> None:
@@ -146,6 +156,15 @@ def restore_stock(db: Session, *, catalog_product_id: int, our_product_id: str, 
         reference_id=reference_id,
         party=party,
         notes=notes,
+    )
+    deduct_addons_for_product(
+        db,
+        catalog_product_id=catalog_product_id,
+        units=-quantity,
+        reference_type="customer_placement",
+        reference_id=reference_id,
+        party=party,
+        note=notes,
     )
 
 

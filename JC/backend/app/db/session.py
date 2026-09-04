@@ -84,7 +84,7 @@ def get_db() -> Generator[Session, None, None]:
 def init_db() -> None:
     global _DB_READY
     from app.models import (  # noqa: F401
-        ActivityLog, AddonProduct, CatalogAddonLink, CatalogAlternative, CatalogLookup,
+        ActivityLog, AddonProduct, AddonStockLedger, CatalogAddonLink, CatalogAlternative, CatalogLookup,
         CatalogProduct, City, Customer, EntityHistory, PriceHistory, Route, Staff, Vendor,
         VendorOrder, VendorOrderLine, VendorOrderPlacement, VendorOpenLine,
         CustomerOrder, CustomerOrderLine, CustomerOrderPlacement, CustomerOpenLine,
@@ -129,6 +129,7 @@ def init_db() -> None:
         _migrate_receipt_billing_pct()
         _migrate_receipt_gst_pct()
         _migrate_receipt_closed()
+        _migrate_addon_stock()
         with engine.begin() as conn:
             conn.execute(text("SELECT 1"))
         _DB_READY = True
@@ -137,6 +138,18 @@ def init_db() -> None:
         _DB_READY = False
         log.exception("init_db FAILED")
         raise
+
+
+def _migrate_addon_stock() -> None:
+    """Add-on stock tracking: quantity_on_hand + low_stock_threshold on jc_addon_products.
+    jc_addon_stock_ledger is a brand new table, created by create_all above."""
+    with engine.begin() as conn:
+        if _is_sqlite:
+            _exec_sql(conn, "ALTER TABLE jc_addon_products ADD COLUMN quantity_on_hand INTEGER DEFAULT 0", critical=False)
+            _exec_sql(conn, "ALTER TABLE jc_addon_products ADD COLUMN low_stock_threshold INTEGER DEFAULT 5", critical=False)
+        else:
+            _exec_sql(conn, "ALTER TABLE jc_addon_products ADD COLUMN IF NOT EXISTS quantity_on_hand INTEGER NOT NULL DEFAULT 0", critical=False)
+            _exec_sql(conn, "ALTER TABLE jc_addon_products ADD COLUMN IF NOT EXISTS low_stock_threshold INTEGER NOT NULL DEFAULT 5", critical=False)
 
 
 def _migrate_vendor_number() -> None:

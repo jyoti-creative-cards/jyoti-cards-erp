@@ -234,39 +234,6 @@ def list_customer_orders(
     if day == "today":
         day_start, day_end = _local_day_bounds_utc()
 
-    def _cids_with_placement_today() -> set[int]:
-        assert day_start is not None and day_end is not None
-        rows = (
-            db.query(CustomerOrder.customer_id)
-            .join(CustomerOrderPlacement, CustomerOrderPlacement.customer_order_id == CustomerOrder.id)
-            .filter(
-                CustomerOrder.is_open.is_(True),
-                CustomerOrder.bucket == "received",
-                CustomerOrderPlacement.status == "received",
-                CustomerOrderPlacement.deleted_at.is_(None),
-                CustomerOrderPlacement.placed_at >= day_start,
-                CustomerOrderPlacement.placed_at < day_end,
-            )
-            .distinct()
-            .all()
-        )
-        return {int(r[0]) for r in rows}
-
-    def _cids_open_created_today() -> set[int]:
-        assert day_start is not None and day_end is not None
-        rows = (
-            db.query(CustomerOpenLine.customer_id)
-            .filter(
-                CustomerOpenLine.status == "open",
-                CustomerOpenLine.quantity_open > 0,
-                CustomerOpenLine.created_at >= day_start,
-                CustomerOpenLine.created_at < day_end,
-            )
-            .distinct()
-            .all()
-        )
-        return {int(r[0]) for r in rows}
-
     if bucket == "open":
         rows = (
             db.query(
@@ -278,14 +245,12 @@ def list_customer_orders(
             .group_by(CustomerOpenLine.customer_id)
             .all()
         )
-        today_cids = None  # type: Optional[set[int]]
-        if day_start is not None:
-            today_cids = _cids_with_placement_today() | _cids_open_created_today()
+        # NB: "Confirmed" is a pending-action backlog (needs billing), not a daily log —
+        # never day-scope it away or a customer confirmed yesterday and not yet billed
+        # silently vanishes from the default "Today" queue view.
         out: list[CustomerOrderSummary] = []
         for customer_id, total_qty, line_count in rows:
             cid = int(customer_id)
-            if today_cids is not None and cid not in today_cids:
-                continue
             received = (
                 db.query(CustomerOrder)
                 .filter(CustomerOrder.customer_id == cid, CustomerOrder.bucket == "received", CustomerOrder.is_open.is_(True))
@@ -326,21 +291,9 @@ def list_customer_orders(
         return out
 
     if bucket == "received":
-        if day_start is not None:
-            today_cids = _cids_with_placement_today()
-            if not today_cids:
-                return []
-            orders = (
-                db.query(CustomerOrder)
-                .filter(
-                    CustomerOrder.is_open.is_(True),
-                    CustomerOrder.bucket == "received",
-                    CustomerOrder.customer_id.in_(today_cids),
-                )
-                .order_by(CustomerOrder.updated_at.asc())
-                .all()
-            )
-            return [_summary(db, o) for o in orders]
+        # NB: "New" is an unconfirmed-order backlog, not a daily log — never day-scope it
+        # away, or an order placed yesterday and not yet confirmed silently disappears
+        # from the default "Today" queue view (staff never sees it to confirm/bill it).
         orders = (
             db.query(CustomerOrder)
             .filter(CustomerOrder.is_open.is_(True), CustomerOrder.bucket == "received")

@@ -11,6 +11,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.db.session import Base
+from app.deps import AuthContext
 from app.models.catalog_product import CatalogProduct
 from app.models.customer import Customer
 from app.models.customer_order import CustomerOpenLine, CustomerOrder, CustomerOrderLine, CustomerOrderPlacement
@@ -23,6 +24,8 @@ from app.services.customer_order_flow import (
     edit_customer_placement_line_qty,
     get_open_customer_order,
 )
+
+AUTH = AuthContext(actor_type="admin", actor_id=1, actor_name="Test Admin")
 
 
 @pytest.fixture()
@@ -138,3 +141,43 @@ def test_second_order_after_confirm_stacks_but_stays_unconfirmed_until_confirmed
 
     confirm_received_order(db, customer.id)
     assert _open_qty(db, customer.id, prod.id) == 8
+
+
+def test_unconfirmed_order_from_yesterday_still_shows_in_today_new_queue(db):
+    """Regression: the "New" hub tab (bucket=received) day-scoped itself away from
+    anything not placed "today" — an order placed yesterday and never confirmed would
+    vanish from the default "Today" queue (staff never sees it to confirm/bill it),
+    while still showing in the customer's own order history."""
+    from datetime import date, timedelta
+
+    from app.routers.customer_orders import list_customer_orders
+
+    customer, prod = _setup(db)
+    create_received_placement(
+        db, customer_id=customer.id, customer_name=customer.business_name,
+        lines=[{"catalog_product_id": prod.id, "quantity": 5}],
+        placed_on=date.today() - timedelta(days=2),
+    )
+    db.commit()
+
+    today_rows = list_customer_orders(bucket="received", day="today", db=db, auth=AUTH)
+    assert any(r.customer_id == customer.id for r in today_rows)
+    all_rows = list_customer_orders(bucket="received", day="all", db=db, auth=AUTH)
+    assert any(r.customer_id == customer.id for r in all_rows)
+
+
+def test_confirmed_unbilled_order_from_yesterday_still_shows_in_today_confirmed_queue(db):
+    """Same issue as above, one stage later: a customer confirmed yesterday and not yet
+    billed must not vanish from the "Confirmed" (bucket=open) Today queue either."""
+    from app.routers.customer_orders import list_customer_orders
+
+    customer, prod = _setup(db)
+    create_received_placement(
+        db, customer_id=customer.id, customer_name=customer.business_name,
+        lines=[{"catalog_product_id": prod.id, "quantity": 5}],
+    )
+    confirm_received_order(db, customer.id)
+    db.commit()
+
+    today_rows = list_customer_orders(bucket="open", day="today", db=db, auth=AUTH)
+    assert any(r.customer_id == customer.id for r in today_rows)

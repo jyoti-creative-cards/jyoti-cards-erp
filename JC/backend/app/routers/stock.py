@@ -621,7 +621,7 @@ def get_pending_bill_receipts(
             expected_extra_cash=format(r.expected_extra_cash, "f") if r.expected_extra_cash is not None else None,
             line_count=line_count, total_quantity=total_qty,
         ))
-    return VendorPendingBillList(vendor_id=vendor_id, vendor_label=label, receipts=receipts)
+    return VendorPendingBillList(vendor_id=vendor_id, vendor_label=label, vendor_alias=vendor.alias, receipts=receipts)
 
 
 @router.get("/receipts/{receipt_id}/for-bill", response_model=ReceiptForBillDetail)
@@ -663,7 +663,7 @@ def get_receipt_for_bill(
         "billing_notes": vendor.billing_notes,
     }
     return ReceiptForBillDetail(
-        receipt_id=receipt.id, vendor_id=vendor.id, vendor_label=label,
+        receipt_id=receipt.id, vendor_id=vendor.id, vendor_label=label, vendor_alias=vendor.alias,
         order_receipt_number=receipt.order_receipt_number,
         expected_bill_amount=format(receipt.expected_bill_amount, "f") if receipt.expected_bill_amount is not None else None,
         expected_extra_cash=format(receipt.expected_extra_cash, "f") if receipt.expected_extra_cash is not None else None,
@@ -704,7 +704,7 @@ def preview_receipt_bill(
     result = preview_bill_deviations(
         db, vendor, rlines, billed_qty_by_pid, body.total_billed_amount.quantize(Decimal("0.01")),
         products=products, billed_amount_by_pid=billed_amount_by_pid,
-        billing_pct=body.billing_pct_override,
+        billing_pct=body.billing_pct_override, gst_rate_pct=body.gst_rate_pct_override,
     )
     return BillPreviewOut(**result)
 
@@ -831,6 +831,7 @@ def get_receipt_detail(
         "bill_file_key": receipt.bill_file_key,
         "additional_charges": format(receipt.additional_charges, "f") if receipt.additional_charges is not None else None,
         "billing_pct_applied": format(receipt.billing_pct_applied, "f") if receipt.billing_pct_applied is not None else None,
+        "gst_rate_pct_applied": format(receipt.gst_rate_pct_applied, "f") if receipt.gst_rate_pct_applied is not None else None,
         "total_billed_amount": format(receipt.total_billed_amount, "f") if receipt.total_billed_amount is not None else None,
         "bill_amount": format(bill_amt, "f"),
         "debit_note_total": format(dn_total, "f"),

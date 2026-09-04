@@ -11,7 +11,7 @@ from app.deps import AuthContext
 from app.models.catalog_product import CatalogProduct
 from app.models.city import City
 from app.models.debit_note import DebitNote
-from app.models.stock import StockBalance, StockReceipt, StockReceiptLine
+from app.models.stock import StockReceipt, StockReceiptLine
 from app.models.vendor import Vendor
 from app.models.vendor_order import VendorOrderLine
 from app.schemas.stock import VendorReceiptCreate
@@ -123,14 +123,12 @@ def _stock_delta(db: Session, receipt: StockReceipt, label: str, pid: int, delta
     prod = db.get(CatalogProduct, pid)
     if not prod:
         raise HTTPException(400, f"invalid product {pid}")
-    if delta < 0:
-        bal = db.query(StockBalance).filter(StockBalance.catalog_product_id == pid).first()
-        on_hand = int(bal.quantity_on_hand or 0) if bal else 0
-        if on_hand + delta < 0:
-            raise HTTPException(
-                400,
-                f"cannot reduce qty for {prod.our_product_id}: stock would go negative",
-            )
+    # Same philosophy as void (see void_service.py): correcting a past receipt (reduce
+    # qty / remove a line entirely) must never block just because some of that stock has
+    # since shipped out — it only corrects the running total. Blocking here used to make
+    # "fix a data-entry mistake on an old receipt" silently fail with a 400 the moment any
+    # of the received qty had already moved, which is the common case once a receipt is a
+    # few days old.
     add_stock(
         db,
         catalog_product_id=pid,
@@ -323,11 +321,21 @@ def _edit_bill(db: Session, auth: AuthContext, receipt: StockReceipt, body: Vend
     if not (Decimal("0") < billing_pct <= Decimal("100")):
         raise HTTPException(400, "billing % override must be between 0 and 100")
 
+    # Same reuse-what-was-actually-applied logic for GST %, in case the vendor's profile
+    # GST rate changed since this bill was first created.
+    gst_rate_pct = (
+        Decimal(str(body.gst_rate_pct_override)).quantize(Decimal("0.01"))
+        if body.gst_rate_pct_override is not None
+        else (receipt.gst_rate_pct_applied if receipt.gst_rate_pct_applied is not None else vendor.gst_rate_pct)
+    )
+    if not (Decimal("0") <= gst_rate_pct <= Decimal("100")):
+        raise HTTPException(400, "GST % override must be between 0 and 100")
+
     total_actual_value = sum((raw_amt for _, _, raw_amt in normalized), Decimal("0"))
     bill_total, extra_cash = compute_bill_totals(
         total_actual_value=total_actual_value,
         billing_pct=billing_pct, additional_charge=vendor.additional_charge,
-        discount_pct=vendor.discount_pct, gst_included=vendor.gst_included, gst_rate_pct=vendor.gst_rate_pct,
+        discount_pct=vendor.discount_pct, gst_included=vendor.gst_included, gst_rate_pct=gst_rate_pct,
     )
     entered_total = (body.total_billed_amount if body.total_billed_amount is not None else bill_total).quantize(Decimal("0.01"))
     is_split = billing_pct < 100
@@ -340,6 +348,7 @@ def _edit_bill(db: Session, auth: AuthContext, receipt: StockReceipt, body: Vend
     old_doc_key = receipt.receipt_document_key
     receipt.bill_number = (body.bill_number or "").strip() or None
     receipt.billing_pct_applied = billing_pct
+    receipt.gst_rate_pct_applied = gst_rate_pct if vendor.gst_included else None
     receipt.additional_charges = vendor.additional_charge.quantize(Decimal("0.01"))
     receipt.total_billed_amount = entered_total
     receipt.actual_ap_amount = (entered_total + extra_cash).quantize(Decimal("0.01")) if extra_cash > 0 else None

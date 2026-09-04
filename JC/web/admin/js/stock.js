@@ -11,7 +11,7 @@ const Stock = (() => {
   let billFile = null;
   let billFileKey = null;
   let pendingDebitNotes = [];
-  let receiptMeta = { billNumber: "", orderReceiptNumber: "", additionalCharges: "", totalBilledAmount: "", billingPct: "", notes: "", eventDate: "" };
+  let receiptMeta = { billNumber: "", orderReceiptNumber: "", additionalCharges: "", totalBilledAmount: "", billingPct: "", gstPct: "", notes: "", eventDate: "" };
   let wizardReceiptId = null; // selected pending-bill receipt (bill_received mode)
   let wizardPendingBillList = null; // { vendor_id, vendor_label, receipts } from /stock/vendor-order/{id}/received
   let billingTerms = null; // vendor's typed billing terms, loaded with the chosen receipt
@@ -170,7 +170,7 @@ const Stock = (() => {
     wizardLines = []; billFile = null; billFileKey = null; pendingDebitNotes = [];
     offlineVendorsCache = []; wizardProducts = []; // always fetch fresh on open
     enteredFromAddStock = true;
-    receiptMeta = { billNumber: "", orderReceiptNumber: "", additionalCharges: "", totalBilledAmount: "", billingPct: "", notes: "", eventDate: localToday() };
+    receiptMeta = { billNumber: "", orderReceiptNumber: "", additionalCharges: "", totalBilledAmount: "", billingPct: "", gstPct: "", notes: "", eventDate: localToday() };
     document.getElementById("stock-wizard")?.classList.remove("hidden");
     renderWizard();
   }
@@ -197,7 +197,7 @@ const Stock = (() => {
     offlineVendorsCache = [];
     receivePrefill = prefill || null;
     enteredFromAddStock = false;
-    receiptMeta = { billNumber: "", orderReceiptNumber: "", additionalCharges: "", totalBilledAmount: "", billingPct: "", notes: "", eventDate: localToday() };
+    receiptMeta = { billNumber: "", orderReceiptNumber: "", additionalCharges: "", totalBilledAmount: "", billingPct: "", gstPct: "", notes: "", eventDate: localToday() };
     document.getElementById("stock-wizard")?.classList.remove("hidden");
     document.querySelector("#stock-wizard .modal-header h3").textContent = "Receive Goods";
     await renderWizard();
@@ -219,7 +219,7 @@ const Stock = (() => {
     wizardPendingBillList = null;
     billingTerms = null;
     billPreview = null;
-    receiptMeta = { billNumber: "", orderReceiptNumber: "", additionalCharges: "", totalBilledAmount: "", billingPct: "", notes: "", eventDate: localToday() };
+    receiptMeta = { billNumber: "", orderReceiptNumber: "", additionalCharges: "", totalBilledAmount: "", billingPct: "", gstPct: "", notes: "", eventDate: localToday() };
     document.getElementById("stock-wizard")?.classList.remove("hidden");
     document.querySelector("#stock-wizard .modal-header h3").textContent = "Bill Order";
     await renderWizard();
@@ -237,7 +237,7 @@ const Stock = (() => {
     billFile = null;
     billFileKey = null;
     pendingDebitNotes = [];
-    receiptMeta = { billNumber: "", orderReceiptNumber: "", additionalCharges: "", totalBilledAmount: "", billingPct: "", notes: "", eventDate: localToday() };
+    receiptMeta = { billNumber: "", orderReceiptNumber: "", additionalCharges: "", totalBilledAmount: "", billingPct: "", gstPct: "", notes: "", eventDate: localToday() };
     document.getElementById("stock-wizard")?.classList.remove("hidden");
     document.querySelector("#stock-wizard .modal-header h3").textContent = "Receive without order";
     if (vendorId) {
@@ -302,7 +302,7 @@ const Stock = (() => {
       billFile = null;
       billFileKey = null;
       pendingDebitNotes = [];
-      receiptMeta = { billNumber: "", orderReceiptNumber: "", additionalCharges: "", totalBilledAmount: "", billingPct: "", notes: "", eventDate: localToday() };
+      receiptMeta = { billNumber: "", orderReceiptNumber: "", additionalCharges: "", totalBilledAmount: "", billingPct: "", gstPct: "", notes: "", eventDate: localToday() };
       document.querySelector("#stock-wizard .modal-header h3").textContent = "Receive without order";
       renderWizard();
       return;
@@ -317,7 +317,7 @@ const Stock = (() => {
       billFileKey = null;
       pendingDebitNotes = [];
       enteredFromAddStock = true;
-      receiptMeta = { billNumber: "", orderReceiptNumber: "", additionalCharges: "", totalBilledAmount: "", billingPct: "", notes: "", eventDate: localToday() };
+      receiptMeta = { billNumber: "", orderReceiptNumber: "", additionalCharges: "", totalBilledAmount: "", billingPct: "", gstPct: "", notes: "", eventDate: localToday() };
       document.querySelector("#stock-wizard .modal-header h3").textContent = "Receive Goods";
       renderWizard();
       return;
@@ -339,12 +339,17 @@ const Stock = (() => {
     };
     const dir = dn.direction || dn._direction;
     const dirLabel = dn._direction_label || dirLabels[dir] || "";
+    // Value-type notes can be tied to one line (rate/amount mismatch on that item) or to
+    // the whole bill (total mismatch, no product) — show the item when we have one, same
+    // as item-type (qty mismatch) notes already do, instead of a bare "₹X" figure.
+    const itemLabel = dn._label || (dn.our_product_id || dn.catalog_product_id ? productIdLabel(dn) : "");
     if (dirLabel) {
-      if (dn.note_type === "item") return `${dirLabel}: ${dn._label || ""} × ${Math.abs(dn.quantity || 0)}`;
-      return `${dirLabel}: ${fmtPrice(Math.abs(Number(dn.amount) || Number(dn._amount) || 0))}`;
+      if (dn.note_type === "item") return `${dirLabel}: ${itemLabel} × ${Math.abs(dn.quantity || 0)}`;
+      const amt = fmtPrice(Math.abs(Number(dn.amount) || Number(dn._amount) || 0));
+      return itemLabel ? `${dirLabel}: ${itemLabel} — ${amt}` : `${dirLabel}: ${amt}`;
     }
-    if (dn.note_type === "item") return `${dn._label || ""} × ${dn.quantity}`;
-    return "Value adjustment";
+    if (dn.note_type === "item") return `${itemLabel} × ${dn.quantity}`;
+    return itemLabel ? `Value adjustment: ${itemLabel}` : "Value adjustment";
   }
   /** Lines eligible for debit notes: received or billed > 0 */
   function billableLines() {
@@ -404,6 +409,7 @@ const Stock = (() => {
       }));
       receiptMeta.totalBilledAmount = detail.expected_bill_amount || "";
       receiptMeta.billingPct = billingTerms ? String(Number(billingTerms.billing_pct)) : "";
+      receiptMeta.gstPct = billingTerms ? String(Number(billingTerms.gst_rate_pct)) : "";
       billPreview = null;
       pendingDebitNotes = [];
     } catch (e) {
@@ -424,6 +430,10 @@ const Stock = (() => {
     const pct = parseFloat(receiptMeta.billingPct);
     return (pct > 0 && pct <= 100) ? { billing_pct_override: pct } : {};
   }
+  function gstPctOverridePayload() {
+    const pct = parseFloat(receiptMeta.gstPct);
+    return (pct >= 0 && pct <= 100) ? { gst_rate_pct_override: pct } : {};
+  }
   async function refreshBillPreview() {
     const total = parseFloat(receiptMeta.totalBilledAmount) || 0;
     try {
@@ -437,6 +447,7 @@ const Stock = (() => {
             billed_amount: l.billed_amount || 0,
           })),
           ...billingPctOverridePayload(),
+          ...gstPctOverridePayload(),
         }),
       }, 0);
       billPreview = preview;
@@ -590,6 +601,8 @@ const Stock = (() => {
               <input type="number" min="0" step="0.01" class="input" id="stock-total-billed" value="${ctx.esc(receiptMeta.totalBilledAmount)}" required /></div>
             ${isBillEdit ? `<div><label class="label">Billing % (this bill only)</label>
               <input type="number" min="0.01" max="100" step="0.01" class="input" id="stock-billing-pct" value="${ctx.esc(receiptMeta.billingPct)}" title="Override the vendor's usual billing % for this bill only — vendor profile stays unchanged" /></div>` : ""}
+            ${isBillEdit && billingTerms?.gst_included ? `<div><label class="label">GST % (this bill only)</label>
+              <input type="number" min="0" max="100" step="0.01" class="input" id="stock-gst-pct" value="${ctx.esc(receiptMeta.gstPct)}" title="Override the vendor's usual GST % for this bill only — vendor profile stays unchanged" /></div>` : ""}
             <div><label class="label">Replace bill file</label>
               <input type="file" class="input" accept=".pdf,image/*" onchange="Stock.setBillFile(this.files[0])" />
               ${billFile ? `<span class="stock-file-name">${ctx.esc(billFile.name)}</span>` : (billFileKey ? `<span class="stock-file-name">Current file kept</span>` : "")}
@@ -980,7 +993,7 @@ const Stock = (() => {
       }
       bodyEl.innerHTML = `
         <div class="vo-wiz-step-head">
-          <h4>${ctx.esc(wizardPendingBillList.vendor_label)}</h4>
+          <h4>${ctx.esc(wizardPendingBillList.vendor_label)}${wizardPendingBillList.vendor_alias ? ` <span style="color:var(--muted);font-weight:500;">(${ctx.esc(wizardPendingBillList.vendor_alias)})</span>` : ""}</h4>
           <p>${receipts.length} receipt${receipts.length === 1 ? "" : "s"} pending bill. One bill per receipt.</p>
         </div>
         <div class="vo-wiz-vendor-list">
@@ -1010,7 +1023,7 @@ const Stock = (() => {
       setStockWizardChrome("Bill Order", "Step 2 — enter billed quantities & bill total");
       bodyEl.innerHTML = `
         <div class="vo-wiz-step-head">
-          <h4>${ctx.esc(placedOrder.vendor_label)} — receipt #${placedOrder.receipt_id}${placedOrder.order_receipt_number ? ` (${ctx.esc(placedOrder.order_receipt_number)})` : ""}</h4>
+          <h4>${ctx.esc(placedOrder.vendor_label)}${placedOrder.vendor_alias ? ` <span style="color:var(--muted);font-weight:500;">(${ctx.esc(placedOrder.vendor_alias)})</span>` : ""} — receipt #${placedOrder.receipt_id}${placedOrder.order_receipt_number ? ` (${ctx.esc(placedOrder.order_receipt_number)})` : ""}</h4>
           <p>Billed qty defaults to received — edit if the vendor's bill differs. Total bill amount defaults to the calculated expectation — edit to match the paper invoice.</p>
         </div>
         <div class="stock-receive-table-wrap">
@@ -1055,6 +1068,8 @@ const Stock = (() => {
               <input type="number" min="0" step="0.01" class="input" id="stock-total-billed" value="${ctx.esc(receiptMeta.totalBilledAmount)}" placeholder="₹ total on vendor bill" required /></div>
             <div><label class="label">Billing % (this bill only)</label>
               <input type="number" min="0.01" max="100" step="0.01" class="input" id="stock-billing-pct" value="${ctx.esc(receiptMeta.billingPct)}" title="Override the vendor's usual billing % for this bill only — vendor profile stays unchanged" /></div>
+            ${billingTerms?.gst_included ? `<div><label class="label">GST % (this bill only)</label>
+              <input type="number" min="0" max="100" step="0.01" class="input" id="stock-gst-pct" value="${ctx.esc(receiptMeta.gstPct)}" title="Override the vendor's usual GST % for this bill only — vendor profile stays unchanged" /></div>` : ""}
             <div><label class="label">Upload bill</label>
               <input type="file" class="input" accept=".pdf,image/*" onchange="Stock.setBillFile(this.files[0])" />
               ${billFile ? `<span class="stock-file-name">${ctx.esc(billFile.name)}</span>` : ""}
@@ -1122,6 +1137,8 @@ const Stock = (() => {
     if (totalEl && totalEl.tagName === "INPUT") receiptMeta.totalBilledAmount = totalEl.value || "";
     const pctEl = document.getElementById("stock-billing-pct");
     if (pctEl) receiptMeta.billingPct = pctEl.value || "";
+    const gstPctEl = document.getElementById("stock-gst-pct");
+    if (gstPctEl) receiptMeta.gstPct = gstPctEl.value || "";
     const ornEl = document.getElementById("stock-order-receipt-number");
     if (ornEl) receiptMeta.orderReceiptNumber = (ornEl.value || "").trim();
     const notesEl = document.getElementById("stock-receive-notes");
@@ -1695,6 +1712,7 @@ const Stock = (() => {
             notes: receiptMeta.notes || null,
             debit_notes: debitNotesPayload,
             ...billingPctOverridePayload(),
+            ...gstPctOverridePayload(),
           }
         : {
             vendor_id: wizardVendorId,
@@ -1712,6 +1730,7 @@ const Stock = (() => {
             })),
             debit_notes: debitNotesPayload,
             ...(isBill ? billingPctOverridePayload() : {}),
+            ...(isBill ? gstPctOverridePayload() : {}),
           };
       const res = await ctx.api(endpoint, {
         method: isEdit ? "PATCH" : "POST",
@@ -1875,6 +1894,7 @@ const Stock = (() => {
         direction: dn.direction,
         catalog_product_id: dn.catalog_product_id,
         our_product_id: dn.our_product_id,
+        vendor_product_id: dn.vendor_product_id,
         quantity: dn.quantity,
         amount: dn.amount,
         notes: dn.notes,
@@ -1886,6 +1906,7 @@ const Stock = (() => {
         additionalCharges: receipt.additional_charges || "",
         totalBilledAmount: receipt.total_billed_amount || receipt.bill_amount || "",
         billingPct: receipt.billing_pct_applied || "",
+        gstPct: receipt.gst_rate_pct_applied || "",
         notes: receipt.notes || "",
       };
       try {
@@ -1900,6 +1921,7 @@ const Stock = (() => {
           gst_included: v.gst_included, gst_rate_pct: v.gst_rate_pct, billing_notes: v.billing_notes,
         };
         if (!receiptMeta.billingPct) receiptMeta.billingPct = String(Number(v.billing_pct));
+        if (!receiptMeta.gstPct) receiptMeta.gstPct = String(Number(v.gst_rate_pct));
       } catch (_) {
         placedOrder = { vendor_id: receipt.vendor_id, vendor_label: `Vendor #${receipt.vendor_id}` };
       }
@@ -1942,9 +1964,12 @@ const Stock = (() => {
       extra += `<div style="margin-top:12px;"><strong style="font-size:13px;">Debit notes</strong>
         <table class="data" style="font-size:13px;margin-top:6px;"><thead><tr><th>Note</th><th>Effect</th></tr></thead><tbody>
         ${receipt.debit_notes.map(dn => {
+          const item = dn.our_product_id || dn.catalog_product_id ? ctx.esc(productIdLabel(dn)) : "";
           const label = dn.note_type === "item"
-            ? `${ctx.esc(productIdLabel(dn))} × ${dn.quantity} (${ctx.esc(dn.direction || "")})`
-            : `Value ₹${ctx.esc(dn.amount)} (${ctx.esc(dn.direction || "")})`;
+            ? `${item} × ${dn.quantity} (${ctx.esc(dn.direction || "")})`
+            : item
+              ? `${item} — ₹${ctx.esc(dn.amount)} (${ctx.esc(dn.direction || "")})`
+              : `Value ₹${ctx.esc(dn.amount)} (${ctx.esc(dn.direction || "")})`;
           return `<tr><td>${label}${dn.notes ? ` — ${ctx.esc(dn.notes)}` : ""}</td><td>${fmtPrice(dn.payable_effect)}</td></tr>`;
         }).join("")}
         </tbody></table></div>`;

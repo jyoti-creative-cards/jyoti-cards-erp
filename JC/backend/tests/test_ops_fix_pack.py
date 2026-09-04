@@ -395,6 +395,50 @@ def test_bill_receipt_one_off_billing_pct_override_ignores_vendor_default(db):
     assert v.billing_pct == Decimal("100")  # vendor profile untouched
 
 
+def test_bill_receipt_one_off_gst_pct_override_ignores_vendor_default(db):
+    """Vendor defaults to 18% GST, but this one paper bill states 12% — override must
+    apply that rate without touching the vendor's profile."""
+    v = _vendor(db)
+    assert v.gst_rate_pct == Decimal("18")
+    r, ln = _pending_receipt(db, v.id, qty=10, price=Decimal("100"))
+    body = VendorBillIn(
+        total_billed_amount=Decimal("1120.00"),
+        lines=[VendorBillLineIn(catalog_product_id=ln.catalog_product_id, quantity_billed=10)],
+        gst_rate_pct_override=Decimal("12"),
+    )
+    bill_receipt(db, AUTH, r.id, body)
+    r2 = db.get(StockReceipt, r.id)
+    assert r2.bill_status == "billed"
+    assert r2.gst_rate_pct_applied == Decimal("12.00")
+    db.refresh(v)
+    assert v.gst_rate_pct == Decimal("18")  # vendor profile untouched
+
+
+def test_edit_bill_reuses_originally_applied_gst_pct_not_current_vendor_default(db):
+    """After billing at a one-off 12% GST override, later edits to that same receipt
+    must keep using 12% even if the vendor's profile GST rate has since changed."""
+    from app.services.receipt_edit import update_vendor_receipt
+    from app.schemas.stock import VendorReceiptCreate, VendorReceiptLineIn
+
+    v = _vendor(db)
+    r, ln = _pending_receipt(db, v.id, qty=10, price=Decimal("100"))
+    bill_receipt(db, AUTH, r.id, VendorBillIn(
+        total_billed_amount=Decimal("1120.00"),
+        lines=[VendorBillLineIn(catalog_product_id=ln.catalog_product_id, quantity_billed=10)],
+        gst_rate_pct_override=Decimal("12"),
+    ))
+    assert db.get(StockReceipt, r.id).gst_rate_pct_applied == Decimal("12.00")
+
+    v.gst_rate_pct = Decimal("28")
+    db.commit()
+
+    update_vendor_receipt(db, AUTH, r.id, VendorReceiptCreate(
+        vendor_id=v.id, total_billed_amount=Decimal("1130.00"),
+        lines=[VendorReceiptLineIn(catalog_product_id=ln.catalog_product_id, quantity_billed=10)],
+    ))
+    assert db.get(StockReceipt, r.id).gst_rate_pct_applied == Decimal("12.00")
+
+
 def test_edit_bill_reuses_originally_applied_pct_not_current_vendor_default(db):
     """After billing at a one-off 25% override, later edits to that same receipt
     must keep using 25% even if the vendor's profile has since changed back."""
@@ -499,3 +543,71 @@ def test_closeable_billed_lists_receipt_and_close_batch_archives_it(db):
     assert not any(it.id == r.id for it in items_after)
     billed_rows = list_vendor_orders(bucket="billed", view="default", day="all", db=db, auth=AUTH)
     assert not any(row.vendor_id == v.id for row in billed_rows)
+
+
+def test_edit_receipt_can_remove_line_even_if_stock_already_shipped_out(db):
+    """Regression: editing a receipt (reduce qty / delete a line) blocked with a 400
+    the moment any of that line's received stock had already shipped out — the common
+    case for a receipt more than a day old. Same "never blocks, only corrects the
+    running total" philosophy as void (see void_service.py) must apply to edit too."""
+    from app.models.stock import StockBalance
+    from app.services.receipt_edit import update_vendor_receipt
+    from app.schemas.stock import VendorReceiptCreate, VendorReceiptLineIn
+
+    v = _vendor(db)
+    p1 = CatalogProduct(id=1, our_product_id="P1", vendor_id=v.id, vendor_product_id="VP1",
+                         buying_price=Decimal("10"), selling_price=Decimal("20"))
+    p2 = CatalogProduct(id=2, our_product_id="P2", vendor_id=v.id, vendor_product_id="VP2",
+                         buying_price=Decimal("10"), selling_price=Decimal("20"))
+    db.add_all([p1, p2])
+    db.flush()
+    r, ln1 = _pending_receipt(db, v.id, qty=10, price=Decimal("10"))
+    ln2 = StockReceiptLine(
+        receipt_id=r.id, catalog_product_id=2, our_product_id="P2",
+        quantity_received=5, buying_price=Decimal("10"),
+    )
+    db.add(ln2)
+    db.flush()
+    add_stock(db, catalog_product_id=2, our_product_id="P2", quantity=5, entry_type="receive",
+              reference_type="stock_receipt", reference_id=r.id)
+    db.commit()
+
+    # Some of P2's stock already shipped out to a customer since it was received.
+    add_stock(db, catalog_product_id=2, our_product_id="P2", quantity=-4, entry_type="reserved",
+              reference_type="customer_placement", reference_id=999, party="Cust")
+    db.commit()
+
+    body = VendorReceiptCreate(
+        vendor_id=v.id, order_receipt_number="R1",
+        lines=[VendorReceiptLineIn(catalog_product_id=1, quantity_received=10, quantity_billed=0, billed_amount=0)],
+    )
+    result = update_vendor_receipt(db, AUTH, r.id, body)
+    assert result["ok"] is True
+    bal = db.query(StockBalance).filter(StockBalance.catalog_product_id == 2).first()
+    assert bal.quantity_on_hand == -4  # corrected, allowed negative — never blocks
+
+
+def test_value_debit_note_keeps_item_association_when_line_specific(db):
+    """Regression: a rate/amount-mismatch debit note tied to one line lost its product
+    link on save (create_debit_note only set catalog_product_id/our_product_id for
+    note_type="item"), so the UI/ledger/PDF could only ever show "Value ₹X" with no way
+    to tell which item it was for — unlike qty-mismatch (item-type) notes, which always
+    show the item. Whole-bill-total notes (no product) must still work with None."""
+    from app.services.debit_notes import create_debit_note
+    from app.schemas.debit_note import DebitNoteIn
+
+    v = _vendor(db)
+    r, ln = _pending_receipt(db, v.id, qty=10, price=Decimal("10"))
+
+    note = create_debit_note(db, AUTH, vendor_id=v.id, receipt_id=r.id, body=DebitNoteIn(
+        note_type="value", direction="under", catalog_product_id=1, amount=Decimal("5.00"),
+        notes="rate mismatch",
+    ))
+    assert note.catalog_product_id == 1
+    assert note.our_product_id == "P1"
+
+    whole_bill_note = create_debit_note(db, AUTH, vendor_id=v.id, receipt_id=r.id, body=DebitNoteIn(
+        note_type="value", direction="over", amount=Decimal("3.00"), notes="total mismatch",
+    ))
+    assert whole_bill_note.catalog_product_id is None
+    assert whole_bill_note.our_product_id is None

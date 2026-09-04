@@ -118,11 +118,32 @@ def create_debit_note(
         direction, _, signed_amt = normalize_signed_values(
             "value", direction=body.direction, quantity=None, amount=body.amount
         )
+        # Value-type notes can still be tied to a specific line (rate/amount mismatch on
+        # one item, not just a whole-bill total mismatch) — keep the product association
+        # so the ledger/PDF/UI can show "which item" instead of a bare "₹X" figure, same
+        # as item-type (qty mismatch) notes already do.
+        our_product_id = None
+        unit_price = None
+        if body.catalog_product_id is not None:
+            line = (
+                db.query(StockReceiptLine)
+                .filter(
+                    StockReceiptLine.receipt_id == receipt_id,
+                    StockReceiptLine.catalog_product_id == body.catalog_product_id,
+                )
+                .first()
+            )
+            if line:
+                our_product_id = line.our_product_id
+                unit_price = line.buying_price
         note = DebitNote(
             vendor_id=vendor_id,
             receipt_id=receipt_id,
             note_type="value",
             direction=direction,
+            catalog_product_id=body.catalog_product_id,
+            our_product_id=our_product_id,
+            unit_price=unit_price,
             amount=signed_amt,
             notes=body.notes,
             source=source,
@@ -130,7 +151,10 @@ def create_debit_note(
             created_by_id=auth.actor_id,
             created_by_name=auth.actor_name,
         )
-        detail = f"value debit ₹{signed_amt} ({direction})"
+        detail = (
+            f"{our_product_id} value debit ₹{signed_amt} ({direction})"
+            if our_product_id else f"value debit ₹{signed_amt} ({direction})"
+        )
 
     db.add(note)
     db.flush()

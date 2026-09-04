@@ -39,6 +39,7 @@ class StockReceipt(Base):
     )
     additional_charges: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 2), nullable=True)
     billing_pct_applied: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2), nullable=True)  # snapshot of % actually used for this bill (may differ from vendor default via one-off override)
+    gst_rate_pct_applied: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2), nullable=True)  # snapshot of GST % actually used for this bill (may differ from vendor default via one-off override)
     total_billed_amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 2), nullable=True)
     actual_ap_amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(12, 2), nullable=True)  # actual AP when split-pricing applies
     bill_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending_bill", server_default="pending_bill", index=True)

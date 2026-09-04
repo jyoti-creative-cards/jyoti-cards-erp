@@ -127,6 +127,7 @@ def init_db() -> None:
         _migrate_void_recycle_customer()
         _migrate_vendor_number()
         _migrate_receipt_billing_pct()
+        _migrate_receipt_gst_pct()
         _migrate_receipt_closed()
         with engine.begin() as conn:
             conn.execute(text("SELECT 1"))
@@ -162,6 +163,17 @@ def _migrate_receipt_billing_pct() -> None:
             _exec_sql(conn, "ALTER TABLE jc_stock_receipts ADD COLUMN billing_pct_applied NUMERIC(5,2)", critical=False)
         else:
             _exec_sql(conn, "ALTER TABLE jc_stock_receipts ADD COLUMN IF NOT EXISTS billing_pct_applied NUMERIC(5,2)", critical=False)
+
+
+def _migrate_receipt_gst_pct() -> None:
+    """Per-receipt snapshot of the GST % actually applied (supports one-off overrides,
+    mirrors billing_pct_applied — vendor's paper bill sometimes states a different GST
+    rate than their usual profile)."""
+    with engine.begin() as conn:
+        if _is_sqlite:
+            _exec_sql(conn, "ALTER TABLE jc_stock_receipts ADD COLUMN gst_rate_pct_applied NUMERIC(5,2)", critical=False)
+        else:
+            _exec_sql(conn, "ALTER TABLE jc_stock_receipts ADD COLUMN IF NOT EXISTS gst_rate_pct_applied NUMERIC(5,2)", critical=False)
 
 
 def _migrate_receipt_closed() -> None:

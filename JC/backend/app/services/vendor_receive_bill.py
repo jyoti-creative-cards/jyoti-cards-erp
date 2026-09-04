@@ -217,11 +217,20 @@ def bill_receipt(db: Session, auth: AuthContext, receipt_id: int, body: VendorBi
     if not (Decimal("0") < billing_pct <= Decimal("100")):
         raise HTTPException(400, "billing % override must be between 0 and 100")
 
+    # Same for GST % — the vendor's paper bill sometimes states a different rate than
+    # their usual profile. Only meaningful when the vendor charges GST at all.
+    gst_rate_pct = (
+        Decimal(str(body.gst_rate_pct_override)).quantize(Decimal("0.01"))
+        if body.gst_rate_pct_override is not None else vendor.gst_rate_pct
+    )
+    if not (Decimal("0") <= gst_rate_pct <= Decimal("100")):
+        raise HTTPException(400, "GST % override must be between 0 and 100")
+
     total_actual_value = sum((raw_amt for _, _, raw_amt in normalized), Decimal("0"))
     bill_total, extra_cash = compute_bill_totals(
         total_actual_value=total_actual_value,
         billing_pct=billing_pct, additional_charge=vendor.additional_charge,
-        discount_pct=vendor.discount_pct, gst_included=vendor.gst_included, gst_rate_pct=vendor.gst_rate_pct,
+        discount_pct=vendor.discount_pct, gst_included=vendor.gst_included, gst_rate_pct=gst_rate_pct,
     )
     entered_total = body.total_billed_amount.quantize(Decimal("0.01"))
     is_split = billing_pct < 100
@@ -236,6 +245,7 @@ def bill_receipt(db: Session, auth: AuthContext, receipt_id: int, body: VendorBi
     receipt.bill_number = (body.bill_number or "").strip() or None
     receipt.bill_file_key = body.bill_file_key
     receipt.billing_pct_applied = billing_pct
+    receipt.gst_rate_pct_applied = gst_rate_pct if vendor.gst_included else None
     receipt.additional_charges = vendor.additional_charge.quantize(Decimal("0.01"))
     receipt.total_billed_amount = entered_total
     receipt.actual_ap_amount = (entered_total + extra_cash).quantize(Decimal("0.01")) if extra_cash > 0 else None
@@ -281,16 +291,19 @@ def preview_bill_deviations(
     products: dict[int, CatalogProduct] | None = None,
     billed_amount_by_pid: dict[int, Decimal] | None = None,
     billing_pct: Decimal | None = None,
+    gst_rate_pct: Decimal | None = None,
 ) -> dict:
     """Returns expected totals + suggested (unsaved) debit notes for the bill-review UI.
 
     `billing_pct` — one-off override for this bill only (e.g. vendor is normally
     50% split but this particular invoice is 25%). Defaults to the vendor's
     profile setting; never mutates the vendor record.
+    `gst_rate_pct` — same idea, for the GST % this particular invoice states.
     """
     products = products or {}
     billed_amount_by_pid = billed_amount_by_pid or {}
     billing_pct = billing_pct if billing_pct is not None else vendor.billing_pct
+    gst_rate_pct = gst_rate_pct if gst_rate_pct is not None else vendor.gst_rate_pct
     suggestions = []
     total_actual_value = Decimal("0")
     for ln in lines:
@@ -321,7 +334,7 @@ def preview_bill_deviations(
     bill_total, extra_cash = compute_bill_totals(
         total_actual_value=total_actual_value, billing_pct=billing_pct,
         additional_charge=vendor.additional_charge, discount_pct=vendor.discount_pct,
-        gst_included=vendor.gst_included, gst_rate_pct=vendor.gst_rate_pct,
+        gst_included=vendor.gst_included, gst_rate_pct=gst_rate_pct,
     )
     amt_dn = amount_deviation_debit_note(expected_bill_total=bill_total, entered_bill_total=entered_total)
     if amt_dn:

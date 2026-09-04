@@ -108,6 +108,10 @@ class VendorReceiptCreate(BaseModel):
     # One-off billing % override, only used when editing an already-billed receipt.
     # None = keep whatever % was originally applied to this bill (or vendor default if unset).
     billing_pct_override: Optional[Decimal] = Field(None, gt=0, le=100)
+    # One-off GST % override for THIS bill only (vendor's paper bill sometimes states a
+    # different GST rate than their usual profile). None = use the vendor's usual rate
+    # (or whatever was originally applied, when editing). Never mutates the vendor.
+    gst_rate_pct_override: Optional[Decimal] = Field(None, ge=0, le=100)
 
 
 class VendorBillLineIn(BaseModel):
@@ -129,6 +133,9 @@ class VendorBillIn(BaseModel):
     # One-off billing % for THIS bill only (e.g. vendor is normally 50% split but this
     # invoice is 25%). None = use the vendor profile's billing_pct. Never mutates the vendor.
     billing_pct_override: Optional[Decimal] = Field(None, gt=0, le=100)
+    # One-off GST % for THIS bill only (vendor's paper bill sometimes states a different
+    # GST rate). None = use the vendor profile's gst_rate_pct. Never mutates the vendor.
+    gst_rate_pct_override: Optional[Decimal] = Field(None, ge=0, le=100)
 
 
 class VendorReceiveCreate(BaseModel):
@@ -177,6 +184,7 @@ class PendingBillReceipt(BaseModel):
 class VendorPendingBillList(BaseModel):
     vendor_id: int
     vendor_label: str
+    vendor_alias: Optional[str] = None
     receipts: List[PendingBillReceipt] = []
 
 
@@ -194,6 +202,7 @@ class ReceiptForBillDetail(BaseModel):
     receipt_id: int
     vendor_id: int
     vendor_label: str
+    vendor_alias: Optional[str] = None
     order_receipt_number: Optional[str] = None
     expected_bill_amount: Optional[str] = None
     expected_extra_cash: Optional[str] = None
@@ -205,6 +214,7 @@ class BillPreviewIn(BaseModel):
     total_billed_amount: Decimal = Field(..., ge=0)
     lines: List[VendorBillLineIn] = []
     billing_pct_override: Optional[Decimal] = Field(None, gt=0, le=100)
+    gst_rate_pct_override: Optional[Decimal] = Field(None, ge=0, le=100)
 
 
 class BillPreviewOut(BaseModel):

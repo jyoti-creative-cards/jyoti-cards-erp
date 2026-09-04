@@ -341,6 +341,25 @@ def test_to_bill_bucket_lists_vendor_with_pending_receipt(db):
     assert any(r.vendor_id == v.id and r.open_kind == "to_bill" for r in rows)
 
 
+def test_billed_bucket_lists_vendor_after_bill(db):
+    """Regression: VendorOrder.bucket never becomes "billed" either (same dead-column
+    issue as "received") — the "Billed" past-browse tab must source from
+    StockReceipt.bill_status == "billed" directly, not the legacy empty query."""
+    from app.routers.vendor_orders import list_vendor_orders
+
+    v = _vendor(db)
+    r, ln = _pending_receipt(db, v.id, qty=10, price=Decimal("10"))
+    body = VendorBillIn(
+        total_billed_amount=Decimal("100.00"),
+        lines=[VendorBillLineIn(catalog_product_id=ln.catalog_product_id, quantity_billed=10)],
+    )
+    bill_receipt(db, AUTH, r.id, body)
+    rows = list_vendor_orders(bucket="billed", view="default", day="all", db=db, auth=AUTH)
+    assert any(r2.vendor_id == v.id for r2 in rows)
+    to_bill_rows = list_vendor_orders(bucket="received", view="default", day="all", db=db, auth=AUTH)
+    assert not any(r2.vendor_id == v.id for r2 in to_bill_rows)
+
+
 def test_bill_receipt_keeps_vendor_when_other_pending_exists(db):
     v = _vendor(db)
     r1, ln1 = _pending_receipt(db, v.id)

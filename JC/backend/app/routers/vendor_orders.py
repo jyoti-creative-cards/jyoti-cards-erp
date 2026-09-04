@@ -165,6 +165,57 @@ def _to_bill_summaries(
     return out
 
 
+def _billed_summaries(
+    db: Session, *, day_start: datetime | None = None, day_end: datetime | None = None,
+) -> list["VendorOrderSummary"]:
+    """Billed vendors for the 'Billed' past-browse stage. Same dead-VendorOrder-bucket
+    issue as _to_bill_summaries — bucket never becomes "billed" either — so this sources
+    straight from StockReceipt.bill_status == 'billed' (mirrors the closed-bucket query)."""
+    from sqlalchemy import func
+
+    q = (
+        db.query(
+            StockReceipt.vendor_id,
+            func.count(func.distinct(StockReceipt.id)),
+            func.count(StockReceiptLine.id),
+            func.coalesce(func.sum(StockReceiptLine.quantity_received), 0),
+            func.max(StockReceipt.billed_at),
+        )
+        .join(StockReceiptLine, StockReceiptLine.receipt_id == StockReceipt.id)
+        .filter(StockReceipt.bill_status == "billed", StockReceipt.deleted_at.is_(None))
+    )
+    if day_start is not None and day_end is not None:
+        q = q.filter(StockReceipt.billed_at >= day_start, StockReceipt.billed_at < day_end)
+    rows = q.group_by(StockReceipt.vendor_id).all()
+    vctx = _vendor_contexts(db, {int(vendor_id) for vendor_id, _, _, _, _ in rows})
+    out: list[VendorOrderSummary] = []
+    for vendor_id, receipt_count, line_count, total_qty, latest in rows:
+        vid = int(vendor_id)
+        ctx = vctx.get(vid)
+        if ctx is None:
+            continue
+        vendor, city_name, label = ctx
+        out.append(
+            VendorOrderSummary(
+                id=0,
+                vendor_id=vid,
+                vendor_name=vendor.business_name,
+                vendor_city=city_name,
+                vendor_label=label,
+                alias=vendor.alias,
+                status="billed",
+                bucket="billed",
+                is_open=True,
+                placement_count=int(receipt_count),
+                line_count=int(line_count),
+                total_quantity=int(total_qty or 0),
+                updated_at=latest or datetime.now(timezone.utc),
+            )
+        )
+    out.sort(key=lambda x: x.updated_at or datetime.min.replace(tzinfo=timezone.utc))
+    return out
+
+
 def _placement_color_map(placements: list[VendorOrderPlacement]) -> dict[int, int]:
     ordered = sorted(placements, key=lambda p: (p.placed_at, p.id))
     return {p.id: idx for idx, p in enumerate(ordered)}
@@ -692,21 +743,9 @@ def list_vendor_orders(
         # _to_bill_summaries); source from StockReceipt.bill_status instead.
         return _to_bill_summaries(db, day_start=day_start, day_end=day_end)
 
-    if bucket == "billed" and day_start is not None:
-        today_vids = _vids_with_placement_today(("billed",))
-        if not today_vids:
-            return []
-        orders = (
-            db.query(VendorOrder)
-            .filter(
-                VendorOrder.is_open.is_(True),
-                VendorOrder.bucket == "billed",
-                VendorOrder.vendor_id.in_(today_vids),
-            )
-            .order_by(VendorOrder.updated_at.asc())
-            .all()
-        )
-        return _summaries_from_orders(db, orders)
+    if bucket == "billed":
+        # Same story as "received" — VendorOrder.bucket never becomes "billed" either.
+        return _billed_summaries(db, day_start=day_start, day_end=day_end)
 
     orders = (
         db.query(VendorOrder)

@@ -1300,7 +1300,7 @@ const App = (() => {
 
   // ── Customers ─────────────────────────────────────────────────────
   const CUSTOMER_COLS = [
-    { key: "party_number", label: "#", get: c => c.party_number || 0 },
+    { key: "party_number", label: "#", get: c => c.party_number || 0, exactNumeric: true },
     { key: "business", label: "Business", get: c => `${c.business_name} ${c.person_name || ""}` },
     { key: "city", label: "City / Route", get: c => `${c.city_name || ""} ${c.route_name || ""}` },
     { key: "financials", label: "Financials", filterable: false, sortable: false },

@@ -9,7 +9,7 @@ const Vendors = (() => {
   let editingId = null;
 
   const VENDOR_COLS = [
-    { key: "vendor_number", label: "#", get: v => v.vendor_number || 0 },
+    { key: "vendor_number", label: "#", get: v => v.vendor_number || 0, exactNumeric: true },
     { key: "business", label: "Business", get: v => `${v.business_name} ${v.alias || ""}` },
     { key: "phone", label: "Phone", get: v => v.phone },
     { key: "city", label: "City", get: v => v.city_name || "" },

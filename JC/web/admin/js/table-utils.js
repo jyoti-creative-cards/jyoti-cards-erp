@@ -22,7 +22,12 @@ const TableUtils = (() => {
     for (const col of cols) {
       const f = (s.filters[col.key] || "").trim().toLowerCase();
       if (!f || col.filterable === false) continue;
-      out = out.filter(r => norm(col.get(r)).includes(f));
+      // Numeric ID columns (#): exact match only — "1" must not also surface "11"/"111".
+      if (col.exactNumeric && /^\d+$/.test(f)) {
+        out = out.filter(r => norm(col.get(r)) === f);
+      } else {
+        out = out.filter(r => norm(col.get(r)).includes(f));
+      }
     }
     if (s.sort) {
       const col = cols.find(c => c.key === s.sort);

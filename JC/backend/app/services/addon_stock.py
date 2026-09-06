@@ -67,6 +67,14 @@ def deduct_addons_for_product(
         return
     entry_type = "customer_order" if units > 0 else "customer_order_restore"
     for link in links:
+        # A recycle-binned add-on should be inert, the same way the manual
+        # adjust-stock/receive-stock endpoints already 404 on it (`not row.is_active`).
+        # Without this check, every order/cancel/return on a product still linked to a
+        # "deleted" add-on kept silently moving its quantity_on_hand the whole time it
+        # sat in the recycle bin, with no screen able to inspect/correct it meanwhile.
+        addon = db.query(AddonProduct).filter(AddonProduct.id == link.addon_product_id).first()
+        if not addon or not addon.is_active or addon.deleted_at:
+            continue
         delta = -(int(link.quantity or 1) * units)
         if delta == 0:
             continue

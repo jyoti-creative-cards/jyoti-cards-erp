@@ -34,7 +34,7 @@ def _stock_status(row: AddonProduct) -> str:
         return "negative_stock"
     if qty == 0:
         return "out_of_stock"
-    if qty <= int(row.low_stock_threshold or 5):
+    if qty < max(int(row.low_stock_threshold or 5), 1):
         return "low_stock"
     return "in_stock"
 

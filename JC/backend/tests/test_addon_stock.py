@@ -3,6 +3,7 @@ deduct/restore when linked products are reserved/restored on customer orders."""
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from decimal import Decimal
 
 import pytest
@@ -111,3 +112,20 @@ def test_cancelling_customer_order_restores_linked_addon_stock(db):
     db.commit()
     db.refresh(addon)
     assert addon.quantity_on_hand == 100  # fully restored
+
+
+def test_soft_deleted_addon_no_longer_auto_moves_stock(db):
+    """Round-2 catalog audit H1: recycle-binned add-ons must be inert, matching the
+    404 guard already used by the manual receive-stock/adjust-stock endpoints."""
+    customer, prod, addon = _setup(db, addon_qty=100, link_qty=2)
+    addon.deleted_at = datetime.now(timezone.utc)
+    addon.is_active = False
+    db.commit()
+
+    create_received_placement(
+        db, customer_id=customer.id, customer_name=customer.business_name,
+        lines=[{"catalog_product_id": prod.id, "quantity": 10, "unit_price": "20"}],
+    )
+    db.commit()
+    db.refresh(addon)
+    assert addon.quantity_on_hand == 100  # untouched while recycle-binned

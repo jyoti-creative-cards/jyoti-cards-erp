@@ -1250,7 +1250,7 @@ const CustomerOrders = (() => {
   }
 
   function voidPlacement(placementId) {
-    promptReason("Void order — Admin-only, moves to recycle bin, restorable later. Cancels unbilled qty first if still open.", async (reason) => {
+    promptReason("Void order — Admin-only, moves to recycle bin, restorable later. Only releases unbilled qty if this order hasn't been confirmed yet (New bucket) — once confirmed, voiding hides it but leaves its reserved stock/open balance untouched.", async (reason) => {
       ctx.showLoading?.();
       try {
         await ctx.api(`/customer-orders/placements/${placementId}/void`, { method: "POST", body: JSON.stringify({ reason }) });

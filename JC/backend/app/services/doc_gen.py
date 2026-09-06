@@ -108,7 +108,21 @@ def generate_customer_bill_document(db: Session, bill_id: int) -> str | None:
     from app.services.customer_bill_math import prepare_totals_for_pdf
     from sqlalchemy.orm.attributes import flag_modified
 
-    totals = attach_addons_to_totals(db, dict(bill.totals_json or {}))
+    totals = dict(bill.totals_json or {})
+    # Add-ons are frozen onto totals_json once, at bill create/edit time
+    # (_persist_totals_addons in customer_bill_process.py) — that snapshot must survive a
+    # catalog product's add-on links changing later, the same way a bill line's price
+    # doesn't retroactively change. Re-running attach_addons_to_totals here on every PDF
+    # regen (view/print/WhatsApp share/portal download) used to overwrite + permanently
+    # commit today's *live* add-on links onto an already-issued bill, silently rewriting
+    # what the customer was actually billed. Only backfill lines that never got a
+    # snapshot at all (pre-addons-feature legacy bills, missing the "addons" key
+    # entirely) — never touch lines that already have one, even an empty list.
+    _lines = totals.get("lines")
+    if isinstance(_lines, list) and any(isinstance(ln, dict) and "addons" not in ln for ln in _lines):
+        totals = attach_addons_to_totals(db, totals)
+        bill.totals_json = totals
+        flag_modified(bill, "totals_json")
     blines = db.query(CustomerBillLine).filter(CustomerBillLine.bill_id == bill.id).all()
     line_pcts = {
         int(ln.catalog_product_id): ln.discount_percent

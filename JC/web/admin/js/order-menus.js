@@ -105,8 +105,13 @@ const OrderMenus = (() => {
     }
   }
 
-  function openConfirm({ title, message, detailsHtml, confirmLabel, danger, onConfirm, ctx, requireReason, reasonLabel }) {
-    confirmHandler = { onConfirm, ctx, requireReason: !!requireReason };
+  function openConfirm({ title, message, detailsHtml, confirmLabel, danger, onConfirm, ctx, requireReason, optionalReason, reasonLabel }) {
+    // optionalReason: same styled textarea as requireReason, but blank is allowed on
+    // submit — for actions whose backend contract takes an optional reason (e.g. void
+    // receipt) so they don't have to either fake-require one or fall back to a bare
+    // native prompt() just to keep the field optional.
+    const showReason = !!(requireReason || optionalReason);
+    confirmHandler = { onConfirm, ctx, requireReason: !!requireReason, showReason };
     document.getElementById("vo-confirm-title").textContent = title || "Confirm";
     const body = document.getElementById("vo-confirm-body");
     const footer = document.getElementById("vo-confirm-footer");
@@ -114,7 +119,7 @@ const OrderMenus = (() => {
       body.innerHTML = `
         ${message ? `<p style="margin:0 0 12px;font-size:13px;color:var(--muted);">${ctx.esc(message)}</p>` : ""}
         ${detailsHtml || ""}
-        ${requireReason ? `<label class="label" style="margin-top:14px;">${ctx.esc(reasonLabel || "Note (required)")}</label>
+        ${showReason ? `<label class="label" style="margin-top:14px;">${ctx.esc(reasonLabel || (requireReason ? "Note (required)" : "Note (optional)"))}</label>
           <textarea class="input" id="vo-confirm-reason" rows="3" style="width:100%;" placeholder="Why?"></textarea>` : ""}`;
     }
     const btnClass = danger ? "btn btn-danger" : "btn btn-primary";
@@ -124,7 +129,7 @@ const OrderMenus = (() => {
         <button class="${btnClass}" onclick="OrderMenus.submitConfirm()">${ctx.esc(confirmLabel || "Confirm")}</button>`;
     }
     document.getElementById("vo-confirm-modal")?.classList.remove("hidden");
-    if (requireReason) setTimeout(() => document.getElementById("vo-confirm-reason")?.focus(), 50);
+    if (showReason) setTimeout(() => document.getElementById("vo-confirm-reason")?.focus(), 50);
   }
 
   function closeConfirm() {
@@ -136,9 +141,9 @@ const OrderMenus = (() => {
     const h = confirmHandler;
     if (!h?.onConfirm) return closeConfirm();
     let reason = "";
-    if (h.requireReason) {
+    if (h.showReason) {
       reason = (document.getElementById("vo-confirm-reason")?.value || "").trim();
-      if (!reason) return h.ctx?.toast?.("Enter a note", "error");
+      if (h.requireReason && !reason) return h.ctx?.toast?.("Enter a note", "error");
     }
     h.ctx?.showLoading?.();
     try {

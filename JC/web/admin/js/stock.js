@@ -2046,23 +2046,34 @@ const Stock = (() => {
       ${ctx.detailFooterChild()}`;
     ctx.openDetail(title, voidedBanner + ctx.ledgerDetailCard("Receipt details", meta, table, extra), footer, "md", { push: true });
   }
-  async function voidReceipt(receiptId, vendorId) {
-    // Single dialog: entering a reason (or leaving it blank) and pressing OK confirms
-    // the void — was previously prompt() then a *second* confirm() dialog back-to-back.
-    const reason = prompt("Void this receipt? Stock and AP will be reversed — moves to recycle bin, can be restored.\n\nReason (optional):", "");
-    if (reason === null) return;
-    ctx.showLoading?.();
-    try {
-      await ctx.api(`/stock/receipts/${receiptId}/void`, { method: "POST", body: JSON.stringify({ reason: reason || null }) });
-      ctx.invalidateCache?.("/stock");
-      ctx.invalidateCache?.("/vendor-orders");
-      ctx.invalidateCache?.("/accounts-payable");
-      ctx.closeDetail?.();
-      ctx.toast("Voided — moved to recycle bin", "success");
-      if (typeof VendorOrders !== "undefined" && VendorOrders.refreshIfOpen) VendorOrders.refreshIfOpen(vendorId);
-      await load();
-    } catch (e) { ctx.toast(e.message, "error"); }
-    finally { ctx.hideLoading?.(); }
+  function voidReceipt(receiptId, vendorId) {
+    // Styled confirm (details table + optional-reason textarea) instead of a bare
+    // native prompt() — matches every other void/cancel/close action in the buying
+    // flow (VendorOrders.cancelPlacement/closeBilledPlacement/etc.) while keeping the
+    // reason genuinely optional, matching the backend's void contract.
+    const rows = [["Receipt", `#${receiptId}`]];
+    OrderMenus.openConfirm({
+      title: "Void receipt",
+      message: "Stock and AP will be reversed — moves to recycle bin, can be restored.",
+      detailsHtml: `<table class="data" style="font-size:13px;margin:0;"><tbody>
+        ${rows.map(([k, v]) => `<tr><td style="color:var(--muted);width:40%;">${ctx.esc(k)}</td><td><strong>${v}</strong></td></tr>`).join("")}
+      </tbody></table>`,
+      confirmLabel: "Void",
+      danger: true,
+      optionalReason: true,
+      reasonLabel: "Void reason (optional)",
+      ctx,
+      onConfirm: async (reason) => {
+        await ctx.api(`/stock/receipts/${receiptId}/void`, { method: "POST", body: JSON.stringify({ reason: reason || null }) });
+        ctx.invalidateCache?.("/stock");
+        ctx.invalidateCache?.("/vendor-orders");
+        ctx.invalidateCache?.("/accounts-payable");
+        ctx.closeDetail?.();
+        ctx.toast("Voided — moved to recycle bin", "success");
+        if (typeof VendorOrders !== "undefined" && VendorOrders.refreshIfOpen) VendorOrders.refreshIfOpen(vendorId);
+        await load();
+      },
+    });
   }
   async function editThreshold(catalogProductId, current) {
     const raw = prompt("Low stock threshold (qty below this = low stock):", String(current ?? 5));

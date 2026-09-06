@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.deps import AuthContext, get_auth_context, require_permission
+from app.deps import AuthContext, get_auth_context, require_any_permission, require_permission
 from app.models.addon_product import AddonProduct
 from app.models.catalog_product import CatalogProduct
 from app.models.city import City
@@ -149,6 +149,37 @@ def list_vendors(
             )
         )
     return out
+
+
+@router.get("/quick-search")
+def quick_search_vendors(
+    q: str = Query(..., min_length=1),
+    db: Session = Depends(get_db),
+    # finance.js's "Record vendor payment" quick-entry button needs a name/city
+    # lookup to find the party, but the documented finance.write-only "entry-only
+    # accountant" role has no vendors.read — the full GET /vendors list also leaks
+    # outstanding/cost fields that role is explicitly meant not to see. This is a
+    # minimal id/name/city-only lookup so finance.write alone is actually enough,
+    # matching permissions.py's own description of that permission.
+    auth: AuthContext = Depends(require_any_permission("vendors.read", "finance.write")),
+) -> List[dict]:
+    from app.services.token_search import sort_parties_by_search, token_match
+
+    search_clean = q.lstrip("#").strip()
+    query = db.query(Vendor).filter(Vendor.is_active.is_(True), Vendor.deleted_at.is_(None))
+    query = query.outerjoin(City, Vendor.city_id == City.id)
+    clause = token_match(
+        search_clean,
+        [Vendor.business_name, Vendor.person_name, Vendor.phone, Vendor.alias, Vendor.address, City.name],
+        exact_int_columns=[Vendor.vendor_number],
+    )
+    if clause is not None:
+        query = query.filter(clause)
+    rows = query.limit(50).all()
+    city_ids = sorted({r.city_id for r in rows if r.city_id})
+    cities = {c.id: c.name for c in (db.query(City).filter(City.id.in_(city_ids)).all() if city_ids else [])}
+    rows = sort_parties_by_search(rows, search_clean, city_lookup=cities)
+    return [{"id": r.id, "business_name": r.business_name, "city_name": cities.get(r.city_id)} for r in rows[:8]]
 
 
 @router.get("/{vendor_id}", response_model=VendorPublic, dependencies=[Depends(require_permission("vendors.read"))])

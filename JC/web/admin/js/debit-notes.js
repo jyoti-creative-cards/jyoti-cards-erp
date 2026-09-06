@@ -219,12 +219,18 @@ const DebitNotes = (() => {
       const qtyAbs = Math.abs(parseInt(document.getElementById("dn-qty")?.value || "0", 10) || 0);
       const line = state.lines.find(l => l.catalog_product_id === catId);
       if (!line || !qtyAbs) return null;
-      const price = Number(line.buying_price) || 0;
+      // buying_price is the masked "—" placeholder (see cost_visibility.hide_cost)
+      // for staff without costs.read — Number("—") || 0 used to silently render/
+      // confirm a fake ₹0 payable effect. The backend always recomputes the real
+      // amount server-side regardless of what we show here, but showing ₹0 for a
+      // real adjustment is misleading, so surface "hidden" instead of a number.
+      const priceHidden = line.buying_price === "—";
+      const price = priceHidden ? null : (Number(line.buying_price) || 0);
       const signedQty = state.itemDirection === "extra" ? -qtyAbs : qtyAbs;
-      const amt = price * signedQty;
-      const effect = -amt; // item: positive qty → pay less
+      const amt = priceHidden ? null : price * signedQty;
+      const effect = priceHidden ? null : -amt; // item: positive qty → pay less
       return {
-        type, line, qtyAbs, signedQty, price, amt, effect,
+        type, line, qtyAbs, signedQty, price, amt, effect, priceHidden,
         label: state.itemDirection === "short" ? "Short delivery" : "Extra goods",
       };
     }
@@ -247,6 +253,12 @@ const DebitNotes = (() => {
       el.textContent = state.noteType === "item" ? "Select a product and enter quantity." : "Enter the amount to adjust.";
       return;
     }
+    if (info.type === "item" && info.priceHidden) {
+      el.className = "dn-preview";
+      el.innerHTML = `<strong>${info.label}</strong> · ${info.qtyAbs} × —
+        <span>Amount hidden — you don't have cost visibility. The real amount is still applied correctly on save.</span>`;
+      return;
+    }
     const payLess = info.effect < 0;
     el.className = `dn-preview ${payLess ? "is-less" : "is-more"}`;
     if (info.type === "item") {
@@ -266,7 +278,10 @@ const DebitNotes = (() => {
     const summary = info.type === "item"
       ? `${info.label}: ${ctx.productIdLabel(info.line)} × ${info.qtyAbs}`
       : `${info.label}: ${fmtPrice(info.valAbs)}`;
-    if (!confirm(`${summary}\nYou ${info.effect < 0 ? "pay less" : "pay more"} by ${fmtPrice(Math.abs(info.effect))}.\n\nAdd this debit note?`)) return;
+    const effectLine = info.priceHidden
+      ? "Amount hidden — you don't have cost visibility. The real amount is still applied correctly."
+      : `You ${info.effect < 0 ? "pay less" : "pay more"} by ${fmtPrice(Math.abs(info.effect))}.`;
+    if (!confirm(`${summary}\n${effectLine}\n\nAdd this debit note?`)) return;
     // Wizard queue (no receipt yet): hand payload to parent
     if (state.onDone && !state.receiptId) {
       state.onDone(payload);

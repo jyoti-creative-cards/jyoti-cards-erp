@@ -34,7 +34,7 @@ const Stock = (() => {
   const STOCK_COLS = [
     { key: "our_product_id", label: "Product ID", get: p => p.our_product_id },
     { key: "vendor", label: "Vendor", get: p => p.vendor_label || "" },
-    { key: "qty", label: "On Hand", get: p => String(p.quantity_on_hand) },
+    { key: "qty", label: "On Hand", get: p => String(p.quantity_on_hand), numeric: true },
     { key: "price", label: "Sell Price", get: p => p.selling_price || "" },
   ];
   function init(context) { ctx = context; TableUtils.register("stock", () => {}); }

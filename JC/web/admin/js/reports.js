@@ -4,7 +4,12 @@ const Reports = (() => {
   let mode = "today"; // today | books | stock | tax
   let chip = "daybook";
   let ledgerKind = "customers";
-  const today = () => new Date().toISOString().slice(0, 10);
+  // toISOString() is always UTC — for the first 5h30m of every IST calendar day
+  // (00:00-05:29 IST = 18:30-23:59 UTC the previous day) this returned yesterday's
+  // date, silently mislabeling "Today"/date-preset chips with the wrong day for
+  // that whole window (the exact class of bug app/services/biz_date.py exists to
+  // prevent on the backend).
+  const today = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
   let daybookDate = today();
   let fromDate = "";
   let toDate = "";
@@ -257,8 +262,14 @@ const Reports = (() => {
       </div>`;
       return;
     }
-    const noDates = chip === "valuation" || chip === "ageing"
-      || (chip === "ledgers" && ["products", "staff", "routes", "freight"].includes(ledgerKind));
+    // Low stock is a point-in-time on-hand-vs-threshold snapshot (GET /reports/
+    // stock/low takes no date param at all) and can't be date-ranged; customers/
+    // vendors/expenses ledger *lists* are lifetime aggregates with no date filter
+    // either (only the expenses per-category *detail* screen honors a range) — all
+    // four used to render a fully interactive date-preset/From-To picker that
+    // silently did nothing when touched.
+    const noDates = chip === "valuation" || chip === "ageing" || chip === "low"
+      || (chip === "ledgers" && ["products", "staff", "routes", "freight", "customers", "vendors", "expenses"].includes(ledgerKind));
     if (noDates) {
       el.innerHTML = chip === "low"
         ? `<div class="rep-filters"><label class="label">Threshold<input type="number" class="input" id="rep-threshold" min="0" value="${lowThreshold}" onchange="Reports.onThresholdChange()" style="min-width:90px" /></label></div>`
@@ -396,7 +407,11 @@ const Reports = (() => {
         printOnclick: "Reports.shareDaybook(true)",
         pdfOnclick: "Reports.shareDaybook(false)",
         waOnclick: "Reports.waDaybook()",
-        excelOnclick: "Reports.exportExcel('sales_bills')",
+        // No Excel button here — GET /export/sales_bills.xlsx takes no date param
+        // and always dumps the entire lifetime sales register, unrelated to the
+        // single day this screen is scoped to (unlike Print/PDF/WhatsApp above,
+        // which correctly target just this day). Silently downloading the wrong,
+        // unfiltered, unlabeled file was worse than not offering Excel here at all.
       })}
       <div class="fin-hub-strip" style="margin-bottom:16px;">
         <div class="fin-stat"><span class="fin-stat-label">Entries</span><strong>${t.count || 0}</strong></div>
@@ -716,7 +731,7 @@ const Reports = (() => {
       ${ctx.reviewRow("Cash collected", fmtPrice(data.cash_collected))}
       ${ctx.reviewRow("Bill count", data.bill_count)}
     </div>
-    <p class="fin-panel-sub" style="margin-top:12px;">Net profit = net sales (ex-GST, net of returns) − net COGS (purchases, net of vendor debit notes) − expenses − manual losses. Still a management approximation, not true inventory-costed accounting.</p>`;
+    <p class="fin-panel-sub" style="margin-top:12px;">Net profit = net sales (ex-GST, net of returns) − net COGS (purchases, net of vendor debit notes) − expenses − manual losses. Still a management approximation, not true inventory-costed accounting.${data.note ? ` ${ctx.esc(data.note)}` : ""}</p>`;
   }
 
   async function renderLedgers(body) {
@@ -785,12 +800,12 @@ const Reports = (() => {
     body.innerHTML = items.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
       <th>Name</th>
       <th>${isRoute ? "Customers" : isFreight ? "Due" : "Opening"}</th>
-      ${!isRoute && !isFreight ? "<th>Due</th>" : ""}
+      ${isRoute || !isFreight ? "<th>Due</th>" : ""}
     </tr></thead><tbody>
       ${items.map(it => `<tr class="clickable" onclick="Reports.openLedger('${ledgerKind}', ${it.id})">
         <td><strong>${ctx.esc(it.label)}</strong></td>
         <td>${isRoute ? (it.customer_count ?? 0) : isFreight ? `<strong>${fmtPrice(it.outstanding)}</strong>` : fmtPrice(it.opening_total)}</td>
-        ${!isRoute && !isFreight ? `<td><strong>${fmtPrice(it.outstanding)}</strong></td>` : ""}
+        ${isRoute || !isFreight ? `<td><strong>${fmtPrice(it.outstanding)}</strong></td>` : ""}
       </tr>`).join("")}
     </tbody></table></div>` : empty("No ledgers", "Nothing to show for this list.");
   }

@@ -33,6 +33,17 @@ const TableUtils = (() => {
       const col = cols.find(c => c.key === s.sort);
       if (col) {
         out.sort((a, b) => {
+          // norm() always string-compares, which lexicographically mis-orders any
+          // numeric column ("10" sorts before "2") — columns that opt in with
+          // `numeric: true` (on-hand qty, vendor #, etc.) get a real numeric compare.
+          if (col.numeric) {
+            const an = Number(col.get(a));
+            const bn = Number(col.get(b));
+            const av = Number.isFinite(an) ? an : -Infinity;
+            const bv = Number.isFinite(bn) ? bn : -Infinity;
+            const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+            return s.dir === "asc" ? cmp : -cmp;
+          }
           const av = norm(col.get(a));
           const bv = norm(col.get(b));
           const cmp = av < bv ? -1 : av > bv ? 1 : 0;

@@ -8,10 +8,23 @@ const FreightAgentsSetup = (() => {
   function init(context) { ctx = context; }
 
   function fmtPrice(val) {
-    if (val == null || val === "") return "₹0";
+    if (val == null || val === "") return "—";
     const n = Number(val);
     if (Number.isNaN(n)) return ctx.esc(String(val));
     return "₹" + n.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  }
+
+  // balance_due/advance_left come back as the literal string "—" (not a number,
+  // not null) when the viewer lacks any of ap.read/ap.write/finance.write/
+  // vendor_orders.write/customer_orders.write (see freight_agents.py's
+  // _can_see_freight_money). `Number("—") || 0` used to silently coerce that to a
+  // real 0, flipping the status pill to a reassuring "OK" for an agent who may
+  // actually have a large real due.
+  function moneyOrNull(raw) {
+    if (raw === "—") return null;
+    if (raw == null || raw === "") return 0;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
   }
 
   function canWrite() {
@@ -76,16 +89,20 @@ const FreightAgentsSetup = (() => {
       ${!list.length
         ? HubUI.emptyState({ title: "No matches", sub: "Clear search." })
         : `<div class="ord-card-list">${list.map(a => {
-          const due = Number(a.balance_due) || 0;
-          const adv = Number(a.advance_left) || 0;
+          const due = moneyOrNull(a.balance_due);
+          const adv = moneyOrNull(a.advance_left);
+          const hidden = due == null || adv == null;
           const balBits = [];
-          if (due > 0) balBits.push(`<strong>${fmtPrice(due)}</strong> due`);
-          if (adv > 0) balBits.push(`<strong>${fmtPrice(adv)}</strong> advance`);
-          if (!balBits.length) balBits.push("No balance");
+          if (hidden) balBits.push("Balance hidden");
+          else {
+            if (due > 0) balBits.push(`<strong>${fmtPrice(due)}</strong> due`);
+            if (adv > 0) balBits.push(`<strong>${fmtPrice(adv)}</strong> advance`);
+            if (!balBits.length) balBits.push("No balance");
+          }
           return HubUI.partyCard({
             title: a.name,
             meta: `${balBits.join(" · ")}${a.notes ? ` · ${ctx.esc(a.notes)}` : ""}`,
-            pillHtml: due > 0 ? HubUI.pill("Due", "danger") : (adv > 0 ? HubUI.pill("Advance", "info") : HubUI.pill("OK", "muted")),
+            pillHtml: hidden ? HubUI.pill("Hidden", "muted") : (due > 0 ? HubUI.pill("Due", "danger") : (adv > 0 ? HubUI.pill("Advance", "info") : HubUI.pill("OK", "muted"))),
             primaryLabel: write ? "Edit" : null,
             primaryOnclick: write ? `FreightAgentsSetup.openEdit(${a.id})` : "",
             moreItems: [

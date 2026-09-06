@@ -77,7 +77,14 @@ const App = (() => {
     document.getElementById("setup-tile-staff")?.classList.toggle("hidden", !isAdmin());
     document.getElementById("setup-tile-activity")?.classList.toggle("hidden", !isAdmin());
     document.getElementById("setup-tile-documents")?.classList.toggle("hidden", !isAdmin());
-    document.getElementById("setup-tile-billseries")?.classList.toggle("hidden", !isAdmin());
+    // Viewing series/bills only needs vendor_orders.read/customer_orders.read
+    // server-side (require_any_permission in bill_series.py) — only create/delete
+    // are actually admin-only, and BillSeries.js's own canWrite() already gates
+    // those separately. Hiding the whole tile behind isAdmin() blocked e.g. a
+    // "Sell" staffer from checking "what's the next bill number" even though the
+    // backend was fine with them seeing it.
+    document.getElementById("setup-tile-billseries")?.classList.toggle("hidden",
+      !(isAdmin() || canRead("vendor_orders") || canRead("customer_orders")));
     // These three were missing from this list entirely — any setup.read-only staffer
     // (e.g. the built-in "Setup" role preset in staff.js) saw all three tiles and got
     // a 403 on every one, since each needs a real permission (or admin) the Setup
@@ -1332,7 +1339,7 @@ const App = (() => {
 
   // ── Customers ─────────────────────────────────────────────────────
   const CUSTOMER_COLS = [
-    { key: "party_number", label: "#", get: c => c.party_number || 0, exactNumeric: true },
+    { key: "party_number", label: "#", get: c => c.party_number || 0, exactNumeric: true, numeric: true },
     { key: "business", label: "Business", get: c => `${c.business_name} ${c.person_name || ""}` },
     { key: "city", label: "City / Route", get: c => `${c.city_name || ""} ${c.route_name || ""}` },
     { key: "financials", label: "Financials", filterable: false, sortable: false },

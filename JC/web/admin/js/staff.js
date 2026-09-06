@@ -120,13 +120,21 @@ const StaffMgmt = (() => {
       id: "buy",
       label: "Buy",
       hint: "Vendors + buying orders + stock",
-      keys: ["vendors.read", "vendors.write", "vendor_orders.read", "vendor_orders.write", "catalog.read", "catalog.write", "addons.read", "addons.write"],
+      // Hint promises "stock" but stock.read/write (on-hand qty + ledger, gated
+      // separately from catalog.*/vendor_orders.* server-side) was missing — the
+      // buying flow itself worked without it, but the standalone Stock screen the
+      // hint calls out always 403'd.
+      keys: ["vendors.read", "vendors.write", "vendor_orders.read", "vendor_orders.write", "catalog.read", "catalog.write", "addons.read", "addons.write", "stock.read", "stock.write"],
     },
     {
       id: "stock",
       label: "Stock",
       hint: "Catalog + on-hand",
-      keys: ["catalog.read", "catalog.write", "addons.read", "addons.write"],
+      // Named "Stock" and promises "on-hand" but stock.read/write (the actual
+      // permission gating GET /stock/products, /stock/products/{id}, and
+      // /stock/ledger/{id}) was entirely missing — the one thing this preset's own
+      // label promises was the one thing it didn't grant.
+      keys: ["catalog.read", "catalog.write", "addons.read", "addons.write", "stock.read", "stock.write"],
     },
     {
       id: "people",

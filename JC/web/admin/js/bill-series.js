@@ -269,11 +269,13 @@ const BillSeries = (() => {
   }
 
   async function openBillDoc(billId, print) {
+    ctx.showLoading?.();
     try {
       const doc = await ctx.api(`/customer-orders/bills/${billId}/document`, {}, 0);
       const w = window.open(doc.document_url, "_blank");
       if (print && w) w.addEventListener("load", () => w.print());
     } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
   }
 
   function viewBillDoc(name, url) {

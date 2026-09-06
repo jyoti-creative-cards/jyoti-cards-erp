@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db.session import get_db
-from app.deps import AuthContext, get_auth_context, require_permission
+from app.deps import AuthContext, get_auth_context, require_any_permission, require_permission
 from app.integrations.whatsapp.client import send_account_creation
 from app.models.city import City
 from app.models.customer import Customer
@@ -273,6 +273,36 @@ def list_customers(
     from sqlalchemy import nulls_last
     rows = q.order_by(nulls_last(Customer.party_number.asc()), Customer.business_name.asc()).all()
     return _to_public_many(rows, db, auth=auth)
+
+
+@router.get("/quick-search")
+def quick_search_customers(
+    q: str = Query(..., min_length=1),
+    db: Session = Depends(get_db),
+    # Same reasoning as vendors.py's quick_search_vendors: finance.js's "Record
+    # customer payment" quick-entry button needs a name/city lookup, but the
+    # documented finance.write-only "entry-only accountant" role has no
+    # customers.read — the full GET /customers list also leaks AR outstanding
+    # balance/credit-limit fields that role is explicitly meant not to see.
+    auth: AuthContext = Depends(require_any_permission("customers.read", "finance.write")),
+) -> List[dict]:
+    from app.services.token_search import sort_parties_by_search, token_match
+
+    search_clean = q.lstrip("#").strip()
+    query = db.query(Customer).filter(Customer.is_active.is_(True), Customer.deleted_at.is_(None))
+    query = query.outerjoin(City, Customer.city_id == City.id)
+    clause = token_match(
+        search_clean,
+        [Customer.business_name, Customer.person_name, Customer.phone, Customer.alias, Customer.address, City.name],
+        exact_int_columns=[Customer.party_number],
+    )
+    if clause is not None:
+        query = query.filter(clause)
+    rows = query.limit(50).all()
+    city_ids = sorted({r.city_id for r in rows if r.city_id})
+    cities = {c.id: c.name for c in (db.query(City).filter(City.id.in_(city_ids)).all() if city_ids else [])}
+    rows = sort_parties_by_search(rows, search_clean, city_lookup=cities)
+    return [{"id": r.id, "business_name": r.business_name, "city_name": cities.get(r.city_id)} for r in rows[:8]]
 
 
 @router.get("/{customer_id}", response_model=CustomerPublic)

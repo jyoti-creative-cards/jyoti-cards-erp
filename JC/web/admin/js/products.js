@@ -947,7 +947,7 @@ const Products = (() => {
             <span class="stock-price-label">Low stock threshold</span>
             <div class="stock-price-row">
               <strong>${stock.low_stock_threshold ?? 5}</strong>
-              ${ctx.canWrite?.("stock") || ctx.canWrite?.("catalog")
+              ${ctx.canWrite?.("stock")
                 ? `<button class="btn btn-threshold" onclick="Stock.editThreshold(${id}, ${stock.low_stock_threshold ?? 5})">Set threshold</button>`
                 : ""}
             </div>

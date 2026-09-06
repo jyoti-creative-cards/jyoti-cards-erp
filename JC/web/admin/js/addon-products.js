@@ -190,9 +190,12 @@ const AddonProducts = (() => {
       const total_cost = costRaw && costRaw.trim() !== "" ? parseFloat(costRaw) : null;
       if (total_cost != null && (Number.isNaN(total_cost) || total_cost < 0)) return ctx.toast("Enter a valid amount", "error");
       const note = (document.getElementById("addon-rs-note").value || "").trim() || null;
-      App.closeModal();
       try {
+        // Close only after a successful save — this used to close first, so a
+        // failure (e.g. no finance.write when a cost is entered) silently dropped
+        // every typed field with nothing left on screen to retry from.
         await ctx.api(`/addons/${id}/receive-stock`, { method: "POST", body: JSON.stringify({ quantity: q, total_cost, note }) });
+        App.closeModal();
         App.closeDetail();
         await refreshAfterMutation();
         ctx.toast("Stock received", "success");
@@ -220,9 +223,9 @@ const AddonProducts = (() => {
       if (!Number.isFinite(d) || d === 0) return ctx.toast("Enter a non-zero number", "error");
       const reason = (document.getElementById("addon-as-reason").value || "").trim();
       if (!reason) return ctx.toast("Reason required", "error");
-      App.closeModal();
       try {
         await ctx.api(`/addons/${id}/adjust-stock`, { method: "POST", body: JSON.stringify({ delta: d, reason }) });
+        App.closeModal();
         App.closeDetail();
         await refreshAfterMutation();
         ctx.toast("Stock adjusted", "success");
@@ -490,7 +493,10 @@ const AddonProducts = (() => {
           <div><label class="label">Category</label><select id="ae-category" class="input">${catOpts}</select></div>
           <div><label class="label">Unit *</label><select id="ae-unit" class="input"><option value="">Select unit</option>${unitOpts}${customUnit}</select></div>
         </div>
-        <div><label class="label">Buying Price (INR) *</label><input id="ae-buying_price" class="input" type="number" min="0" step="0.01" value="${ctx.esc(a.buying_price)}" /></div>
+        <div><label class="label">Buying Price (INR) *</label>
+          ${a.buying_price === "—"
+            ? `<input id="ae-buying_price" class="input" type="text" value="Hidden — no cost access" disabled title="You don't have costs.read, so this can't be viewed or changed here." />`
+            : `<input id="ae-buying_price" class="input" type="number" min="0" step="0.01" value="${ctx.esc(a.buying_price)}" />`}</div>
         <div><label class="label">Product Image</label>
           <div style="display:flex;align-items:center;gap:16px;">
             ${imgPreview}
@@ -517,8 +523,15 @@ const AddonProducts = (() => {
     if (!editingId) return;
     const unit = document.getElementById("ae-unit").value.trim();
     if (!unit) return ctx.toast("Unit required", "error");
-    const price = parseFloat(document.getElementById("ae-buying_price").value);
-    if (Number.isNaN(price) || price < 0) return ctx.toast("Enter a valid buying price", "error");
+    // Masked ("—") for staff without costs.read — see openEdit. Previously this
+    // NaN-guard hard-blocked saving *any* field (name/unit/image) for such staff,
+    // since they have no way to re-type a price they aren't allowed to see.
+    const bpEl = document.getElementById("ae-buying_price");
+    let price = null;
+    if (!bpEl.disabled) {
+      price = parseFloat(bpEl.value);
+      if (Number.isNaN(price) || price < 0) return ctx.toast("Enter a valid buying price", "error");
+    }
 
     let imageKeys = (document.getElementById("ae-image_keys").value || "")
       .split(",").map(s => s.trim()).filter(Boolean);
@@ -534,16 +547,17 @@ const AddonProducts = (() => {
       }
     }
 
+    const body = {
+      vendor_product_id: document.getElementById("ae-vendor_product_id").value.trim(),
+      name: document.getElementById("ae-name").value.trim() || null,
+      description: document.getElementById("ae-description").value.trim() || null,
+      category: document.getElementById("ae-category").value.trim() || null,
+      unit,
+      image_keys: imageKeys,
+    };
+    if (!bpEl.disabled) body.buying_price = price;
     try {
-      await ctx.api(`/addons/${editingId}`, { method: "PATCH", body: JSON.stringify({
-        vendor_product_id: document.getElementById("ae-vendor_product_id").value.trim(),
-        name: document.getElementById("ae-name").value.trim() || null,
-        description: document.getElementById("ae-description").value.trim() || null,
-        category: document.getElementById("ae-category").value.trim() || null,
-        unit,
-        buying_price: price,
-        image_keys: imageKeys,
-      })});
+      await ctx.api(`/addons/${editingId}`, { method: "PATCH", body: JSON.stringify(body) });
       const id = editingId;
       closeEdit();
       App.closeDetail();

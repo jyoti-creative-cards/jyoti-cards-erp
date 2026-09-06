@@ -268,7 +268,12 @@ const Finance = (() => {
     if (q == null || !q.trim()) return null;
     let rows;
     try {
-      rows = await ctx.api(`/${resource}?search=${encodeURIComponent(q.trim())}`, {}, 0);
+      // /quick-search (not the full /vendors or /customers list) — the documented
+      // finance.write-only "entry-only accountant" role has no vendors.read/
+      // customers.read, and the full list endpoints both leak outstanding-balance/
+      // cost fields that role is explicitly meant not to see. quick-search accepts
+      // finance.write alone and returns only id/business_name/city_name.
+      rows = await ctx.api(`/${resource}/quick-search?q=${encodeURIComponent(q.trim())}`, {}, 0);
     } catch (e) { ctx.toast(e.message, "error"); return null; }
     if (!rows || !rows.length) { ctx.toast("No match found", "error"); return null; }
     if (rows.length === 1) return rows[0];
@@ -360,9 +365,18 @@ const Finance = (() => {
     if (amtRaw == null) return;
     const amount = Number(amtRaw);
     if (!Number.isFinite(amount) || amount <= 0) return ctx.toast("Enter a valid amount", "error");
-    const description = prompt("Description (optional):") || "";
+    // description/date are genuinely optional (fall back to "" / today) — but that
+    // exact `|| fallback` pattern can't tell "user cleared the field and hit OK"
+    // apart from "user hit Cancel", so a Cancel here used to silently continue and
+    // record the expense anyway with today's date, instead of aborting like the
+    // category/amount prompts above correctly do.
+    const descriptionRaw = prompt("Description (optional):");
+    if (descriptionRaw === null) return;
+    const description = descriptionRaw || "";
     const today = new Date().toISOString().slice(0, 10);
-    const dateRaw = prompt("Date (YYYY-MM-DD):", today) || today;
+    const dateInput = prompt("Date (YYYY-MM-DD):", today);
+    if (dateInput === null) return;
+    const dateRaw = dateInput || today;
     ctx.showLoading?.();
     try {
       await ctx.api("/expenses", {
@@ -909,13 +923,20 @@ const Finance = (() => {
               const title = d.our_product_id
                 ? `${ctx.esc(d.our_product_id)} × ${d.quantity ?? "—"} (${ctx.esc(d.direction || d.note_type || "")})`
                 : `Value (${ctx.esc(d.direction || "adj.")})`;
-              const canDn = ctx.canWrite?.("vendor_orders") || ctx.isAdmin?.();
+              // Void reverses AP ledger history — admin-only server-side (same trust
+              // boundary as every other void/purge). Edit is a routine correction and
+              // stays at vendor_orders.write. These used to share one flag, so a
+              // vendor_orders.write-but-not-admin staffer saw a live Void button here
+              // that always 403'd (debit-notes.js's own voidFromList already splits
+              // these correctly — this view just never matched it).
+              const canEditDn = ctx.canWrite?.("vendor_orders") || ctx.isAdmin?.();
+              const canVoidDn = ctx.isAdmin?.();
               return `<div class="fin-dn-row">
                 <div><strong>${title}</strong>${d.notes ? `<div class="fin-dn-note">${ctx.esc(d.notes)}</div>` : ""}
                 <div class="fin-muted">${d.created_at ? new Date(d.created_at).toLocaleString() : ""}</div>
-                ${canDn && d.id ? `<div style="margin-top:6px;">
-                  <button type="button" class="btn btn-ghost btn-sm" onclick="Finance.editDebitNote(${b.receipt_id},${d.id})">Edit</button>
-                  <button type="button" class="btn btn-ghost btn-sm" onclick="Finance.voidDebitNote(${b.receipt_id},${d.id})">Void</button>
+                ${(canEditDn || canVoidDn) && d.id ? `<div style="margin-top:6px;">
+                  ${canEditDn ? `<button type="button" class="btn btn-ghost btn-sm" onclick="Finance.editDebitNote(${b.receipt_id},${d.id})">Edit</button>` : ""}
+                  ${canVoidDn ? `<button type="button" class="btn btn-ghost btn-sm" onclick="Finance.voidDebitNote(${b.receipt_id},${d.id})">Void</button>` : ""}
                 </div>` : ""}
                 </div>
                 <strong class="${effect < 0 ? "is-pos" : "is-neg"}">${fmtPrice(effect)}</strong>
@@ -1338,9 +1359,9 @@ const Finance = (() => {
     const today = new Date().toISOString().slice(0, 10);
     const cid = currentCustomer;
     ctx.openDetail("Opening", `
-      <p style="color:var(--muted);font-size:13px;margin:0 0 16px;">Tally start they owed. Use 0 to clear. Not Due (Due = opening + bills − collected).</p>
+      <p style="color:var(--muted);font-size:13px;margin:0 0 16px;">Tally start they owed. Use 0 to clear. Negative = they had a credit as of this date. Not Due (Due = opening + bills − collected).</p>
       <label class="label">Opening (₹)</label>
-      <input type="number" step="0.01" min="0" class="input" id="ar-ob-amt" value="${ctx.esc(arDetail.opening_total || "0")}" style="margin-bottom:12px;" />
+      <input type="number" step="0.01" class="input" id="ar-ob-amt" value="${ctx.esc(arDetail.opening_total || "0")}" style="margin-bottom:12px;" />
       <label class="label">As on date</label>
       <input type="date" class="input" id="ar-ob-as-on" value="${ctx.esc(arDetail.opening_as_on || today)}" />
     `, `
@@ -1352,7 +1373,11 @@ const Finance = (() => {
   async function saveArOpeningBalance(customerId) {
     const amount = parseFloat(document.getElementById("ar-ob-amt")?.value || "0");
     const asOn = (document.getElementById("ar-ob-as-on")?.value || "").trim();
-    if (!Number.isFinite(amount) || amount < 0) return ctx.toast("Enter a valid amount", "error");
+    // AR opening balance is signed (positive = customer owes us, negative = we owe
+    // them a starting credit) — the backend schema/service fully support negative
+    // here (unlike AP's opening balance, which is genuinely non-negative-only), so
+    // don't floor it at 0.
+    if (!Number.isFinite(amount)) return ctx.toast("Enter a valid amount", "error");
     if (!/^\d{4}-\d{2}-\d{2}$/.test(asOn)) return ctx.toast("Pick a valid date", "error");
     ctx.showLoading?.();
     try {

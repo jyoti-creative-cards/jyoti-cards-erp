@@ -794,7 +794,9 @@ const Catalog = (() => {
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
           <div><label class="label">Buying Price</label>
-            <input id="ce-buying_price" class="input" type="number" min="0" step="0.01" value="${ctx.esc(p.buying_price)}" /></div>
+            ${p.buying_price === "—"
+              ? `<input id="ce-buying_price" class="input" type="text" value="Hidden — no cost access" disabled title="You don't have costs.read, so this can't be viewed or changed here." />`
+              : `<input id="ce-buying_price" class="input" type="number" min="0" step="0.01" value="${ctx.esc(p.buying_price)}" />`}</div>
           <div><label class="label">Selling Price</label>
             <input id="ce-selling_price" class="input" type="number" min="0" step="0.01" value="${ctx.esc(p.selling_price || "")}" /></div>
         </div>
@@ -890,31 +892,42 @@ const Catalog = (() => {
         const vendorId = Number(document.getElementById("ce-vendor_id")?.value || 0);
         const nextIndex = Math.max(1, imageKeys.length + 1);
         const result = await uploadImage(vendorId, ourId, nextIndex, file);
-        if (result?.key) imageKeys = [result.key];
+        // This control only replaces the cover photo — it used to wipe the whole
+        // imageKeys array down to this one upload, silently deleting every other
+        // photo a multi-image product had (e.g. from the bulk-create wizard).
+        if (result?.key) imageKeys[0] = result.key;
       } catch (e) {
         return ctx.toast("Image upload failed: " + e.message, "error");
       }
     }
 
+    // buying_price input is disabled+masked ("Hidden — no cost access") for staff
+    // without costs.read (see openEdit) — a browser can't hold "—" in a type=number
+    // field so it silently resets to "" and Number("") is 0, which used to zero out
+    // the real cost on every single save regardless of what the user meant to edit.
+    // Backend uses exclude_unset=True, so simply omitting the key entirely (not
+    // sending 0/null) leaves the existing buying_price completely untouched.
+    const bpEl = document.getElementById("ce-buying_price");
+    const body = {
+      our_product_id: ourId,
+      vendor_product_id: document.getElementById("ce-vendor_product_id").value.trim(),
+      category: document.getElementById("ce-category").value || null,
+      series: document.getElementById("ce-series").value || null,
+      unit: document.getElementById("ce-unit").value || null,
+      year_group: ctx.isAdmin?.()
+        ? (document.getElementById("ce-year_group")?.value || null)
+        : undefined,
+      selling_price: document.getElementById("ce-selling_price").value
+        ? Number(document.getElementById("ce-selling_price").value) : null,
+      image_keys: imageKeys,
+      alternative_our_product_ids: altIds,
+      addon_links: addonLinks,
+    };
+    if (!bpEl?.disabled) body.buying_price = Number(bpEl.value);
     try {
       await ctx.api(`/catalog/products/${editingId}`, {
         method: "PATCH",
-        body: JSON.stringify({
-          our_product_id: ourId,
-          vendor_product_id: document.getElementById("ce-vendor_product_id").value.trim(),
-          category: document.getElementById("ce-category").value || null,
-          series: document.getElementById("ce-series").value || null,
-          unit: document.getElementById("ce-unit").value || null,
-          year_group: ctx.isAdmin?.()
-            ? (document.getElementById("ce-year_group")?.value || null)
-            : undefined,
-          buying_price: Number(document.getElementById("ce-buying_price").value),
-          selling_price: document.getElementById("ce-selling_price").value
-            ? Number(document.getElementById("ce-selling_price").value) : null,
-          image_keys: imageKeys,
-          alternative_our_product_ids: altIds,
-          addon_links: addonLinks,
-        }),
+        body: JSON.stringify(body),
       });
       const id = editingId;
       const ret = editReturnTo === "stock" ? "stock"

@@ -140,6 +140,7 @@ def init_db() -> None:
         _migrate_addon_stock()
         _migrate_legacy_staff_permissions()
         _migrate_vendor_order_unique_open()
+        _migrate_customer_order_unique_open()
         _migrate_bill_number_unique()
         with engine.begin() as conn:
             conn.execute(text("SELECT 1"))
@@ -231,6 +232,53 @@ def _migrate_vendor_order_unique_open() -> None:
         _exec_sql(
             conn,
             f"CREATE UNIQUE INDEX IF NOT EXISTS uq_jc_vendor_orders_open ON jc_vendor_orders (vendor_id, bucket) WHERE is_open = {is_open_true}",
+            critical=False,
+        )
+
+
+def _migrate_customer_order_unique_open() -> None:
+    """Same exact bug as _migrate_vendor_order_unique_open, on the customer side:
+    get_or_create_customer_order() already has an IntegrityError-retry to catch two
+    concurrent requests both finding no open (customer_id, bucket) row, but there
+    was never a real unique index backing it — so duplicate open rows (received/
+    billed/cancelled/closed) could pile up per customer+bucket. A stale duplicate
+    stuck open is exactly why a customer's already-confirmed order kept reappearing
+    in the New tab: the confirm action closed one row while the other lingered open
+    with nothing left to do.
+
+    Unlike the vendor-order version, we can't just flip is_open on the loser here —
+    jc_customer_order_placements point at a specific customer_order_id, and every
+    bucket listing filters on is_open, so closing a duplicate without moving its
+    placements first would make those placements silently vanish from every hub
+    view (not just "New"). Re-parent placements onto the surviving row, then close
+    the now-empty duplicates before adding the unique index."""
+    with engine.begin() as conn:
+        is_open_true = "1" if _is_sqlite else "true"
+        rows = conn.execute(
+            text(f"SELECT id, customer_id, bucket FROM jc_customer_orders WHERE is_open = {is_open_true} ORDER BY customer_id, bucket, id ASC")
+        ).all()
+        keep_by_key: dict[tuple, int] = {}
+        dup_ids: list[int] = []
+        for oid, customer_id, bucket in rows:
+            key = (customer_id, bucket)
+            if key not in keep_by_key:
+                keep_by_key[key] = int(oid)  # first (oldest) row wins — it's the one older confirm/bill actions already reference
+            else:
+                dup_ids.append((int(oid), keep_by_key[key]))
+        if dup_ids:
+            for dup_id, keep_id in dup_ids:
+                _exec_sql(
+                    conn,
+                    f"UPDATE jc_customer_order_placements SET customer_order_id = {keep_id} WHERE customer_order_id = {dup_id}",
+                    critical=False,
+                )
+            is_open_false = "0" if _is_sqlite else "false"
+            id_list = ",".join(str(d) for d, _ in dup_ids)
+            _exec_sql(conn, f"UPDATE jc_customer_orders SET is_open = {is_open_false} WHERE id IN ({id_list})", critical=False)
+            log.info("merged %d duplicate open customer_order row(s) before adding unique index", len(dup_ids))
+        _exec_sql(
+            conn,
+            f"CREATE UNIQUE INDEX IF NOT EXISTS uq_jc_customer_orders_open ON jc_customer_orders (customer_id, bucket) WHERE is_open = {is_open_true}",
             critical=False,
         )
 

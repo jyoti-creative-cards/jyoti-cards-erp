@@ -141,6 +141,7 @@ def init_db() -> None:
         _migrate_legacy_staff_permissions()
         _migrate_vendor_order_unique_open()
         _migrate_customer_order_unique_open()
+        _migrate_customer_bill_closed()
         _migrate_bill_number_unique()
         with engine.begin() as conn:
             conn.execute(text("SELECT 1"))
@@ -281,6 +282,47 @@ def _migrate_customer_order_unique_open() -> None:
             f"CREATE UNIQUE INDEX IF NOT EXISTS uq_jc_customer_orders_open ON jc_customer_orders (customer_id, bucket) WHERE is_open = {is_open_true}",
             critical=False,
         )
+
+
+def _migrate_customer_bill_closed() -> None:
+    """closed_at: once every CustomerBillLine on a bill is closed (fully
+    dispatched/settled via close_bill_line), the bill itself now has closed_at
+    set so it drops out of the 'Billed' backlog — previously nothing ever
+    removed a fully-closed bill from that list, so old settled bills piled up
+    there forever with no way to void them either. Backfill existing rows that
+    are already in that state."""
+    for stmt in (
+        "ALTER TABLE jc_customer_bills ADD COLUMN IF NOT EXISTS closed_at TIMESTAMPTZ",
+    ):
+        try:
+            with engine.begin() as conn:
+                s = stmt.replace(" ADD COLUMN IF NOT EXISTS ", " ADD COLUMN ") if _is_sqlite else stmt
+                conn.execute(text(s))
+        except Exception:
+            log.warning("Migration step skipped", exc_info=True)
+    try:
+        with engine.begin() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT bill_id, COUNT(*) AS n, SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END) AS closed_n, "
+                    "MAX(CASE WHEN status = 'closed' THEN closed_at ELSE NULL END) AS max_closed "
+                    "FROM jc_customer_bill_lines GROUP BY bill_id"
+                )
+            ).all()
+            fully_closed = [(bid, max_closed) for bid, n, closed_n, max_closed in rows if n and n == closed_n]
+            if fully_closed:
+                for bid, max_closed in fully_closed:
+                    conn.execute(
+                        text(
+                            "UPDATE jc_customer_bills SET closed_at = COALESCE(:mc, "
+                            + ("CURRENT_TIMESTAMP" if not _is_sqlite else "CURRENT_TIMESTAMP")
+                            + ") WHERE id = :bid AND cancelled_at IS NULL AND closed_at IS NULL"
+                        ),
+                        {"mc": max_closed, "bid": bid},
+                    )
+                log.info("backfilled closed_at on %d fully-closed customer bill(s)", len(fully_closed))
+    except Exception:
+        log.warning("customer bill closed_at backfill skipped", exc_info=True)
 
 
 def _migrate_bill_number_unique() -> None:

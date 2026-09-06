@@ -42,6 +42,12 @@ class CustomerBill(Base):
     document_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     cancelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     cancel_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Set once every CustomerBillLine on this bill has been individually closed
+    # (fully dispatched/settled) via close_bill_line — distinct from cancelled_at
+    # (which means reversed/voided). Used to drop the bill out of the "Billed"
+    # actionable backlog once there's nothing left to do on it; the per-line
+    # history already lives under the customer's "Closed" bucket.
+    closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     deleted_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     deleted_by_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)

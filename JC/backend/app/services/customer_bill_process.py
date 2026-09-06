@@ -518,8 +518,12 @@ def cancel_customer_bill(
         .filter(CustomerBillLine.bill_id == bill.id)
         .all()
     )
-    if any(ln.status == "closed" for ln in lines):
-        raise HTTPException(400, "cannot cancel — some lines already closed")
+    closed_count = sum(1 for ln in lines if ln.status == "closed")
+    if 0 < closed_count < len(lines):
+        raise HTTPException(400, "cannot cancel — some lines already closed and some are not; close or reverse them consistently first")
+    # If every line is already closed there's nothing left to reverse (stock was
+    # legitimately dispatched) — the loop below is a no-op for "closed" lines, so
+    # cancelling just records the cancellation and zeroes the AR ledger amount below.
 
     for ln in lines:
         if ln.status != "billed":
@@ -665,6 +669,18 @@ def close_bill_line(db: Session, bill_line_id: int, reason: str) -> None:
         )
     )
     closed_order.updated_at = datetime.now(timezone.utc)
+    db.flush()
+
+    # Once every line on this bill is closed, the bill itself is done — drop it out of
+    # the "Billed" backlog (its per-line history now lives under "Closed"). Without this,
+    # a fully-settled bill stays visible in "Billed" forever with no way to clear it.
+    remaining_open = (
+        db.query(CustomerBillLine)
+        .filter(CustomerBillLine.bill_id == bill.id, CustomerBillLine.status != "closed")
+        .count()
+    )
+    if remaining_open == 0 and not bill.closed_at:
+        bill.closed_at = datetime.now(timezone.utc)
 
 
 def process_offline_customer_order(
@@ -1050,7 +1066,7 @@ def _apply_bill_qty_delta_to_order(
                 open_row.status = "cancelled"
 
 
-def edit_customer_bill(
+def _prepare_edit_bill_totals(
     db: Session,
     *,
     bill_id: int,
@@ -1062,17 +1078,15 @@ def edit_customer_bill(
     freight_charges: Optional[Decimal],
     packaging_charges: Optional[Decimal],
     additional_charges: Optional[list[dict]],
-    narration: Optional[str],
-    actor_type: str,
-    actor_id: Optional[int],
-    actor_name: str,
-    force_credit_override: bool = False,
-    bill_number: str | None = None,
     transport_mode: Optional[str] = None,
     transport_receipt_number: Optional[str] = None,
     freight_charges_raw: object = None,
-) -> CustomerBill:
-    """Edit an existing bill (add/remove/change qty) and sync customer order qty."""
+) -> dict:
+    """Read-only: validate + compute totals for an edit-bill request. Shared by the real
+    edit (which then persists) and the preview endpoint (which just returns this dict) so
+    the two can never drift — the create-bill flow already has this create/preview split
+    via compute_bill_totals; edit previously duplicated a simplified, wrong total in the
+    frontend instead of reusing this math."""
     from app.services.pricing import effective_selling_price
 
     bill = db.get(CustomerBill, bill_id)
@@ -1160,6 +1174,110 @@ def edit_customer_bill(
         additional_charges=additional_charges,
     )
     totals = stamp_transport_on_totals(totals, t, agent_name=agent_name)
+    return {
+        "bill": bill,
+        "customer_id": customer_id,
+        "customer_name": customer_name,
+        "existing_lines": existing_lines,
+        "old_by_cat": old_by_cat,
+        "desired": desired,
+        "use_overall": use_overall,
+        "bill_items": bill_items,
+        "item_overrides": item_overrides,
+        "totals": totals,
+        "freight_agent_id": freight_agent_id,
+        "freight_charges": freight_charges,
+        "transport": t,
+    }
+
+
+def preview_edit_customer_bill(
+    db: Session,
+    *,
+    bill_id: int,
+    lines_in: list[dict],
+    overall_discount_percent: Optional[Decimal],
+    gst_enabled: bool,
+    gst_rate_percent: Decimal,
+    freight_agent_id: Optional[int],
+    freight_charges: Optional[Decimal],
+    packaging_charges: Optional[Decimal],
+    additional_charges: Optional[list[dict]],
+    transport_mode: Optional[str] = None,
+    transport_receipt_number: Optional[str] = None,
+    freight_charges_raw: object = None,
+) -> dict:
+    """Read-only preview of what edit_customer_bill would save — same totals math, no
+    writes. Lets the edit-bill review screen show the real server-computed grand total
+    (incl. GST + additional charges) instead of a divergent client-side estimate."""
+    prep = _prepare_edit_bill_totals(
+        db,
+        bill_id=bill_id,
+        lines_in=lines_in,
+        overall_discount_percent=overall_discount_percent,
+        gst_enabled=gst_enabled,
+        gst_rate_percent=gst_rate_percent,
+        freight_agent_id=freight_agent_id,
+        freight_charges=freight_charges,
+        packaging_charges=packaging_charges,
+        additional_charges=additional_charges,
+        transport_mode=transport_mode,
+        transport_receipt_number=transport_receipt_number,
+        freight_charges_raw=freight_charges_raw,
+    )
+    return prep["totals"]
+
+
+def edit_customer_bill(
+    db: Session,
+    *,
+    bill_id: int,
+    lines_in: list[dict],
+    overall_discount_percent: Optional[Decimal],
+    gst_enabled: bool,
+    gst_rate_percent: Decimal,
+    freight_agent_id: Optional[int],
+    freight_charges: Optional[Decimal],
+    packaging_charges: Optional[Decimal],
+    additional_charges: Optional[list[dict]],
+    narration: Optional[str],
+    actor_type: str,
+    actor_id: Optional[int],
+    actor_name: str,
+    force_credit_override: bool = False,
+    bill_number: str | None = None,
+    transport_mode: Optional[str] = None,
+    transport_receipt_number: Optional[str] = None,
+    freight_charges_raw: object = None,
+) -> CustomerBill:
+    """Edit an existing bill (add/remove/change qty) and sync customer order qty."""
+    prep = _prepare_edit_bill_totals(
+        db,
+        bill_id=bill_id,
+        lines_in=lines_in,
+        overall_discount_percent=overall_discount_percent,
+        gst_enabled=gst_enabled,
+        gst_rate_percent=gst_rate_percent,
+        freight_agent_id=freight_agent_id,
+        freight_charges=freight_charges,
+        packaging_charges=packaging_charges,
+        additional_charges=additional_charges,
+        transport_mode=transport_mode,
+        transport_receipt_number=transport_receipt_number,
+        freight_charges_raw=freight_charges_raw,
+    )
+    bill = prep["bill"]
+    customer_id = prep["customer_id"]
+    customer_name = prep["customer_name"]
+    existing_lines = prep["existing_lines"]
+    old_by_cat = prep["old_by_cat"]
+    desired = prep["desired"]
+    use_overall = prep["use_overall"]
+    bill_items = prep["bill_items"]
+    totals = prep["totals"]
+    freight_agent_id = prep["freight_agent_id"]
+    freight_charges = prep["freight_charges"]
+    t = prep["transport"]
     new_grand = Decimal(str(totals.get("rounded_grand_total") or totals["grand_total"]))
     old_grand = Decimal(str(bill.grand_total))
     pending_delta = new_grand - old_grand

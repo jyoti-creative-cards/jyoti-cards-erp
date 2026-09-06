@@ -60,7 +60,9 @@ def _get_or_create_open_line(
         row.unit_price = unit_price
         row.our_product_id = prod.our_product_id
         return row
-    row = CustomerOpenLine(
+    from sqlalchemy.exc import IntegrityError
+
+    new_row = CustomerOpenLine(
         customer_id=customer_id,
         catalog_product_id=catalog_product_id,
         our_product_id=prod.our_product_id,
@@ -71,10 +73,25 @@ def _get_or_create_open_line(
         status="open",
     )
     if as_of is not None:
-        row.created_at = as_of
-    db.add(row)
-    db.flush()
-    return row
+        new_row.created_at = as_of
+    try:
+        with db.begin_nested():
+            db.add(new_row)
+            db.flush()
+    except IntegrityError:
+        # CustomerOpenLine has a real UniqueConstraint(customer_id, catalog_product_id) —
+        # a concurrent request can win the insert race between our SELECT above and this
+        # INSERT. Without this retry, that 500s the whole cancel/edit-bill request even
+        # though the other request's write succeeded fine.
+        row = (
+            db.query(CustomerOpenLine)
+            .filter(CustomerOpenLine.customer_id == customer_id, CustomerOpenLine.catalog_product_id == catalog_product_id)
+            .first()
+        )
+        if not row:
+            raise
+        return row
+    return new_row
 
 
 def add_to_customer_open(

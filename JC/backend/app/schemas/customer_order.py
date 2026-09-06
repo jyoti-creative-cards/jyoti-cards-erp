@@ -58,6 +58,10 @@ class CustomerOrderSummary(BaseModel):
     customer_name: str
     bucket: str
     placement_count: int
+    # Only meaningful for bucket="billed", where placement_count is actually a count of
+    # CustomerBill rows (no real placement exists for that summary card) — sent under its
+    # real name too so nobody trusts the misleading placement_count field name elsewhere.
+    bill_count: Optional[int] = None
     line_count: int
     total_quantity: int
     updated_at: datetime

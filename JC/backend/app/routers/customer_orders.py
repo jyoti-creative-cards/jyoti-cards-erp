@@ -314,7 +314,7 @@ def list_customer_orders(
                 func.count(CustomerBill.id),
                 func.min(CustomerBill.created_at),
             )
-            .filter(CustomerBill.cancelled_at.is_(None))
+            .filter(CustomerBill.cancelled_at.is_(None), CustomerBill.closed_at.is_(None))
             .group_by(CustomerBill.customer_id)
             .all()
         )
@@ -327,6 +327,7 @@ def list_customer_orders(
                     customer_name=_customer_name(db, int(cid)),
                     bucket="billed",
                     placement_count=int(cnt or 0),
+                    bill_count=int(cnt or 0),
                     line_count=0,
                     total_quantity=0,
                     updated_at=earliest or datetime.now(timezone.utc),
@@ -460,7 +461,11 @@ def get_customer_order_detail(
 
         bills = (
             db.query(CustomerBill)
-            .filter(CustomerBill.customer_id == customer_id, CustomerBill.cancelled_at.is_(None))
+            .filter(
+                CustomerBill.customer_id == customer_id,
+                CustomerBill.cancelled_at.is_(None),
+                CustomerBill.closed_at.is_(None),
+            )
             .order_by(CustomerBill.created_at.desc())
             .all()
         )
@@ -1008,6 +1013,38 @@ def void_bill_endpoint(
     response_cache.invalidate("shop:")
     response_cache.invalidate("catalog:")
     return result
+
+
+@router.post("/bills/{bill_id}/edit-preview")
+def preview_edit_bill_endpoint(
+    bill_id: int,
+    body: EditBillIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("customer_orders.read")),
+):
+    """Read-only: same totals math PUT /bills/{id} will actually save (incl. GST +
+    additional charges) — lets the edit-bill review screen show a real number instead
+    of a divergent client-side estimate that silently dropped GST/extra charges."""
+    from app.services.customer_bill_process import preview_edit_customer_bill
+
+    extra = [{"name": c.name, "amount": c.amount} for c in body.additional_charges] if body.additional_charges else None
+    totals = preview_edit_customer_bill(
+        db,
+        bill_id=bill_id,
+        lines_in=[ln.model_dump() for ln in body.lines],
+        overall_discount_percent=Decimal(str(body.overall_discount_percent)) if body.overall_discount_percent else None,
+        gst_enabled=body.gst_enabled,
+        gst_rate_percent=Decimal(str(body.gst_rate_percent)),
+        freight_agent_id=body.freight_agent_id,
+        freight_charges=Decimal(body.freight_charges) if body.freight_charges else None,
+        packaging_charges=Decimal(body.packaging_charges) if body.packaging_charges else None,
+        additional_charges=extra,
+        transport_mode=body.transport_mode,
+        transport_receipt_number=body.transport_receipt_number,
+        freight_charges_raw=body.freight_charges,
+    )
+    db.rollback()  # this endpoint must never persist — _prepare_edit_bill_totals only reads
+    return totals
 
 
 @router.put("/bills/{bill_id}")

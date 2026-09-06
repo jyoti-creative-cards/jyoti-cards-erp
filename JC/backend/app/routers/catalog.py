@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from pydantic import BaseModel
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.db.session import get_db
 from app.deps import AuthContext, get_auth_context, require_permission
@@ -32,7 +32,12 @@ from app.schemas.catalog import (
     VendorOption,
 )
 from app.services.activity import log_from_auth
-from app.services.cost_visibility import can_see_cost, hide_cost, hide_cost_in_diff_summary
+from app.services.cost_visibility import (
+    can_see_cost,
+    hide_cost,
+    hide_cost_in_diff_summary,
+    hide_cost_in_snapshot_json,
+)
 from app.services.pricing import coerce_selling_price, effective_selling_price
 from app.services.history import (
     TRACKED_FIELDS,
@@ -99,9 +104,28 @@ def _to_public(
     if max_images is not None:
         keys = keys[: max(0, max_images)]
     if addon_count is None:
-        addon_count = db.query(CatalogAddonLink).filter(CatalogAddonLink.catalog_product_id == row.id).count()
+        addon_count = (
+            db.query(CatalogAddonLink)
+            .join(AddonProduct, AddonProduct.id == CatalogAddonLink.addon_product_id)
+            .filter(
+                CatalogAddonLink.catalog_product_id == row.id,
+                AddonProduct.is_active.is_(True),
+                AddonProduct.deleted_at.is_(None),
+            )
+            .count()
+        )
     if alt_count is None:
-        alt_count = db.query(CatalogAlternative).filter(CatalogAlternative.product_id == row.id).count()
+        alt_target = aliased(CatalogProduct)
+        alt_count = (
+            db.query(CatalogAlternative)
+            .join(alt_target, alt_target.id == CatalogAlternative.alternative_product_id)
+            .filter(
+                CatalogAlternative.product_id == row.id,
+                alt_target.is_active.is_(True),
+                alt_target.deleted_at.is_(None),
+            )
+            .count()
+        )
     return CatalogProductPublic(
         id=row.id,
         our_product_id=row.our_product_id,
@@ -171,17 +195,32 @@ def _sync_alternatives_bidirectional(db: Session, product_id: int, alt_ids: list
 
 
 def _sync_addon_links(db: Session, product_id: int, links: list[AddonLinkIn], addon_map: dict[str, int]) -> None:
+    from sqlalchemy import func
+
     db.query(CatalogAddonLink).filter(CatalogAddonLink.catalog_product_id == product_id).delete(synchronize_session=False)
+    seen_aids: dict[int, str] = {}
     for link in links:
-        aid = addon_map.get(link.addon_our_product_id)
+        sku = (link.addon_our_product_id or "").strip()
+        if not sku:
+            continue
+        aid = addon_map.get(sku) or addon_map.get(sku.lower())
         if not aid:
             addon = db.query(AddonProduct).filter(
-                AddonProduct.our_product_id == link.addon_our_product_id,
+                func.lower(AddonProduct.our_product_id) == sku.lower(),
                 AddonProduct.is_active.is_(True),
+                AddonProduct.deleted_at.is_(None),
             ).first()
             aid = addon.id if addon else None
         if not aid:
-            raise HTTPException(400, f"addon {link.addon_our_product_id} not found")
+            raise HTTPException(
+                400,
+                f"add-on '{sku}' not found — create it under Products → Add-ons first (not a catalog SKU)",
+            )
+        if aid in seen_aids:
+            # Would otherwise hit the (catalog_product_id, addon_product_id) unique
+            # constraint and 500 — same add-on listed twice (typo/copy-paste), report it.
+            raise HTTPException(400, f"add-on '{sku}' is listed more than once for this product — remove the duplicate row")
+        seen_aids[aid] = sku
         db.add(CatalogAddonLink(catalog_product_id=product_id, addon_product_id=aid, quantity=link.quantity))
 
 
@@ -206,6 +245,8 @@ def list_vendors_for_catalog(db: Session = Depends(get_db)) -> List[VendorOption
                 city_name=city_name,
                 alias=v.alias,
                 is_active=v.is_active,
+                vendor_number=v.vendor_number,
+                phone=v.phone,
             )
         )
     return out
@@ -383,14 +424,25 @@ def list_products(
     if ids:
         for pid, cnt in (
             db.query(CatalogAddonLink.catalog_product_id, func.count(CatalogAddonLink.id))
-            .filter(CatalogAddonLink.catalog_product_id.in_(ids))
+            .join(AddonProduct, AddonProduct.id == CatalogAddonLink.addon_product_id)
+            .filter(
+                CatalogAddonLink.catalog_product_id.in_(ids),
+                AddonProduct.is_active.is_(True),
+                AddonProduct.deleted_at.is_(None),
+            )
             .group_by(CatalogAddonLink.catalog_product_id)
             .all()
         ):
             addon_counts[pid] = int(cnt)
+        alt_target = aliased(CatalogProduct)
         for pid, cnt in (
             db.query(CatalogAlternative.product_id, func.count(CatalogAlternative.id))
-            .filter(CatalogAlternative.product_id.in_(ids))
+            .join(alt_target, alt_target.id == CatalogAlternative.alternative_product_id)
+            .filter(
+                CatalogAlternative.product_id.in_(ids),
+                alt_target.is_active.is_(True),
+                alt_target.deleted_at.is_(None),
+            )
             .group_by(CatalogAlternative.product_id)
             .all()
         ):
@@ -427,7 +479,7 @@ def get_product(product_id: int, db: Session = Depends(get_db), auth: AuthContex
     alt_pub = []
     for a in alts:
         alt = db.get(CatalogProduct, a.alternative_product_id)
-        if alt:
+        if alt and alt.is_active and not alt.deleted_at:
             vn, vc = _vendor_info(db, alt.vendor_id)
             alt_pub.append(AlternativePublic(
                 id=a.id, product_id=a.product_id, alternative_product_id=a.alternative_product_id,
@@ -441,7 +493,7 @@ def get_product(product_id: int, db: Session = Depends(get_db), auth: AuthContex
     link_pub = []
     for lk in links:
         addon = db.get(AddonProduct, lk.addon_product_id)
-        if addon:
+        if addon and addon.is_active and not addon.deleted_at:
             link_pub.append(AddonLinkPublic(
                 id=lk.id, catalog_product_id=lk.catalog_product_id, addon_product_id=lk.addon_product_id,
                 addon_our_product_id=addon.our_product_id, addon_name=addon.name or addon.our_product_id,
@@ -523,7 +575,17 @@ def bulk_create(body: CatalogBulkCreate, db: Session = Depends(get_db), auth: Au
                     CatalogProduct.our_product_id == alt_oid, CatalogProduct.is_active.is_(True)
                 ).first()
                 aid = existing.id if existing else None
-            if aid and aid != pid:
+            if not aid:
+                # Previously silently dropped — same class of typo as an unmatched
+                # addon SKU (_sync_addon_links below), which does report it. The
+                # single-alternative endpoint (add_product_alternative) also 404s
+                # on this instead of no-op'ing, so match that here too.
+                raise HTTPException(
+                    400,
+                    f"alternative '{alt_oid}' for {item.our_product_id} not found — "
+                    f"check the product ID and year group, or add it as its own row in this batch",
+                )
+            if aid != pid:
                 _link_alternative(db, pid, aid, linked=linked_pairs)
                 _link_alternative(db, aid, pid, linked=linked_pairs)
 

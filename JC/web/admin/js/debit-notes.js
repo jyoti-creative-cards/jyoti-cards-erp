@@ -33,12 +33,13 @@ const DebitNotes = (() => {
     return { itemDirection: "short", valueDirection: d === "under" ? "under" : "over" };
   }
 
-  function openCreate({ vendorId, receiptId, receivingLines, onDone, prefill, editIndex }) {
+  function openCreate({ vendorId, receiptId, receivingLines, receivingLinesLoadFailed, onDone, prefill, editIndex }) {
     const dirs = prefill ? directionFromNote(prefill) : { itemDirection: "short", valueDirection: "over" };
     state = {
       vendorId,
       receiptId,
       lines: receivingLines || [],
+      linesLoadFailed: !!receivingLinesLoadFailed,
       editing: null,
       editIndex: editIndex != null ? editIndex : null,
       prefillNote: prefill || null,
@@ -56,12 +57,22 @@ const DebitNotes = (() => {
     ctx.showLoading?.();
     try {
       const note = await ctx.api(`/debit-notes/${noteId}`, {}, 0);
-      const lines = await ctx.api(`/stock/receipts/${note.receipt_id}/lines`, {}, 0).catch(() => []);
+      let lines = [];
+      let linesLoadFailed = false;
+      try {
+        lines = await ctx.api(`/stock/receipts/${note.receipt_id}/lines`, {}, 0);
+      } catch (_) {
+        // Previously swallowed to [] — indistinguishable from "this receipt
+        // genuinely has no lines" (impossible) and left the Product dropdown
+        // silently empty with zero explanation.
+        linesLoadFailed = true;
+      }
       const dirs = directionFromNote(note);
       state = {
         vendorId: note.vendor_id,
         receiptId: note.receipt_id,
         lines,
+        linesLoadFailed,
         editing: note,
         onDone: onDone || null,
         noteType: note.note_type || "item",
@@ -134,9 +145,11 @@ const DebitNotes = (() => {
 
         ${type === "item" ? `
           <label class="label">Product</label>
-          <select class="input" id="dn-product" onchange="DebitNotes.updatePreview()">
+          ${state.linesLoadFailed
+            ? `<p style="font-size:13px;color:var(--danger);margin:4px 0 0;">Couldn't load this receipt's products — <a href="#" onclick="event.preventDefault();DebitNotes.reloadLines()">retry</a>, or use an Amount adjustment instead.</p>`
+            : `<select class="input" id="dn-product" onchange="DebitNotes.updatePreview()">
             <option value="">— Select product —</option>${productOpts}
-          </select>
+          </select>`}
 
           <p class="dn-section-label">What happened?</p>
           <div class="dn-choice-list">
@@ -362,17 +375,23 @@ const DebitNotes = (() => {
 
   async function openForReceipt({ vendorId, receiptId, receivingLines, onDone }) {
     if (!receiptId) return openCreate({ vendorId, receiptId, receivingLines, onDone });
-    listCtx = { vendorId, receiptId, receivingLines: receivingLines || [], onDone: onDone || null };
+    listCtx = { vendorId, receiptId, receivingLines: receivingLines || [], onDone: onDone || null, receivingLinesLoadFailed: false };
     ctx.showLoading?.();
     try {
       const notes = await ctx.api(`/debit-notes?receipt_id=${receiptId}`, {}, 0);
       if (!listCtx.receivingLines.length) {
-        listCtx.receivingLines = await ctx.api(`/stock/receipts/${receiptId}/lines`, {}, 0).catch(() => []);
+        try {
+          listCtx.receivingLines = await ctx.api(`/stock/receipts/${receiptId}/lines`, {}, 0);
+        } catch (_) {
+          listCtx.receivingLinesLoadFailed = true;
+        }
       }
       document.getElementById("dn-modal-title").textContent = "Debit Notes";
       const body = document.getElementById("debit-note-body");
       const footer = document.getElementById("debit-note-footer");
-      const canAdmin = ctx.isAdmin?.();
+      // Backend: edit needs vendor_orders.write, void reverses AP history so it's admin-only.
+      const canEdit = ctx.isAdmin?.() || ctx.canWrite?.("vendor_orders");
+      const canVoid = ctx.isAdmin?.();
       const rows = (notes || []).map(n => {
         const effect = n.payable_effect != null ? n.payable_effect : (n.note_type === "item" ? -Number(n.amount) : Number(n.amount));
         const payLess = Number(effect) < 0;
@@ -389,9 +408,9 @@ const DebitNotes = (() => {
           ${n.notes ? `<div class="dn-row-note">${ctx.esc(n.notes)}</div>` : ""}
           ${voided && n.deleted_reason ? `<div class="dn-row-note" style="color:var(--danger);">Voided — ${ctx.esc(n.deleted_reason)}</div>` : ""}
           <div class="vo-muted" style="margin-top:4px;">${new Date(n.created_at).toLocaleString()}</div>
-          ${!voided ? `<div style="margin-top:6px;">
-            <button type="button" class="btn btn-ghost btn-sm" onclick="DebitNotes.editFromList(${n.id})">Edit</button>
-            ${canAdmin ? `<button type="button" class="btn btn-ghost btn-sm" onclick="DebitNotes.voidFromList(${n.id})">Void</button>` : ""}
+          ${!voided && (canEdit || canVoid) ? `<div style="margin-top:6px;">
+            ${canEdit ? `<button type="button" class="btn btn-ghost btn-sm" onclick="DebitNotes.editFromList(${n.id})">Edit</button>` : ""}
+            ${canVoid ? `<button type="button" class="btn btn-ghost btn-sm" onclick="DebitNotes.voidFromList(${n.id})">Void</button>` : ""}
           </div>` : ""}
         </div>`;
       }).join("");
@@ -408,11 +427,12 @@ const DebitNotes = (() => {
 
   function addFromList() {
     if (!listCtx) return;
-    const { vendorId, receiptId, receivingLines, onDone } = listCtx;
+    const { vendorId, receiptId, receivingLines, receivingLinesLoadFailed, onDone } = listCtx;
     openCreate({
       vendorId,
       receiptId,
       receivingLines,
+      receivingLinesLoadFailed,
       onDone: async () => {
         if (onDone) await onDone();
         await openForReceipt({ vendorId, receiptId, receivingLines, onDone });
@@ -432,9 +452,9 @@ const DebitNotes = (() => {
   async function voidFromList(noteId) {
     if (!listCtx) return;
     const { vendorId, receiptId, receivingLines, onDone } = listCtx;
-    const reason = prompt("Why are you voiding this debit note? (optional)", "");
+    // Single dialog — entering a reason (or leaving it blank) and pressing OK confirms.
+    const reason = prompt("Void this debit note? Moves to recycle bin, can be restored.\n\nReason (optional):", "");
     if (reason === null) return;
-    if (!confirm("Void this debit note? It moves to the recycle bin and can be restored.")) return;
     ctx.showLoading?.();
     try {
       await ctx.api(`/debit-notes/${noteId}/void`, { method: "POST", body: JSON.stringify({ reason: reason || null }) });
@@ -447,8 +467,24 @@ const DebitNotes = (() => {
     finally { ctx.hideLoading?.(); }
   }
 
+  /** Retry the receipt-lines fetch after it failed (see linesLoadFailed above). */
+  async function reloadLines() {
+    if (!state.receiptId) return;
+    ctx.showLoading?.();
+    try {
+      state.lines = await ctx.api(`/stock/receipts/${state.receiptId}/lines`, {}, 0);
+      state.linesLoadFailed = false;
+    } catch (e) {
+      ctx.toast?.(e.message || "Still couldn't load products", "error");
+      return;
+    } finally {
+      ctx.hideLoading?.();
+    }
+    renderForm(state.editing);
+  }
+
   return {
     init, openCreate, openEdit, openForReceipt, addFromList, editFromList, voidFromList, close, setType, setItemDirection, setValueDirection,
-    updatePreview, review, saveEdit, saveLocalEdit, buildPayload,
+    updatePreview, review, saveEdit, saveLocalEdit, buildPayload, reloadLines,
   };
 })();

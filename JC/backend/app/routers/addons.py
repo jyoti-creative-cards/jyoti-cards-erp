@@ -20,6 +20,7 @@ from app.schemas.addon import (
 )
 from app.services.activity import log_from_auth
 from app.services.addon_stock import add_addon_stock
+from app.services.biz_date import today_ist
 from app.services.cost_visibility import hide_cost, hide_cost_in_diff_summary, hide_cost_in_snapshot_json
 from app.services.history import TRACKED_FIELDS, diff_summary, list_entity_history, list_price_history, record_entity_history, record_price_change, row_snapshot
 from app.services.storage import presigned_urls
@@ -64,7 +65,7 @@ def _to_public(row: AddonProduct, db: Session, *, auth: AuthContext) -> AddonPub
     )
 
 
-@router.get("", response_model=List[AddonPublic], dependencies=[Depends(require_permission("addons.read"))])
+@router.get("", response_model=List[AddonPublic])
 def list_addons(
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(get_auth_context),
@@ -72,7 +73,9 @@ def list_addons(
     vendor_id: Optional[int] = Query(None),
     stock_status: Optional[str] = Query(None),
 ) -> List[AddonPublic]:
-    q = db.query(AddonProduct).filter(AddonProduct.is_active.is_(True))
+    if not (auth.has("addons.read") or auth.has("catalog.read") or auth.has("catalog.write")):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="permission denied: addons.read")
+    q = db.query(AddonProduct).filter(AddonProduct.is_active.is_(True), AddonProduct.deleted_at.is_(None))
     if vendor_id:
         q = q.filter(AddonProduct.vendor_id == vendor_id)
     if search:
@@ -202,6 +205,11 @@ def receive_addon_stock(
     row = db.get(AddonProduct, addon_id)
     if not row or not row.is_active:
         raise HTTPException(404, "addon not found")
+    has_cost = body.total_cost is not None and body.total_cost > 0
+    if has_cost and not (auth.is_admin or auth.has("finance.write")):
+        # This path creates an Expense (P&L-affecting) — addons.write alone isn't
+        # enough to post money, same trust boundary as the standalone expense API.
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="permission denied: finance.write (required to log a cost against this receipt)")
     vendor = db.get(Vendor, row.vendor_id)
     add_addon_stock(
         db,
@@ -213,11 +221,11 @@ def receive_addon_stock(
         notes=body.note,
         created_by_name=auth.actor_name,
     )
-    if body.total_cost is not None and body.total_cost > 0:
+    if has_cost:
         try:
-            exp_date = date.fromisoformat(body.expense_date) if body.expense_date else date.today()
+            exp_date = date.fromisoformat(body.expense_date) if body.expense_date else today_ist()
         except ValueError:
-            exp_date = date.today()
+            exp_date = today_ist()
         db.add(Expense(
             expense_date=exp_date,
             category="addon stock",
@@ -225,11 +233,12 @@ def receive_addon_stock(
             + (f" — {body.note}" if body.note else ""),
             amount=body.total_cost,
             reference=row.our_product_id,
+            addon_product_id=row.id,
             created_by_name=auth.actor_name,
         ))
     log_from_auth(
         db, auth, action="update", entity_type="addon", entity_id=row.id, entity_label=row.our_product_id,
-        detail=f"received stock +{body.quantity}",
+        detail=f"received stock +{body.quantity}" + (f" — expense ₹{body.total_cost}" if has_cost else ""),
     )
     db.commit()
     db.refresh(row)

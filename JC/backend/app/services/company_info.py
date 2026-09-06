@@ -4,7 +4,10 @@ from __future__ import annotations
 import os
 
 COMPANY_NAME = os.environ.get("COMPANY_NAME", "JYOTI CREATIVE CARDS")
-COMPANY_ADDRESS = os.environ.get("COMPANY_ADDRESS", "")
+# Fallback to city only when COMPANY_ADDRESS isn't set in env — better than a printed
+# document with no location line at all. Phone/GST are NOT given fake fallbacks: an
+# invented GSTIN on a tax invoice is worse than a blank one, so those stay env-only.
+COMPANY_ADDRESS = os.environ.get("COMPANY_ADDRESS", "Indore, Madhya Pradesh")
 COMPANY_PHONE = os.environ.get("COMPANY_PHONE", "")
 COMPANY_GST = os.environ.get("COMPANY_GST", "")
 

@@ -311,7 +311,7 @@ def ledger_vendor_detail(vendor_id: int, db: Session = Depends(get_db), auth: Au
         "bill_total": format(totals["bill_total"], "f"),
         "payment_total": format(totals["payment_total"], "f"),
         "debit_note_total": format(totals["debit_note_total"], "f"),
-        "entries": build_ap_ledger(db, vendor_id),
+        "entries": build_ap_ledger(db, vendor_id, auth=auth),
     }
 
 

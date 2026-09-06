@@ -303,18 +303,21 @@ def list_customer_orders(
         return [_summary(db, o) for o in orders]
 
     if bucket == "billed":
-        # Always derive from active bills — cancelled bills/orders must not linger in Billed
-        q = db.query(
-            CustomerBill.customer_id,
-            func.count(CustomerBill.id),
-            func.min(CustomerBill.created_at),
-        ).filter(CustomerBill.cancelled_at.is_(None))
-        if day_start is not None:
-            q = q.filter(
-                CustomerBill.created_at >= day_start,
-                CustomerBill.created_at < day_end,
+        # Always derive from active bills — cancelled bills/orders must not linger in Billed.
+        # NB: like "received"/"open" above, "Billed" is a pending-action backlog (dispatch
+        # or collect payment, then close) not a daily log — never day-scope it away, or a
+        # bill from yesterday that's still awaiting dispatch/collection silently disappears
+        # from the default "Today" queue view.
+        bill_rows = (
+            db.query(
+                CustomerBill.customer_id,
+                func.count(CustomerBill.id),
+                func.min(CustomerBill.created_at),
             )
-        bill_rows = q.group_by(CustomerBill.customer_id).all()
+            .filter(CustomerBill.cancelled_at.is_(None))
+            .group_by(CustomerBill.customer_id)
+            .all()
+        )
         out = []
         for cid, cnt, earliest in bill_rows:
             out.append(
@@ -1093,6 +1096,23 @@ def patch_bill_number(
     old = bill.bill_number
     bill.bill_number = new_num
     bill.document_key = None
+
+    # If the corrected number falls inside an active series' range, bump that
+    # series' cursor forward so the *next* auto-allocated number doesn't collide
+    # with this manually-set one and jam billing for everyone else on the series.
+    from app.models.bill_series import BillSeries
+
+    for series in db.query(BillSeries).filter(BillSeries.is_active.is_(True)).all():
+        prefix = series.prefix or ""
+        if prefix and not new_num.startswith(prefix):
+            continue
+        suffix = new_num[len(prefix):]
+        if not suffix.isdigit():
+            continue
+        num = int(suffix)
+        if series.start_num <= num <= series.end_num and num > series.current_num:
+            series.current_num = num
+
     customer = db.get(Customer, bill.customer_id)
     log_from_auth(
         db, auth, action="edit_bill_number", entity_type="customer_order",
@@ -1116,8 +1136,11 @@ def get_bill_document(
         try:
             generate_customer_bill_document(db, bill.id)
             db.commit()
-        except Exception:
+        except Exception as exc:
             db.rollback()
+            import logging
+            logging.getLogger(__name__).exception("bill PDF generate failed for %s", bill_id)
+            raise HTTPException(500, f"document generation failed: {exc}") from exc
     if not bill.document_key:
         raise HTTPException(404, "document not available")
     url = presigned_url(bill.document_key)

@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.deps import AuthContext, require_admin, require_permission, require_any_permission
+from app.deps import AuthContext, require_admin, require_any_permission
 from app.models.bill_series import BillSeries
 from app.models.customer import Customer
 from app.models.customer_bill import CustomerBill, CustomerBillLine
@@ -141,9 +141,31 @@ def list_bill_series(db: Session = Depends(get_db), auth: AuthContext = Depends(
 def create_bill_series(body: BillSeriesCreate, db: Session = Depends(get_db), auth=Depends(require_admin)):
     if body.end_num <= body.start_num:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="end_num must be greater than start_num")
+
+    prefix = body.prefix.strip()
+    # Two active series sharing a prefix with overlapping number ranges will
+    # eventually both mint the identical bill_number string (e.g. "INV-50" from
+    # two different series) — there's no DB-level unique constraint on
+    # CustomerBill.bill_number to catch that later, so block it here.
+    overlap = (
+        db.query(BillSeries)
+        .filter(
+            BillSeries.is_active.is_(True),
+            BillSeries.prefix == prefix,
+            BillSeries.start_num <= body.end_num,
+            BillSeries.end_num >= body.start_num,
+        )
+        .first()
+    )
+    if overlap:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=f"overlaps active series '{overlap.name}' ({overlap.prefix}{overlap.start_num}\u2013{overlap.end_num}) — pick a non-overlapping range or different prefix",
+        )
+
     row = BillSeries(
         name=body.name.strip(),
-        prefix=body.prefix.strip(),
+        prefix=prefix,
         start_num=body.start_num,
         end_num=body.end_num,
         current_num=0,
@@ -165,7 +187,14 @@ def create_bill_series(body: BillSeriesCreate, db: Session = Depends(get_db), au
 
 
 @router.get("/bills/{bill_id}", response_model=BillDetailPublic)
-def get_bill_detail(bill_id: int, db: Session = Depends(get_db), auth=Depends(require_admin)):
+def get_bill_detail(
+    bill_id: int,
+    db: Session = Depends(get_db),
+    # Was admin-only while list_bill_series() (above) is readable by anyone with
+    # vendor_orders.read/customer_orders.read — a non-admin could see a series row
+    # in bill-series.js and then 403 clicking into it. Match the list's permission.
+    auth: AuthContext = Depends(require_any_permission("vendor_orders.read", "customer_orders.read")),
+):
     bill = db.get(CustomerBill, bill_id)
     if not bill:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="bill not found")
@@ -217,7 +246,12 @@ def get_bill_detail(bill_id: int, db: Session = Depends(get_db), auth=Depends(re
 
 
 @router.get("/{series_id}", response_model=BillSeriesDetailPublic)
-def get_bill_series_detail(series_id: int, db: Session = Depends(get_db), auth=Depends(require_admin)):
+def get_bill_series_detail(
+    series_id: int,
+    db: Session = Depends(get_db),
+    # Same fix as get_bill_detail above — align with list_bill_series's permission.
+    auth: AuthContext = Depends(require_any_permission("vendor_orders.read", "customer_orders.read")),
+):
     row = db.get(BillSeries, series_id)
     if not row:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="series not found")

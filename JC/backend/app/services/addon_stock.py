@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
+
 from sqlalchemy.orm import Session
 
 from app.models.addon_product import AddonProduct
 from app.models.addon_stock_ledger import AddonStockLedger
 from app.models.catalog_addon_link import CatalogAddonLink
+
+logger = logging.getLogger("jc.addon_stock")
 
 
 def add_addon_stock(
@@ -78,4 +82,8 @@ def deduct_addons_for_product(
                 notes=note,
             )
         except ValueError:
+            logger.warning(
+                "deduct_addons_for_product: addon %s missing (link on catalog_product %s, %s %s) — skipped, not blocking",
+                link.addon_product_id, catalog_product_id, reference_type, reference_id,
+            )
             continue  # addon was deleted/missing — never block the customer order over it

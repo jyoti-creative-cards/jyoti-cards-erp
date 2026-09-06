@@ -174,7 +174,9 @@ def receive_vendor_goods(
 
 def bill_receipt(db: Session, auth: AuthContext, receipt_id: int, body: VendorBillIn) -> dict:
     """Bill a single pending receipt in place. One-to-one: no cross-receipt aggregation."""
-    receipt = db.get(StockReceipt, receipt_id)
+    # Row lock — a double-click/double-submit racing two requests for the same receipt
+    # must not both pass the bill_status check below and both post to AP.
+    receipt = db.query(StockReceipt).filter(StockReceipt.id == receipt_id).with_for_update().first()
     if not receipt:
         raise HTTPException(404, "receipt not found")
     if receipt.deleted_at:

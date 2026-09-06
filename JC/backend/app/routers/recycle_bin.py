@@ -318,6 +318,9 @@ def restore_catalog_product(product_id: int, db: Session = Depends(get_db), auth
     row.deleted_at = None
     log_from_auth(db, auth, action="restore", entity_type="catalog", entity_id=row.id, entity_label=row.our_product_id)
     db.commit()
+    from app.services import response_cache
+    response_cache.invalidate("catalog:")
+    response_cache.invalidate("stock:")
     return {"ok": True, "message": "product restored"}
 
 
@@ -335,8 +338,8 @@ def restore_addon(addon_id: int, db: Session = Depends(get_db), auth: AuthContex
     return {"ok": True, "message": "addon restored"}
 
 
-@router.delete("/routes/{route_id}", dependencies=[Depends(require_permission("recycle.write"))])
-def purge_route(route_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("recycle.write"))) -> dict:
+@router.delete("/routes/{route_id}", dependencies=[Depends(require_admin)])
+def purge_route(route_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_admin)) -> dict:
     row = db.get(Route, route_id)
     if not row or row.is_active:
         raise HTTPException(404, "deleted route not found")
@@ -346,8 +349,8 @@ def purge_route(route_id: int, db: Session = Depends(get_db), auth: AuthContext 
     return {"ok": True, "message": "route permanently deleted"}
 
 
-@router.delete("/cities/{city_id}", dependencies=[Depends(require_permission("recycle.write"))])
-def purge_city(city_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("recycle.write"))) -> dict:
+@router.delete("/cities/{city_id}", dependencies=[Depends(require_admin)])
+def purge_city(city_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_admin)) -> dict:
     row = db.get(City, city_id)
     if not row or row.is_active:
         raise HTTPException(404, "deleted city not found")
@@ -361,8 +364,8 @@ def purge_city(city_id: int, db: Session = Depends(get_db), auth: AuthContext = 
     return {"ok": True, "message": "city permanently deleted"}
 
 
-@router.delete("/customers/{customer_id}", dependencies=[Depends(require_permission("recycle.write"))])
-def purge_customer(customer_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("recycle.write"))) -> dict:
+@router.delete("/customers/{customer_id}", dependencies=[Depends(require_admin)])
+def purge_customer(customer_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_admin)) -> dict:
     row = db.get(Customer, customer_id)
     if not row or row.is_active:
         raise HTTPException(404, "deleted customer not found")
@@ -409,8 +412,8 @@ def purge_customer(customer_id: int, db: Session = Depends(get_db), auth: AuthCo
         }
 
 
-@router.delete("/vendors/{vendor_id}", dependencies=[Depends(require_permission("recycle.write"))])
-def purge_vendor(vendor_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("recycle.write"))) -> dict:
+@router.delete("/vendors/{vendor_id}", dependencies=[Depends(require_admin)])
+def purge_vendor(vendor_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_admin)) -> dict:
     row = db.get(Vendor, vendor_id)
     if not row or row.is_active:
         raise HTTPException(404, "deleted vendor not found")
@@ -424,8 +427,8 @@ def purge_vendor(vendor_id: int, db: Session = Depends(get_db), auth: AuthContex
     return {"ok": True, "message": "vendor permanently deleted"}
 
 
-@router.delete("/catalog-products/{product_id}", dependencies=[Depends(require_permission("recycle.write"))])
-def purge_catalog_product(product_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("recycle.write"))) -> dict:
+@router.delete("/catalog-products/{product_id}", dependencies=[Depends(require_admin)])
+def purge_catalog_product(product_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_admin)) -> dict:
     row = db.get(CatalogProduct, product_id)
     if not row or row.is_active:
         raise HTTPException(404, "deleted product not found")
@@ -433,25 +436,46 @@ def purge_catalog_product(product_id: int, db: Session = Depends(get_db), auth: 
         (CatalogAlternative.product_id == product_id) | (CatalogAlternative.alternative_product_id == product_id)
     ).delete(synchronize_session=False)
     db.query(CatalogAddonLink).filter(CatalogAddonLink.catalog_product_id == product_id).delete(synchronize_session=False)
-    if row.image_keys:
-        delete_keys(row.image_keys)
-    log_from_auth(db, auth, action="purge", entity_type="catalog", entity_id=row.id, entity_label=row.our_product_id)
-    db.delete(row)
-    db.commit()
+    label = row.our_product_id
+    try:
+        if row.image_keys:
+            delete_keys(row.image_keys)
+        log_from_auth(db, auth, action="purge", entity_type="catalog", entity_id=row.id, entity_label=label)
+        db.delete(row)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            400,
+            "cannot permanently delete — this product has stock/order/bill history. "
+            "It stays safely in the recycle bin (soft-deleted); history is kept.",
+        ) from None
+    from app.services import response_cache
+    response_cache.invalidate("catalog:")
+    response_cache.invalidate("stock:")
     return {"ok": True, "message": "product permanently deleted"}
 
 
-@router.delete("/addons/{addon_id}", dependencies=[Depends(require_permission("recycle.write"))])
-def purge_addon(addon_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("recycle.write"))) -> dict:
+@router.delete("/addons/{addon_id}", dependencies=[Depends(require_admin)])
+def purge_addon(addon_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_admin)) -> dict:
     row = db.get(AddonProduct, addon_id)
     if not row or row.is_active:
         raise HTTPException(404, "deleted addon not found")
     db.query(CatalogAddonLink).filter(CatalogAddonLink.addon_product_id == addon_id).delete(synchronize_session=False)
-    if row.image_keys:
-        delete_keys(row.image_keys)
-    log_from_auth(db, auth, action="purge", entity_type="addon", entity_id=row.id, entity_label=row.our_product_id)
-    db.delete(row)
-    db.commit()
+    label = row.our_product_id
+    try:
+        if row.image_keys:
+            delete_keys(row.image_keys)
+        log_from_auth(db, auth, action="purge", entity_type="addon", entity_id=row.id, entity_label=label)
+        db.delete(row)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            400,
+            "cannot permanently delete — this add-on has stock movement history. "
+            "It stays safely in the recycle bin (soft-deleted); history is kept.",
+        ) from None
     return {"ok": True, "message": "addon permanently deleted"}
 
 

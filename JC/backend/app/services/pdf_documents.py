@@ -53,6 +53,19 @@ def _ist_fmt(dt: datetime | None) -> str:
     return format_ist(dt)
 
 
+def add_page_number(canvas, doc) -> None:
+    """Shared onPage callback — stamps 'Page N' bottom-right of every printed document.
+
+    Multi-line receipts/bills/statements can silently spill onto extra pages with no
+    visual cue; this makes page count/order obvious when printed or paged through.
+    """
+    canvas.saveState()
+    canvas.setFont("Helvetica", 7.5)
+    canvas.setFillColor(colors.HexColor("#94a3b8"))
+    canvas.drawRightString(doc.pagesize[0] - 1.2 * cm, 0.8 * cm, f"Page {canvas.getPageNumber()}")
+    canvas.restoreState()
+
+
 def _code_pair(vendor_code: str | None, our_code: str | None) -> str:
     """Vendor's item number first, ours in brackets — matches vendor's paper bill/challan."""
     v = _safe(vendor_code, 24)
@@ -397,7 +410,7 @@ def render_customer_order_pdf(
     story.append(Paragraph("Thank you — our team will process your order shortly.", ParagraphStyle(
         "foot", parent=styles["Normal"], fontSize=8, alignment=TA_CENTER, textColor=colors.HexColor("#64748b"),
     )))
-    doc.build(story)
+    doc.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
     return buf.getvalue()
 
 
@@ -441,7 +454,7 @@ def render_vendor_placement_pdf(
     story.append(Paragraph("Please supply the above items as per agreed rates. Add-ons are handled separately and are not listed here.", ParagraphStyle(
         "foot", parent=getSampleStyleSheet()["Normal"], fontSize=8, alignment=TA_CENTER, textColor=colors.HexColor("#64748b"),
     )))
-    doc.build(story)
+    doc.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
     return buf.getvalue()
 
 
@@ -547,7 +560,7 @@ def render_vendor_receipt_pdf(
     story.append(Paragraph("This is a goods receipt for vendor billing. Please retain for accounts and godown records.", ParagraphStyle(
         "foot", parent=getSampleStyleSheet()["Normal"], fontSize=8, alignment=TA_CENTER, textColor=colors.HexColor("#64748b"),
     )))
-    doc.build(story)
+    doc.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
     return buf.getvalue()
 
 
@@ -640,5 +653,5 @@ def render_customer_return_pdf(
     story.append(Paragraph("Goods restocked. This credit note reduces customer accounts receivable.", ParagraphStyle(
         "foot", parent=styles["Normal"], fontSize=8, alignment=TA_CENTER, textColor=colors.HexColor("#64748b"),
     )))
-    doc.build(story)
+    doc.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
     return buf.getvalue()

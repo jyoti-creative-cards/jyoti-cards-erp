@@ -5,18 +5,9 @@ const AddonProducts = (() => {
   let categories = [];
   let units = [];
   let vendors = [];
-  let viewMode = "list";
   let wizardStep = 1;
   let wizardForm = {};
   let editingId = null;
-
-  const ADDON_COLS = [
-    { key: "our_product_id", label: "Product ID", get: a => a.our_product_id },
-    { key: "vendor", label: "Vendor", get: a => a.vendor_name || "" },
-    { key: "unit", label: "Unit", get: a => a.unit },
-    { key: "price", label: "Buying Price", get: a => a.buying_price || "" },
-    { key: "_actions", label: "", filterable: false, sortable: false },
-  ];
 
   function init(context) {
     ctx = context;
@@ -78,34 +69,7 @@ const AddonProducts = (() => {
     return `<span class="badge ${cls}">${ctx.esc(a.quantity_on_hand ?? 0)} on hand · ${label}</span>`;
   }
 
-  function thumbHtml(a, size) {
-    const s = size || 40;
-    if (a.image_urls && a.image_urls[0]) {
-      return `<img src="${ctx.esc(a.image_urls[0])}" alt="" style="width:${s}px;height:${s}px;object-fit:cover;border-radius:8px;border:1px solid var(--border);" />`;
-    }
-    return `<div style="width:${s}px;height:${s}px;border-radius:8px;background:#f1f5f9;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--muted);">${ctx.esc((a.our_product_id || "?").slice(0, 3))}</div>`;
-  }
-
-  function setViewMode(mode) {
-    viewMode = mode;
-    document.getElementById("addon-view-grid")?.classList.toggle("active", viewMode === "grid");
-    document.getElementById("addon-view-list")?.classList.toggle("active", viewMode === "list");
-    renderView();
-  }
-
-  function renderView() { /* legacy — Products hub owns list */ }
-  function renderToolbar() { /* legacy */ }
-  function addonEmptyHtml() {
-    return HubUI.emptyState({
-      title: "No addon products yet",
-      sub: "Add your first addon to track vendor buying prices.",
-      ctaHtml: ctx.canWrite?.("addons")
-        ? `<button class="btn btn-primary btn-lg" onclick="AddonProducts.openWizard()">Add Addon Product</button>`
-        : "",
-    });
-  }
-  function renderTable() { /* legacy — Products hub owns list */ }
-  function renderGrid() { /* legacy — Products hub owns list */ }
+  function renderView() { /* legacy — Products hub owns list; kept only for TableUtils.register above */ }
 
   async function uploadImage(vendorId, ourProductId, file) {
     if (ctx.uploadImage) return ctx.uploadImage(vendorId, ourProductId, file);
@@ -206,46 +170,80 @@ const AddonProducts = (() => {
     );
   }
 
-  async function openReceiveStock(id) {
-    const qty = prompt("Quantity received:");
-    if (qty == null) return;
-    const q = parseInt(qty, 10);
-    if (!Number.isFinite(q) || q <= 0) return ctx.toast("Enter a valid quantity", "error");
-    const costRaw = prompt("Total cost paid for this (optional — logs as an Expense; leave blank to skip):");
-    const total_cost = costRaw && costRaw.trim() !== "" ? parseFloat(costRaw) : null;
-    if (total_cost != null && (Number.isNaN(total_cost) || total_cost < 0)) return ctx.toast("Enter a valid amount", "error");
-    const note = prompt("Note (optional):") || null;
-    try {
-      await ctx.api(`/addons/${id}/receive-stock`, { method: "POST", body: JSON.stringify({ quantity: q, total_cost, note }) });
-      App.closeDetail();
-      await refreshAfterMutation();
-      ctx.toast("Stock received", "success");
-      openDetail(id);
-    } catch (e) {
-      ctx.toast(e.message, "error");
-    }
+  function openReceiveStock(id) {
+    // Single modal with all 3 fields — was a 3-prompt() chain (qty, cost, note).
+    document.getElementById("modal-title").textContent = "Receive addon stock";
+    document.getElementById("modal-body").innerHTML = `
+      <label class="label">Quantity received</label>
+      <input class="input" id="addon-rs-qty" type="number" step="1" min="1" style="width:100%;margin-bottom:10px;" />
+      <label class="label">Total cost paid (optional — logs as an Expense)</label>
+      <input class="input" id="addon-rs-cost" type="number" step="0.01" min="0" style="width:100%;margin-bottom:10px;" />
+      <label class="label">Note (optional)</label>
+      <textarea class="input" id="addon-rs-note" rows="2" style="width:100%;"></textarea>`;
+    document.getElementById("modal-footer").innerHTML = `
+      <button class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="addon-rs-ok">Save</button>`;
+    document.getElementById("addon-rs-ok").onclick = async () => {
+      const q = parseInt(document.getElementById("addon-rs-qty").value, 10);
+      if (!Number.isFinite(q) || q <= 0) return ctx.toast("Enter a valid quantity", "error");
+      const costRaw = document.getElementById("addon-rs-cost").value;
+      const total_cost = costRaw && costRaw.trim() !== "" ? parseFloat(costRaw) : null;
+      if (total_cost != null && (Number.isNaN(total_cost) || total_cost < 0)) return ctx.toast("Enter a valid amount", "error");
+      const note = (document.getElementById("addon-rs-note").value || "").trim() || null;
+      App.closeModal();
+      try {
+        await ctx.api(`/addons/${id}/receive-stock`, { method: "POST", body: JSON.stringify({ quantity: q, total_cost, note }) });
+        App.closeDetail();
+        await refreshAfterMutation();
+        ctx.toast("Stock received", "success");
+        openDetail(id);
+      } catch (e) {
+        ctx.toast(e.message, "error");
+      }
+    };
+    document.getElementById("modal").classList.remove("hidden");
   }
 
-  async function openAdjustStock(id) {
-    const delta = prompt("Adjustment (e.g. -3 or 10):");
-    if (delta == null) return;
-    const d = parseInt(delta, 10);
-    if (!Number.isFinite(d) || d === 0) return ctx.toast("Enter a non-zero number", "error");
-    const reason = prompt("Reason for adjustment:");
-    if (!reason || !reason.trim()) return ctx.toast("Reason required", "error");
-    try {
-      await ctx.api(`/addons/${id}/adjust-stock`, { method: "POST", body: JSON.stringify({ delta: d, reason: reason.trim() }) });
-      App.closeDetail();
-      await refreshAfterMutation();
-      ctx.toast("Stock adjusted", "success");
-      openDetail(id);
-    } catch (e) {
-      ctx.toast(e.message, "error");
-    }
+  function openAdjustStock(id) {
+    // Single modal with both fields — was a 2-prompt() chain (delta, then reason).
+    document.getElementById("modal-title").textContent = "Adjust addon stock";
+    document.getElementById("modal-body").innerHTML = `
+      <label class="label">Adjustment (e.g. -3 or 10)</label>
+      <input class="input" id="addon-as-delta" type="number" step="1" style="width:100%;margin-bottom:10px;" />
+      <label class="label">Reason (required)</label>
+      <textarea class="input" id="addon-as-reason" rows="2" style="width:100%;"></textarea>`;
+    document.getElementById("modal-footer").innerHTML = `
+      <button class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="addon-as-ok">Save</button>`;
+    document.getElementById("addon-as-ok").onclick = async () => {
+      const d = parseInt(document.getElementById("addon-as-delta").value, 10);
+      if (!Number.isFinite(d) || d === 0) return ctx.toast("Enter a non-zero number", "error");
+      const reason = (document.getElementById("addon-as-reason").value || "").trim();
+      if (!reason) return ctx.toast("Reason required", "error");
+      App.closeModal();
+      try {
+        await ctx.api(`/addons/${id}/adjust-stock`, { method: "POST", body: JSON.stringify({ delta: d, reason }) });
+        App.closeDetail();
+        await refreshAfterMutation();
+        ctx.toast("Stock adjusted", "success");
+        openDetail(id);
+      } catch (e) {
+        ctx.toast(e.message, "error");
+      }
+    };
+    document.getElementById("modal").classList.remove("hidden");
   }
 
   async function openWizard() {
-    await Promise.all([ensureLookups(), ensureVendors()]);
+    ctx.showLoading?.();
+    try {
+      await Promise.all([ensureLookups(), ensureVendors()]);
+    } catch (e) {
+      ctx.toast(e.message || "Could not load vendors/lookups", "error");
+      return;
+    } finally {
+      ctx.hideLoading?.();
+    }
     if (!vendors.length) {
       ctx.toast("Add vendors in People first", "error");
       return;
@@ -359,7 +357,7 @@ const AddonProducts = (() => {
 
   function syncField(key, val) {
     if (key === "vendor_id") wizardForm.vendor_id = parseInt(val, 10) || null;
-    else wizardForm[key] = typeof val === "string" ? val : val;
+    else wizardForm[key] = val;
   }
 
   function onWizardImagePick(input) {
@@ -572,9 +570,8 @@ const AddonProducts = (() => {
   }
 
   return {
-    init, load, setViewMode, openDetail, openWizard, closeWizard,
+    init, load, openDetail, openWizard, closeWizard,
     wizardBack, wizardNext, onWizardImagePick, syncField, create,
     openEdit, closeEdit, save, deleteAddon, openReceiveStock, openAdjustStock,
-    stockBadge,
   };
 })();

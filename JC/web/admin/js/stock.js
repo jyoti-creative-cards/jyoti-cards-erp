@@ -399,6 +399,8 @@ const Stock = (() => {
       wizardLines = (detail.lines || []).map(l => ({
         catalog_product_id: l.catalog_product_id,
         our_product_id: l.our_product_id,
+        vendor_product_id: l.vendor_product_id || "",
+        year_group: l.year_group || "",
         quantity_received: l.quantity_received,
         quantity_billed: l.quantity_received,
         billed_amount: (Number(l.quantity_received) || 0) * (Number(l.buying_price) || 0),
@@ -490,7 +492,12 @@ const Stock = (() => {
       return `<div class="${cls}"><span class="step-num">${n < wizardStep ? "✓" : n}</span><span class="step-label">${lbl}</span></div>`;
     }).join("");
     if (wizardMode === "edit_receipt") {
-      const isRecvEdit = editReceiptType === "vendor_receive";
+      // "offline_vendor" (received w/o a placed order) is unbilled, same as
+      // "vendor_receive" — submitReceipt() below already treats them the same
+      // way; this used to fall through to the bill-editing form/labels instead
+      // of the plain receive-quantities one, demanding a bill number/amount for
+      // a receipt that was never billed.
+      const isRecvEdit = editReceiptType === "vendor_receive" || editReceiptType === "offline_vendor";
       const isBillEdit = editReceiptType === "vendor_bill";
       setStockWizardChrome(
         isRecvEdit ? "Edit Receive" : "Edit Vendor Bill",
@@ -1881,6 +1888,8 @@ const Stock = (() => {
       wizardLines = (receipt.lines || []).map(l => ({
         catalog_product_id: l.catalog_product_id,
         our_product_id: l.our_product_id,
+        vendor_product_id: l.vendor_product_id || "",
+        year_group: l.year_group || "",
         buying_price: l.buying_price,
         quantity_received: l.quantity_received || 0,
         quantity_billed: l.quantity_billed || 0,
@@ -1927,7 +1936,7 @@ const Stock = (() => {
       }
       document.getElementById("stock-wizard")?.classList.remove("hidden");
       document.querySelector("#stock-wizard .modal-header h3").textContent =
-        editReceiptType === "vendor_receive" ? "Edit Receive" : "Edit Vendor Bill";
+        (editReceiptType === "vendor_receive" || editReceiptType === "offline_vendor") ? "Edit Receive" : "Edit Vendor Bill";
       await renderWizard();
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
@@ -1990,9 +1999,10 @@ const Stock = (() => {
     ctx.openDetail(title, voidedBanner + ctx.ledgerDetailCard("Receipt details", meta, table, extra), footer, "md", { push: true });
   }
   async function voidReceipt(receiptId, vendorId) {
-    const reason = prompt("Why are you voiding this receipt/bill? (optional)", "");
+    // Single dialog: entering a reason (or leaving it blank) and pressing OK confirms
+    // the void — was previously prompt() then a *second* confirm() dialog back-to-back.
+    const reason = prompt("Void this receipt? Stock and AP will be reversed — moves to recycle bin, can be restored.\n\nReason (optional):", "");
     if (reason === null) return;
-    if (!confirm("Void this receipt? Stock and AP will be reversed. It moves to the recycle bin and can be restored.")) return;
     ctx.showLoading?.();
     try {
       await ctx.api(`/stock/receipts/${receiptId}/void`, { method: "POST", body: JSON.stringify({ reason: reason || null }) });
@@ -2027,31 +2037,43 @@ const Stock = (() => {
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
   }
-  async function adjustStock(catalogProductId, currentQty) {
-    const raw = prompt(`Adjust stock for this product.\nCurrent on hand: ${currentQty ?? 0}\n\nEnter quantity change (e.g. 5 to add 5, -3 to remove 3):`);
-    if (raw == null) return;
-    const delta = parseInt(String(raw).trim(), 10);
-    if (!Number.isFinite(delta) || delta === 0) return ctx.toast("Enter a non-zero whole number", "error");
-    const reason = prompt("Reason for this correction (required):");
-    if (reason == null) return;
-    const reasonTrimmed = reason.trim();
-    if (!reasonTrimmed) return ctx.toast("Reason is required", "error");
-    ctx.showLoading?.();
-    try {
-      await ctx.api(`/stock/products/${catalogProductId}/adjust`, {
-        method: "POST",
-        body: JSON.stringify({ quantity_delta: delta, reason: reasonTrimmed }),
-      });
-      ctx.invalidateCache?.("/stock");
-      ctx.toast(`Stock ${delta > 0 ? "increased" : "decreased"} by ${Math.abs(delta)}`, "success");
-      if (typeof Products !== "undefined" && Products.openProductDetail) {
-        await Products.openProductDetail(catalogProductId, "stock");
-        Products.refreshHub?.();
-      } else {
-        openDetail(catalogProductId);
-      }
-    } catch (e) { ctx.toast(e.message, "error"); }
-    finally { ctx.hideLoading?.(); }
+  function adjustStock(catalogProductId, currentQty) {
+    // Single modal with both fields — was a 2-prompt() chain (qty, then reason),
+    // which felt disjointed and lost the qty context on the second popup.
+    document.getElementById("modal-title").textContent = "Adjust stock";
+    document.getElementById("modal-body").innerHTML = `
+      <p class="vo-muted" style="margin:0 0 10px;">Current on hand: <strong>${currentQty ?? 0}</strong></p>
+      <label class="label">Quantity change (e.g. 5 to add, -3 to remove)</label>
+      <input class="input" id="stock-adj-delta" type="number" step="1" style="width:100%;margin-bottom:10px;" />
+      <label class="label">Reason (required)</label>
+      <textarea class="input" id="stock-adj-reason" rows="3" style="width:100%;"></textarea>`;
+    document.getElementById("modal-footer").innerHTML = `
+      <button class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="stock-adj-ok">Save</button>`;
+    document.getElementById("stock-adj-ok").onclick = async () => {
+      const delta = parseInt(String(document.getElementById("stock-adj-delta").value || "").trim(), 10);
+      if (!Number.isFinite(delta) || delta === 0) return ctx.toast("Enter a non-zero whole number", "error");
+      const reasonTrimmed = (document.getElementById("stock-adj-reason").value || "").trim();
+      if (!reasonTrimmed) return ctx.toast("Reason is required", "error");
+      App.closeModal();
+      ctx.showLoading?.();
+      try {
+        await ctx.api(`/stock/products/${catalogProductId}/adjust`, {
+          method: "POST",
+          body: JSON.stringify({ quantity_delta: delta, reason: reasonTrimmed }),
+        });
+        ctx.invalidateCache?.("/stock");
+        ctx.toast(`Stock ${delta > 0 ? "increased" : "decreased"} by ${Math.abs(delta)}`, "success");
+        if (typeof Products !== "undefined" && Products.openProductDetail) {
+          await Products.openProductDetail(catalogProductId, "stock");
+          Products.refreshHub?.();
+        } else {
+          openDetail(catalogProductId);
+        }
+      } catch (e) { ctx.toast(e.message, "error"); }
+      finally { ctx.hideLoading?.(); }
+    };
+    document.getElementById("modal").classList.remove("hidden");
   }
   async function setSellingPrice(catalogProductId, current) {
     const raw = prompt("Selling price (₹). Leave blank to clear:", current == null ? "" : String(current));

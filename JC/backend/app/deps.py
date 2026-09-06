@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, Optional, Set
 
-from fastapi import Depends, Header, HTTPException, Query, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -39,18 +39,21 @@ class AuthContext:
 
 
 def _is_valid_admin_key(x_admin_key: Optional[str]) -> bool:
+    import hmac
+
     expected = (get_settings().admin_api_key or "").strip()
-    return bool(expected and x_admin_key and x_admin_key.strip() == expected)
+    got = (x_admin_key or "").strip()
+    return bool(expected and got and hmac.compare_digest(got, expected))
 
 
 def get_auth_context(
     x_admin_key_header: Optional[str] = Header(None, alias="X-Admin-Key"),
-    x_admin_key_query: Optional[str] = Query(None, alias="x_admin_key"),
     creds: Optional[HTTPAuthorizationCredentials] = Depends(security),
     db: Session = Depends(get_db),
 ) -> AuthContext:
-    x_admin_key = x_admin_key_header or x_admin_key_query
-    if _is_valid_admin_key(x_admin_key):
+    # Header-only by design: a query-string variant would leak the master key into
+    # server access logs, browser history, and Referer headers.
+    if _is_valid_admin_key(x_admin_key_header):
         return AuthContext(actor_type="admin", actor_id=None, actor_name="Admin")
 
     if creds and creds.credentials:
@@ -89,6 +92,17 @@ def require_any_permission(*permissions: str) -> Callable:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             detail=f"permission denied: one of {', '.join(permissions)}",
+        )
+    return _dep
+
+
+def require_all_permissions(*permissions: str) -> Callable:
+    def _dep(auth: AuthContext = Depends(get_auth_context)) -> AuthContext:
+        if auth.is_admin or all(auth.has(p) for p in permissions):
+            return auth
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail=f"permission denied: all of {', '.join(permissions)}",
         )
     return _dep
 

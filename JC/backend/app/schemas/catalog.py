@@ -96,6 +96,11 @@ class VendorOption(BaseModel):
     city_name: Optional[str] = None
     alias: Optional[str] = None
     is_active: bool
+    # Both needed by OrdersUI.partySearchRank's phone/# search (stock.js's vendor
+    # picker searches this list) — without them, searching by phone or vendor
+    # number silently matched nothing for any vendor loaded via /catalog/vendors.
+    vendor_number: Optional[int] = None
+    phone: Optional[str] = None
 
 
 class CheckDuplicateItem(BaseModel):

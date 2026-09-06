@@ -8,7 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.deps import AuthContext, get_auth_context, require_admin
+from app.deps import AuthContext, get_auth_context, require_admin, require_permission
 from app.models.catalog_alternative import CatalogAlternative
 from app.models.catalog_addon_link import CatalogAddonLink
 from app.models.catalog_product import CatalogProduct
@@ -39,7 +39,7 @@ from app.schemas.stock import (
 )
 from app.services.cost_visibility import can_see_cost, hide_cost
 from app.services.pricing import coerce_selling_price, effective_selling_price
-from app.services.stock_levels import stock_status_label
+from app.services.stock_levels import admin_stock_status_label
 from app.schemas.ledger import StockLedgerDetail
 from app.models.debit_note import DebitNote
 from app.services.ap_ledger import debit_note_payable_effect, receipt_bill_amount, receipt_debit_note_total
@@ -113,7 +113,7 @@ def _product_public(
         "year_group": row.year_group,
         "quantity_on_hand": balance,
         "low_stock_threshold": threshold,
-        "stock_status": stock_status_label(balance, threshold),
+        "stock_status": admin_stock_status_label(balance, threshold),
         "selling_price": (
             format(eff, "f")
             if (eff := effective_selling_price(row.buying_price, row.selling_price)) is not None
@@ -149,7 +149,7 @@ def list_stock(
     search: Optional[str] = Query(None),
     year_group: Optional[str] = Query(None),
     lite: bool = Query(False, description="Skip images for faster pickers"),
-    auth: AuthContext = Depends(get_auth_context),
+    auth: AuthContext = Depends(require_permission("stock.read")),
 ):
     yg = (year_group or "").replace("\x00", "").strip()
     cache_key = f"stock:products:v2:{(search or '').replace(chr(0), '')}:{yg}:{int(lite)}:cost={int(can_see_cost(auth))}"
@@ -247,7 +247,7 @@ def list_stock(
                 year_group=r["year_group"],
                 quantity_on_hand=qty,
                 low_stock_threshold=th,
-                stock_status=stock_status_label(qty, th),
+                stock_status=admin_stock_status_label(qty, th),
                 selling_price=(
                     format(eff, "f")
                     if (eff := effective_selling_price(r["buying_price"], r["selling_price"])) is not None
@@ -268,7 +268,7 @@ def list_stock(
 def get_stock_detail(
     catalog_product_id: int,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(get_auth_context),
+    auth: AuthContext = Depends(require_permission("stock.read")),
 ):
     row = db.get(CatalogProduct, catalog_product_id)
     if not row or not row.is_active:
@@ -322,10 +322,29 @@ def get_stock_detail(
         for e in ledger_rows
     ]
 
+    from app.models.addon_product import AddonProduct
+    from app.models.catalog_addon_link import CatalogAddonLink
+
+    addon_links_pub: list[dict] = []
+    for lk in db.query(CatalogAddonLink).filter(CatalogAddonLink.catalog_product_id == catalog_product_id).all():
+        addon = db.get(AddonProduct, lk.addon_product_id)
+        if not addon or not addon.is_active or addon.deleted_at:
+            continue
+        addon_links_pub.append({
+            "id": lk.id,
+            "catalog_product_id": lk.catalog_product_id,
+            "addon_product_id": lk.addon_product_id,
+            "addon_our_product_id": addon.our_product_id,
+            "addon_name": addon.name or addon.our_product_id,
+            "quantity": lk.quantity,
+            "image_urls": list(presigned_urls(addon.image_keys or []) or []),
+        })
+
     base = _product_public(row, db, qty, threshold, auth=auth)
     return StockProductDetail(
         **base,
         alternatives=alt_pub,
+        addon_links=addon_links_pub,
         quantity_pending=int(pending),
         quantity_sold=0,
         ledger=ledger,
@@ -336,7 +355,7 @@ def get_stock_detail(
 def get_ledger_entry_detail(
     ledger_id: int,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(get_auth_context),
+    auth: AuthContext = Depends(require_permission("stock.read")),
 ):
     entry = db.get(StockLedger, ledger_id)
     if not entry:
@@ -457,7 +476,7 @@ def update_stock_threshold(
     catalog_product_id: int,
     body: StockThresholdUpdate,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(get_auth_context),
+    auth: AuthContext = Depends(require_permission("stock.write")),
 ):
     row = db.get(CatalogProduct, catalog_product_id)
     if not row or not row.is_active:
@@ -531,7 +550,7 @@ def adjust_stock(
 def get_placed_order_for_receipt(
     vendor_id: int,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(get_auth_context),
+    auth: AuthContext = Depends(require_permission("vendor_orders.read")),
 ):
     vendor = db.get(Vendor, vendor_id)
     if not vendor or vendor.deleted_at:
@@ -580,7 +599,7 @@ def get_placed_order_for_receipt(
 def get_pending_bill_receipts(
     vendor_id: int,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(get_auth_context),
+    auth: AuthContext = Depends(require_permission("vendor_orders.read")),
 ) -> VendorPendingBillList:
     vendor = db.get(Vendor, vendor_id)
     if not vendor or vendor.deleted_at:
@@ -628,7 +647,7 @@ def get_pending_bill_receipts(
 def get_receipt_for_bill(
     receipt_id: int,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(get_auth_context),
+    auth: AuthContext = Depends(require_permission("vendor_orders.read")),
 ) -> ReceiptForBillDetail:
     receipt = db.get(StockReceipt, receipt_id)
     if not receipt or receipt.deleted_at or receipt.bill_status != "pending_bill":
@@ -646,6 +665,7 @@ def get_receipt_for_bill(
             catalog_product_id=ln.catalog_product_id,
             our_product_id=ln.our_product_id,
             vendor_product_id=prod.vendor_product_id if prod else None,
+            year_group=prod.year_group if prod else None,
             quantity_received=ln.quantity_received,
             buying_price=hide_cost(format(ln.buying_price, "f"), auth),
             unit=prod.unit if prod else None,
@@ -676,7 +696,7 @@ def preview_receipt_bill(
     receipt_id: int,
     body: BillPreviewIn,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(get_auth_context),
+    auth: AuthContext = Depends(require_permission("vendor_orders.read")),
 ) -> BillPreviewOut:
     receipt = db.get(StockReceipt, receipt_id)
     if not receipt or receipt.deleted_at or receipt.bill_status != "pending_bill":
@@ -715,7 +735,7 @@ async def upload_bill(
     bill_number: str = Form(""),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(get_auth_context),
+    auth: AuthContext = Depends(require_permission("vendor_orders.write")),
 ) -> dict:
     if not storage_configured():
         raise HTTPException(503, "S3 not configured")
@@ -741,7 +761,7 @@ async def upload_bill(
 def create_vendor_receive(
     body: VendorReceiveCreate,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(get_auth_context),
+    auth: AuthContext = Depends(require_permission("vendor_orders.write")),
 ):
     payload = VendorReceiptCreate(
         vendor_id=body.vendor_id,
@@ -763,7 +783,7 @@ def create_receipt_bill(
     receipt_id: int,
     body: VendorBillIn,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(get_auth_context),
+    auth: AuthContext = Depends(require_permission("vendor_orders.write")),
 ):
     result = bill_receipt(db, auth, receipt_id, body)
     response_cache.invalidate("stock:")
@@ -775,7 +795,7 @@ def create_receipt_bill(
 def create_offline_vendor_receipt(
     body: VendorReceiveCreate,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(get_auth_context),
+    auth: AuthContext = Depends(require_permission("vendor_orders.write")),
 ):
     """Offline receive only — stock up + Received bucket. Bill later via vendor-bill."""
     payload = VendorReceiptCreate(
@@ -797,7 +817,7 @@ def create_offline_vendor_receipt(
 def get_receipt_detail(
     receipt_id: int,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(get_auth_context),
+    auth: AuthContext = Depends(require_permission("vendor_orders.read")),
 ):
     receipt = db.get(StockReceipt, receipt_id)
     if not receipt:
@@ -898,7 +918,7 @@ def patch_receipt(
     receipt_id: int,
     body: VendorReceiptCreate,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(get_auth_context),
+    auth: AuthContext = Depends(require_permission("vendor_orders.write")),
 ):
     result = update_vendor_receipt(db, auth, receipt_id, body)
     response_cache.invalidate("stock:")
@@ -910,7 +930,7 @@ def patch_receipt(
 def get_receipt_document(
     receipt_id: int,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(get_auth_context),
+    auth: AuthContext = Depends(require_permission("vendor_orders.read")),
 ):
     receipt = db.get(StockReceipt, receipt_id)
     if not receipt:
@@ -937,7 +957,7 @@ def get_receipt_document(
 def get_receipt_lines(
     receipt_id: int,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(get_auth_context),
+    auth: AuthContext = Depends(require_permission("vendor_orders.read")),
 ):
     receipt = db.get(StockReceipt, receipt_id)
     if not receipt:

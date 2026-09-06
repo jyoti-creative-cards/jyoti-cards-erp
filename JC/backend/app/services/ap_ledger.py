@@ -12,6 +12,8 @@ from app.models.debit_note import DebitNote
 from app.models.stock import StockReceipt, StockReceiptLine
 from app.models.vendor import Vendor
 from app.models.city import City
+from app.deps import AuthContext
+from app.services.cost_visibility import hide_cost
 from app.services.money import as_signed_decrease, as_signed_increase, mag
 from app.services.storage import presigned_url
 
@@ -460,7 +462,7 @@ def set_opening_balance(
     return entry
 
 
-def build_ap_ledger(db: Session, vendor_id: int) -> list[dict]:
+def build_ap_ledger(db: Session, vendor_id: int, *, auth: Optional[AuthContext] = None) -> list[dict]:
     from app.services.debit_notes import infer_direction
 
     entries = (
@@ -559,7 +561,9 @@ def build_ap_ledger(db: Session, vendor_id: int) -> list[dict]:
                     "direction": dn.direction or infer_direction(dn.note_type, dn.quantity, dn.amount),
                     "our_product_id": dn.our_product_id,
                     "quantity": dn.quantity,
-                    "unit_price": format(dn.unit_price, "f") if dn.unit_price is not None else None,
+                    # unit_price is the catalog buying_price at receive time — a cost hint,
+                    # not the bill amount owed. Redact for AP-visibility-only staff.
+                    "unit_price": hide_cost(format(dn.unit_price, "f") if dn.unit_price is not None else None, auth),
                     "amount": format(dn.amount, "f"),
                     "payable_effect": format(debit_note_payable_effect(dn.amount, dn.note_type), "f"),
                     "notes": dn.notes,
@@ -739,9 +743,9 @@ def ap_dues_total(db: Session) -> dict:
     return {"total": total, "count": len(due), "parties": due}
 
 
-def build_ap_statement(db: Session, vendor_id: int) -> dict:
+def build_ap_statement(db: Session, vendor_id: int, *, auth: Optional[AuthContext] = None) -> dict:
     """Bill-wise statement: bills with nested debit notes + separate payments."""
-    entries = build_ap_ledger(db, vendor_id)  # newest first
+    entries = build_ap_ledger(db, vendor_id, auth=auth)  # newest first
     chronological = list(reversed(entries))
     bills_by_receipt: dict[int, dict] = {}
     payments: list[dict] = []

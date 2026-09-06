@@ -59,9 +59,26 @@ def add_stock(
         .first()
     )
     if not balance:
-        balance = StockBalance(catalog_product_id=catalog_product_id, quantity_on_hand=0)
-        db.add(balance)
-        db.flush()
+        # catalog_product_id is unique on StockBalance — two concurrent first-ever
+        # touches of a brand-new product's stock can both miss the row above and
+        # both try to insert. Same begin_nested/IntegrityError-retry shape as
+        # get_or_create_open_order.
+        from sqlalchemy.exc import IntegrityError
+
+        try:
+            with db.begin_nested():
+                balance = StockBalance(catalog_product_id=catalog_product_id, quantity_on_hand=0)
+                db.add(balance)
+                db.flush()
+        except IntegrityError:
+            balance = (
+                db.query(StockBalance)
+                .filter(StockBalance.catalog_product_id == catalog_product_id)
+                .with_for_update()
+                .first()
+            )
+            if not balance:
+                raise
     balance.quantity_on_hand += quantity
     db.add(
         StockLedger(

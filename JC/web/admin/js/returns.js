@@ -165,9 +165,9 @@ const Returns = (() => {
   }
 
   async function voidReturn(returnId) {
-    const reason = prompt("Why are you voiding this return? (optional)", "");
+    // Single dialog — entering a reason (or leaving it blank) and pressing OK confirms.
+    const reason = prompt("Void this return? Stock and AR credit will be reversed — moves to recycle bin, can be restored.\n\nReason (optional):", "");
     if (reason === null) return;
-    if (!confirm("Void this return? Stock and AR credit will be reversed. It moves to the recycle bin and can be restored.")) return;
     ctx.showLoading?.();
     try {
       await ctx.api(`/customer-returns/${returnId}/void`, { method: "POST", body: JSON.stringify({ reason: reason || null }) });
@@ -196,11 +196,16 @@ const Returns = (() => {
   async function openCreate(preselectCustomerId) {
     if (!ctx.canWrite?.("returns")) return ctx.toast("No write access", "error");
     let customers = [];
-    try { customers = await ctx.api("/customers", {}, 30000); } catch (_) {}
+    let customersLoadFailed = false;
+    try { customers = await ctx.api("/customers", {}, 30000); } catch (e) {
+      customersLoadFailed = true;
+      ctx.toast(e.message || "Could not load customers", "error");
+    }
     wizard = {
       step: 1,
       customer_id: preselectCustomerId || null,
       customers,
+      customersLoadFailed,
       search: "",
       returnable: [],
       qtys: {},
@@ -353,8 +358,10 @@ const Returns = (() => {
               </span>
               <span class="vo-wiz-vendor-check"></span>
             </button>`).join("") : HubUI.emptyState({
-            title: "No matches",
-            sub: tokens.length ? `No customer matches “${ctx.esc(wizard.search)}”.` : "No customers loaded.",
+            title: wizard.customersLoadFailed ? "Couldn't load customers" : "No matches",
+            sub: wizard.customersLoadFailed
+              ? "Failed to fetch customers — check your connection and reopen this wizard."
+              : (tokens.length ? `No customer matches “${ctx.esc(wizard.search)}”.` : "No customers loaded."),
           })}
         </div>` : `
           ${!wizard.returnable.length ? `<p style="color:var(--muted);">No returnable billed items.</p>` : `

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import date
-from decimal import Decimal
 from io import BytesIO
 from typing import Optional
 
@@ -16,16 +15,21 @@ from sqlalchemy.orm import Session
 
 from app.services.ap_ledger import build_ap_ledger, vendor_ap_totals, _vendor_label
 from app.services.ar_ledger import build_ar_ledger, customer_ar_totals, _customer_label
+from app.services.company_info import company_lines
+from app.services.customer_bill_pdf import _money as _money_grouped
+from app.services.pdf_documents import add_page_number
 from app.services.reports import daybook
 from app.services.reports_extended import ageing_ap, ageing_ar
 
 
 def _money(v) -> str:
+    # Indian digit grouping (12,34,567.00), matching customer_bill_pdf._money — these
+    # statements were previously using plain US-style ",.2f" grouping, inconsistent
+    # with every other printed document in the app.
     try:
-        n = Decimal(str(v or 0))
+        return f"Rs.{_money_grouped(v)}"
     except Exception:
         return str(v)
-    return f"Rs.{n:,.2f}"
 
 
 def _doc() -> tuple[SimpleDocTemplate, list, object]:
@@ -69,7 +73,7 @@ def render_ar_statement_pdf(db: Session, customer_id: int) -> bytes:
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
     ]))
     story.append(t)
-    doc.build(story)
+    doc.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
     return buf.getvalue()
 
 
@@ -106,7 +110,7 @@ def render_ap_statement_pdf(db: Session, vendor_id: int) -> bytes:
         ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
     ]))
     story.append(t)
-    doc.build(story)
+    doc.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
     return buf.getvalue()
 
 
@@ -140,7 +144,7 @@ def render_daybook_pdf(db: Session, day: date) -> bytes:
         ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
     ]))
     story.append(table)
-    doc.build(story)
+    doc.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
     return buf.getvalue()
 
 
@@ -177,7 +181,7 @@ def render_ageing_pdf(db: Session, side: str, as_of: Optional[date] = None) -> b
         ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
     ]))
     story.append(table)
-    doc.build(story)
+    doc.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
     return buf.getvalue()
 
 
@@ -192,6 +196,8 @@ def render_freight_statement_pdf(db: Session, agent_id: int) -> bytes:
     entries = build_freight_ledger(db, agent_id)
     doc, buf, styles = _doc()
     story = [
+        Paragraph(" · ".join(company_lines()), styles["Normal"]),
+        Spacer(1, 4),
         Paragraph("Freight agent statement", styles["Heading1"]),
         Paragraph(agent.name, styles["Heading3"]),
         Spacer(1, 6),
@@ -220,7 +226,7 @@ def render_freight_statement_pdf(db: Session, agent_id: int) -> bytes:
         ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
     ]))
     story.append(t)
-    doc.build(story)
+    doc.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
     return buf.getvalue()
 
 
@@ -242,6 +248,8 @@ def render_freight_payment_pdf(
     kind = "Advance paid" if entry.entry_type == "advance" else "Freight payment"
     doc, buf, styles = _doc()
     story = [
+        Paragraph(" · ".join(company_lines()), styles["Normal"]),
+        Spacer(1, 4),
         Paragraph(kind, styles["Heading1"]),
         Paragraph(agent.name, styles["Heading3"]),
         Spacer(1, 6),
@@ -277,5 +285,5 @@ def render_freight_payment_pdf(
             ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
         ]))
         story.append(t)
-    doc.build(story)
+    doc.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
     return buf.getvalue()

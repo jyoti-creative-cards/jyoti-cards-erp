@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 from collections.abc import Generator
@@ -82,6 +83,13 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def init_db() -> None:
+    """Legacy ad-hoc schema migrator (idempotent ALTER/CREATE IF NOT EXISTS calls below).
+
+    Frozen as of the Alembic baseline (alembic/versions/*_baseline_existing_schema.py) —
+    still runs on every boot for backward compat with whatever's already deployed, but
+    do NOT add new schema changes here. Write a new `alembic revision --autogenerate`
+    migration instead and run `alembic upgrade head` as a deploy step.
+    """
     global _DB_READY
     from app.models import (  # noqa: F401
         ActivityLog, AddonProduct, AddonStockLedger, CatalogAddonLink, CatalogAlternative, CatalogLookup,
@@ -130,6 +138,9 @@ def init_db() -> None:
         _migrate_receipt_gst_pct()
         _migrate_receipt_closed()
         _migrate_addon_stock()
+        _migrate_legacy_staff_permissions()
+        _migrate_vendor_order_unique_open()
+        _migrate_bill_number_unique()
         with engine.begin() as conn:
             conn.execute(text("SELECT 1"))
         _DB_READY = True
@@ -150,6 +161,93 @@ def _migrate_addon_stock() -> None:
         else:
             _exec_sql(conn, "ALTER TABLE jc_addon_products ADD COLUMN IF NOT EXISTS quantity_on_hand INTEGER NOT NULL DEFAULT 0", critical=False)
             _exec_sql(conn, "ALTER TABLE jc_addon_products ADD COLUMN IF NOT EXISTS low_stock_threshold INTEGER NOT NULL DEFAULT 5", critical=False)
+
+
+def _migrate_legacy_staff_permissions() -> None:
+    """One-time backfill: rows that only ever had vendor_orders.* used to get
+    customer_orders.*/returns.* auto-granted at *read time* on every request
+    (see git history of app/services/permissions.py). That runtime expansion was
+    removed because it silently over-granted brand-new staff too. Bake the old
+    behavior permanently into any row that predates the split so nobody already
+    relying on it loses access; new rows saved after this migration runs are
+    unaffected (they only ever get what was explicitly checked)."""
+    from app.models.staff import Staff
+    from app.services.permissions import ALL_STAFF_PERMISSIONS, dump_permissions
+
+    with Session(engine) as session:
+        rows = session.query(Staff).all()
+        changed = 0
+        for row in rows:
+            try:
+                data = json.loads(row.permissions_json or "[]")
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(data, list):
+                continue
+            perms = {str(x) for x in data if str(x) in ALL_STAFF_PERMISSIONS}
+            has_split = any(p.startswith("customer_orders.") or p.startswith("returns.") for p in perms)
+            if has_split:
+                continue  # already explicit — never touch
+            expanded = set(perms)
+            if "vendor_orders.read" in expanded:
+                expanded.add("customer_orders.read")
+                expanded.add("returns.read")
+            if "vendor_orders.write" in expanded:
+                expanded.add("customer_orders.write")
+                expanded.add("returns.write")
+            if expanded != perms:
+                row.permissions_json = dump_permissions(sorted(expanded))
+                changed += 1
+        if changed:
+            session.commit()
+            log.info("migrated legacy vendor_orders permissions -> explicit split keys for %d staff row(s)", changed)
+
+
+def _migrate_vendor_order_unique_open() -> None:
+    """get_or_create_open_order relied on an IntegrityError-retry to catch the
+    race of two concurrent requests both finding no open bucket — but the index
+    backing it was never actually unique, so the retry logic never fired and
+    duplicate open (vendor_id, bucket) rows could silently pile up. Close out
+    any pre-existing dupes (keep the newest open, close the rest) then add a
+    real partial-unique index so the retry logic has something to catch."""
+    with engine.begin() as conn:
+        is_open_true = "1" if _is_sqlite else "true"
+        rows = conn.execute(
+            text(f"SELECT id, vendor_id, bucket FROM jc_vendor_orders WHERE is_open = {is_open_true} ORDER BY vendor_id, bucket, id DESC")
+        ).all()
+        seen: set[tuple] = set()
+        dup_ids: list[int] = []
+        for oid, vendor_id, bucket in rows:
+            key = (vendor_id, bucket)
+            if key in seen:
+                dup_ids.append(int(oid))
+            else:
+                seen.add(key)
+        if dup_ids:
+            is_open_false = "0" if _is_sqlite else "false"
+            id_list = ",".join(str(i) for i in dup_ids)
+            _exec_sql(conn, f"UPDATE jc_vendor_orders SET is_open = {is_open_false} WHERE id IN ({id_list})", critical=False)
+            log.info("closed %d duplicate open vendor_order row(s) before adding unique index", len(dup_ids))
+        _exec_sql(
+            conn,
+            f"CREATE UNIQUE INDEX IF NOT EXISTS uq_jc_vendor_orders_open ON jc_vendor_orders (vendor_id, bucket) WHERE is_open = {is_open_true}",
+            critical=False,
+        )
+
+
+def _migrate_bill_number_unique() -> None:
+    """bill_number had only a plain index — nothing at the DB level stopped two
+    concurrent requests (series allocation race, or the manual /number correction
+    endpoint) from both passing their app-level "already used" check and landing
+    on the same number. Partial-unique on active (non-cancelled) bills only, since
+    a cancelled bill's old number is explicitly allowed to be reused."""
+    with engine.begin() as conn:
+        _exec_sql(
+            conn,
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_jc_customer_bills_number_active "
+            "ON jc_customer_bills (bill_number) WHERE cancelled_at IS NULL",
+            critical=False,
+        )
 
 
 def _migrate_vendor_number() -> None:

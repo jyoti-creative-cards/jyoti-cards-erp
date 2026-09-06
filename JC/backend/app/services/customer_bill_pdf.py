@@ -16,7 +16,7 @@ from reportlab.platypus import Image, PageBreak, Paragraph, SimpleDocTemplate, S
 
 from app.services.company_info import company_lines
 from app.services.customer_bill_math import fmt_discount_pct
-from app.services.pdf_documents import _fetch_image, _header, _party_blocks, _safe, _totals_block
+from app.services.pdf_documents import _fetch_image, _header, _party_blocks, _safe, _totals_block, add_page_number
 
 COPY_LABELS = ["ORIGINAL", "DUPLICATE", "TRIPLICATE", "QUADRUPLICATE"]
 
@@ -108,8 +108,10 @@ def _addon_label(addon: Dict[str, Any]) -> str:
 
 
 def _addon_qty(addon: Dict[str, Any], line_qty: int) -> int:
+    # NB: addon snapshots (catalog_addons.py::_addon_row) only ever set "quantity"
+    # (the per-product-unit link qty) — there is no "per_unit" key anywhere upstream.
     try:
-        per = int(addon.get("per_unit") or addon.get("quantity") or 1)
+        per = int(addon.get("quantity") or 1)
     except (TypeError, ValueError):
         per = 1
     if per < 1:
@@ -561,5 +563,5 @@ def render_copies_pdf(
         topMargin=1.4 * cm,
         bottomMargin=1.4 * cm,
     )
-    doc.build(combined)
+    doc.build(combined, onFirstPage=add_page_number, onLaterPages=add_page_number)
     return buf.getvalue()

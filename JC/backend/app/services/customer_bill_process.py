@@ -173,12 +173,12 @@ def process_customer_bill(
         row = open_map.get(cid)
         if not row or qty > row.quantity_open:
             raise HTTPException(400, f"cannot ship more than open qty for product {cid}")
-        prod = db.get(CatalogProduct, cid)
         bill_items.append(
             {
                 "catalog_product_id": cid,
                 "our_product_id": row.our_product_id,
-                "name": prod.vendor_product_id if prod else row.our_product_id,
+                # Customer-facing doc — never show the vendor's own product code here.
+                "name": row.our_product_id,
                 "quantity": qty,
                 "unit_price": str(row.unit_price),
             }
@@ -708,7 +708,8 @@ def process_offline_customer_order(
             {
                 "catalog_product_id": cid,
                 "our_product_id": prod.our_product_id,
-                "name": prod.vendor_product_id or prod.our_product_id,
+                # Customer-facing doc — never show the vendor's own product code here.
+                "name": prod.our_product_id,
                 "quantity": qty,
                 "unit_price": format(unit_price, "f"),
             }
@@ -1133,7 +1134,8 @@ def edit_customer_bill(
             {
                 "catalog_product_id": cid,
                 "our_product_id": prod.our_product_id,
-                "name": prod.vendor_product_id or prod.our_product_id,
+                # Customer-facing doc — never show the vendor's own product code here.
+                "name": prod.our_product_id,
                 "quantity": qty,
                 "unit_price": str(unit_price),
             }

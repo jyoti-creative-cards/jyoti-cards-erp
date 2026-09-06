@@ -1198,7 +1198,16 @@ const VendorOrders = (() => {
     const wrap = document.getElementById(`vo-placement-drill-${placementId}`);
     const placement = (currentOrder?.placements || []).find(p => p.id === placementId);
     if (!wrap || !placement) return;
+    try {
+      await _loadPlacementExpandInner(wrap, placement, placementId);
+    } catch (e) {
+      // Anything unexpected here previously left the row stuck on "Loading…" forever.
+      wrap.innerHTML = `<p style="color:var(--danger);font-size:13px;">Failed to load — ${ctx.esc(e.message || "unknown error")}
+        <a href="#" onclick="event.preventDefault();VendorOrders.loadPlacementExpand(${placementId})">retry</a></p>`;
+    }
+  }
 
+  async function _loadPlacementExpandInner(wrap, placement, placementId) {
     if (currentBucket === "placed" || currentBucket === "cancelled") {
       const cancelled = !!placement.cancel_reason || placement.status === "cancelled" || currentBucket === "cancelled";
       const canEdit = !!ctx.canWrite?.("vendor_orders") && !cancelled && currentBucket === "placed";
@@ -1243,10 +1252,14 @@ const VendorOrders = (() => {
 
     if (placement.receipt_id) {
       try {
-        const [receipt, notes] = await Promise.all([
-          ctx.api(`/stock/receipts/${placement.receipt_id}`, {}, 0),
-          ctx.api(`/debit-notes?receipt_id=${placement.receipt_id}`, {}, 0).catch(() => []),
-        ]);
+        const receipt = await ctx.api(`/stock/receipts/${placement.receipt_id}`, {}, 0);
+        let notes = [];
+        let notesFailed = false;
+        try {
+          notes = await ctx.api(`/debit-notes?receipt_id=${placement.receipt_id}`, {}, 0);
+        } catch (_) {
+          notesFailed = true; // don't conflate a failed fetch with "confirmed no debit notes"
+        }
         if (!(placement.bill_amount != null || placement.net_payable != null)) {
           html += `<div class="vo-money-block">
             ${ctx.reviewRow ? "" : ""}
@@ -1256,15 +1269,27 @@ const VendorOrders = (() => {
             <div class="is-total"><span>Net payable</span><strong>${fmtPrice(receipt.net_payable)}</strong></div>
           </div>`;
         }
-        if (notes.length) {
+        if (notesFailed) {
+          html += `<p style="color:var(--danger);font-size:13px;margin:12px 0 0;">Couldn't load debit notes —
+            <a href="#" onclick="event.preventDefault();VendorOrders.loadPlacementExpand(${placementId})">retry</a></p>`;
+        } else if (notes.length) {
+          const canDn = ctx.canWrite?.("vendor_orders");
           html += `<div class="vo-section-label">Debit notes</div>
-            <table class="data vo-hub-table"><thead><tr><th>Note</th><th>Effect</th></tr></thead><tbody>
+            <table class="data vo-hub-table"><thead><tr><th>Note</th><th>Effect</th>${canDn ? "<th></th>" : ""}</tr></thead><tbody>
               ${notes.map(n => {
                 const lbl = n.note_type === "item" ? `${ctx.esc(n.our_product_id || "")} × ${n.quantity}${n.notes ? ` — ${ctx.esc(n.notes)}` : ""}` : `Value adjustment${n.notes ? ` — ${ctx.esc(n.notes)}` : ""}`;
                 const effect = n.payable_effect != null ? n.payable_effect : (n.note_type === "item" ? -Number(n.amount) : Number(n.amount));
-                return `<tr><td>${lbl}</td><td>${fmtPrice(effect)}</td></tr>`;
+                const actions = canDn
+                  ? `<td style="white-space:nowrap;">
+                      <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();VendorOrders.editDebitNote(${placement.receipt_id},${n.id})">Edit</button>
+                      <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();VendorOrders.voidDebitNote(${placement.receipt_id},${n.id})">Void</button>
+                    </td>`
+                  : "";
+                return `<tr><td>${lbl}</td><td>${fmtPrice(effect)}</td>${actions}</tr>`;
               }).join("")}
             </tbody></table>`;
+        } else if (ctx.canWrite?.("vendor_orders") && placement.receipt_id) {
+          html += `<p class="vo-muted" style="margin:12px 0 0;">No debit notes yet.</p>`;
         }
         html += `<div class="vo-hub-expand-actions">
           <button class="btn btn-primary btn-sm" onclick="VendorOrders.openReceiptDoc(${placement.receipt_id})">Bill Receipt</button>
@@ -1630,6 +1655,22 @@ const VendorOrders = (() => {
   }
   // keep alias for any leftover callers
   async function addDebitNote(receiptId) { return openDebitNotes(receiptId); }
+
+  async function editDebitNote(receiptId, noteId) {
+    if (!receiptId || !noteId) return;
+    await openDebitNotes(receiptId);
+    if (typeof DebitNotes !== "undefined" && DebitNotes.editFromList) {
+      DebitNotes.editFromList(noteId);
+    }
+  }
+
+  async function voidDebitNote(receiptId, noteId) {
+    if (!receiptId || !noteId) return;
+    await openDebitNotes(receiptId);
+    if (typeof DebitNotes !== "undefined" && DebitNotes.voidFromList) {
+      await DebitNotes.voidFromList(noteId);
+    }
+  }
 
   async function cancelPlacement(placementId) {
     const found = findPlacementAnywhere(placementId);
@@ -2405,7 +2446,7 @@ const VendorOrders = (() => {
 
   return {
     init, showHub, setBucket, setHubMode, setQueueFilter, setHubSearch, loadList, openDetail, switchDetailBucket, refreshIfOpen,
-    toggleSummaryRow, togglePlacementRow, toggleClosedRow,
+    toggleSummaryRow, togglePlacementRow, toggleClosedRow, loadPlacementExpand,
     showCreateMenu, showCreateMenuFromVendor, runHubAction, runDetailAction, openCloseBatch,
     openWizard, closeWizard, primeVendors, pickVendor, toggleWizardProduct, setWizardQty, bumpWizardQty, swapProduct,
     onVendorSearch, onProductSearch,
@@ -2414,7 +2455,7 @@ const VendorOrders = (() => {
     billSummaryLine, cancelSummaryLine, closeSummaryLine,
     wizardBack, wizardNext, placeOrder, setWizardPlacedOn, openOrderPdf, fetchPlacementPdf,
     openEditOpenLine, closeEdit, saveEdit,
-    cancelPlacement, addDebitNote, openDebitNotes, closeOpenLine, cancelOpenLine, closeBilledPlacement,
+    cancelPlacement, addDebitNote, openDebitNotes, editDebitNote, voidDebitNote, closeOpenLine, cancelOpenLine, closeBilledPlacement,
     openPlacementDoc, openReceiptDoc,
     toggleHubVendor, toggleHubPlacement, toggleHubClosedBill,
     _detailVendorId,

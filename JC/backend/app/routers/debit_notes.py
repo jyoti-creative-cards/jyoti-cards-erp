@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.deps import AuthContext, get_auth_context, require_admin
+from app.deps import AuthContext, get_auth_context, require_admin, require_permission
 from app.models.debit_note import DebitNote
 from app.models.stock import StockReceipt
 from app.models.vendor import Vendor
@@ -15,10 +15,9 @@ from app.models.city import City
 from app.schemas.debit_note import DebitNoteIn, DebitNoteOut, DebitNoteUpdate
 from app.schemas.stock import VoidIn
 from app.services.debit_notes import (
-    _resolve_item_amount,
     create_debit_note,
     infer_direction,
-    normalize_signed_values,
+    reverse_debit_note_effects,
 )
 from app.services.activity import log_from_auth
 from app.services.ap_ledger import debit_note_payable_effect
@@ -71,7 +70,7 @@ def list_debit_notes(
     vendor_id: Optional[int] = Query(None),
     receipt_id: Optional[int] = Query(None),
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(get_auth_context),
+    auth: AuthContext = Depends(require_permission("vendor_orders.read")),
 ):
     q = db.query(DebitNote).filter(DebitNote.deleted_at.is_(None)).order_by(DebitNote.created_at.desc())
     if vendor_id is not None:
@@ -85,7 +84,7 @@ def list_debit_notes(
 def get_debit_note(
     note_id: int,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(get_auth_context),
+    auth: AuthContext = Depends(require_permission("vendor_orders.read")),
 ):
     note = db.get(DebitNote, note_id)
     if not note:
@@ -93,13 +92,16 @@ def get_debit_note(
     return _debit_note_out(db, note, auth=auth)
 
 
-@router.post("", response_model=DebitNoteOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "", response_model=DebitNoteOut, status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_permission("vendor_orders.write"))],
+)
 def create_debit_note_endpoint(
     body: DebitNoteIn,
     vendor_id: int = Query(...),
     receipt_id: int = Query(...),
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(get_auth_context),
+    auth: AuthContext = Depends(require_permission("vendor_orders.write")),
 ):
     note = create_debit_note(db, auth, vendor_id=vendor_id, receipt_id=receipt_id, body=body)
     db.commit()
@@ -107,11 +109,14 @@ def create_debit_note_endpoint(
     return _debit_note_out(db, note, auth=auth)
 
 
-@router.post("/{note_id}/void", dependencies=[Depends(require_admin)])
+@router.post("/{note_id}/void")
 def void_debit_note_endpoint(
     note_id: int,
     body: VoidIn,
     db: Session = Depends(get_db),
+    # Void is destructive to AP history (reverses the ledger effect) — admin only,
+    # same trust boundary as every other void/purge in the app. Editing (below)
+    # stays at vendor_orders.write since it's a routine correction, not a reversal.
     auth: AuthContext = Depends(require_admin),
 ):
     from app.services import response_cache
@@ -121,13 +126,19 @@ def void_debit_note_endpoint(
     return result
 
 
-@router.patch("/{note_id}", response_model=DebitNoteOut)
+@router.patch("/{note_id}", response_model=DebitNoteOut, dependencies=[Depends(require_permission("vendor_orders.write"))])
 def update_debit_note(
     note_id: int,
     body: DebitNoteUpdate,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(get_auth_context),
+    auth: AuthContext = Depends(require_permission("vendor_orders.write")),
 ):
+    """Edit = reverse the old note's AP/stock effect with a compensating entry, then
+    create a brand-new note with the merged values. Never mutate note.amount/quantity
+    or an existing ApLedgerEntry in place — that would rewrite history a reconciliation
+    or PDF might already have been generated against. Same pattern receipt_edit.py
+    already uses for auto-generated debit notes when a receipt is edited.
+    """
     note = db.get(DebitNote, note_id)
     if not note:
         raise HTTPException(404, "debit note not found")
@@ -141,55 +152,33 @@ def update_debit_note(
         direction = body.direction if body.direction is not None else note.direction
         if not cat_id or qty is None or qty == 0:
             raise HTTPException(400, "item debit note requires product and non-zero quantity")
-        direction, signed_qty, _ = normalize_signed_values(
-            "item", direction=direction, quantity=qty, amount=None
+        new_body = DebitNoteIn(
+            note_type="item",
+            direction=direction,
+            catalog_product_id=cat_id,
+            quantity=qty,
+            notes=body.notes if body.notes is not None else note.notes,
         )
-        amount, our_product_id, unit_price = _resolve_item_amount(db, note.receipt_id, cat_id, signed_qty)
-        note.note_type = "item"
-        note.direction = direction
-        note.catalog_product_id = cat_id
-        note.our_product_id = our_product_id
-        note.quantity = signed_qty
-        note.unit_price = unit_price
-        note.amount = amount
     else:
         amt = body.amount if body.amount is not None else note.amount
         direction = body.direction if body.direction is not None else note.direction
-        direction, _, signed_amt = normalize_signed_values(
-            "value", direction=direction, quantity=None, amount=amt
-        )
-        note.note_type = "value"
-        note.direction = direction
-        note.catalog_product_id = None
-        note.our_product_id = None
-        note.quantity = None
-        note.unit_price = None
-        note.amount = signed_amt
-
-    if body.notes is not None:
-        note.notes = body.notes
-
-    from app.models.accounts_payable import ApLedgerEntry
-    from app.services.ap_ledger import post_debit_note_entry
-    entry = db.query(ApLedgerEntry).filter(ApLedgerEntry.debit_note_id == note.id).first()
-    if entry:
-        entry.amount = debit_note_payable_effect(note.amount, note.note_type)
-        entry.description = f"Debit note — ₹{note.amount} ({note.direction or ''})"
-    else:
-        post_debit_note_entry(
-            db,
-            vendor_id=note.vendor_id,
-            receipt_id=note.receipt_id,
-            debit_note_id=note.id,
-            amount=note.amount,
-            note_type=note.note_type,
-            description=f"Debit note — ₹{note.amount} ({note.direction or ''})",
-            actor_type=auth.actor_type,
-            actor_id=auth.actor_id,
-            actor_name=auth.actor_name,
+        new_body = DebitNoteIn(
+            note_type="value",
+            direction=direction,
+            catalog_product_id=body.catalog_product_id if body.catalog_product_id is not None else note.catalog_product_id,
+            amount=amt,
+            notes=body.notes if body.notes is not None else note.notes,
         )
 
-    vendor = db.get(Vendor, note.vendor_id)
+    vendor_id, receipt_id = note.vendor_id, note.receipt_id
+    old_summary = f"{note.note_type} ₹{note.amount} ({note.direction or ''})"
+    reverse_debit_note_effects(db, auth, note, reason=f"edited — was {old_summary}")
+    db.delete(note)
+    db.flush()
+
+    new_note = create_debit_note(db, auth, vendor_id=vendor_id, receipt_id=receipt_id, body=new_body, source="manual")
+
+    vendor = db.get(Vendor, vendor_id)
     city_name = None
     if vendor and vendor.city_id:
         city = db.get(City, vendor.city_id)
@@ -199,10 +188,10 @@ def update_debit_note(
         auth,
         action="update",
         entity_type="debit_note",
-        entity_id=note.id,
+        entity_id=new_note.id,
         entity_label=_vendor_label(vendor, city_name) if vendor else None,
-        detail=f"{note.note_type} ₹{note.amount}",
+        detail=f"edited (was {old_summary}) → {new_note.note_type} ₹{new_note.amount}",
     )
     db.commit()
-    db.refresh(note)
-    return _debit_note_out(db, note, auth=auth)
+    db.refresh(new_note)
+    return _debit_note_out(db, new_note, auth=auth)

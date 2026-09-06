@@ -26,6 +26,7 @@ from app.models.debit_note import DebitNote
 from app.models.stock import StockReceipt, StockReceiptLine
 from app.models.vendor import Vendor
 from app.services.activity import log_from_auth
+from app.services.open_lines import add_to_open, reduce_from_open
 from app.services.stock_receipt import add_stock
 
 
@@ -97,6 +98,16 @@ def void_receipt(db: Session, auth: AuthContext, receipt_id: int, reason: Option
                 notes="Receipt voided" + (f" — {reason_txt}" if reason_txt else ""),
             )
 
+    # This receipt reduced the vendor's pending open-order lines when it was
+    # created (see vendor_receive_bill.receive_vendor_goods) — voiding it means
+    # those units were never actually received, so give the pending qty back.
+    # placed_order_id is only ever set on that non-offline receive path.
+    if receipt.placed_order_id is not None:
+        add_to_open(
+            db, receipt.vendor_id,
+            [(ln.catalog_product_id, int(ln.quantity_received or 0)) for ln in lines],
+        )
+
     ap_entries = (
         db.query(ApLedgerEntry)
         .filter(ApLedgerEntry.receipt_id == receipt_id, ApLedgerEntry.deleted_at.is_(None))
@@ -151,6 +162,14 @@ def restore_receipt(db: Session, auth: AuthContext, receipt_id: int) -> dict:
                 party=label,
                 notes="Receipt restored from recycle bin",
             )
+
+    # Mirror of the void-time restore above — re-consume the pending open qty
+    # this receipt originally satisfied.
+    if receipt.placed_order_id is not None:
+        reduce_from_open(
+            db, receipt.vendor_id,
+            [(ln.catalog_product_id, int(ln.quantity_received or 0)) for ln in lines],
+        )
 
     (
         db.query(ApLedgerEntry)
@@ -427,6 +446,8 @@ def void_customer_return(db: Session, auth: AuthContext, return_id: int, reason:
     now = datetime.now(timezone.utc)
     reason_txt = (reason or "").strip() or None
 
+    from app.services.addon_stock import deduct_addons_for_product
+
     lines = db.query(CustomerReturnLine).filter(CustomerReturnLine.return_id == return_id).all()
     for ln in lines:
         if ln.quantity_returned:
@@ -440,6 +461,15 @@ def void_customer_return(db: Session, auth: AuthContext, return_id: int, reason:
                 reference_id=ret.id,
                 party=label,
                 notes="Return voided" + (f" — {reason_txt}" if reason_txt else ""),
+            )
+            deduct_addons_for_product(
+                db,
+                catalog_product_id=ln.catalog_product_id,
+                units=int(ln.quantity_returned),
+                reference_type="customer_return",
+                reference_id=ret.id,
+                party=label,
+                note="Return voided" + (f" — {reason_txt}" if reason_txt else ""),
             )
 
     (
@@ -469,6 +499,8 @@ def restore_customer_return(db: Session, auth: AuthContext, return_id: int) -> d
     label = _customer_label(db, ret.customer_id)
     voided_at = ret.deleted_at
 
+    from app.services.addon_stock import deduct_addons_for_product
+
     lines = db.query(CustomerReturnLine).filter(CustomerReturnLine.return_id == return_id).all()
     for ln in lines:
         if ln.quantity_returned:
@@ -482,6 +514,15 @@ def restore_customer_return(db: Session, auth: AuthContext, return_id: int) -> d
                 reference_id=ret.id,
                 party=label,
                 notes="Return restored from recycle bin",
+            )
+            deduct_addons_for_product(
+                db,
+                catalog_product_id=ln.catalog_product_id,
+                units=-int(ln.quantity_returned),
+                reference_type="customer_return",
+                reference_id=ret.id,
+                party=label,
+                note="Return restored from recycle bin",
             )
 
     (

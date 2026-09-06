@@ -14,7 +14,7 @@ PERMISSION_GROUPS = [
     ("Vendor Orders", [("vendor_orders.read", "View vendor orders"), ("vendor_orders.write", "Place & edit vendor orders")]),
     ("Customer Orders", [("customer_orders.read", "View customer orders"), ("customer_orders.write", "Place & bill customer orders")]),
     ("Returns", [("returns.read", "View customer returns"), ("returns.write", "Create customer returns")]),
-    ("Stock", [("stock.read", "View stock"), ("stock.write", "Receive stock & edit prices")]),
+    ("Stock", [("stock.read", "View stock"), ("stock.write", "Receive, edit, adjust & bill stock; edit selling prices")]),
     ("Costs", [("costs.read", "See our buying price / cost & margins")]),
     ("Finance", [("finance.write", "Record vendor/customer payments & add expenses — no totals or reports")]),
     ("Accounts Receivable", [
@@ -31,7 +31,13 @@ ALL_STAFF_PERMISSIONS: List[str] = [p for _, perms in PERMISSION_GROUPS for p, _
 
 
 def _migrate_legacy_order_perms(perms: set[str]) -> set[str]:
-    """Old staff JSON used vendor_orders to gate selling + returns. Expand once."""
+    """Old staff JSON used vendor_orders to gate selling + returns too. One-time
+    expansion, applied to existing rows by the DB migration in db/session.py
+    (_migrate_legacy_staff_permissions) — kept here only so that migration can
+    reuse the exact same expansion rule. NOT called on every parse anymore:
+    doing so silently granted customer_orders/returns access to any *new* staff
+    account that was deliberately given only vendor_orders.read, with no way to
+    opt out (see JC audit, Staff/Permissions module)."""
     out = set(perms)
     if "vendor_orders.read" in out:
         out.add("customer_orders.read")
@@ -48,13 +54,7 @@ def parse_permissions(raw: str | None) -> set[str]:
     try:
         data = json.loads(raw)
         if isinstance(data, list):
-            raw_set = {str(x) for x in data if str(x) in ALL_STAFF_PERMISSIONS}
-            # Legacy rows only had vendor_orders; expand until staff is re-saved with split keys.
-            has_split = any(
-                p.startswith("customer_orders.") or p.startswith("returns.")
-                for p in raw_set
-            )
-            return raw_set if has_split else _migrate_legacy_order_perms(raw_set)
+            return {str(x) for x in data if str(x) in ALL_STAFF_PERMISSIONS}
     except json.JSONDecodeError:
         pass
     return set()

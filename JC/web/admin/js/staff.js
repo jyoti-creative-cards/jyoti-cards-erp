@@ -9,10 +9,18 @@ const StaffMgmt = (() => {
   function init(context) { ctx = context; }
 
   async function load() {
-    [staff, permGroups] = await Promise.all([
-      ctx.api("/staff"),
-      ctx.api("/staff/permissions"),
-    ]);
+    // Called unguarded on tab switch (app.js) — an API failure previously threw
+    // an unhandled rejection and left the page stuck on whatever it last showed
+    // with no explanation.
+    try {
+      [staff, permGroups] = await Promise.all([
+        ctx.api("/staff"),
+        ctx.api("/staff/permissions"),
+      ]);
+    } catch (e) {
+      ctx.toast?.(e.message || "Could not load staff", "error");
+      return;
+    }
     if (!Array.isArray(staff)) staff = [];
     const count = document.getElementById("hub-staff-count");
     if (count) count.textContent = `${staff.length} staff`;
@@ -130,7 +138,9 @@ const StaffMgmt = (() => {
       id: "setup",
       label: "Setup",
       hint: "Routes, cities, lookups",
-      keys: ["setup.read", "setup.write", "recycle.read", "recycle.write"],
+      // Deliberately no recycle.* here — recycle bin is unrelated to setup data
+      // and least-privilege says don't bundle it in by default.
+      keys: ["setup.read", "setup.write"],
     },
     {
       id: "accountant",
@@ -208,13 +218,27 @@ const StaffMgmt = (() => {
     document.getElementById("staff-modal-body").innerHTML = `
       <div style="display:grid;gap:16px;">
         <div><label class="label">Full Name *</label><input id="sm-name" class="input" value="${ctx.esc(s.name)}" /></div>
-        <div><label class="label">Login ID</label><input class="input" value="${ctx.esc(s.phone)}" disabled /></div>
+        <div><label class="label">Login ID (mobile)</label><input id="sm-phone" class="input" type="tel" maxlength="10" value="${ctx.esc(s.phone)}" />
+          <p style="margin:6px 0 0;font-size:12px;color:var(--muted);">Changing this changes their login number too.</p></div>
         <div><label class="label">Permissions</label><div class="card" style="padding:16px;max-height:240px;overflow-y:auto;">${permCheckboxes(s.permissions)}</div></div>
+        <div><button type="button" class="btn btn-secondary btn-sm" onclick="StaffMgmt.resetPassword(${s.id})">Reset Password</button></div>
       </div>`;
     document.getElementById("staff-modal-footer").innerHTML = `
       <button class="btn btn-secondary" onclick="StaffMgmt.closeModal()">Cancel</button>
-      <button class="btn btn-primary" style="flex:1;" onclick="StaffMgmt.save()">Save Permissions</button>`;
+      <button class="btn btn-primary" style="flex:1;" onclick="StaffMgmt.save()">Save</button>`;
     document.getElementById("staff-modal").classList.remove("hidden");
+  }
+
+  async function resetPassword(id) {
+    if (!confirm("Reset this staff member's password? A new one will be generated and sent via WhatsApp.")) return;
+    try {
+      const res = await ctx.api(`/staff/${id}/reset-password`, { method: "POST", body: "{}" });
+      if (res.whatsapp_sent) {
+        ctx.toast("Password reset & WhatsApp sent!", "success");
+      } else {
+        alert(`Password reset.\nNew password: ${res.temp_password}\n\n(WhatsApp not sent: ${res.whatsapp_error || "unknown reason"} — share this yourself.)`);
+      }
+    } catch (e) { ctx.toast(e.message, "error"); }
   }
 
   function closeModal() {
@@ -227,7 +251,10 @@ const StaffMgmt = (() => {
     if (!name) return ctx.toast("Name required", "error");
     try {
       if (editingId) {
-        await ctx.api(`/staff/${editingId}`, { method: "PATCH", body: JSON.stringify({ name, permissions: collectPerms() }) });
+        const phone = document.getElementById("sm-phone")?.value.trim();
+        const body = { name, permissions: collectPerms() };
+        if (phone) body.phone = phone.replace(/\D/g, "");
+        await ctx.api(`/staff/${editingId}`, { method: "PATCH", body: JSON.stringify(body) });
         ctx.toast("Staff updated", "success");
       } else {
         const phone = document.getElementById("sm-phone")?.value.trim();
@@ -254,5 +281,5 @@ const StaffMgmt = (() => {
     } catch (e) { ctx.toast(e.message, "error"); }
   }
 
-  return { init, load, openDetail, openWizard, openEdit, closeModal, save, deleteStaff, setSearch, applyRolePreset };
+  return { init, load, openDetail, openWizard, openEdit, closeModal, save, deleteStaff, setSearch, applyRolePreset, resetPassword };
 })();

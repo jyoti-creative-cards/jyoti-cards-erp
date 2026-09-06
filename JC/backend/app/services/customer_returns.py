@@ -13,6 +13,7 @@ from app.models.city import City
 from app.models.customer import Customer
 from app.models.customer_bill import CustomerBill, CustomerBillLine
 from app.models.customer_return import CustomerReturn, CustomerReturnLine
+from app.services.addon_stock import deduct_addons_for_product
 from app.services.ar_ledger import post_credit_note_entry
 from app.services.stock_receipt import add_stock
 from app.services.storage import customer_folder_slug, customer_return_key, presigned_urls, storage_configured, upload_bytes
@@ -195,6 +196,18 @@ def create_customer_return(
             party=customer.business_name,
             notes=f"Return {ret.return_number}",
         )
+        # Returned goods bring their linked add-ons back into stock too — same
+        # choke point (reserve_stock/restore_stock) applies this on placement
+        # cancel; returns went through add_stock directly and skipped it.
+        deduct_addons_for_product(
+            db,
+            catalog_product_id=p["catalog_product_id"],
+            units=-p["quantity"],
+            reference_type="customer_return",
+            reference_id=ret.id,
+            party=customer.business_name,
+            note=f"Return {ret.return_number}",
+        )
 
     post_credit_note_entry(
         db,
@@ -360,7 +373,8 @@ def generate_customer_return_document(db: Session, return_id: int) -> str | None
             {
                 "catalog_product_id": ln.catalog_product_id,
                 "our_product_id": ln.our_product_id,
-                "name": prod.vendor_product_id if prod else ln.our_product_id,
+                # Customer-facing doc — never show the vendor's own product code here.
+                "name": ln.our_product_id,
                 "quantity": ln.quantity_returned,
                 "unit_price": format(_d(ln.sold_unit_price), "f"),
                 "line_total": format(_d(ln.line_calculated), "f"),

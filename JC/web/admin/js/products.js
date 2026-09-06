@@ -505,17 +505,6 @@ const Products = (() => {
     return "₹" + n.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
   }
 
-  function stockBadge(status) {
-    const map = {
-      in_stock: ["badge-green", "In stock"],
-      low_stock: ["badge-amber", "Low"],
-      out_of_stock: ["badge-gray", "Out"],
-      negative_stock: ["badge-red", "Negative"],
-    };
-    const [cls, lbl] = map[status] || ["badge-gray", status || "—"];
-    return `<span class="badge ${cls}">${lbl}</span>`;
-  }
-
   function stockStatusMeta(status) {
     const map = {
       in_stock: { cls: "is-ok", label: "In stock" },
@@ -538,10 +527,6 @@ const Products = (() => {
         <span>units on hand</span>
       </div>
     </div>`;
-  }
-
-  function setStockChip(status) {
-    setAttentionFilter(status || "all");
   }
 
   function buildItems() {
@@ -1027,18 +1012,24 @@ const Products = (() => {
           }).join("")}</div>${altManageBtn}`
         : `<p style="color:var(--muted);font-size:14px;margin:0;">No alternatives</p>${altManageBtn}`;
 
-      const addonPane = cat?.addon_links?.length
-        ? `<div class="alt-chip-row">${cat.addon_links.map(l => {
+      const addonSource = cat?.addon_links?.length ? cat.addon_links : (stock?.addon_links || []);
+      const addonManageBtn = (ctx.canWrite?.("catalog") || ctx.isAdmin?.())
+        ? `<button type="button" class="btn btn-secondary btn-sm" style="margin-top:10px;" onclick="Catalog.openEdit(${id}, 'addons')">Manage add-ons</button>`
+        : "";
+      const addonPane = addonSource.length
+        ? `<div class="alt-chip-row">${addonSource.map(l => {
             const img = (l.image_urls && l.image_urls[0]) || "";
+            const sku = l.addon_our_product_id || l.our_product_id;
+            const name = l.addon_name || l.name || "Add-on";
             return `<div class="alt-chip is-static">
               ${img ? `<img src="${ctx.esc(img)}" alt="" onclick="Products.enlargeImage(decodeURIComponent('${encodeURIComponent(img)}'))" style="cursor:zoom-in;" />` : `<span class="alt-chip-empty"></span>`}
               <span class="alt-chip-body">
-                <strong>${ctx.esc(l.addon_our_product_id)}</strong>
-                <span>${ctx.esc(l.addon_name || "Add-on")} · qty ${l.quantity}</span>
+                <strong>${ctx.esc(sku)}</strong>
+                <span>${ctx.esc(name)} · qty ${l.quantity}</span>
               </span>
             </div>`;
-          }).join("")}</div>`
-        : '<p style="color:var(--muted);font-size:14px;">No add-on links</p>';
+          }).join("")}</div>${addonManageBtn}`
+        : `<p style="color:var(--muted);font-size:14px;margin:0;">No add-on links</p>${addonManageBtn}`;
 
       const tabBtn = (key, label) =>
         `<button type="button" class="prod-detail-tab${sec === key ? " active" : ""}" onclick="Products.openProductDetail(${id}, '${key}')">${label}</button>`;
@@ -1070,7 +1061,7 @@ const Products = (() => {
         <div class="prod-detail-pane" data-pane="alts" style="${sec === "alts" ? "" : "display:none;"}">${altPane}</div>`,
         `${(ctx.canWrite?.("catalog") || ctx.isAdmin?.())
           ? `<button class="btn btn-danger btn-sm" onclick="Catalog.deleteProduct(${id})">Delete</button>
-             <button type="button" class="btn btn-secondary btn-sm" onclick="event.stopPropagation();Catalog.openEdit(${id}, '${sec === "stock" ? "stock" : "catalog"}')">Edit</button>`
+             <button type="button" class="btn btn-secondary btn-sm" onclick="event.stopPropagation();Catalog.openEdit(${id}, '${sec}')">Edit</button>`
           : ""}
          <button class="btn btn-primary" style="flex:1;" onclick="App.closeDetail()">Close</button>`,
         "lg"
@@ -1243,6 +1234,9 @@ const Products = (() => {
     const scored = [];
     for (const s of (altsPickerStock || [])) {
       if (linked.has(s.our_product_id)) continue;
+      // Linking is bidirectional and the backend caps each side at 3 — a candidate
+      // already at its own cap would 400 on select, so don't offer it at all.
+      if (Number(s.alt_count || 0) >= 3) continue;
       if (!q) { scored.push({ s, score: 0 }); continue; }
       const id = String(s.our_product_id || "").toLowerCase();
       const vendor = String(s.vendor_name || "").toLowerCase();
@@ -1360,12 +1354,11 @@ const Products = (() => {
 
   return {
     init, showHub, setMainTab, setTypeFilter, setViewMode, onSearch, clearSearch,
-    onFilterChange, clearFilters, setStockChip, setAttentionFilter, toggleFilters,
+    onFilterChange, clearFilters, setAttentionFilter, toggleFilters,
     load, loadMoreCatalog, refreshHub,
     openItem, openProductDetail, saveBulkSellPrices,
     openAlternativesManager, closeAlternativesManager, onAltsBoardSearch,
     openAltPicker, closeAltPicker, onAltPickerSearch, addAlternative, removeAlternative,
     enlargeImage, closeLightbox,
-    getTab: () => mainTab,
   };
 })();

@@ -7,6 +7,7 @@ from typing import List, Optional
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 _BIZ_TZ = ZoneInfo("Asia/Kolkata")
@@ -1330,7 +1331,14 @@ def update_open_line(
             db, auth, action="update_open", entity_type="vendor_order", entity_id=row.vendor_id,
             entity_label=label, detail=f"open line #{line_id}: {', '.join(changes)}",
         )
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="this vendor already has an open line for that product — merge quantities into the existing line instead",
+        ) from None
     return _open_vendor_detail(db, row.vendor_id, auth=auth)
 
 

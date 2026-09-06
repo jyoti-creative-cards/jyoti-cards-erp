@@ -41,6 +41,9 @@ const CustomerOrders = (() => {
   let editBillId = null;
   let editBillNumber = "";
   let billEditSearch = "";
+  // catalog_product_id -> quantity_shipped as it stood when the edit wizard opened.
+  // Used only to warn the user before a qty decrease restores stock + shrinks the order.
+  let editBillOriginalQty = {};
   let billEditProducts = [];
 
   // Past stages — Dispatch is an ops stage (parcels), not a Today/Past peer.
@@ -515,7 +518,7 @@ const CustomerOrders = (() => {
     const openQty = o.total_quantity || 0;
     const bucket = detailBucketFor(o);
     const src = sourceMeta(o.sources);
-    const canMoney = !!ctx.isAdmin?.() || !!ctx.canWrite?.("accounts_receivable") || !!ctx.canWrite?.("finance");
+    const canMoney = !!ctx.isAdmin?.() || !!ctx.canWrite?.("ar") || !!ctx.canWrite?.("finance");
     const viewFn = `CustomerOrders.openDetail(${o.customer_id}, '${bucket}')`;
 
     // Primary action by bucket
@@ -717,7 +720,7 @@ const CustomerOrders = (() => {
               : "Cancelled";
     }
     const canWrite = !!ctx.canWrite?.("customer_orders");
-    const canMoney = !!ctx.isAdmin?.() || !!ctx.canWrite?.("accounts_receivable") || !!ctx.canWrite?.("finance");
+    const canMoney = !!ctx.isAdmin?.() || !!ctx.canWrite?.("ar") || !!ctx.canWrite?.("finance");
 
     if (currentBucket === "open") {
       const lines = currentOrder.open_lines || [];
@@ -1229,8 +1232,10 @@ const CustomerOrders = (() => {
   }
 
   function voidBill(billId) {
-    promptReason("Void bill — moves to recycle bin. Cancels first if not already cancelled.", async (reason) => {
-      if (!confirm("Void this bill? Admin-only. Restore later from the recycle bin.")) return;
+    // The promptReason modal's title already states the consequence and has its own
+    // Confirm/Cancel buttons — a second native confirm() after it was a redundant
+    // double dialog.
+    promptReason("Void bill — Admin-only, moves to recycle bin, restorable later. Cancels first if not already cancelled.", async (reason) => {
       ctx.showLoading?.();
       try {
         await ctx.api(`/customer-orders/bills/${billId}/void`, { method: "POST", body: JSON.stringify({ reason }) });
@@ -1245,8 +1250,7 @@ const CustomerOrders = (() => {
   }
 
   function voidPlacement(placementId) {
-    promptReason("Void order — moves to recycle bin. Cancels unbilled qty first if still open.", async (reason) => {
-      if (!confirm("Void this order? Admin-only. Restore later from the recycle bin.")) return;
+    promptReason("Void order — Admin-only, moves to recycle bin, restorable later. Cancels unbilled qty first if still open.", async (reason) => {
       ctx.showLoading?.();
       try {
         await ctx.api(`/customer-orders/placements/${placementId}/void`, { method: "POST", body: JSON.stringify({ reason }) });
@@ -1344,7 +1348,7 @@ const CustomerOrders = (() => {
       return `<div class="card" style="padding:10px 14px;margin-bottom:12px;background:#f8fafc;border:1px solid var(--border);display:flex;gap:20px;flex-wrap:wrap;align-items:center;font-size:13px;">
         <span><strong>Outstanding:</strong> ${colorMoney(currentOut)}</span>
         ${showAfter ? `<span><strong>After this bill:</strong> ${colorMoney(afterOut)}</span>` : ""}
-        <span style="color:var(--muted);">Credit limit: ${cr.track_only ? "₹0 (tracking only)" : "Unlimited"}</span>
+        <span style="color:var(--muted);">Credit limit: ${cr.track_only ? "not set — outstanding tracked only, never blocks billing" : "Unlimited"}</span>
       </div>`;
     }
     const left = afterBill ? cr.left_after_bill : cr.left;
@@ -1358,13 +1362,36 @@ const CustomerOrders = (() => {
         <div><strong>Outstanding</strong> ₹${ctx.esc(used)}</div>
         <div>Credit limit ₹${ctx.esc(cr.credit_limit)} · Available ₹${ctx.esc(left)}</div>
       </div>
-      ${over ? `<p style="margin:8px 0 0;font-size:13px;color:#b91c1c;">⚠ Over limit — outstanding will exceed credit limit. Bill anyway.</p>` : ""}
+      ${over ? `<p style="margin:8px 0 0;font-size:13px;color:#b91c1c;">⚠ This bill will push the customer over their credit limit — you can still proceed.</p>` : ""}
     </div>`;
   }
 
   async function processFromHub(customerId, bucket) {
     await openDetail(customerId, bucket || "open");
     await processOrder();
+  }
+
+  /** Confirm received order (if any), then open bill wizard. Used by post-place "Bill now". */
+  async function billNow(customerId) {
+    if (!customerId) return;
+    App.closeDetail?.();
+    ctx.showLoading?.();
+    try {
+      try {
+        await ctx.api(`/customer-orders/customer/${customerId}/confirm`, { method: "POST" }, 0);
+        ctx.invalidateCache?.("/customer-orders");
+      } catch (e) {
+        const msg = String(e.message || "").toLowerCase();
+        if (!msg.includes("no pending") && !msg.includes("nothing to confirm")) throw e;
+      }
+      detailCustomerId = customerId;
+      currentBucket = "open";
+      await processOrder();
+    } catch (e) {
+      ctx.toast(e.message || "Could not bill", "error");
+    } finally {
+      ctx.hideLoading?.();
+    }
   }
 
   async function processOrder() {
@@ -1476,6 +1503,8 @@ const CustomerOrders = (() => {
         discSource: l.discount_percent ? "pct" : (l.net_rate ? "net" : ""),
         addons: l.addons || [],
       }));
+      editBillOriginalQty = {};
+      for (const l of processLines) editBillOriginalQty[l.catalog_product_id] = Number(l.quantity_to_ship) || 0;
       if (!processLines.length) {
         ctx.toast("No editable lines on this bill", "error");
         editBillId = null;
@@ -1517,6 +1546,25 @@ const CustomerOrders = (() => {
     document.getElementById("co-wizard")?.classList.add("hidden");
     editBillId = null;
     editBillNumber = "";
+    editBillOriginalQty = {};
+  }
+
+  /** Lines whose qty on this bill edit dropped below what was originally billed —
+   * saving will restore stock and shrink the customer's order for that qty. */
+  function _billEditShrinkLines() {
+    if (!editBillId) return [];
+    const currentByCid = {};
+    for (const l of processLines) currentByCid[l.catalog_product_id] = Number(l.quantity_to_ship) || 0;
+    const out = [];
+    for (const [cidStr, origQty] of Object.entries(editBillOriginalQty)) {
+      const cid = Number(cidStr);
+      const newQty = currentByCid[cid] || 0; // 0 if the line was removed entirely
+      if (newQty < origQty) {
+        const line = processLines.find(l => l.catalog_product_id === cid);
+        out.push({ our_product_id: line ? line.our_product_id : cid, from: origQty, to: newQty });
+      }
+    }
+    return out;
   }
 
   function promptEditBillNumber(billId, current) {
@@ -1835,7 +1883,14 @@ const CustomerOrders = (() => {
       </div>
       ${customerNotes ? `<p style="font-size:13px;margin:0 0 6px;"><span class="vo-muted">Customer note:</span> ${ctx.esc(customerNotes)}</p>` : ""}
       <p style="font-size:13px;color:var(--muted);margin:0;"><span class="vo-muted">Narration:</span> ${ctx.esc(narration || "—")}</p>
-      ${editBillId ? `<p style="font-size:12px;color:var(--muted);margin:10px 0 0;">Saving updates the bill and syncs the customer order quantities.</p>` : ""}`;
+      ${editBillId ? `<p style="font-size:12px;color:var(--muted);margin:10px 0 0;">Saving updates the bill and syncs the customer order quantities.</p>` : ""}
+      ${editBillId && _billEditShrinkLines().length ? `<div style="margin-top:10px;padding:10px 12px;background:#fef3c7;border:1px solid #fde68a;border-radius:8px;font-size:13px;color:#92400e;">
+        <strong>Reducing quantity below what was billed:</strong>
+        <ul style="margin:6px 0 0;padding-left:18px;">
+          ${_billEditShrinkLines().map(l => `<li>${ctx.esc(l.our_product_id)}: ${l.from} → ${l.to}</li>`).join("")}
+        </ul>
+        <div style="margin-top:6px;">Stock will be restored and the customer's order for these qty will shrink — this can't be told apart later from "never ordered".</div>
+      </div>` : ""}`;
     footerEl.innerHTML = `
       <button class="btn btn-secondary" onclick="CustomerOrders.processBack()">← Back</button>
       <button class="btn btn-primary" ${processBusy ? "disabled" : ""} onclick="CustomerOrders.submitProcess()">${processBusy ? "Saving…" : (editBillId ? "Save bill" : "Submit Bill")}</button>`;
@@ -2019,7 +2074,7 @@ const CustomerOrders = (() => {
             <p style="margin:0 0 16px;color:var(--muted);">Bill created — ${fmtPrice(res.grand_total)}. AR posted. ${nextHint}</p>
             <div style="display:flex;flex-direction:column;gap:8px;">
               <button class="btn btn-primary" onclick="App.closeDetail();CustomerOrders.goToDispatch()">Dispatch</button>
-              ${(ctx.isAdmin?.() || ctx.canWrite?.("accounts_receivable") || ctx.canWrite?.("finance")) ? `<button class="btn btn-secondary" onclick="App.closeDetail();CustomerOrders.goCollectPayment(${cid})">Collect payment</button>` : ""}
+              ${(ctx.isAdmin?.() || ctx.canWrite?.("ar") || ctx.canWrite?.("finance")) ? `<button class="btn btn-secondary" onclick="App.closeDetail();CustomerOrders.goCollectPayment(${cid})">Collect payment</button>` : ""}
               <button class="btn btn-secondary" onclick="CustomerOrders.openBillDoc(${res.bill_id}, false)">Download PDF</button>
               <button class="btn btn-secondary" onclick="CustomerOrders.openBillDoc(${res.bill_id}, true)">Print</button>
               <button class="btn btn-secondary" onclick="CustomerOrders.shareBillWhatsApp(${res.bill_id})">WhatsApp</button>
@@ -2107,9 +2162,13 @@ const CustomerOrders = (() => {
         })),
         ctx,
         onSubmit: async (ids, reason) => {
-          await ctx.api("/customer-orders/close-batch", { method: "POST", body: JSON.stringify({ bill_line_ids: ids, reason }) });
+          const res = await ctx.api("/customer-orders/close-batch", { method: "POST", body: JSON.stringify({ bill_line_ids: ids, reason }) });
           ctx.invalidateCache?.("/customer-orders");
-          ctx.toast(`Closed ${ids.length} line(s)`, "success");
+          const closed = res?.closed ?? ids.length;
+          ctx.toast(
+            closed < ids.length ? `Closed ${closed} of ${ids.length} line(s) — some were skipped` : `Closed ${closed} line(s)`,
+            closed < ids.length ? "info" : "success",
+          );
           if (detailCustomerId) await openDetail(detailCustomerId, currentBucket);
           else loadList();
         },
@@ -2633,8 +2692,8 @@ const CustomerOrders = (() => {
           <strong>Placed for customer</strong>
           <span>Same as portal · stock reserved</span>
         </div>
-        <p style="margin:12px 0;font-size:14px;color:var(--muted);">Order in <strong>To bill</strong>. Bill now, or view order.</p>`,
-        `<button class="btn btn-primary" style="flex:1;" onclick="App.closeDetail();CustomerOrders.processFromHub(${cid}, 'open')">Bill now</button>
+        <p style="margin:12px 0;font-size:14px;color:var(--muted);">Order is in <strong>New</strong>. Bill now confirms it and opens billing, or view the order first.</p>`,
+        `<button class="btn btn-primary" style="flex:1;" onclick="CustomerOrders.billNow(${cid})">Bill now</button>
          <button class="btn btn-secondary" style="flex:1;" onclick="App.closeDetail();CustomerOrders.openDetail(${cid}, 'received')">View order</button>`, "sm");
       ctx.toast("Order placed for customer", "success");
       hubMode = "needs_action";
@@ -2663,7 +2722,7 @@ const CustomerOrders = (() => {
     openSlidePanel, closeSlidePanel, toggleCardMore, closeAllCardMore,
     goToDispatch, goCollectPayment, setDispatchStatus, setDispatchAgent, pickParcel, reassignParcel, submitParcelReassign,
     showCreateMenu, showCreateMenuFromCustomer, runHubAction, runDetailAction, openCloseBatch,
-    processOrder, processFromHub, closeProcessWizard, renderProcessWizard,
+    processOrder, processFromHub, billNow, closeProcessWizard, renderProcessWizard,
     openEditBill, editLatestBill, promptEditBillNumber, saveBillNumber, enableDiscount, clearDiscount, setBillEditSearch, addBillEditProduct, removeProcessLine,
     openEditFromOpen,
     _detailCustomerId,

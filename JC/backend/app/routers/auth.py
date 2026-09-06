@@ -16,6 +16,7 @@ from app.schemas.customer import CustomerPublic, LoginRequest, LoginResponse
 from app.schemas.staff import StaffLoginRequest, StaffLoginResponse, StaffPublic
 from app.services.passwords import verify_password
 from app.services.permissions import parse_permissions
+from app.services.rate_limit import record_failure, record_success, seconds_until_unlocked
 from app.services.tokens import create_access_token, create_staff_token, customer_token_ttl_minutes
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -57,9 +58,15 @@ def login(body: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse:
     digits = re.sub(r"\D+", "", body.phone.strip())
     if len(digits) != 10:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="invalid phone")
+    lock_key = f"customer_login:{digits}"
+    wait = seconds_until_unlocked(lock_key)
+    if wait > 0:
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, detail=f"too many attempts — try again in {int(wait // 60) + 1} min")
     row = db.query(Customer).filter(Customer.phone == digits, Customer.is_active.is_(True)).one_or_none()
     if row is None or not verify_password(body.password, row.password_hash):
+        record_failure(lock_key)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="wrong phone or password")
+    record_success(lock_key)
     token = create_access_token(customer_id=row.id, phone=row.phone)
     return LoginResponse(access_token=token, expires_in_minutes=customer_token_ttl_minutes())
 
@@ -87,9 +94,15 @@ def staff_login(body: StaffLoginRequest, db: Session = Depends(get_db)) -> Staff
     digits = re.sub(r"\D+", "", body.phone.strip())
     if len(digits) != 10:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="invalid phone")
+    lock_key = f"staff_login:{digits}"
+    wait = seconds_until_unlocked(lock_key)
+    if wait > 0:
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, detail=f"too many attempts — try again in {int(wait // 60) + 1} min")
     row = db.query(Staff).filter(Staff.phone == digits, Staff.is_active.is_(True)).one_or_none()
     if row is None or not verify_password(body.password, row.password_hash):
+        record_failure(lock_key)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="wrong phone or password")
+    record_success(lock_key)
     s = get_settings()
     token = create_staff_token(staff_id=row.id, phone=row.phone)
     return StaffLoginResponse(

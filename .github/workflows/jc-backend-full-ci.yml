@@ -1,0 +1,45 @@
+# Complements jc-money-ci.yml (which only runs the 2 money/stock files + a
+# live prod integrity check). This runs the FULL backend test suite (117
+# tests as of writing) on every push/PR touching JC/backend, so a change to
+# e.g. void_service or debit_notes gets caught even if it doesn't touch
+# money-signed/stock-integrity code paths directly.
+name: JC Backend — Full Test Suite
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "JC/backend/**"
+      - ".github/workflows/jc-backend-full-ci.yml"
+  pull_request:
+    paths:
+      - "JC/backend/**"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: JC/backend
+    env:
+      # Import-time Settings() needs a DATABASE_URL; every test module builds
+      # its own isolated in-memory sqlite engine and never touches this one.
+      DATABASE_URL: "sqlite:///./ci_test.db"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: JC/backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Byte-compile sanity check
+        run: python -m py_compile $(find app -name "*.py")
+
+      - name: Run full test suite
+        run: python -m pytest -q

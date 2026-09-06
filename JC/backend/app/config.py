@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     s3_access_key_id: str = ""
     s3_secret_access_key: str = ""
 
+    # Observability — both optional; app runs fine with neither set.
+    sentry_dsn: str = ""
+    environment: str = "production"
+
     @field_validator("whatsapp_disable", mode="before")
     @classmethod
     def _parse_whatsapp_disable(cls, v: object) -> bool:

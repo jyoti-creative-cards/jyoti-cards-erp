@@ -132,9 +132,11 @@ def get_return_document(
         try:
             generate_customer_return_document(db, ret.id)
             db.commit()
-        except Exception:
+        except Exception as exc:
             db.rollback()
-            ret = db.get(CustomerReturn, return_id)
+            import logging
+            logging.getLogger(__name__).exception("return PDF generate failed for %s", return_id)
+            raise HTTPException(500, f"document generation failed: {exc}") from exc
     if not ret or not ret.document_key:
         raise HTTPException(404, "document not available")
     url = presigned_url(ret.document_key)

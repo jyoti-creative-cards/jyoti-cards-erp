@@ -2125,13 +2125,13 @@ const App = (() => {
       const p = await api(`/recycle-bin/catalog-products/${id}`);
       body = `<div class="review-grid">
         ${reviewRow("Product ID", p.our_product_id)}${reviewRow("Vendor", p.vendor_name)}
-        ${reviewRow("Buy Price", "₹" + p.buying_price)}${reviewRow("Deleted", fmtDate(p.deleted_at))}
+        ${reviewRow("Buy Price", fmtPersonMoney(p.buying_price))}${reviewRow("Deleted", fmtDate(p.deleted_at))}
       </div>`;
     } else if (type === "addon") {
       const a = await api(`/recycle-bin/addons/${id}`);
       body = `<div class="review-grid">
         ${reviewRow("Add-on ID", a.our_product_id)}${reviewRow("Vendor", a.vendor_name)}
-        ${reviewRow("Unit", a.unit)}${reviewRow("Buy Price", "₹" + a.buying_price)}
+        ${reviewRow("Unit", a.unit)}${reviewRow("Buy Price", fmtPersonMoney(a.buying_price))}
         ${reviewRow("Deleted", fmtDate(a.deleted_at))}
       </div>`;
     } else if (type === "receipt") {
@@ -2229,7 +2229,17 @@ const App = (() => {
   }
 
   async function purgeItem(type, id) {
-    if (!confirm("Permanently delete? This cannot be undone.")) return;
+    // Type-to-confirm — a plain confirm() was too easy to click through for a truly
+    // irreversible, admin-only action that can wipe historical accounting records.
+    const typed = prompt(
+      `Permanently delete this ${type.replace(/_/g, " ")}? This CANNOT be undone and is not the same as moving to the recycle bin.\n\nType DELETE to confirm:`,
+      "",
+    );
+    if (typed === null) return;
+    if (typed.trim().toUpperCase() !== "DELETE") {
+      toast("Not deleted — you must type DELETE to confirm", "error");
+      return;
+    }
     const path = RESTORE_PATHS[type] || `${type}s`;
     try {
       await api(`/recycle-bin/${path}/${id}`, { method: "DELETE" });

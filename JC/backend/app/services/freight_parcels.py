@@ -69,6 +69,11 @@ def sync_bill_freight_on_edit(
             return
         if entry:
             if entry.freight_agent_id != bill.freight_agent_id:
+                # Stale/orphaned entry pointing at a different agent than the bill
+                # now carries — clear it, then fall through to post a fresh charge
+                # against the correct agent below. Previously this branch cleared
+                # the entry and returned without reposting, so the pending due
+                # never made it onto the (correct) agent's ledger/statement.
                 remove_charge_for_bill(db, bill.id)
                 entry = None
             else:
@@ -76,7 +81,8 @@ def sync_bill_freight_on_edit(
                 entry.notes = customer_name or entry.notes
                 db.flush()
                 recompute_balance_due(db, entry.freight_agent_id)
-        elif bill.freight_agent_id and new_amt > 0:
+                return
+        if not entry and bill.freight_agent_id and new_amt > 0:
             agent = db.get(FreightAgent, bill.freight_agent_id)
             if agent:
                 post_freight_charge(
@@ -174,13 +180,25 @@ def reassign_parcel(
     return bill
 
 
-def _parcel_dict(db: Session, bill: CustomerBill, agents: dict[int, str]) -> dict:
-    customer = db.get(Customer, bill.customer_id)
-    lines = (
-        db.query(CustomerBillLine)
-        .filter(CustomerBillLine.bill_id == bill.id)
-        .all()
-    )
+def _parcel_dict(
+    db: Session,
+    bill: CustomerBill,
+    agents: dict[int, str],
+    *,
+    customer: Optional[Customer] = None,
+    lines: Optional[list] = None,
+) -> dict:
+    # Both batch-fetched by the caller (list_parcels) to avoid N+1 queries — kept as
+    # optional lookups here (falling back to a single fetch) so other callers of this
+    # helper still work unchanged.
+    if customer is None:
+        customer = db.get(Customer, bill.customer_id)
+    if lines is None:
+        lines = (
+            db.query(CustomerBillLine)
+            .filter(CustomerBillLine.bill_id == bill.id)
+            .all()
+        )
     line_rows = [
         {
             "our_product_id": ln.our_product_id,
@@ -239,9 +257,11 @@ def list_parcels(
         q = q.filter(CustomerBill.freight_picked_at.isnot(None))
     # NB: "pending" is an actionable backlog (awaiting pickup), not a daily log — never
     # day-scope it away, or a bill created yesterday and still unpicked silently
-    # disappears from the default "Today" dispatch queue. Only "picked"/"all" (already
-    # actioned / full history) are meaningful to scope by day.
-    if day == "today" and status != "pending":
+    # disappears from the default "Today" dispatch queue. "all" mixes pending + picked,
+    # so day-scoping it would silently reintroduce that same bug for old pending parcels
+    # viewed via the "All" tab — only a pure "picked" (fully actioned) view is meaningful
+    # to scope by day.
+    if day == "today" and status == "picked":
         local_now = datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Kolkata"))
         start_local = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
         day_start = start_local.astimezone(timezone.utc)
@@ -255,25 +275,30 @@ def list_parcels(
             db.query(FreightAgent).filter(FreightAgent.id.in_(agent_ids)).all() if agent_ids else []
         )
     }
-    # city names
+    # Batch-fetch everything the loop needs up front — avoids one Customer + one
+    # CustomerBillLine query per row (was O(n) round trips for n parcels).
     from app.models.city import City
 
-    city_ids = set()
-    cust_map = {}
-    for b in rows:
-        c = db.get(Customer, b.customer_id)
-        if c:
-            cust_map[b.customer_id] = c
-            if c.city_id:
-                city_ids.add(c.city_id)
+    bill_ids = [b.id for b in rows]
+    customer_ids = {b.customer_id for b in rows}
+    cust_map = {
+        c.id: c
+        for c in (db.query(Customer).filter(Customer.id.in_(customer_ids)).all() if customer_ids else [])
+    }
+    city_ids = {c.city_id for c in cust_map.values() if c.city_id}
     cities = {
         c.id: c.name
         for c in (db.query(City).filter(City.id.in_(city_ids)).all() if city_ids else [])
     }
+    lines_by_bill: dict[int, list] = {}
+    if bill_ids:
+        for ln in db.query(CustomerBillLine).filter(CustomerBillLine.bill_id.in_(bill_ids)).all():
+            lines_by_bill.setdefault(ln.bill_id, []).append(ln)
+
     out = []
     for b in rows:
-        d = _parcel_dict(db, b, agents)
         c = cust_map.get(b.customer_id)
+        d = _parcel_dict(db, b, agents, customer=c, lines=lines_by_bill.get(b.id, []))
         if c and c.city_id:
             d["customer_city"] = cities.get(c.city_id)
         if c:

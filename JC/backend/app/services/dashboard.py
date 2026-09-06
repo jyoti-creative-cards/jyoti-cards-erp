@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session
 
 from app.models.activity_log import ActivityLog
 from app.models.freight_agent import FreightAgent
+from app.services.ap_ledger import ap_dues_total
+from app.services.ar_ledger import ar_dues_total
 from app.services.biz_date import ist_day_bounds_utc
 from app.services.money import mag
 
@@ -48,7 +50,10 @@ def build_dashboard(db: Session) -> dict:
               (SELECT COUNT(*) FROM jc_catalog_products p
                  LEFT JOIN jc_stock_balances b ON b.catalog_product_id = p.id
                  WHERE p.is_active IS TRUE AND p.deleted_at IS NULL
-                   AND COALESCE(b.quantity_on_hand, 0) <= 10) AS low_stock,
+                   AND COALESCE(b.quantity_on_hand, 0) <= 10) AS low_stock_products,
+              (SELECT COUNT(*) FROM jc_addon_products a
+                 WHERE a.is_active IS TRUE AND a.deleted_at IS NULL
+                   AND a.quantity_on_hand <= a.low_stock_threshold) AS low_stock_addons,
               (SELECT COALESCE(SUM(grand_total), 0) FROM jc_customer_bills
                  WHERE deleted_at IS NULL
                    AND created_at >= :day_start AND created_at <= :day_end) AS sales_total,
@@ -73,62 +78,22 @@ def build_dashboard(db: Session) -> dict:
     vendor_orders = int(row.vo_open or 0)
     returns_recent = int(row.returns_recent or 0)
     returns_today = int(row.returns_today or 0)
-    low_count = int(row.low_stock or 0)
+    low_count = int(row.low_stock_products or 0) + int(row.low_stock_addons or 0)
     sales_total = Decimal(str(row.sales_total or 0))
     sales_count = int(row.sales_count or 0)
     purchase_count = int(row.purchase_count or 0)
     cash_in = mag(row.cash_in_raw)
     cash_out = mag(row.cash_out_raw)
 
-    # —— 2) AR dues (one join query) ——
-    ar_rows = db.execute(
-        text(
-            """
-            SELECT c.id, c.business_name, ci.name AS city_name, SUM(e.amount) AS outstanding
-            FROM jc_ar_ledger_entries e
-            JOIN jc_customers c ON c.id = e.customer_id AND c.deleted_at IS NULL
-            LEFT JOIN jc_cities ci ON ci.id = c.city_id
-            WHERE e.deleted_at IS NULL
-            GROUP BY c.id, c.business_name, ci.name
-            HAVING SUM(e.amount) > 0
-            ORDER BY SUM(e.amount) DESC
-            """
-        )
-    ).all()
-    ar_due_parties = [
-        {
-            "customer_id": int(r.id),
-            "customer_label": f"{r.business_name} — {r.city_name}" if r.city_name else r.business_name,
-            "outstanding": _fmt(r.outstanding),
-        }
-        for r in ar_rows
-    ]
-    ar_outstanding = sum((Decimal(str(r.outstanding or 0)) for r in ar_rows), Decimal("0")).quantize(Decimal("0.01"))
+    # —— 2) AR dues — canonical helper, same number Home/Finance/Collect tab must show ——
+    ar_totals = ar_dues_total(db)
+    ar_due_parties = ar_totals["parties"]
+    ar_outstanding = Decimal(str(ar_totals["total"]))
 
-    # —— 3) AP dues (one join query) ——
-    ap_rows = db.execute(
-        text(
-            """
-            SELECT v.id, v.business_name, ci.name AS city_name, SUM(e.amount) AS outstanding
-            FROM jc_ap_ledger_entries e
-            JOIN jc_vendors v ON v.id = e.vendor_id AND v.deleted_at IS NULL
-            LEFT JOIN jc_cities ci ON ci.id = v.city_id
-            WHERE e.deleted_at IS NULL
-            GROUP BY v.id, v.business_name, ci.name
-            HAVING SUM(e.amount) > 0
-            ORDER BY SUM(e.amount) DESC
-            """
-        )
-    ).all()
-    ap_due_parties = [
-        {
-            "vendor_id": int(r.id),
-            "vendor_label": f"{r.business_name} — {r.city_name}" if r.city_name else r.business_name,
-            "outstanding": _fmt(r.outstanding),
-        }
-        for r in ap_rows
-    ]
-    ap_outstanding = sum((Decimal(str(r.outstanding or 0)) for r in ap_rows), Decimal("0")).quantize(Decimal("0.01"))
+    # —— 3) AP dues — canonical helper, same number Home/Finance/Pay tab must show ——
+    ap_totals = ap_dues_total(db)
+    ap_due_parties = ap_totals["parties"]
+    ap_outstanding = Decimal(str(ap_totals["total"]))
 
     # —— 4) Freight from cached balance_due ——
     freight_agents = (

@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.deps import AuthContext, require_admin, require_permission
+from app.deps import AuthContext, require_permission
 from app.models.expense import Expense
 from app.services.activity import log_from_auth
 
@@ -32,6 +32,7 @@ class ExpensePublic(BaseModel):
     amount: str
     reference: Optional[str] = None
     freight_agent_id: Optional[int] = None
+    addon_product_id: Optional[int] = None
     created_by_name: str
 
     @classmethod
@@ -44,6 +45,7 @@ class ExpensePublic(BaseModel):
             amount=format(row.amount, "f"),
             reference=row.reference,
             freight_agent_id=row.freight_agent_id,
+            addon_product_id=row.addon_product_id,
             created_by_name=row.created_by_name,
         )
 
@@ -54,7 +56,10 @@ def list_expenses(
     to_date: Optional[date] = Query(None),
     category: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(require_admin),
+    # Was require_admin while create_expense (below) only needs finance.write —
+    # a finance.write-only staffer could add an expense but not see the list
+    # that immediately renders after (finance.js loadExpenses), a hard 403.
+    auth: AuthContext = Depends(require_permission("finance.write")),
 ):
     q = db.query(Expense)
     if from_date:
@@ -97,12 +102,20 @@ def create_expense(
 
 
 @router.delete("/{expense_id}", status_code=204)
-def delete_expense(expense_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_admin)):
+def delete_expense(
+    expense_id: int,
+    db: Session = Depends(get_db),
+    # Same fix as list_expenses above — finance.js shows the Delete button to
+    # anyone who can see the list, with no isAdmin gate, so this 403'd the same way.
+    auth: AuthContext = Depends(require_permission("finance.write")),
+):
     row = db.get(Expense, expense_id)
     if not row:
         raise HTTPException(404, "expense not found")
     if row.freight_agent_id:
         raise HTTPException(400, "cannot delete freight-linked expense")
+    if row.addon_product_id:
+        raise HTTPException(400, "cannot delete add-on stock expense — adjust the add-on's stock ledger instead")
     log_from_auth(
         db,
         auth,

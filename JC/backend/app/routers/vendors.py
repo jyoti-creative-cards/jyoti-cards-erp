@@ -230,11 +230,14 @@ def create_vendor(body: VendorCreate, db: Session = Depends(get_db), auth: AuthC
             db.execute(text("SELECT COALESCE(MAX(vendor_number), 0) + 1 FROM jc_vendors")).scalar()
         ),
     )
+    requested_vendor_number = body.vendor_number
     db.add(row)
     try:
         db.flush()
     except IntegrityError:
         db.rollback()
+        if requested_vendor_number is not None and db.query(Vendor).filter(Vendor.vendor_number == requested_vendor_number).first():
+            raise HTTPException(status.HTTP_409_CONFLICT, detail=f"vendor # {requested_vendor_number} already in use") from None
         raise HTTPException(status.HTTP_409_CONFLICT, detail="phone already registered") from None
     if body.opening_balance_due and float(body.opening_balance_due) > 0:
         from decimal import Decimal

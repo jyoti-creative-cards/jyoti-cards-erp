@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
@@ -53,7 +53,7 @@ def get_vendor_ap(
     vendor = db.get(Vendor, vendor_id)
     if not vendor or vendor.deleted_at:
         raise HTTPException(404, "vendor not found")
-    statement = build_ap_statement(db, vendor_id)
+    statement = build_ap_statement(db, vendor_id, auth=auth)
     opening = get_opening_balance(db, vendor_id)
     return ApVendorDetail(
         vendor_id=vendor_id,
@@ -128,6 +128,12 @@ def settle_vendor_ap(
         if not mode or not mode.is_active:
             raise HTTPException(400, "invalid payment mode")
         mode_name = mode.name
+    else:
+        # Mirrors accounts_receivable.py's settle — once modes are configured,
+        # don't let a client that skipped/failed the picker post a mode-less entry.
+        active_modes = db.query(PaymentMode).filter(PaymentMode.is_active.is_(True)).count()
+        if active_modes:
+            raise HTTPException(400, "select a payment mode")
 
     pay_day = body.value_date or today_ist()
     entry = post_payment_entry(
@@ -155,7 +161,7 @@ def settle_vendor_ap(
     )
     db.commit()
     db.refresh(entry)
-    ledger = build_ap_ledger(db, vendor_id)
+    ledger = build_ap_ledger(db, vendor_id, auth=auth)
     match = next((e for e in ledger if e["id"] == entry.id), None)
     if not match:
         raise HTTPException(500, "payment recorded but ledger entry missing")
@@ -188,6 +194,10 @@ def record_vendor_payment(
         if not mode or not mode.is_active:
             raise HTTPException(400, "invalid payment mode")
         mode_name = mode.name
+    else:
+        active_modes = db.query(PaymentMode).filter(PaymentMode.is_active.is_(True)).count()
+        if active_modes:
+            raise HTTPException(400, "select a payment mode")
 
     pay_day = body.value_date or today_ist()
     entry = post_payment_entry(
@@ -217,8 +227,8 @@ def record_vendor_payment(
     return {"ok": True, "message": f"Payment of ₹{amount} recorded for {vendor.business_name}"}
 
 
-def _ap_payment_out(db: Session, vendor_id: int, entry_id: int) -> ApLedgerEntryOut:
-    ledger = build_ap_ledger(db, vendor_id)
+def _ap_payment_out(db: Session, vendor_id: int, entry_id: int, auth: Optional[AuthContext] = None) -> ApLedgerEntryOut:
+    ledger = build_ap_ledger(db, vendor_id, auth=auth)
     match = next((e for e in ledger if e["id"] == entry_id), None)
     if not match:
         raise HTTPException(500, "ledger entry missing")
@@ -253,7 +263,7 @@ def reverse_ap_payment_endpoint(
         detail=f"reverse #{entry_id} — {body.reason}"[:500],
     )
     db.commit()
-    return _ap_payment_out(db, orig.vendor_id, entry.id)
+    return _ap_payment_out(db, orig.vendor_id, entry.id, auth=auth)
 
 
 @router.post("/payments/{entry_id}/void", response_model=ApLedgerEntryOut, status_code=status.HTTP_201_CREATED)
@@ -284,7 +294,7 @@ def void_ap_payment_endpoint(
         detail=f"void #{entry_id} — {body.reason}"[:500],
     )
     db.commit()
-    return _ap_payment_out(db, orig.vendor_id, entry.id)
+    return _ap_payment_out(db, orig.vendor_id, entry.id, auth=auth)
 
 
 @router.post("/upload-payment-receipt")

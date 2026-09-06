@@ -490,6 +490,8 @@ def get_order_document(
                 db.commit()
             except Exception:
                 db.rollback()
+                logger.exception("order PDF regen failed placement=%s", placement_id)
+                raise HTTPException(500, "document generation failed")
         if not placement.document_key:
             raise HTTPException(404, "document not available")
     url = presigned_url(placement.document_key)
@@ -513,6 +515,8 @@ def get_bill_document(
             db.commit()
         except Exception:
             db.rollback()
+            logger.exception("bill PDF regen failed bill=%s", bill_id)
+            raise HTTPException(500, "document generation failed")
         if not bill.document_key:
             raise HTTPException(404, "document not available")
     url = presigned_url(bill.document_key)

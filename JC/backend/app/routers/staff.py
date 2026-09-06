@@ -136,6 +136,13 @@ def update_staff(
     data = body.model_dump(exclude_unset=True)
     if "name" in data and data["name"]:
         row.name = data["name"].strip()
+    if "phone" in data and data["phone"]:
+        new_phone = _normalize_phone(data["phone"])
+        if new_phone != row.phone:
+            clash = db.query(Staff).filter(Staff.phone == new_phone, Staff.is_active.is_(True), Staff.id != staff_id).first()
+            if clash:
+                raise HTTPException(409, "phone already registered")
+            row.phone = new_phone
     if "permissions" in data and data["permissions"] is not None:
         row.permissions_json = dump_permissions(data["permissions"])
     if "is_active" in data and data["is_active"] is not None:
@@ -144,6 +151,27 @@ def update_staff(
     db.commit()
     db.refresh(row)
     return _to_public(row)
+
+
+@router.post("/{staff_id}/reset-password", dependencies=[Depends(require_admin)])
+def reset_staff_password(staff_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_admin)) -> dict:
+    row = db.get(Staff, staff_id)
+    if not row or not row.is_active:
+        raise HTTPException(404, "staff not found")
+    from app.services.passwords import generate_portal_password
+
+    plain = generate_portal_password()
+    row.password_hash = hash_password(plain)
+    wa_ok, wa_err = _send_whatsapp(row.name, row.phone, plain)
+    log_from_auth(db, auth, action="reset_password", entity_type="staff", entity_id=row.id, entity_label=row.name)
+    db.commit()
+    return {
+        "ok": True,
+        "whatsapp_sent": wa_ok,
+        "whatsapp_error": wa_err,
+        "temp_password": plain,
+        "message": "password reset" + (" and WhatsApp sent" if wa_ok else f" but WhatsApp failed: {wa_err}"),
+    }
 
 
 @router.delete("/{staff_id}", status_code=204, dependencies=[Depends(require_admin)])

@@ -89,6 +89,11 @@ def close_open_line(db: Session, line_id: int, reason: str | None = None) -> Ven
     row.status = "closed"
     if reason:
         row.close_reason = reason.strip()
+    # Zero out now that it's resolved — _get_or_create_open() reuses this same
+    # (vendor_id, catalog_product_id) row for the *next* pending order regardless
+    # of status. Leaving a stale non-zero quantity here means a brand-new order
+    # inherits this closed quantity on top of its own the moment it's re-opened.
+    row.quantity = 0
     return row
 
 
@@ -99,6 +104,8 @@ def cancel_open_line(db: Session, line_id: int, reason: str | None = None) -> Ve
     row.status = "cancelled"
     if reason:
         row.cancel_reason = reason.strip()
+    # Same reuse hazard as close_open_line — see comment there.
+    row.quantity = 0
     return row
 
 

@@ -35,6 +35,11 @@ const Vendors = (() => {
       vendors = await ctx.api(`/vendors${q ? "?search=" + encodeURIComponent(q) : ""}`, {}, 0);
       if (ctx.setVendors) ctx.setVendors(vendors);
       renderTable();
+    } catch (e) {
+      // Several callers (search debounce, tab switch) fire this without awaiting/
+      // catching — an API failure here used to be a silent unhandled rejection
+      // with the list just left stale and no explanation to the user.
+      ctx.toast?.(e.message || "Could not load vendors", "error");
     } finally {
       ctx.hideLoading?.();
     }
@@ -523,10 +528,11 @@ const Vendors = (() => {
               <div><label class="label">Alias</label><input id="vw-alias" class="input" value="${ctx.esc(wizardForm.alias || "")}" /></div>
             </div>
             <div><label class="label">City</label>
-              <select id="vw-city_id" class="input">
+              <select id="vw-city_id" class="input" onchange="Vendors.onWizardCityChange(this.value)">
                 <option value="">— Optional —</option>
                 ${cities.map(c => `<option value="${c.id}" ${wizardForm.city_id == c.id ? "selected" : ""}>${ctx.esc(cityOptionLabel(c))}</option>`).join("")}
               </select>
+              <div id="vw-city-hint">${cityRouteHint(wizardForm.city_id)}</div>
             </div>
             <div><label class="label">GST</label><input id="vw-gst_number" class="input" value="${ctx.esc(wizardForm.gst_number || "")}" maxlength="15" style="text-transform:uppercase;" /></div>
             <div><label class="label">Address</label><textarea id="vw-address" class="input" rows="2">${ctx.esc(wizardForm.address || "")}</textarea></div>
@@ -672,6 +678,7 @@ const Vendors = (() => {
             <option value="">— Optional —</option>
             ${cities.map(c => `<option value="${c.id}" ${v.city_id == c.id ? "selected" : ""}>${ctx.esc(cityOptionLabel(c))}</option>`).join("")}
           </select>
+          <div id="ve-city-hint">${cityRouteHint(v.city_id)}</div>
         </div>
         <div><label class="label">Contact person</label><input id="ve-person_name" class="input" value="${ctx.esc(v.person_name || "")}" /></div>
         <div><label class="label">Secondary Phone</label><input id="ve-secondary_phone" class="input" type="tel" maxlength="10" value="${ctx.esc(v.secondary_phone || "")}" placeholder="10 digits or blank" /></div>
@@ -699,7 +706,7 @@ const Vendors = (() => {
       </div>`;
     document.getElementById("vendor-edit-footer").innerHTML = `
       <button class="btn btn-secondary" onclick="Vendors.closeEdit()">Cancel</button>
-      <button class="btn btn-primary" style="flex:1;" onclick="Vendors.save()">Save Changes</button>`;
+      <button class="btn btn-primary" style="flex:1;" id="vendor-save-btn" onclick="Vendors.save()">Save Changes</button>`;
     document.getElementById("vendor-edit-modal").classList.remove("hidden");
   }
 
@@ -739,6 +746,9 @@ const Vendors = (() => {
       if (!Number.isFinite(discountPct) || discountPct < 0 || discountPct > 100) return ctx.toast("Discount % must be between 0 and 100", "error");
       if (!Number.isFinite(gstRatePct) || gstRatePct < 0 || gstRatePct > 100) return ctx.toast("GST rate % must be between 0 and 100", "error");
     }
+    const btn = document.getElementById("vendor-save-btn");
+    if (btn) btn.disabled = true;
+    ctx.showLoading?.();
     try {
       await ctx.api(`/vendors/${editingId}`, { method: "PATCH", body: JSON.stringify({
         business_name: business,
@@ -767,7 +777,12 @@ const Vendors = (() => {
       await load();
       ctx.toast("Vendor updated", "success");
       openDetail(id);
-    } catch (e) { ctx.toast(e.message, "error"); }
+    } catch (e) {
+      ctx.toast(e.message, "error");
+    } finally {
+      if (btn) btn.disabled = false;
+      ctx.hideLoading?.();
+    }
   }
 
   async function deleteVendor(id) {

@@ -2,15 +2,10 @@
 const Catalog = (() => {
   let ctx = {};
   let products = [];
-  let productsTotal = 0;
-  let productsOffset = 0;
-  const PAGE_SIZE = 60;
   let addons = [];
-  let viewMode = "grid";
   let wizardStep = 1;
   let wizardVendorId = null;
   let wizardRows = [];
-  let wizardSelectedRowIdx = 0;
   let editingId = null;
   let editReturnTo = null;
   let wizardCreatedProducts = [];
@@ -19,15 +14,6 @@ const Catalog = (() => {
 
   const MAX_ALTERNATIVES = 3;
   const STEP_LABELS = ["Product", "Price", "Create"];
-
-  const CATALOG_COLS = [
-    { key: "our_product_id", label: "Product ID", get: p => p.our_product_id },
-    { key: "vendor", label: "Vendor", get: p => `${p.vendor_name || ""} ${p.vendor_city || ""}` },
-    { key: "category", label: "Category", get: p => p.category || "" },
-    { key: "buying_price", label: "Buy Price", get: p => p.buying_price || "" },
-    { key: "selling_price", label: "Sell Price", get: p => p.selling_price || "" },
-    { key: "_actions", label: "", filterable: false, sortable: false },
-  ];
 
   let _rowCounter = 0;
   function newRowKey() { return `row-${++_rowCounter}`; }
@@ -165,12 +151,6 @@ const Catalog = (() => {
     return wizardRows.filter(r => r.our_product_id.trim() && r.vendor_product_id.trim());
   }
 
-  function productImage(p) {
-    const url = (p.image_urls && p.image_urls[0]) || "";
-    if (url) return `<img src="${ctx.esc(url)}" alt="" class="catalog-card-img" />`;
-    return `<div class="catalog-card-img catalog-card-img-empty">No image</div>`;
-  }
-
   function init(context) {
     ctx = context;
     // List UI lives in Products hub; register no-op for legacy TableUtils callers.
@@ -189,13 +169,6 @@ const Catalog = (() => {
     // Live hub is Products
     if (typeof Products !== "undefined" && Products.refreshHub) await Products.refreshHub();
   }
-
-  function loadMore() { /* legacy no-op */ }
-  function setViewMode() { /* legacy no-op */ }
-  function render() { /* legacy no-op */ }
-
-  function renderGrid() { /* legacy — Products hub owns list */ }
-  function renderTable() { /* legacy — Products hub owns list */ }
 
   async function openDetail(id) {
     if (typeof Products !== "undefined" && Products.openProductDetail) {
@@ -309,8 +282,9 @@ const Catalog = (() => {
     wizardStep = 1;
     wizardVendorId = presetVendorId || null;
     wizardRows = [emptyWizardRow()];
-    wizardSelectedRowIdx = 0;
     wizardCreatedProducts = [];
+    products = [];
+    _loadVendorProducts(wizardVendorId);
     document.getElementById("catalog-wizard")?.classList.remove("hidden");
     loadAddons().then(renderWizard);
   }
@@ -455,34 +429,6 @@ const Catalog = (() => {
       <button class="btn btn-primary" style="flex:1;" onclick="Catalog.wizardNext()">Review →</button>`;
   }
 
-  function allProductOptions(excludeOurId) {
-    const batch = filledWizardRows()
-      .filter(r => r.our_product_id !== excludeOurId)
-      .map(r => ({ value: r.our_product_id, label: `${r.our_product_id} (new)` }));
-    const existing = products
-      .filter(p => p.our_product_id !== excludeOurId)
-      .map(p => ({ value: p.our_product_id, label: `${p.our_product_id}${p.category ? ` (${p.category})` : ""}` }));
-    return [...batch, ...existing];
-  }
-
-  function viceVersaPreview(row) {
-    const ours = row.our_product_id;
-    const alts = (row.alternative_our_product_ids || []).filter(Boolean);
-    if (!alts.length) return '<p style="color:var(--muted);font-size:13px;">No bidirectional links yet</p>';
-    const lines = alts.map(alt => `
-      <div class="review-row"><span>${ctx.esc(ours)} ↔ ${ctx.esc(alt)}</span><span class="badge badge-blue">linked</span></div>`);
-    const mirrored = filledWizardRows().filter(r => {
-      if (r.our_product_id === ours) return false;
-      return (r.alternative_our_product_ids || []).includes(ours);
-    });
-    mirrored.forEach(r => {
-      if (!alts.includes(r.our_product_id)) {
-        lines.push(`<div class="review-row"><span>${ctx.esc(r.our_product_id)} ↔ ${ctx.esc(ours)}</span><span class="badge badge-green">mirror</span></div>`);
-      }
-    });
-    return `<div class="review-grid">${lines.join("")}</div>`;
-  }
-
   function renderWizardStep3(body, footer) {
     const vendor = catalogVendors.find(v => v.id == wizardVendorId);
     const filled = filledWizardRows();
@@ -576,6 +522,19 @@ const Catalog = (() => {
 
   function setWizardVendor(val) {
     wizardVendorId = val ? parseInt(val, 10) : null;
+    _loadVendorProducts(wizardVendorId);
+  }
+
+  /** Populate the `products` cache used by allProductOptions()/checkWizardDuplicates()'s
+   * fallback — without this, both silently no-op against an always-empty array. */
+  async function _loadVendorProducts(vendorId) {
+    if (!vendorId) { products = []; return; }
+    try {
+      const res = await ctx.api(`/catalog/products?vendor_id=${vendorId}&limit=200`, {}, 0);
+      products = res?.items || (Array.isArray(res) ? res : []);
+    } catch (_) {
+      products = [];
+    }
   }
 
   function addWizardRow() {
@@ -656,62 +615,6 @@ const Catalog = (() => {
     renderWizard();
   }
 
-  function setWizardSelectedRow(idx) {
-    wizardSelectedRowIdx = idx;
-    renderWizard();
-  }
-
-  function setWizardAlt(rowIdx, slot, value) {
-    const row = wizardRows[rowIdx];
-    if (!row) return;
-    const prev = row.alternative_our_product_ids[slot] || "";
-    const next = [...row.alternative_our_product_ids];
-    while (next.length <= slot) next.push("");
-    next[slot] = value;
-    row.alternative_our_product_ids = next.filter((_, i) => i <= slot || next[i]).slice(0, MAX_ALTERNATIVES);
-
-    if (prev && prev !== value) mirrorAltRemove(row.our_product_id, prev);
-    if (value && value !== row.our_product_id) mirrorAltAdd(value, row.our_product_id);
-    renderWizard();
-  }
-
-  function mirrorAltAdd(targetOurId, sourceOurId) {
-    const target = wizardRows.find(r => r.our_product_id === targetOurId);
-    if (!target) return;
-    const alts = [...(target.alternative_our_product_ids || [])].filter(Boolean);
-    if (!alts.includes(sourceOurId) && alts.length < MAX_ALTERNATIVES) {
-      alts.push(sourceOurId);
-      target.alternative_our_product_ids = alts.slice(0, MAX_ALTERNATIVES);
-    }
-  }
-
-  function mirrorAltRemove(sourceOurId, removedAlt) {
-    const target = wizardRows.find(r => r.our_product_id === removedAlt);
-    if (!target) return;
-    target.alternative_our_product_ids = (target.alternative_our_product_ids || []).filter(a => a !== sourceOurId);
-  }
-
-  function addWizardAddon(rowIdx) {
-    const row = wizardRows[rowIdx];
-    if (!row) return;
-    row.addon_links = [...(row.addon_links || []), { addon_our_product_id: "", quantity: 1 }];
-    renderWizard();
-  }
-
-  function setWizardAddon(rowIdx, linkIdx, field, value) {
-    const row = wizardRows[rowIdx];
-    if (!row || !row.addon_links[linkIdx]) return;
-    if (field === "quantity") row.addon_links[linkIdx].quantity = Math.max(1, parseInt(value, 10) || 1);
-    else row.addon_links[linkIdx].addon_our_product_id = value;
-  }
-
-  function removeWizardAddon(rowIdx, linkIdx) {
-    const row = wizardRows[rowIdx];
-    if (!row) return;
-    row.addon_links = row.addon_links.filter((_, i) => i !== linkIdx);
-    renderWizard();
-  }
-
   function validateStep1() {
     if (!wizardVendorId) return ctx.toast("Select a vendor", "error"), false;
     const filled = filledWizardRows();
@@ -785,7 +688,6 @@ const Catalog = (() => {
       const ok = await (ctx.checkBackend ? ctx.checkBackend() : Promise.resolve(true));
       if (!ok) throw new Error("Backend not reachable — start JC backend on port 8003");
 
-      const filled = filledWizardRows();
       const items = [];
       for (let ri = 0; ri < filled.length; ri++) {
         const row = filled[ri];
@@ -854,6 +756,20 @@ const Catalog = (() => {
       if (!p || !p.id) throw new Error("Product not found");
       const altOptions = (Array.isArray(optRes) ? optRes : []).filter(x => x.id !== p.id);
 
+      // Keep already-linked add-ons in the dropdown even if /addons list failed or filtered them out
+      const linkedAddons = (p.addon_links || []).map(l => ({
+        our_product_id: l.addon_our_product_id,
+        name: l.addon_name || l.addon_our_product_id,
+      }));
+      for (const la of linkedAddons) {
+        if (la.our_product_id && !addons.some(a => String(a.our_product_id).toLowerCase() === String(la.our_product_id).toLowerCase())) {
+          addons.push(la);
+        }
+      }
+      const addonWarn = !addons.length
+        ? `<p style="margin:6px 0 0;font-size:12px;color:#b45309;">No add-ons available. Create them under Products → Add-ons first.</p>`
+        : "";
+
     const imgPreview = p.image_urls && p.image_urls[0]
       ? `<img id="ce-preview" src="${ctx.esc(p.image_urls[0])}" alt="" style="width:80px;height:80px;object-fit:cover;border-radius:8px;border:1px solid var(--border);" />`
       : `<div id="ce-preview" style="width:80px;height:80px;border-radius:8px;background:#f1f5f9;border:1px dashed var(--border);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--muted);">No image</div>`;
@@ -909,12 +825,13 @@ const Catalog = (() => {
               <div style="display:flex;gap:8px;margin-bottom:8px;" data-addon-row="${i}">
                 <select class="input ce-addon-id" style="flex:1;">
                   <option value="">—</option>
-                  ${addons.map(a => `<option value="${ctx.esc(a.our_product_id)}" ${l.addon_our_product_id === a.our_product_id ? "selected" : ""}>${ctx.esc(a.our_product_id)}</option>`).join("")}
+                  ${addons.map(a => `<option value="${ctx.esc(a.our_product_id)}" ${String(l.addon_our_product_id).toLowerCase() === String(a.our_product_id).toLowerCase() ? "selected" : ""}>${ctx.esc(a.our_product_id)}${a.name && a.name !== a.our_product_id ? ` — ${ctx.esc(a.name)}` : ""}</option>`).join("")}
                 </select>
                 <input class="input ce-addon-qty" type="number" min="1" style="width:72px;" value="${l.quantity}" />
               </div>`).join("")}
           </div>
           <button type="button" class="btn btn-secondary btn-sm" onclick="Catalog.addEditAddonRow()">+ Add link</button>
+          ${addonWarn}
         </div>
       </div>`;
 
@@ -936,7 +853,7 @@ const Catalog = (() => {
     div.style.cssText = "display:flex;gap:8px;margin-bottom:8px;";
     div.innerHTML = `
       <select class="input ce-addon-id" style="flex:1;"><option value="">—</option>
-        ${addons.map(a => `<option value="${ctx.esc(a.our_product_id)}">${ctx.esc(a.our_product_id)}</option>`).join("")}
+        ${addons.map(a => `<option value="${ctx.esc(a.our_product_id)}">${ctx.esc(a.our_product_id)}${a.name && a.name !== a.our_product_id ? ` — ${ctx.esc(a.name)}` : ""}</option>`).join("")}
       </select>
       <input class="input ce-addon-qty" type="number" min="1" style="width:72px;" value="1" />`;
     wrap.appendChild(div);
@@ -1000,7 +917,10 @@ const Catalog = (() => {
         }),
       });
       const id = editingId;
-      const ret = editReturnTo === "stock" ? "stock" : "catalog";
+      const ret = editReturnTo === "stock" ? "stock"
+        : editReturnTo === "addons" ? "addons"
+        : editReturnTo === "alts" ? "alts"
+        : "catalog";
       closeEdit();
       ctx.invalidateCache?.("/stock");
       ctx.invalidateCache?.("/catalog");
@@ -1036,10 +956,9 @@ const Catalog = (() => {
   }
 
   return {
-    init, load, loadMore, setViewMode, renderGrid, renderTable, openDetail, openWizard, openWizardForVendor, closeWizard,
+    init, load, openDetail, openWizard, openWizardForVendor, closeWizard,
     wizardBack, wizardNext, createAll, setWizardVendor, addWizardRow, maybeAddWizardRow, removeWizardRows, deleteWizardRow,
     toggleWizardRow, toggleAllWizardRows, updateWizardRow, setWizardImages, applyBulkFields,
-    setWizardSelectedRow, setWizardAlt, addWizardAddon, setWizardAddon, removeWizardAddon,
     openEdit, closeEdit, saveEdit, addEditAddonRow, deleteProduct, setVendors,
   };
 })();

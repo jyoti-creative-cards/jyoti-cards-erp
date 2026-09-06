@@ -82,7 +82,17 @@ class FreightReassignIn(BaseModel):
     freight_charges: Optional[Decimal] = Field(None, ge=0)
 
 
-def _pub(row: FreightAgent, totals: Optional[dict] = None) -> FreightAgentPublic:
+def _can_see_freight_money(auth: AuthContext) -> bool:
+    """Freight dues are 3rd-party financial exposure, not just order data — a purely
+    read-only staffer (vendor_orders.read/customer_orders.read with no write access
+    anywhere) shouldn't see it, even though they need this endpoint's id/name list
+    to render the agent picker while dispatching."""
+    if auth.is_admin:
+        return True
+    return any(auth.has(p) for p in ("ap.read", "ap.write", "finance.write", "vendor_orders.write", "customer_orders.write"))
+
+
+def _pub(row: FreightAgent, totals: Optional[dict] = None, *, auth: Optional[AuthContext] = None) -> FreightAgentPublic:
     t = totals or {}
     outstanding = t.get("outstanding")
     if outstanding is None:
@@ -93,12 +103,13 @@ def _pub(row: FreightAgent, totals: Optional[dict] = None) -> FreightAgentPublic
     if t:
         due = Decimal(str(t.get("due", due))).quantize(Decimal("0.01"))
         advance = Decimal(str(t.get("advance_left", advance))).quantize(Decimal("0.01"))
+    hide = auth is not None and not _can_see_freight_money(auth)
     return FreightAgentPublic(
         id=row.id,
         name=row.name,
-        balance_due=format(due, "f"),
-        advance_left=format(advance, "f"),
-        outstanding=format(outstanding, "f"),
+        balance_due="—" if hide else format(due, "f"),
+        advance_left="—" if hide else format(advance, "f"),
+        outstanding="—" if hide else format(outstanding, "f"),
         notes=row.notes,
     )
 
@@ -135,7 +146,7 @@ def list_freight_agents(
         if (r.balance_due or Decimal("0")).quantize(Decimal("0.01")) != totals["outstanding"]:
             r.balance_due = totals["outstanding"]
             dirty = True
-        out.append(_pub(r, totals))
+        out.append(_pub(r, totals, auth=auth))
     if dirty:
         db.commit()
     return out
@@ -196,7 +207,7 @@ def reassign_freight_parcel(
     log_from_auth(
         db, auth, action="freight_reassign", entity_type="customer_bill",
         entity_id=bill.id, entity_label=bill.bill_number,
-        detail=f"→ agent {bill.freight_agent_id}",
+        detail=f"→ agent {bill.freight_agent_id} ₹{bill.freight_charges}",
     )
     db.commit()
     return {

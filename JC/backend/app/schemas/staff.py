@@ -25,6 +25,7 @@ class StaffCreate(BaseModel):
 
 class StaffUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=200)
+    phone: Optional[str] = Field(None, min_length=10, max_length=15)
     permissions: Optional[List[str]] = None
     is_active: Optional[bool] = None
 

@@ -61,6 +61,7 @@ class StockLedgerEntry(BaseModel):
 
 class StockProductDetail(StockProductSummary):
     alternatives: List[dict] = []
+    addon_links: List[dict] = []
     quantity_pending: int = 0
     quantity_sold: int = 0
     ledger: List[StockLedgerEntry] = []
@@ -192,6 +193,7 @@ class ReceiptLineForBill(BaseModel):
     catalog_product_id: int
     our_product_id: str
     vendor_product_id: Optional[str] = None
+    year_group: Optional[str] = None
     quantity_received: int
     buying_price: str
     unit: Optional[str] = None

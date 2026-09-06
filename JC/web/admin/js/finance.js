@@ -3,6 +3,7 @@ const Finance = (() => {
   let ctx = {};
   let vendors = [];
   let customers = [];
+  let needsActionLoadFailed = false;
   let expenses = [];
   let overview = null;
   let currentVendor = null;
@@ -537,16 +538,20 @@ const Finance = (() => {
     const el = document.getElementById("finance-needs");
     if (!el) return;
     ctx.showLoading?.();
+    needsActionLoadFailed = false;
     try {
       const [ap, ar, fr] = await Promise.all([
-        ctx.api("/accounts-payable", {}, 0).catch(() => []),
-        ctx.api("/accounts-receivable", {}, 0).catch(() => []),
-        ctx.api("/freight-agents", {}, 0).catch(() => []),
+        ctx.api("/accounts-payable", {}, 0).catch(() => { needsActionLoadFailed = true; return []; }),
+        ctx.api("/accounts-receivable", {}, 0).catch(() => { needsActionLoadFailed = true; return []; }),
+        ctx.api("/freight-agents", {}, 0).catch(() => { needsActionLoadFailed = true; return []; }),
         loadDuesSilent(),
       ]);
       vendors = Array.isArray(ap) ? ap : [];
       customers = Array.isArray(ar) ? ar : [];
       freightAgents = Array.isArray(fr) ? fr : [];
+      if (needsActionLoadFailed) {
+        ctx.toast?.("Some dues failed to load — the list below may be incomplete", "error");
+      }
       refreshChipCounts();
       renderHubChrome();
       renderHubStrip();
@@ -587,6 +592,18 @@ const Finance = (() => {
     const frDue = freightAgents.filter(a => Number(a.balance_due) > 0 && matchSearch(a.name));
     const total = apDue.length + arDue.length + frDue.length;
 
+    if (!total && needsActionLoadFailed && !hubSearch.trim()) {
+      // Don't claim "All clear" when zero is really "some fetches failed" —
+      // that reads as a false all-clear and can mask real outstanding dues.
+      el.innerHTML = HubUI.emptyState({
+        title: "Couldn't load dues",
+        sub: "One or more of AP / AR / freight failed to load — this is not a confirmed all-clear.",
+        ctaHtml: `<div class="home-clear-actions">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.loadNeedsAction()">Retry</button>
+        </div>`,
+      });
+      return;
+    }
     if (!total) {
       el.innerHTML = HubUI.emptyState({
         title: hubSearch.trim() ? "No matches" : "All clear",
@@ -892,16 +909,22 @@ const Finance = (() => {
               const title = d.our_product_id
                 ? `${ctx.esc(d.our_product_id)} × ${d.quantity ?? "—"} (${ctx.esc(d.direction || d.note_type || "")})`
                 : `Value (${ctx.esc(d.direction || "adj.")})`;
+              const canDn = ctx.canWrite?.("vendor_orders") || ctx.isAdmin?.();
               return `<div class="fin-dn-row">
                 <div><strong>${title}</strong>${d.notes ? `<div class="fin-dn-note">${ctx.esc(d.notes)}</div>` : ""}
-                <div class="fin-muted">${d.created_at ? new Date(d.created_at).toLocaleString() : ""}</div></div>
+                <div class="fin-muted">${d.created_at ? new Date(d.created_at).toLocaleString() : ""}</div>
+                ${canDn && d.id ? `<div style="margin-top:6px;">
+                  <button type="button" class="btn btn-ghost btn-sm" onclick="Finance.editDebitNote(${b.receipt_id},${d.id})">Edit</button>
+                  <button type="button" class="btn btn-ghost btn-sm" onclick="Finance.voidDebitNote(${b.receipt_id},${d.id})">Void</button>
+                </div>` : ""}
+                </div>
                 <strong class="${effect < 0 ? "is-pos" : "is-neg"}">${fmtPrice(effect)}</strong>
               </div>`;
             }).join("")}
           </div>` : `<p class="fin-muted">No debit notes on this bill.</p>`}
-          <div style="margin-top:12px;">
+          ${(ctx.canWrite?.("vendor_orders") || ctx.isAdmin?.()) ? `<div style="margin-top:12px;">
             <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.addDebitNote(${b.receipt_id})">+ Bill correction</button>
-          </div>
+          </div>` : ""}
         </div>` : ""}
       </div>`;
     }).join("")}</div>`;
@@ -921,6 +944,20 @@ const Finance = (() => {
         loadOverviewSilent();
       },
     });
+  }
+
+  async function editDebitNote(receiptId, noteId) {
+    await addDebitNote(receiptId);
+    if (typeof DebitNotes !== "undefined" && DebitNotes.editFromList) {
+      DebitNotes.editFromList(noteId);
+    }
+  }
+
+  async function voidDebitNote(receiptId, noteId) {
+    await addDebitNote(receiptId);
+    if (typeof DebitNotes !== "undefined" && DebitNotes.voidFromList) {
+      await DebitNotes.voidFromList(noteId);
+    }
   }
 
   function renderApLedgerFlat() {
@@ -1023,10 +1060,17 @@ const Finance = (() => {
     if (title) title.textContent = "Pay";
     const footerBtn = document.querySelector("#settle-modal .btn-primary");
     if (footerBtn) footerBtn.textContent = "Pay";
+    let paymentModesLoadFailed = false;
     try {
       paymentModes = await ctx.api("/payment-modes?active_only=true", {}, 30000) || [];
-    } catch (_) { paymentModes = []; }
-    const modeOpts = paymentModes.length
+    } catch (e) {
+      paymentModes = [];
+      paymentModesLoadFailed = true;
+      ctx.toast?.(e.message || "Could not load payment modes", "error");
+    }
+    const modeOpts = paymentModesLoadFailed
+      ? `<p style="font-size:13px;color:var(--danger);margin:0 0 12px;">Couldn't load payment modes — <a href="#" onclick="event.preventDefault();Finance.openSettle()">retry</a>. You can still pay; you'll be asked for a mode if one is required.</p>`
+      : paymentModes.length
       ? `<label class="label">Payment mode</label>
         <select class="input" id="settle-mode" style="margin-bottom:12px;width:100%;">
           <option value="">— Select mode —</option>
@@ -1496,10 +1540,17 @@ const Finance = (() => {
     if (!arDetail) return;
     if (!ctx.isAdmin?.() && !ctx.can?.("ar.write")) return ctx.toast?.("Not permitted", "error");
     const outstanding = Number(arDetail.outstanding) || 0;
+    let paymentModesLoadFailed = false;
     try {
       paymentModes = await ctx.api("/payment-modes?active_only=true", {}, 30000) || [];
-    } catch (_) { paymentModes = []; }
-    const modeOpts = paymentModes.length
+    } catch (e) {
+      paymentModes = [];
+      paymentModesLoadFailed = true;
+      ctx.toast?.(e.message || "Could not load payment modes", "error");
+    }
+    const modeOpts = paymentModesLoadFailed
+      ? `<p style="font-size:13px;color:var(--danger);margin:0 0 12px;">Couldn't load payment modes — <a href="#" onclick="event.preventDefault();Finance.openArSettle()">retry</a>. You can still collect; you'll be asked for a mode if one is required.</p>`
+      : paymentModes.length
       ? `<label class="label">Payment mode</label>
         <select class="input" id="ar-settle-mode" style="margin-bottom:12px;width:100%;">
           <option value="">— Select mode —</option>
@@ -2310,12 +2361,12 @@ const Finance = (() => {
   }
 
   return {
-    init, showHub, showQuickEntry, showArApHub, quickVendorPayment, quickCustomerPayment, quickAddExpense,
+    init, showHub, showQuickEntry, showArApHub, quickVendorPayment, quickCustomerPayment, quickAddExpense, loadNeedsAction,
     setHubMode, setChip, setHubSearch, setBrowseSection, setShowSettled, setReportTab,
     showAp, showAr, showExpenses, showRevenue, showCost, showPnl, showFreight,
     showRouteCollections, openRouteCollection, openRouteCustomer, backRouteCustomers, printRouteCollection,
     showApFromVendor, showArFromCustomer, openVendorAp, openEntry, openSettle, closeSettle, submitSettle, setSettleFile, onApSettleAmount,
-    setApTab, toggleBill, addDebitNote,
+    setApTab, toggleBill, addDebitNote, editDebitNote, voidDebitNote,
     openCustomerAr, setArTab, openArSettle, closeArSettle, submitArSettle, onArSettleAmount,
     undoArPayment, undoApPayment,
     shareArStatement, shareApStatement,

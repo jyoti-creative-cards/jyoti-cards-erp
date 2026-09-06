@@ -31,7 +31,13 @@ def bill_series_preview(db: Session, series_id: int) -> dict:
 
 
 def allocate_bill_number(db: Session, series_id: int) -> str:
-    """Always advance the series cursor. Cancelled bills keep their numbers (no reuse)."""
+    """Always advance the series cursor. Cancelled bills keep their numbers (no reuse).
+
+    with_for_update() makes advancing *this* series' cursor race-safe, but can't
+    stop two different (overlapping) active series from minting the same string —
+    create_bill_series() blocks that at creation time; this is the last-resort
+    check in case an overlapping pair already existed before that guard shipped.
+    """
     row = (
         db.query(BillSeries)
         .filter(BillSeries.id == series_id)
@@ -43,9 +49,11 @@ def allocate_bill_number(db: Session, series_id: int) -> str:
     next_num = row.current_num + 1 if row.current_num >= row.start_num else row.start_num
     if next_num > row.end_num:
         raise HTTPException(400, "bill series exhausted — select a new series")
+    bill_number = f"{row.prefix}{next_num}"
+    _assert_bill_number_free(db, bill_number)
     row.current_num = next_num
     db.flush()
-    return f"{row.prefix}{next_num}"
+    return bill_number
 
 
 def _assert_bill_number_free(db: Session, bill_number: str, *, exclude_bill_id: int | None = None) -> None:

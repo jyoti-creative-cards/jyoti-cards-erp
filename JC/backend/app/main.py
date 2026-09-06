@@ -11,8 +11,10 @@ from fastapi.staticfiles import StaticFiles
 
 from app.db.session import init_db
 from app.routers import addons, activity, auth, catalog, customers, lookups, recycle_bin, routes, staff, stats, stock, vendor_orders, vendors, debit_notes, accounts_payable, shop, customer_orders, customer_returns, bill_series, freight_agents, expenses, accounts_receivable, documents, finance, reports, dashboard, share, export, payment_modes
+from app.services.observability import setup_observability
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+# Real format (with request-id correlation) is installed by setup_observability()
+# below, once the app object exists.
 
 _cors = (os.environ.get("CORS_ORIGINS") or "").strip()
 if not _cors or _cors == "*":
@@ -34,6 +36,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="JC Customer API", version="1.0.0", lifespan=lifespan)
+
+setup_observability(app)
 
 app.add_middleware(
     CORSMiddleware,

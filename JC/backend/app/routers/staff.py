@@ -19,6 +19,7 @@ from app.schemas.staff import (
     StaffCreateResponse,
     StaffPublic,
     StaffUpdate,
+    StaffUpdateResponse,
 )
 from app.services.activity import log_from_auth
 from app.services.passwords import hash_password
@@ -103,6 +104,10 @@ def create_staff(
         phone=phone,
         password_hash=hash_password(plain),
         permissions_json=perms,
+        # New rows never need the legacy vendor_orders.* -> customer_orders.*/returns.*
+        # backfill — mark them already-migrated so a future deploy's one-time pass
+        # never re-expands permissions an admin intentionally narrowed.
+        legacy_order_perms_migrated=True,
     )
     db.add(row)
     try:
@@ -123,19 +128,20 @@ def create_staff(
     return StaffCreateResponse(**pub.model_dump(), whatsapp_sent=wa_ok, whatsapp_error=wa_err, temp_password=plain)
 
 
-@router.patch("/{staff_id}", response_model=StaffPublic, dependencies=[Depends(require_admin)])
+@router.patch("/{staff_id}", response_model=StaffUpdateResponse, dependencies=[Depends(require_admin)])
 def update_staff(
     staff_id: int,
     body: StaffUpdate,
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_admin),
-) -> StaffPublic:
+) -> StaffUpdateResponse:
     row = db.get(Staff, staff_id)
     if not row or not row.is_active:
         raise HTTPException(404, "staff not found")
     data = body.model_dump(exclude_unset=True)
     if "name" in data and data["name"]:
         row.name = data["name"].strip()
+    phone_changed = False
     if "phone" in data and data["phone"]:
         new_phone = _normalize_phone(data["phone"])
         if new_phone != row.phone:
@@ -143,6 +149,7 @@ def update_staff(
             if clash:
                 raise HTTPException(409, "phone already registered")
             row.phone = new_phone
+            phone_changed = True
     if "permissions" in data and data["permissions"] is not None:
         row.permissions_json = dump_permissions(data["permissions"])
     if "is_active" in data and data["is_active"] is not None:
@@ -150,7 +157,25 @@ def update_staff(
     log_from_auth(db, auth, action="update", entity_type="staff", entity_id=row.id, entity_label=row.name)
     db.commit()
     db.refresh(row)
-    return _to_public(row)
+
+    wa_ok: Optional[bool] = None
+    wa_err: Optional[str] = None
+    if phone_changed:
+        # Login id just changed — the old number simply stops working with no
+        # explanation otherwise, so tell the staff member their new login number
+        # on the *new* number (mirrors create/reset-password's own notification).
+        from app.integrations.whatsapp.client import send_text
+
+        result = send_text(
+            row.phone,
+            f"Hi {row.name}, your login number for Jyoti Creative Cards ERP was updated. "
+            f"Please use {row.phone} to log in from now on.",
+        )
+        wa_ok = bool(result.get("ok"))
+        wa_err = None if wa_ok else str(result.get("error") or "whatsapp failed")
+
+    pub = _to_public(row)
+    return StaffUpdateResponse(**pub.model_dump(), whatsapp_sent=wa_ok, whatsapp_error=wa_err)
 
 
 @router.post("/{staff_id}/reset-password", dependencies=[Depends(require_admin)])

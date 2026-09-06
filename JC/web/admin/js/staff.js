@@ -114,7 +114,7 @@ const StaffMgmt = (() => {
       id: "sell",
       label: "Sell",
       hint: "Customers + selling orders",
-      keys: ["customers.read", "customers.write", "vendor_orders.read", "vendor_orders.write", "catalog.read", "addons.read"],
+      keys: ["customers.read", "customers.write", "customer_orders.read", "customer_orders.write", "returns.read", "returns.write", "catalog.read", "addons.read"],
     },
     {
       id: "buy",
@@ -254,8 +254,14 @@ const StaffMgmt = (() => {
         const phone = document.getElementById("sm-phone")?.value.trim();
         const body = { name, permissions: collectPerms() };
         if (phone) body.phone = phone.replace(/\D/g, "");
-        await ctx.api(`/staff/${editingId}`, { method: "PATCH", body: JSON.stringify(body) });
-        ctx.toast("Staff updated", "success");
+        const res = await ctx.api(`/staff/${editingId}`, { method: "PATCH", body: JSON.stringify(body) });
+        if (res.whatsapp_sent === true) {
+          ctx.toast("Staff updated — login number change sent via WhatsApp", "success");
+        } else if (res.whatsapp_sent === false) {
+          alert(`Staff updated.\nCould not WhatsApp the new login number (${res.whatsapp_error || "unknown reason"}) — tell them yourself: ${res.phone}`);
+        } else {
+          ctx.toast("Staff updated", "success");
+        }
       } else {
         const phone = document.getElementById("sm-phone")?.value.trim();
         if (!/^\d{10}$/.test(phone.replace(/\D/g, ""))) return ctx.toast("Phone must be 10 digits", "error");

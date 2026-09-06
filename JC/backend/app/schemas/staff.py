@@ -36,6 +36,14 @@ class StaffCreateResponse(StaffPublic):
     temp_password: str = ""
 
 
+class StaffUpdateResponse(StaffPublic):
+    # Only meaningful when this update changed `phone` (the staff member's login id) —
+    # None otherwise, so the admin knows whether the affected staffer was told their
+    # login number changed.
+    whatsapp_sent: Optional[bool] = None
+    whatsapp_error: Optional[str] = None
+
+
 class StaffLoginRequest(BaseModel):
     phone: str
     password: str

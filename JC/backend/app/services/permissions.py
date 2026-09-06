@@ -13,11 +13,11 @@ PERMISSION_GROUPS = [
     # Label intentionally doesn't say "permanently delete" — every purge endpoint is
     # hard-gated to require_admin server-side regardless of this permission (see
     # recycle_bin.py), so recycle.write only ever grants restore, never purge.
-    ("Recycle Bin", [("recycle.read", "View recycle bin"), ("recycle.write", "Restore items (permanent delete is admin-only)")]),
+    ("Recycle Bin", [("recycle.read", "View recycle bin"), ("recycle.write", "Restore routes/cities/customers/vendors/catalog & add-ons only — money-relevant restores (bills, receipts, debit notes, staff) and permanent delete are always admin-only")]),
     ("Vendor Orders", [("vendor_orders.read", "View vendor orders"), ("vendor_orders.write", "Place & edit vendor orders")]),
     ("Customer Orders", [("customer_orders.read", "View customer orders"), ("customer_orders.write", "Place & bill customer orders")]),
     ("Returns", [("returns.read", "View customer returns"), ("returns.write", "Create customer returns")]),
-    ("Stock", [("stock.read", "View stock"), ("stock.write", "Receive, edit, adjust & bill stock; edit selling prices")]),
+    ("Stock", [("stock.read", "View stock"), ("stock.write", "Receive, edit & bill stock (stock adjustment and selling-price edits are always owner/admin-only)")]),
     ("Costs", [("costs.read", "See our buying price / cost & margins")]),
     ("Finance", [("finance.write", "Record vendor/customer payments & add expenses — no totals or reports")]),
     ("Accounts Receivable", [

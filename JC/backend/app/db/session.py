@@ -171,38 +171,53 @@ def _migrate_legacy_staff_permissions() -> None:
     (see git history of app/services/permissions.py). That runtime expansion was
     removed because it silently over-granted brand-new staff too. Bake the old
     behavior permanently into any row that predates the split so nobody already
-    relying on it loses access; new rows saved after this migration runs are
-    unaffected (they only ever get what was explicitly checked)."""
+    relying on it loses access.
+
+    Made provably one-time via `legacy_order_perms_migrated`: without it, the old
+    `has_split` guard ("skip if the row already has some customer_orders./returns.
+    permission") re-expanded *any* row with only vendor_orders.* on every single
+    process boot (every deploy) forever — including a "Buy"-preset staffer or one an
+    admin deliberately narrowed back down to vendor-only, silently undoing that
+    narrowing within one deploy cycle. New rows are created with this flag already
+    True (see routers/staff.py create_staff) so this backfill never touches them."""
     from app.models.staff import Staff
     from app.services.permissions import ALL_STAFF_PERMISSIONS, dump_permissions
 
+    with engine.begin() as conn:
+        stmt = (
+            "ALTER TABLE jc_staff ADD COLUMN legacy_order_perms_migrated BOOLEAN DEFAULT 0"
+            if _is_sqlite
+            else "ALTER TABLE jc_staff ADD COLUMN IF NOT EXISTS legacy_order_perms_migrated BOOLEAN NOT NULL DEFAULT false"
+        )
+        _exec_sql(conn, stmt, critical=False)
+
     with Session(engine) as session:
-        rows = session.query(Staff).all()
+        rows = session.query(Staff).filter(
+            (Staff.legacy_order_perms_migrated.is_(False)) | (Staff.legacy_order_perms_migrated.is_(None))
+        ).all()
         changed = 0
         for row in rows:
             try:
                 data = json.loads(row.permissions_json or "[]")
             except (TypeError, ValueError):
-                continue
-            if not isinstance(data, list):
-                continue
-            perms = {str(x) for x in data if str(x) in ALL_STAFF_PERMISSIONS}
+                data = None
+            perms = {str(x) for x in data if str(x) in ALL_STAFF_PERMISSIONS} if isinstance(data, list) else set()
             has_split = any(p.startswith("customer_orders.") or p.startswith("returns.") for p in perms)
-            if has_split:
-                continue  # already explicit — never touch
             expanded = set(perms)
-            if "vendor_orders.read" in expanded:
-                expanded.add("customer_orders.read")
-                expanded.add("returns.read")
-            if "vendor_orders.write" in expanded:
-                expanded.add("customer_orders.write")
-                expanded.add("returns.write")
+            if not has_split:
+                if "vendor_orders.read" in expanded:
+                    expanded.add("customer_orders.read")
+                    expanded.add("returns.read")
+                if "vendor_orders.write" in expanded:
+                    expanded.add("customer_orders.write")
+                    expanded.add("returns.write")
             if expanded != perms:
                 row.permissions_json = dump_permissions(sorted(expanded))
-                changed += 1
+            row.legacy_order_perms_migrated = True
+            changed += 1
         if changed:
             session.commit()
-            log.info("migrated legacy vendor_orders permissions -> explicit split keys for %d staff row(s)", changed)
+            log.info("legacy vendor_orders permission backfill checked/closed out %d staff row(s)", changed)
 
 
 def _migrate_vendor_order_unique_open() -> None:

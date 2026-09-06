@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.deps import AuthContext, require_permission
+from app.deps import AuthContext, require_admin, require_permission
 from app.models.expense import Expense
 from app.services.activity import log_from_auth
 
@@ -105,9 +105,13 @@ def create_expense(
 def delete_expense(
     expense_id: int,
     db: Session = Depends(get_db),
-    # Same fix as list_expenses above — finance.js shows the Delete button to
-    # anyone who can see the list, with no isAdmin gate, so this 403'd the same way.
-    auth: AuthContext = Depends(require_permission("finance.write")),
+    # Expense is hard-delete only (no deleted_at / recycle-bin recovery), and the
+    # accountant/finance.write-only role is explicitly meant to be entry-only with no
+    # delete capability. finance.write alone let that role permanently destroy an
+    # expense via a direct API call even though the UI never renders a Delete button
+    # for them (they're routed to the button-less showQuickEntry() screen) — matches
+    # this app's "void/purge is admin-only regardless of staff permissions" rule.
+    auth: AuthContext = Depends(require_admin),
 ):
     row = db.get(Expense, expense_id)
     if not row:

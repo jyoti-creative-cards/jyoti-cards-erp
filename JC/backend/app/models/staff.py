@@ -23,3 +23,7 @@ class Staff(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Set once _migrate_legacy_staff_permissions has processed this row, so the
+    # one-time vendor_orders.* -> customer_orders.*/returns.* backfill can never
+    # silently re-run on a row an admin has since deliberately narrowed back down.
+    legacy_order_perms_migrated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")

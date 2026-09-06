@@ -447,9 +447,16 @@ def render_vendor_placement_pdf(
     story.append(_party_blocks(our, vendor))
     story.append(Spacer(1, 0.35 * cm))
     story.append(_vendor_order_table(lines, image_urls))
-    total = sum(float(ln.get("line_total") or 0) for ln in lines)
+    # line_total is "—" (not a number) when the viewer lacks costs.read — cost_visibility
+    # redacts per-line buying-price fields, so summing them here would either crash on the
+    # string or (worse, if silently coerced to 0 upstream) render a fake real-looking
+    # "Order Total ₹0" instead of an honest redaction.
+    try:
+        total_str = f"Rs. {sum(float(ln.get('line_total') or 0) for ln in lines):,.2f}"
+    except (TypeError, ValueError):
+        total_str = "—"
     story.append(Spacer(1, 0.3 * cm))
-    story.append(_totals_block([["Order Total", f"Rs. {total:,.2f}"]]))
+    story.append(_totals_block([["Order Total", total_str]]))
     story.append(Spacer(1, 0.5 * cm))
     story.append(Paragraph("Please supply the above items as per agreed rates. Add-ons are handled separately and are not listed here.", ParagraphStyle(
         "foot", parent=getSampleStyleSheet()["Normal"], fontSize=8, alignment=TA_CENTER, textColor=colors.HexColor("#64748b"),

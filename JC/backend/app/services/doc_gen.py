@@ -14,8 +14,10 @@ from app.models.customer_order import CustomerOrder, CustomerOrderLine, Customer
 from app.models.stock import StockReceipt, StockReceiptLine
 from app.models.vendor import Vendor
 from app.models.vendor_order import VendorOrderLine, VendorOrderPlacement
+from app.deps import AuthContext
 from app.services.biz_date import bill_invoice_date
 from app.services.catalog_addons import addon_snapshots_for_product, attach_addons_to_totals
+from app.services.cost_visibility import HIDDEN as HIDDEN_COST, can_see_cost
 from app.services.customer_bill_pdf import render_customer_bill_pdf
 from app.services.pdf_documents import render_customer_order_pdf, render_vendor_placement_pdf, render_vendor_receipt_pdf
 from app.services.storage import (
@@ -194,7 +196,7 @@ def _vendor_ctx(db: Session, vendor_id: int) -> tuple[Vendor, str | None]:
     return vendor, city_name
 
 
-def generate_vendor_placement_document(db: Session, placement_id: int) -> str | None:
+def generate_vendor_placement_document(db: Session, placement_id: int, auth: AuthContext | None = None) -> str | None:
     placement = db.get(VendorOrderPlacement, placement_id)
     if not placement:
         return None
@@ -208,6 +210,12 @@ def generate_vendor_placement_document(db: Session, placement_id: int) -> str | 
     vlines = db.query(VendorOrderLine).filter(VendorOrderLine.placement_id == placement.id).all()
     if not vlines:
         return None
+    # This PDF is regenerated fresh on every view (see callers), so redacting here per
+    # the current viewer's auth is safe — it was previously built straight from
+    # buying_price with no hide_cost() at all, so any staffer with just
+    # vendor_orders.read (which doesn't imply costs.read) could see our exact cost per
+    # unit for every vendor line, bypassing the redaction the rest of the app enforces.
+    show_cost = can_see_cost(auth)
     pdf_lines = []
     image_urls: dict[int, str | None] = {}
     for ln in vlines:
@@ -220,8 +228,8 @@ def generate_vendor_placement_document(db: Session, placement_id: int) -> str | 
             "vendor_product_id": prod.vendor_product_id if prod else "",
             "name": prod.vendor_product_id if prod else ln.our_product_id,
             "quantity": ln.quantity,
-            "unit_price": format(ln.buying_price, "f"),
-            "line_total": format(Decimal(str(ln.buying_price)) * ln.quantity, "f"),
+            "unit_price": format(ln.buying_price, "f") if show_cost else HIDDEN_COST,
+            "line_total": format(Decimal(str(ln.buying_price)) * ln.quantity, "f") if show_cost else HIDDEN_COST,
         })
     pdf = render_vendor_placement_pdf(
         placement_id=placement.id,
@@ -244,7 +252,7 @@ def generate_vendor_placement_document(db: Session, placement_id: int) -> str | 
     return key
 
 
-def generate_vendor_receipt_document(db: Session, receipt_id: int) -> str | None:
+def generate_vendor_receipt_document(db: Session, receipt_id: int, auth: AuthContext | None = None) -> str | None:
     receipt = db.get(StockReceipt, receipt_id)
     if not receipt:
         return None
@@ -255,13 +263,18 @@ def generate_vendor_receipt_document(db: Session, receipt_id: int) -> str | None
     total_only = receipt.total_billed_amount is not None and all(
         (ln.billed_amount or Decimal("0")) == 0 for ln in rlines
     )
+    # Regenerated fresh on every view (see callers) — see generate_vendor_placement_document
+    # for why redacting per the current viewer's auth here (instead of not at all) matters.
+    show_cost = can_see_cost(auth)
     pdf_lines = []
     image_urls: dict[int, str | None] = {}
     for ln in rlines:
         prod = db.get(CatalogProduct, ln.catalog_product_id)
         urls = presigned_urls(prod.image_keys or []) if prod else []
         image_urls[ln.catalog_product_id] = urls[0] if urls else None
-        if total_only:
+        if not show_cost:
+            line_amt_str = HIDDEN_COST
+        elif total_only:
             line_amt_str = "—"
         elif ln.billed_amount:
             line_amt_str = format(ln.billed_amount, "f")
@@ -274,7 +287,7 @@ def generate_vendor_receipt_document(db: Session, receipt_id: int) -> str | None
             "name": prod.vendor_product_id if prod else ln.our_product_id,
             "quantity_received": ln.quantity_received,
             "quantity_billed": ln.quantity_billed,
-            "unit_price": format(ln.buying_price, "f"),
+            "unit_price": format(ln.buying_price, "f") if show_cost else HIDDEN_COST,
             "line_total": line_amt_str,
         })
     from app.services.ap_ledger import receipt_bill_amount, receipt_debit_note_total, debit_note_payable_effect

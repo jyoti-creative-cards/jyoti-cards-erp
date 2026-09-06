@@ -1857,12 +1857,26 @@ const VendorOrders = (() => {
     return scored.map(x => x.p);
   }
 
+  // buying_price comes back as the literal string "—" (not a number, not null) when the
+  // viewer lacks costs.read (see cost_visibility.hide_cost). `Number("—") || 0` silently
+  // coerces that to a real 0, so a redacted price used to render as a plausible-looking
+  // "est. ₹0" total instead of an honest "unknown" — actively misleading, not just blank.
+  function priceOrNull(raw) {
+    if (raw == null || raw === "") return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  }
+
   function wizardCartTotal() {
-    return wizardLines.reduce((sum, l) => {
+    let anyUnknown = false;
+    let sum = 0;
+    for (const l of wizardLines) {
       const p = wizardProducts.find(x => x.id === l.catalog_product_id);
-      const price = p ? Number(p.buying_price) || 0 : 0;
-      return sum + price * (Number(l.quantity) || 0);
-    }, 0);
+      const price = p ? priceOrNull(p.buying_price) : 0;
+      if (price == null) { anyUnknown = true; continue; }
+      sum += price * (Number(l.quantity) || 0);
+    }
+    return anyUnknown ? null : sum;
   }
 
   function wizardCartQty() {
@@ -2023,7 +2037,7 @@ const VendorOrders = (() => {
         </div>`;
       footerEl.innerHTML = `
         <button class="btn btn-secondary" onclick="VendorOrders.wizardBack()">← Back</button>
-        <div class="vo-wiz-footer-mid">${wizardLines.length ? `${wizardLines.length} item${wizardLines.length === 1 ? "" : "s"} · est. ${fmtPrice(wizardCartTotal())}` : "Select at least one product"}</div>
+        <div class="vo-wiz-footer-mid">${wizardLines.length ? `${wizardLines.length} item${wizardLines.length === 1 ? "" : "s"}${(() => { const t = wizardCartTotal(); return t == null ? "" : ` · est. ${fmtPrice(t)}`; })()}` : "Select at least one product"}</div>
         <button class="btn btn-primary" ${wizardLines.length ? "" : "disabled"} onclick="VendorOrders.wizardNext()">Review →</button>`;
       return;
     }
@@ -2048,20 +2062,21 @@ const VendorOrders = (() => {
               ${wizardLines.map(l => {
                 const p = wizardProducts.find(x => x.id === l.catalog_product_id);
                 const img = p && p.image_urls && p.image_urls[0] ? p.image_urls[0] : "";
-                const lineTotal = p ? (Number(p.buying_price) || 0) * l.quantity : 0;
+                const price = p ? priceOrNull(p.buying_price) : null;
+                const lineTotal = price != null ? price * l.quantity : null;
                 return `<tr>
                   <td>${thumb(img)}</td>
                   <td><strong>${ctx.esc(p ? (p.vendor_product_id ? `${p.our_product_id} / (${p.vendor_product_id})` : p.our_product_id) : "")}</strong>${p?.category ? `<div class="vo-wiz-product-sub">${ctx.esc(p.category)}</div>` : ""}</td>
                   <td><strong>${l.quantity}</strong></td>
-                  <td>${p ? fmtPrice(p.buying_price) : "—"}</td>
-                  <td><strong>${fmtPrice(lineTotal)}</strong></td>
+                  <td>${price != null ? fmtPrice(price) : "—"}</td>
+                  <td><strong>${lineTotal != null ? fmtPrice(lineTotal) : "—"}</strong></td>
                 </tr>`;
               }).join("")}
             </tbody></table>
           </div>
           <div class="vo-wiz-review-total">
             <span>Estimated buy total</span>
-            <strong>${fmtPrice(total)}</strong>
+            <strong>${total == null ? "—" : fmtPrice(total)}</strong>
           </div>
           <label class="label" style="margin-top:16px;">Order date</label>
           <input type="date" class="input" style="width:100%;max-width:220px;margin-bottom:4px;" value="${ctx.esc(wizardPlacedOn || localToday())}" onchange="VendorOrders.setWizardPlacedOn(this.value)" />

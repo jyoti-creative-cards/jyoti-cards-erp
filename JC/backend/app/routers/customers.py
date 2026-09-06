@@ -48,6 +48,7 @@ def _row_to_public(
     opening_as_on=None,
     history: Optional[list] = None,
     outstanding: Optional[Decimal] = None,
+    show_ar: bool = True,
 ) -> CustomerPublic:
     # available_credit: only meaningful when a real (non-null, non-zero) limit is set
     if row.credit_limit is not None and row.credit_limit > Decimal("0") and outstanding is not None:
@@ -56,6 +57,14 @@ def _row_to_public(
         # track-only (limit=0): available = 0 - outstanding (informational, can be negative)
         available = Decimal("0") - outstanding
     else:
+        available = None
+    # ar.read gates AR outstanding/credit figures — there's a dedicated permission
+    # specifically so only accountant-type staff see "customer outstanding, ledger &
+    # statements" (permissions.py). Without this, any staffer with plain
+    # customers.read (needed just to browse the directory) or any order-taking staffer
+    # via the offline-order picker could see every customer's exact dues.
+    if not show_ar:
+        outstanding = None
         available = None
     return CustomerPublic(
         id=row.id,
@@ -70,7 +79,7 @@ def _row_to_public(
         route_id=row.route_id,
         city_name=city_name,
         route_name=route_name,
-        credit_limit=format(row.credit_limit, "f") if row.credit_limit is not None else None,
+        credit_limit=format(row.credit_limit, "f") if (show_ar and row.credit_limit is not None) else None,
         credit_override=row.credit_override,
         gst_number=row.gst_number,
         is_active=row.is_active,
@@ -90,8 +99,8 @@ def _row_to_public(
     )
 
 
-def _to_public(row: Customer, db: Session, include_history: bool = False) -> CustomerPublic:
-    return _to_public_many([row], db, include_history=include_history)[0]
+def _to_public(row: Customer, db: Session, include_history: bool = False, auth: Optional[AuthContext] = None) -> CustomerPublic:
+    return _to_public_many([row], db, include_history=include_history, auth=auth)[0]
 
 
 def _to_public_many(
@@ -99,10 +108,12 @@ def _to_public_many(
     db: Session,
     *,
     include_history: bool = False,
+    auth: Optional[AuthContext] = None,
 ) -> List[CustomerPublic]:
     """Batch city/route/opening lookups — avoids N+1 on list endpoints."""
     if not rows:
         return []
+    show_ar = bool(auth and (auth.is_admin or auth.has("ar.read") or auth.has("ar.write")))
 
     city_ids = {r.city_id for r in rows if r.city_id}
     route_ids = {r.route_id for r in rows if r.route_id}
@@ -169,6 +180,7 @@ def _to_public_many(
                 opening_as_on=opening.value_date if opening else None,
                 history=history,
                 outstanding=outstanding_val,
+                show_ar=show_ar,
             )
         )
     return out
@@ -200,9 +212,10 @@ def _route_from_city(db: Session, city_id: Optional[int]) -> Optional[int]:
     return city.route_id
 
 
-@router.get("", response_model=List[CustomerPublic], dependencies=[Depends(require_permission("customers.read"))])
+@router.get("", response_model=List[CustomerPublic])
 def list_customers(
     db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("customers.read")),
     search: Optional[str] = Query(None),
     city_id: Optional[int] = Query(None),
     route_id: Optional[int] = Query(None),
@@ -256,18 +269,22 @@ def list_customers(
             for c in (db.query(City).filter(City.id.in_(city_ids)).all() if city_ids else [])
         }
         rows = sort_parties_by_search(rows, search_clean, city_lookup=city_lookup)
-        return _to_public_many(rows, db)
+        return _to_public_many(rows, db, auth=auth)
     from sqlalchemy import nulls_last
     rows = q.order_by(nulls_last(Customer.party_number.asc()), Customer.business_name.asc()).all()
-    return _to_public_many(rows, db)
+    return _to_public_many(rows, db, auth=auth)
 
 
-@router.get("/{customer_id}", response_model=CustomerPublic, dependencies=[Depends(require_permission("customers.read"))])
-def get_customer(customer_id: int, db: Session = Depends(get_db)) -> CustomerPublic:
+@router.get("/{customer_id}", response_model=CustomerPublic)
+def get_customer(
+    customer_id: int,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("customers.read")),
+) -> CustomerPublic:
     row = db.get(Customer, customer_id)
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="customer not found")
-    return _to_public(row, db, include_history=True)
+    return _to_public(row, db, include_history=True, auth=auth)
 
 
 @router.get("/{customer_id}/ledger", response_model=EntityLedgerResponse, dependencies=[Depends(require_permission("customers.read"))])
@@ -336,7 +353,7 @@ def create_customer(body: CustomerCreate, db: Session = Depends(get_db), auth: A
         wa_ok, wa_err = _send_whatsapp(display_name, existing.phone, plain)
         log_from_auth(db, auth, action="create", entity_type="customer", entity_id=existing.id, entity_label=existing.business_name)
         db.commit()
-        pub = _to_public(existing, db)
+        pub = _to_public(existing, db, auth=auth)
         return CustomerCreateResponse(
             **pub.model_dump(), whatsapp_sent=wa_ok, whatsapp_error=wa_err, portal_password=plain
         )
@@ -387,7 +404,7 @@ def create_customer(body: CustomerCreate, db: Session = Depends(get_db), auth: A
     wa_ok, wa_err = _send_whatsapp(display_name, row.phone, plain)
     log_from_auth(db, auth, action="create", entity_type="customer", entity_id=row.id, entity_label=row.business_name)
     db.commit()
-    pub = _to_public(row, db)
+    pub = _to_public(row, db, auth=auth)
     return CustomerCreateResponse(
         **pub.model_dump(), whatsapp_sent=wa_ok, whatsapp_error=wa_err, portal_password=plain
     )
@@ -480,7 +497,7 @@ def update_customer(customer_id: int, body: CustomerUpdate, db: Session = Depend
     log_from_auth(db, auth, action="update", entity_type="customer", entity_id=row.id, entity_label=row.business_name, detail=summary)
     db.commit()
     db.refresh(row)
-    return _to_public(row, db)
+    return _to_public(row, db, auth=auth)
 
 
 @router.delete("/{customer_id}", status_code=204, dependencies=[Depends(require_permission("customers.write"))])
@@ -505,7 +522,7 @@ def restore_customer(customer_id: int, db: Session = Depends(get_db), auth: Auth
     log_from_auth(db, auth, action="restore", entity_type="customer", entity_id=row.id, entity_label=row.business_name)
     db.commit()
     db.refresh(row)
-    return _to_public(row, db)
+    return _to_public(row, db, auth=auth)
 
 
 @router.post("/{customer_id}/reset-password", dependencies=[Depends(require_permission("customers.write"))])

@@ -953,7 +953,7 @@ def get_receipt_document(
         raise HTTPException(404, "receipt not found")
     if storage_configured():
         try:
-            generate_vendor_receipt_document(db, receipt.id)
+            generate_vendor_receipt_document(db, receipt.id, auth)
             db.commit()
             db.refresh(receipt)
         except Exception as exc:

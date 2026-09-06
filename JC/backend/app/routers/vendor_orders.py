@@ -1689,7 +1689,7 @@ def get_placement_document(
     if storage_configured():
         try:
             # Always regenerate so PDF matches current lines (fixes stale empty PDFs)
-            generate_vendor_placement_document(db, placement.id)
+            generate_vendor_placement_document(db, placement.id, auth)
             db.commit()
             db.refresh(placement)
         except Exception as exc:

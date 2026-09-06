@@ -26,8 +26,6 @@ const VendorOrders = (() => {
   let wizardVendorSearch = "";
   let wizardVendorsCache = [];
   let wizardPlacedOn = "";
-  let editingOpenLine = null;
-  let vendorProductsCache = [];
 
   function localToday() {
     const n = new Date();
@@ -59,10 +57,6 @@ const VendorOrders = (() => {
 
   function isQueueMode() {
     return isTodayMode();
-  }
-
-  function openKindOf(o) {
-    return o.open_kind || (o.status === "to_bill" ? "to_bill" : "to_receive");
   }
 
   function init(context) { ctx = context; }
@@ -342,62 +336,6 @@ const VendorOrders = (() => {
     return `<span class="vo-chevron ${open ? "is-open" : ""}" aria-hidden="true"></span>`;
   }
 
-  function renderOpenHubCard(o, canWrite) {
-    const kind = openKindOf(o);
-    const isBill = kind === "to_bill";
-    const expandKey = isBill ? `open-bill-${o.vendor_id}` : `open-${o.vendor_id}`;
-    const open = hubExpandedVendorId === `${kind}-${o.vendor_id}`;
-    const cache = hubExpandCache[expandKey];
-    const primaryOnclick = isBill ? `VendorOrders.billVendor(${o.vendor_id})` : `VendorOrders.receiveVendor(${o.vendor_id})`;
-    const more = [
-      { label: open ? "Hide lines" : "Show lines", onclick: `VendorOrders.toggleHubVendor(${o.vendor_id}, '${isBill ? "open-bill" : "open"}', ${o.id || 0})` },
-      { label: "Open vendor", onclick: `VendorOrders.openDetail(${o.id || 0}, '${isBill ? "received" : "placed"}', ${o.vendor_id})` },
-    ];
-    if (!isBill && canWrite) {
-      more.push({ label: "Cancel Order", onclick: `VendorOrders.cancelVendorOpen(${o.vendor_id})`, danger: true });
-    }
-    const meta = isBill
-      ? `${o.line_count} shipment${o.line_count === 1 ? "" : "s"} pending · <strong>${o.total_quantity}</strong> qty to bill`
-      : `${o.line_count} products · <strong>${o.total_quantity}</strong> to receive`;
-    return OrdersUI.partyCard({
-      title: o.vendor_label,
-      meta: hubCardMeta(o, meta),
-      pillHtml: OrdersUI.pill(isBill ? "To bill" : "To receive", isBill ? "info" : "warn"),
-      primaryLabel: isBill ? "Bill vendor" : "Receive goods",
-      primaryOnclick,
-      moreItems: more,
-      open,
-      // One click: row runs the next action; lines via More → Show lines
-      rowOnclick: canWrite ? primaryOnclick : `VendorOrders.openDetail(${o.id || 0}, '${isBill ? "received" : "placed"}', ${o.vendor_id})`,
-      canWrite,
-      expandHtml: open
-        ? `<div id="vo-hub-expand-${kind}-${o.vendor_id}">${cache ? (isBill ? renderOpenBillExpand(cache, canWrite) : renderOpenExpand(cache, canWrite)) : `<p class="vo-muted" style="margin:0;padding:8px 0;">Loading…</p>`}</div>`
-        : "",
-    });
-  }
-
-  function renderOpenExpand(detail, canWrite) {
-    const lines = detail.lines || [];
-    if (!lines.length) return `<p class="vo-muted" style="margin:0;">Nothing pending.</p>`;
-    return `<table class="data vo-hub-table"><thead><tr>
-      <th></th><th>Product</th><th>Qty</th><th>Price</th>
-    </tr></thead><tbody>
-      ${lines.map(l => {
-        const img = (l.image_urls && l.image_urls[0]) || "";
-        return `<tr>
-          <td>${thumb(img, "vo-thumb-sm")}</td>
-          <td><strong>${ctx.esc(ctx.productIdLabel(l))}</strong></td>
-          <td><strong>${l.quantity}</strong></td>
-          <td>${fmtPrice(l.buying_price)}</td>
-        </tr>`;
-      }).join("")}
-    </tbody></table>
-    ${canWrite ? `<div class="vo-hub-expand-actions">
-      <button class="btn btn-primary" onclick="VendorOrders.receiveVendor(${detail.vendor_id})">Receive Order</button>
-      <button class="btn btn-danger" onclick="VendorOrders.cancelVendorOpen(${detail.vendor_id})">Cancel Order</button>
-    </div>` : ""}`;
-  }
-
   function renderOpenBillExpand(detail, canWrite) {
     const receipts = detail.receipts || [];
     if (!receipts.length) return `<p class="vo-muted" style="margin:0;">Nothing to bill.</p>`;
@@ -457,33 +395,6 @@ const VendorOrders = (() => {
         ? `<div id="vo-hub-expand-${o.vendor_id}">${cache ? renderOpenBillExpand(cache, canWrite) : `<p class="vo-muted" style="margin:0;padding:8px 0;">Loading…</p>`}</div>`
         : "",
     });
-  }
-
-  function renderReceivedExpand(order, canWrite) {
-    const placements = (order.placements || []).slice().sort((a, b) => new Date(b.placed_at) - new Date(a.placed_at));
-    if (!placements.length) return `<p class="vo-muted" style="margin:0;">No receives yet.</p>`;
-    return placements.map(p => {
-      const lines = (order.aggregated_lines || [])
-        .flatMap(al => (al.breakdown || []).filter(b => b.placement_id === p.id).map(b => ({ ...b, our_product_id: al.our_product_id })));
-      const plines = lines.length ? lines : [];
-      return `<div class="vo-nested-card" style="margin-bottom:10px;">
-        <div class="vo-hub-main" style="justify-content:space-between;width:100%;">
-          <div>
-            <div class="vo-hub-title" style="font-size:14px;">${p.order_receipt_number ? `Receipt ${ctx.esc(p.order_receipt_number)}` : "Receive"} · ${new Date(p.placed_at).toLocaleString()}</div>
-            <div class="vo-hub-meta">${p.line_count} lines · ${p.total_quantity || "—"} qty${p.notes ? ` · ${ctx.esc(p.notes)}` : ""}</div>
-          </div>
-          ${canWrite && p.receipt_id ? `<div class="vo-hub-actions" onclick="event.stopPropagation()">
-            <button class="btn btn-secondary btn-sm" onclick="Stock.openEditReceipt(${p.receipt_id})">Edit</button>
-          </div>` : ""}
-        </div>
-        ${plines.length ? `<table class="data vo-hub-table"><thead><tr><th>Product</th><th>Qty</th><th>Unbilled</th></tr></thead><tbody>
-          ${plines.map(l => `<tr><td>${ctx.esc(ctx.productIdLabel(l))}</td><td>${l.quantity}</td><td>${l.quantity_remaining != null ? l.quantity_remaining : "—"}</td></tr>`).join("")}
-        </tbody></table>` : ""}
-        ${p.bill_file_url ? `<p style="margin:8px 0 0;"><a class="btn btn-secondary btn-sm" href="${ctx.esc(p.bill_file_url)}" target="_blank" rel="noopener">View receipt file</a></p>` : ""}
-      </div>`;
-    }).join("") + (canWrite ? `<div class="vo-hub-expand-actions">
-      <button class="btn btn-primary" onclick="VendorOrders.billVendor(${order.vendor_id})">Bill Order</button>
-    </div>` : "");
   }
 
   function renderPlacedExpand(order, canWrite) {
@@ -823,25 +734,10 @@ const VendorOrders = (() => {
         // there's no real order id to look up here — always source from StockReceipt.
         currentOrder = await ctx.api(`/stock/vendor-order/${detailVendorId}/billed`, {}, 0);
       } else if (b === "received") {
-        // Same story for "received" (unbilled) — build the placements/aggregated_lines
-        // shape renderDetail expects from the StockReceipt-backed endpoint instead of a
-        // VendorOrder id that will never exist for this bucket either.
-        const recv = await ctx.api(`/stock/vendor-order/${detailVendorId}/received`, {}, 0);
-        const receipts = recv.receipts || [];
-        currentOrder = {
-          vendor_id: detailVendorId,
-          vendor_label: recv.vendor_label,
-          placements: receipts.map(r => ({
-            id: r.receipt_id,
-            receipt_id: r.receipt_id,
-            order_receipt_number: r.order_receipt_number,
-            placed_at: r.received_at,
-            total_quantity: r.total_quantity,
-            line_count: r.line_count,
-            notes: null,
-          })),
-          aggregated_lines: [],
-        };
+        // Same story for "received" (unbilled) — sourced from the dedicated
+        // per-line detail endpoint (StockReceipt-backed) instead of a VendorOrder id
+        // that will never exist for this bucket either.
+        currentOrder = await ctx.api(`/stock/vendor-order/${detailVendorId}/received-detail`, {}, 0);
       } else if (currentOrder && currentOrder.bucket === b) {
         // already loaded
       } else {
@@ -934,38 +830,6 @@ const VendorOrders = (() => {
               : "",
           });
         }).join("") : HubUI.emptyState({ title: "No order activity", sub: "No order activity for this vendor yet." })}</div>`;
-      return;
-    }
-
-    if (currentBucket === "open" && openOrder) {
-      const lines = openOrder.lines || [];
-      const totalPending = lines.reduce((s, l) => s + (l.quantity || 0), 0);
-      setDetailHeader(openOrder.vendor_label, "Yet to receive — receive goods when they arrive, or cancel with a note", "Open");
-      el.innerHTML = `
-        ${detailStatPills([
-          ["Products", String(lines.length)],
-          ["Pending qty", String(totalPending)],
-        ])}
-        ${canWrite && lines.length ? `<div class="ui-toolbar vo-detail-toolbar">
-          <div class="vo-detail-toolbar-copy"><strong>${lines.length}</strong> products · <strong>${totalPending}</strong> pending — use Receive above</div>
-          <button class="btn btn-danger btn-sm" onclick="VendorOrders.cancelAllOpenLines()">Cancel Order</button>
-        </div>` : ""}
-        <div class="ord-hub-list">${lines.length ? lines.map(line => {
-          const img = (line.image_urls && line.image_urls[0]) || "";
-          return HubUI.partyCard({
-            title: line.our_product_id,
-            meta: `${thumb(img)} ${fmtPrice(line.buying_price)}${line.unit ? ` / ${ctx.esc(line.unit)}` : ""} · Pending <strong>${line.quantity}</strong>`,
-            pillHtml: HubUI.pill(String(line.quantity), "warn"),
-            primaryLabel: canWrite ? "Edit" : null,
-            primaryOnclick: `VendorOrders.openEditOpenLine(${line.id})`,
-            moreItems: canWrite ? [{ label: "Cancel", onclick: `VendorOrders.cancelOpenLine(${line.id})`, danger: true }] : [],
-            canWrite: !!canWrite,
-          });
-        }).join("") : HubUI.emptyState({
-          title: "Nothing pending",
-          sub: "All billed, cancelled, or closed.",
-          ctaHtml: canWrite ? `<button class="btn btn-primary" onclick="VendorOrders.showCreateMenu()">+ Create Order</button>` : "",
-        })}</div>`;
       return;
     }
 
@@ -1207,6 +1071,7 @@ const VendorOrders = (() => {
             buying_price: agg.buying_price,
             quantity: b.quantity,
             quantity_billed: b.quantity_billed,
+            quantity_remaining: b.quantity_remaining,
             billed_amount: b.billed_amount,
             placement_id: b.placement_id,
           });
@@ -1434,166 +1299,6 @@ const VendorOrders = (() => {
       }
     }
   }
-
-  function openLinesConfirmRows(lines, vendorLabel) {
-    const rows = [["Vendor", ctx.esc(vendorLabel || "—")]];
-    (lines || []).slice(0, 8).forEach(l => {
-      rows.push(["Product", `${ctx.esc(ctx.productIdLabel(l))} — ${l.quantity} @ ${fmtPrice(l.buying_price)}`]);
-    });
-    if ((lines || []).length > 8) rows.push(["More", `${lines.length - 8} additional lines`]);
-    rows.push(["Total pending", String((lines || []).reduce((s, l) => s + (l.quantity || 0), 0))]);
-    return rows;
-  }
-
-  async function runOpenLineBatch(lines, action, reason) {
-    const endpoint = action === "cancel" ? "cancel" : "close";
-    let ok = 0;
-    const errors = [];
-    for (const line of lines) {
-      try {
-        await ctx.api(`/vendor-orders/open-lines/${line.id}/${endpoint}`, { method: "POST", body: reasonBody(reason) });
-        ok += 1;
-      } catch (e) {
-        errors.push(`${line.our_product_id || line.id}: ${e.message || "failed"}`);
-      }
-    }
-    ctx.invalidateCache?.("/vendor-orders");
-    return { ok, failed: errors.length, errors };
-  }
-
-  async function closeVendorOpen(vendorId, vendorLabel) {
-    ctx.showLoading?.();
-    try {
-      const detail = await ctx.api(`/vendor-orders/vendor/${vendorId}/open`, {}, 0);
-      const lines = detail.lines || [];
-      if (!lines.length) return ctx.toast("No open lines", "error");
-      openConfirmAction({
-        title: "Close all open lines",
-        message: "Removes all pending from Open and records as closed.",
-        rows: openLinesConfirmRows(lines, vendorLabel || detail.vendor_label),
-        confirmLabel: "Close all",
-        requireReason: true,
-        reasonLabel: "Close note",
-        onConfirm: async (reason) => {
-          const result = await runOpenLineBatch(lines, "close", reason);
-          if (result.failed) ctx.toast(`Closed ${result.ok}, failed ${result.failed}`, "error");
-          else ctx.toast(`Closed ${result.ok} line(s)`, "success");
-          await reloadAfterVendorChange(vendorId, "open");
-        },
-      });
-    } catch (e) { ctx.toast(e.message, "error"); }
-    finally { ctx.hideLoading?.(); }
-  }
-
-  async function cancelVendorOpen(vendorId, vendorLabel) {
-    ctx.showLoading?.();
-    try {
-      const detail = await ctx.api(`/vendor-orders/vendor/${vendorId}/open`, {}, 0);
-      const lines = detail.lines || [];
-      if (!lines.length) return ctx.toast("No open lines", "error");
-      openConfirmAction({
-        title: "Cancel Order",
-        message: "Removes open qty. Recorded in Cancelled. Placed record stays.",
-        rows: openLinesConfirmRows(lines, vendorLabel || detail.vendor_label),
-        confirmLabel: "Cancel Order",
-        danger: true,
-        requireReason: true,
-        reasonLabel: "Cancel note",
-        onConfirm: async (reason) => {
-          const result = await runOpenLineBatch(lines, "cancel", reason);
-          if (result.failed) ctx.toast(`Cancelled ${result.ok}, failed ${result.failed}`, "error");
-          else ctx.toast(`Order cancelled (${result.ok})`, "success");
-          await reloadAfterVendorChange(vendorId, "open");
-        },
-      });
-    } catch (e) { ctx.toast(e.message, "error"); }
-    finally { ctx.hideLoading?.(); }
-  }
-
-  function closeAllOpenLines() {
-    const lines = openOrder?.lines || [];
-    if (!lines.length) return ctx.toast("No open lines", "error");
-    openConfirmAction({
-      title: "Close all open lines",
-      message: "Removes all pending from Open and records as closed.",
-      rows: openLinesConfirmRows(lines, openOrder?.vendor_label),
-      confirmLabel: "Close all",
-      requireReason: true,
-      reasonLabel: "Close note",
-      onConfirm: async (reason) => {
-        const result = await runOpenLineBatch(lines, "close", reason);
-        if (result.failed) ctx.toast(`Closed ${result.ok}, failed ${result.failed}`, "error");
-        else ctx.toast(`Closed ${result.ok} line(s)`, "success");
-        await reloadAfterVendorChange(detailVendorId, "open");
-      },
-    });
-  }
-
-  function cancelAllOpenLines() {
-    const lines = openOrder?.lines || [];
-    if (!lines.length) return ctx.toast("No open lines", "error");
-    openConfirmAction({
-      title: "Cancel Order",
-      message: "Removes open qty. Recorded in Cancelled. Placed record stays.",
-      rows: openLinesConfirmRows(lines, openOrder?.vendor_label),
-      confirmLabel: "Cancel Order",
-      danger: true,
-      requireReason: true,
-      reasonLabel: "Cancel note",
-      onConfirm: async (reason) => {
-        const result = await runOpenLineBatch(lines, "cancel", reason);
-        if (result.failed) ctx.toast(`Cancelled ${result.ok}, failed ${result.failed}`, "error");
-        else ctx.toast(`Order cancelled (${result.ok})`, "success");
-        await reloadAfterVendorChange(detailVendorId, "open");
-      },
-    });
-  }
-
-  async function closeOpenLine(lineId) {
-    const line = (openOrder?.lines || []).find(l => l.id === lineId);
-    if (!line) return;
-    openConfirmAction({
-      title: "Close open line",
-      message: "Removes from Open and records as closed.",
-      rows: [
-        ["Product", ctx.esc(line.our_product_id)],
-        ["Pending qty", String(line.quantity)],
-        ["Price", fmtPrice(line.buying_price)],
-      ],
-      confirmLabel: "Close",
-      requireReason: true,
-      reasonLabel: "Close note",
-      onConfirm: async (reason) => {
-        await ctx.api(`/vendor-orders/open-lines/${lineId}/close`, { method: "POST", body: reasonBody(reason) });
-        ctx.toast("Line closed", "success");
-        await reloadAfterVendorChange(detailVendorId || openOrder?.vendor_id, "open");
-      },
-    });
-  }
-
-  async function cancelOpenLine(lineId) {
-    const line = (openOrder?.lines || []).find(l => l.id === lineId);
-    if (!line) return;
-    openConfirmAction({
-      title: "Cancel line",
-      message: "Removes open qty. Recorded in Cancelled.",
-      rows: [
-        ["Product", ctx.esc(line.our_product_id)],
-        ["Qty", String(line.quantity)],
-        ["Price", fmtPrice(line.buying_price)],
-      ],
-      confirmLabel: "Cancel line",
-      danger: true,
-      requireReason: true,
-      reasonLabel: "Cancel note",
-      onConfirm: async (reason) => {
-        await ctx.api(`/vendor-orders/open-lines/${lineId}/cancel`, { method: "POST", body: reasonBody(reason) });
-        ctx.toast("Line cancelled", "success");
-        await reloadAfterVendorChange(detailVendorId || openOrder?.vendor_id, "open");
-      },
-    });
-  }
-
 
   function hubOrderForVendor(vendorId, bucket) {
     return hubExpandCache[`${bucket}-${vendorId}`] || currentOrder;
@@ -2239,48 +1944,6 @@ const VendorOrders = (() => {
     finally { ctx.hideLoading?.(); }
   }
 
-  async function openEditOpenLine(lineId) {
-    if (!openOrder) return;
-    const line = (openOrder.lines || []).find(l => l.id === lineId);
-    if (!line) return;
-    editingOpenLine = line;
-    vendorProductsCache = await ctx.api(`/vendor-orders/vendor/${openOrder.vendor_id}/products`, {}, 0);
-    document.getElementById("vo-edit-body").innerHTML = `
-      <label class="label">Product</label>
-      <select class="input" id="vo-edit-product" style="margin-bottom:12px;">
-        ${vendorProductsCache.map(p => `<option value="${p.id}" ${p.id === line.catalog_product_id ? "selected" : ""}>${ctx.esc(ctx.productIdLabel(p))}</option>`).join("")}
-      </select>
-      <label class="label">Quantity</label>
-      <input type="number" min="1" class="input" id="vo-edit-qty" value="${line.quantity}" />`;
-    document.getElementById("vo-edit-footer").innerHTML = `
-      <button class="btn btn-secondary" onclick="VendorOrders.closeEdit()">Cancel</button>
-      <button class="btn btn-primary" onclick="VendorOrders.saveEdit()">Save</button>`;
-    document.getElementById("vo-edit-modal").classList.remove("hidden");
-  }
-
-  function closeEdit() {
-    document.getElementById("vo-edit-modal")?.classList.add("hidden");
-    editingOpenLine = null;
-  }
-
-  async function saveEdit() {
-    if (!editingOpenLine) return;
-    const productId = parseInt(document.getElementById("vo-edit-product")?.value, 10);
-    const qty = Math.max(1, parseInt(document.getElementById("vo-edit-qty")?.value || "1", 10) || 1);
-    ctx.showLoading?.();
-    try {
-      openOrder = await ctx.api(`/vendor-orders/open-lines/${editingOpenLine.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ catalog_product_id: productId, quantity: qty }),
-      });
-      ctx.invalidateCache?.("/vendor-orders");
-      closeEdit();
-      ctx.toast("Line updated", "success");
-      renderDetail();
-    } catch (e) { ctx.toast(e.message, "error"); }
-    finally { ctx.hideLoading?.(); }
-  }
-
   function billSummaryLine(catalogProductId, pendingQty) {
     if (!detailVendorId) return;
     Stock.openReceiveForVendor(detailVendorId, { catalog_product_id: catalogProductId, quantity: pendingQty });
@@ -2475,11 +2138,9 @@ const VendorOrders = (() => {
     openWizard, closeWizard, primeVendors, pickVendor, toggleWizardProduct, setWizardQty, bumpWizardQty, swapProduct,
     onVendorSearch, onProductSearch,
     billOrder, receiveOrder, billVendor, receiveVendor, billOpenLine, editPlacedLine, deletePlacedLine, closePlacedLine, cancelPlacedLine,
-    closeVendorOpen, cancelVendorOpen, closeAllOpenLines, cancelAllOpenLines,
     billSummaryLine, cancelSummaryLine, closeSummaryLine,
     wizardBack, wizardNext, placeOrder, setWizardPlacedOn, openOrderPdf, fetchPlacementPdf,
-    openEditOpenLine, closeEdit, saveEdit,
-    cancelPlacement, addDebitNote, openDebitNotes, editDebitNote, voidDebitNote, closeOpenLine, cancelOpenLine, closeBilledPlacement,
+    cancelPlacement, addDebitNote, openDebitNotes, editDebitNote, voidDebitNote, closeBilledPlacement,
     openPlacementDoc, openReceiptDoc,
     toggleHubVendor, toggleHubPlacement, toggleHubClosedBill,
     _detailVendorId,

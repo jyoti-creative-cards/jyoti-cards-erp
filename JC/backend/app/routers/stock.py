@@ -659,6 +659,24 @@ def get_billed_receipts_detail(
     return build_vendor_billed_detail(db, vendor_id, auth)
 
 
+@router.get("/vendor-order/{vendor_id}/received-detail")
+def get_received_receipts_detail(
+    vendor_id: int,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("vendor_orders.read")),
+) -> dict:
+    """Detail for the 'Received' tab's full-page per-vendor drill-down (per-line
+    breakdown) — see build_vendor_received_detail docstring. The lighter-weight
+    receipt-summary `/received` endpoint above still powers the hub card's mini-expand
+    and the "Bill Order" review; this one is for the full detail page's line tables."""
+    from app.services.stock_receipt import build_vendor_received_detail
+
+    vendor = db.get(Vendor, vendor_id)
+    if not vendor or vendor.deleted_at:
+        raise HTTPException(404, "vendor not found")
+    return build_vendor_received_detail(db, vendor_id, auth)
+
+
 @router.get("/receipts/{receipt_id}/for-bill", response_model=ReceiptForBillDetail)
 def get_receipt_for_bill(
     receipt_id: int,

@@ -14,7 +14,7 @@ from reportlab.lib.units import cm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from app.services.company_info import company_lines
-from app.services.pdf_documents import _ist_fmt, _safe
+from app.services.pdf_documents import _ist_fmt, _safe, add_page_number
 
 
 def _money(v: object) -> str:
@@ -168,5 +168,5 @@ def render_route_collection_pdf(payload: Dict[str, Any]) -> bytes:
     story.append(Spacer(1, 0.8 * cm))
     story.append(Paragraph("Agent signature: ______________________ &nbsp;&nbsp; Date: __________", right))
 
-    doc.build(story)
+    doc.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
     return buf.getvalue()

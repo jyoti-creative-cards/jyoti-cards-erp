@@ -262,7 +262,7 @@ def _header(story: list, title: str, subtitle: str, meta: str) -> None:
     styles = getSampleStyleSheet()
     brand_bar = Table(
         [[Paragraph(
-            "JYOTI CREATIVE CARDS",
+            escape(company_lines()[0]),
             ParagraphStyle(
                 "brand", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=14,
                 alignment=TA_CENTER, textColor=colors.white, leading=18,

@@ -336,6 +336,20 @@ def generate_vendor_receipt_document(db: Session, receipt_id: int, auth: AuthCon
     total = receipt.total_billed_amount or bill_amt
     extra_cash = None
     billed_pct = receipt.billing_pct_applied if receipt.billing_pct_applied is not None else vendor.billing_pct
+    # GST (like billing %) can be one-off overridden per bill and is snapshotted onto the
+    # receipt at bill time (gst_rate_pct_applied — None means "no GST for this bill",
+    # since it's only ever set when vendor.gst_included was true at that moment). Falling
+    # back to the vendor's *current* profile here would let a later profile edit silently
+    # change the taxable-value/GST split shown on an already-issued, unrelated receipt
+    # every time its PDF is regenerated (which happens on every view/print/share).
+    # billing_pct_applied is only ever null on receipts billed before this snapshot
+    # existed — for those, fall back to the vendor's profile same as before.
+    if receipt.billing_pct_applied is not None:
+        gst_included = receipt.gst_rate_pct_applied is not None
+        gst_rate_pct = receipt.gst_rate_pct_applied if receipt.gst_rate_pct_applied is not None else Decimal("0")
+    else:
+        gst_included = vendor.gst_included
+        gst_rate_pct = vendor.gst_rate_pct
     if billed_pct < 100:
         if receipt.actual_ap_amount is not None and total is not None:
             extra_cash = (receipt.actual_ap_amount - total).quantize(Decimal("0.01"))
@@ -357,8 +371,8 @@ def generate_vendor_receipt_document(db: Session, receipt_id: int, auth: AuthCon
         net_payable=format(net, "f"),
         received_by=receipt.received_by_name,
         received_at=receipt.received_at,
-        gst_included=vendor.gst_included,
-        gst_rate_pct=vendor.gst_rate_pct,
+        gst_included=gst_included,
+        gst_rate_pct=gst_rate_pct,
         extra_cash=format(extra_cash, "f") if extra_cash is not None else None,
     )
     key = vendor_receipt_key(slug, receipt.bill_number or f"receipt_{receipt.id}", receipt.id)

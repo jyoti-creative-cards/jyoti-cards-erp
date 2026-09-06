@@ -182,10 +182,11 @@ def pick_freight_parcel(
     auth: AuthContext = Depends(require_admin),
 ):
     bill = pick_parcel(db, bill_id=bill_id, actor_name=auth.actor_name)
+    agent = db.get(FreightAgent, bill.freight_agent_id) if bill.freight_agent_id else None
     log_from_auth(
         db, auth, action="freight_pick", entity_type="customer_bill",
         entity_id=bill.id, entity_label=bill.bill_number,
-        detail=f"agent {bill.freight_agent_id} ₹{bill.freight_charges}",
+        detail=f"agent {agent.name if agent else bill.freight_agent_id} ₹{bill.freight_charges}",
     )
     db.commit()
     return {"ok": True, "bill_id": bill.id, "status": "picked", "freight_agent_id": bill.freight_agent_id}
@@ -204,10 +205,11 @@ def reassign_freight_parcel(
         freight_agent_id=body.freight_agent_id,
         freight_charges=body.freight_charges,
     )
+    agent = db.get(FreightAgent, bill.freight_agent_id) if bill.freight_agent_id else None
     log_from_auth(
         db, auth, action="freight_reassign", entity_type="customer_bill",
         entity_id=bill.id, entity_label=bill.bill_number,
-        detail=f"→ agent {bill.freight_agent_id} ₹{bill.freight_charges}",
+        detail=f"→ agent {agent.name if agent else bill.freight_agent_id} ₹{bill.freight_charges}",
     )
     db.commit()
     return {

@@ -367,7 +367,7 @@ const CustomerOrders = (() => {
         actions.push(`<button type="button" class="btn btn-secondary btn-sm" onclick="CustomerOrders.openEditBill(${p.bill_id})">Edit</button>`);
       }
       if (pending && canWrite) {
-        actions.push(`<button type="button" class="btn btn-primary btn-sm" onclick="CustomerOrders.pickParcel(${p.bill_id})">${mode === "bus" ? "✓ Picked" : "Mark dispatched"}</button>`);
+        actions.push(`<button type="button" class="btn btn-primary btn-sm" onclick="CustomerOrders.pickParcel(${p.bill_id}, '${mode}')">${mode === "bus" ? "✓ Picked" : "Mark dispatched"}</button>`);
         if (mode === "bus") {
           actions.push(`<button type="button" class="btn btn-secondary btn-sm" onclick="CustomerOrders.reassignParcel(${p.bill_id})">Change agent</button>`);
         }
@@ -392,8 +392,11 @@ const CustomerOrders = (() => {
     }).join("")}</div>`;
   }
 
-  async function pickParcel(billId) {
-    if (!confirm("Mark picked? Freight amount goes to this agent's dues in Money → Freight.")) return;
+  async function pickParcel(billId, mode) {
+    const msg = mode === "bus"
+      ? "Mark picked? Freight amount goes to this agent's dues in Money → Freight."
+      : "Mark this parcel as dispatched?";
+    if (!confirm(msg)) return;
     ctx.showLoading?.();
     try {
       await ctx.api(`/freight-agents/parcels/${billId}/pick`, { method: "POST", body: "{}" }, 0);

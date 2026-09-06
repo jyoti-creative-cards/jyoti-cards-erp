@@ -249,6 +249,19 @@ const Stock = (() => {
     await renderWizard();
   }
   function openOfflineForVendor(vendorId) { return openOfflineWizard(vendorId); }
+  function billedRateInputValue(l) {
+    // billed_rate is null when the underlying buying_price is hidden (no
+    // costs.read) and the biller hasn't typed one in yet — don't fall back to
+    // Number(l.buying_price) here, since that's the masked "—" string and
+    // renders as a bogus "NaN".
+    if (l.billed_rate != null && Number.isFinite(Number(l.billed_rate))) return Number(l.billed_rate).toFixed(2);
+    if (Number.isFinite(Number(l.buying_price))) return Number(l.buying_price).toFixed(2);
+    return "";
+  }
+  function billedAmountInputValue(l) {
+    if (l.billed_amount != null && Number.isFinite(Number(l.billed_amount))) return Number(l.billed_amount).toFixed(2);
+    return "";
+  }
   function productIdLabel(p) {
     const our = p?.our_product_id || "";
     const year = p?.year_group ? ` [${p.year_group}]` : "";
@@ -396,19 +409,29 @@ const Stock = (() => {
       const detail = await ctx.api(`/stock/receipts/${receiptId}/for-bill`, {}, 0);
       billingTerms = detail.billing_terms || null;
       placedOrder = detail;
-      wizardLines = (detail.lines || []).map(l => ({
-        catalog_product_id: l.catalog_product_id,
-        our_product_id: l.our_product_id,
-        vendor_product_id: l.vendor_product_id || "",
-        year_group: l.year_group || "",
-        quantity_received: l.quantity_received,
-        quantity_billed: l.quantity_received,
-        billed_amount: (Number(l.quantity_received) || 0) * (Number(l.buying_price) || 0),
-        billed_rate: l.buying_price,
-        buying_price: l.buying_price,
-        unit: l.unit,
-        image_urls: l.image_urls || [],
-      }));
+      wizardLines = (detail.lines || []).map(l => {
+        // buying_price is the masked "—" placeholder (see cost_visibility.hide_cost)
+        // for staff without costs.read — Number("—")||0 used to silently seed a real,
+        // submittable billed_amount of 0 for real goods received (the backend only
+        // falls back to its own real buying_price when the client sends null, not an
+        // explicit 0). Leave both null so the input renders blank and the biller must
+        // type the vendor's paper rate/amount manually.
+        const priceKnown = Number.isFinite(Number(l.buying_price));
+        return {
+          catalog_product_id: l.catalog_product_id,
+          our_product_id: l.our_product_id,
+          vendor_product_id: l.vendor_product_id || "",
+          year_group: l.year_group || "",
+          quantity_received: l.quantity_received,
+          quantity_billed: l.quantity_received,
+          billed_amount: priceKnown ? (Number(l.quantity_received) || 0) * Number(l.buying_price) : null,
+          billed_rate: priceKnown ? l.buying_price : null,
+          _priceHidden: !priceKnown,
+          buying_price: l.buying_price,
+          unit: l.unit,
+          image_urls: l.image_urls || [],
+        };
+      });
       receiptMeta.totalBilledAmount = detail.expected_bill_amount || "";
       receiptMeta.billingPct = billingTerms ? String(Number(billingTerms.billing_pct)) : "";
       receiptMeta.gstPct = billingTerms ? String(Number(billingTerms.gst_rate_pct)) : "";
@@ -446,7 +469,7 @@ const Stock = (() => {
           lines: wizardLines.map(l => ({
             catalog_product_id: l.catalog_product_id,
             quantity_billed: l.quantity_billed || 0,
-            billed_amount: l.billed_amount || 0,
+            billed_amount: l.billed_amount != null ? l.billed_amount : null,
           })),
           ...billingPctOverridePayload(),
           ...gstPctOverridePayload(),
@@ -587,8 +610,8 @@ const Stock = (() => {
               <td><strong>${ctx.esc(productIdLabel(l))}</strong></td>
               ${isBillEdit ? "" : `<td><input type="number" min="0" class="input stock-qty-input" value="${l.quantity_received || ""}" onchange="Stock.setLine(${i},'quantity_received',this.value)" /></td>`}
               <td><input type="number" min="0" class="input stock-qty-input stock-billed-input" value="${l.quantity_billed || ""}" onchange="Stock.setLine(${i},'quantity_billed',this.value)" /></td>
-              ${isBillEdit ? `<td><input type="number" min="0" step="0.01" class="input stock-qty-input stock-rate-input" value="${l.billed_rate ? Number(l.billed_rate).toFixed(2) : (l.buying_price ? Number(l.buying_price).toFixed(2) : "")}" onchange="Stock.setLineRate(${i},this.value)" title="Defaults to our catalog rate — edit if the vendor's paper bill states a different rate" /></td>` : ""}
-              ${isBillEdit ? `<td><input type="number" min="0" step="0.01" class="input stock-qty-input stock-amount-input" value="${l.billed_amount ? Number(l.billed_amount).toFixed(2) : ""}" onchange="Stock.setLineAmount(${i},this.value)" title="Defaults to qty x our rate — edit if the vendor's paper bill states a different rate/amount" /></td>` : ""}
+              ${isBillEdit ? `<td><input type="number" min="0" step="0.01" class="input stock-qty-input stock-rate-input" value="${billedRateInputValue(l)}" placeholder="${l._priceHidden ? "Enter rate" : ""}" onchange="Stock.setLineRate(${i},this.value)" title="${l._priceHidden ? "Cost hidden — type the vendor's paper rate" : "Defaults to our catalog rate — edit if the vendor's paper bill states a different rate"}" /></td>` : ""}
+              ${isBillEdit ? `<td><input type="number" min="0" step="0.01" class="input stock-qty-input stock-amount-input" value="${billedAmountInputValue(l)}" placeholder="${l._priceHidden ? "Enter amount" : ""}" onchange="Stock.setLineAmount(${i},this.value)" title="${l._priceHidden ? "Cost hidden — type the vendor's paper amount" : "Defaults to qty x our rate — edit if the vendor's paper bill states a different rate/amount"}" /></td>` : ""}
             </tr>`).join("")}
           </tbody>
           ${isBillEdit ? `<tfoot><tr class="stock-qty-tfoot">
@@ -1049,8 +1072,8 @@ const Stock = (() => {
                 <td style="text-align:right;color:var(--muted);">${l.quantity_received || 0}</td>
                 <td style="text-align:right;">${fmtPrice(l.buying_price)}</td>
                 <td style="text-align:right;"><input type="number" min="0" class="input stock-qty-input stock-billed-input" value="${l.quantity_billed ?? ""}" onchange="Stock.setLine(${i},'quantity_billed',this.value)" /></td>
-                <td style="text-align:right;"><input type="number" min="0" step="0.01" class="input stock-qty-input stock-rate-input" value="${l.billed_rate ? Number(l.billed_rate).toFixed(2) : (l.buying_price ? Number(l.buying_price).toFixed(2) : "")}" onchange="Stock.setLineRate(${i},this.value)" title="Defaults to our catalog rate — edit if the vendor's paper bill states a different rate" /></td>
-                <td style="text-align:right;"><input type="number" min="0" step="0.01" class="input stock-qty-input stock-amount-input" value="${l.billed_amount ? Number(l.billed_amount).toFixed(2) : ""}" onchange="Stock.setLineAmount(${i},this.value)" title="Defaults to qty x our rate — edit if the vendor's paper bill states a different rate/amount for this line" /></td>
+                <td style="text-align:right;"><input type="number" min="0" step="0.01" class="input stock-qty-input stock-rate-input" value="${billedRateInputValue(l)}" placeholder="${l._priceHidden ? "Enter rate" : ""}" onchange="Stock.setLineRate(${i},this.value)" title="${l._priceHidden ? "Cost hidden — type the vendor's paper rate" : "Defaults to our catalog rate — edit if the vendor's paper bill states a different rate"}" /></td>
+                <td style="text-align:right;"><input type="number" min="0" step="0.01" class="input stock-qty-input stock-amount-input" value="${billedAmountInputValue(l)}" placeholder="${l._priceHidden ? "Enter amount" : ""}" onchange="Stock.setLineAmount(${i},this.value)" title="${l._priceHidden ? "Cost hidden — type the vendor's paper amount" : "Defaults to qty x our rate — edit if the vendor's paper bill states a different rate/amount for this line"}" /></td>
               </tr>`;
             }).join("")}
           </tbody>
@@ -1472,12 +1495,19 @@ const Stock = (() => {
       if (billedEl) billedEl.value = wizardLines[idx].quantity_billed || "";
     }
     if (field === "quantity_billed" && !wizardLines[idx]._amountDirty) {
-      const rate = Number(wizardLines[idx].billed_rate ?? wizardLines[idx].buying_price) || 0;
-      const amt = (Number(wizardLines[idx].quantity_billed) || 0) * rate;
-      wizardLines[idx].billed_amount = amt;
-      const row = document.querySelectorAll(".stock-receive-table tbody tr")[idx];
-      const amtEl = row?.querySelector(".stock-amount-input");
-      if (amtEl) amtEl.value = amt ? amt.toFixed(2) : "";
+      // If neither a manual rate nor the underlying buying_price is known (hidden
+      // cost), leave billed_amount as null instead of coercing to a submittable 0 —
+      // the biller must type the vendor's paper rate/amount manually.
+      if (wizardLines[idx]._priceHidden && wizardLines[idx].billed_rate == null) {
+        wizardLines[idx].billed_amount = null;
+      } else {
+        const rate = Number(wizardLines[idx].billed_rate ?? wizardLines[idx].buying_price) || 0;
+        const amt = (Number(wizardLines[idx].quantity_billed) || 0) * rate;
+        wizardLines[idx].billed_amount = amt;
+        const row = document.querySelectorAll(".stock-receive-table tbody tr")[idx];
+        const amtEl = row?.querySelector(".stock-amount-input");
+        if (amtEl) amtEl.value = amt ? amt.toFixed(2) : "";
+      }
     }
     refreshQtyFooter();
   }
@@ -1657,6 +1687,9 @@ const Stock = (() => {
       ? receivedLines()
       : (isBill ? wizardLines.filter(l => (l.quantity_billed || 0) > 0) : billableLines());
     if (!active.length) return ctx.toast(isReceive ? "Enter received quantities" : "Enter received or billed quantities", "error");
+    if (isBill && active.some(l => l._priceHidden && l.billed_amount == null)) {
+      return ctx.toast("Cost is hidden for you on some lines — enter Rate billed / Amount billed manually before saving", "error");
+    }
     const endpoint = isEdit
       ? `/stock/receipts/${editReceiptId}`
       : isOffline
@@ -1711,7 +1744,7 @@ const Stock = (() => {
             lines: active.map(l => ({
               catalog_product_id: l.catalog_product_id,
               quantity_billed: l.quantity_billed || 0,
-              billed_amount: l.billed_amount || 0,
+              billed_amount: l.billed_amount != null ? l.billed_amount : null,
             })),
             bill_number: billNum,
             bill_file_key: key,
@@ -1733,7 +1766,7 @@ const Stock = (() => {
               catalog_product_id: l.catalog_product_id,
               quantity_received: l.quantity_received || l.quantity_billed || 0,
               quantity_billed: l.quantity_billed || 0,
-              billed_amount: l.billed_amount || 0,
+              billed_amount: l.billed_amount != null ? l.billed_amount : null,
             })),
             debit_notes: debitNotesPayload,
             ...(isBill ? billingPctOverridePayload() : {}),
@@ -1885,17 +1918,32 @@ const Stock = (() => {
       wizardProducts = [];
       editAddPickerOpen = false;
       editAddSearch = "";
-      wizardLines = (receipt.lines || []).map(l => ({
-        catalog_product_id: l.catalog_product_id,
-        our_product_id: l.our_product_id,
-        vendor_product_id: l.vendor_product_id || "",
-        year_group: l.year_group || "",
-        buying_price: l.buying_price,
-        quantity_received: l.quantity_received || 0,
-        quantity_billed: l.quantity_billed || 0,
-        billed_amount: (Number(l.quantity_billed) || 0) * (Number(l.buying_price) || 0),
-        billed_rate: l.buying_price,
-      }));
+      wizardLines = (receipt.lines || []).map(l => {
+        // buying_price is masked ("—") for staff without costs.read, but
+        // billed_amount (a historical fact, not a "cost") never is — re-deriving
+        // billed_amount from qty*buying_price used to overwrite an already-correct
+        // recorded amount with 0 the moment a masked-price line was re-edited.
+        // Prefer the already-recorded real billed_amount; only fall back to null
+        // (forcing manual entry) when there's neither a visible price nor an
+        // existing recorded amount to preserve (e.g. a brand-new masked-price line
+        // added during this edit).
+        const priceKnown = Number.isFinite(Number(l.buying_price));
+        const existingAmt = Number(l.billed_amount);
+        const hasExistingAmt = Number.isFinite(existingAmt) && existingAmt > 0;
+        const qty = Number(l.quantity_billed) || 0;
+        return {
+          catalog_product_id: l.catalog_product_id,
+          our_product_id: l.our_product_id,
+          vendor_product_id: l.vendor_product_id || "",
+          year_group: l.year_group || "",
+          buying_price: l.buying_price,
+          quantity_received: l.quantity_received || 0,
+          quantity_billed: qty,
+          billed_amount: priceKnown ? qty * Number(l.buying_price) : (hasExistingAmt ? existingAmt : null),
+          billed_rate: priceKnown ? l.buying_price : (hasExistingAmt && qty > 0 ? existingAmt / qty : null),
+          _priceHidden: !priceKnown && !hasExistingAmt,
+        };
+      });
       billFile = null;
       billFileKey = receipt.bill_file_key || null;
       pendingDebitNotes = (receipt.debit_notes || []).map(dn => ({

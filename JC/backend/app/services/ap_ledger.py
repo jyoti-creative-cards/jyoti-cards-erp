@@ -383,7 +383,17 @@ def vendor_ap_totals(db: Session, vendor_id: int) -> dict:
     ).all()
     outstanding = sum((r.amount for r in rows), Decimal("0")).quantize(Decimal("0.01"))
     opening_total = sum((r.amount for r in rows if r.entry_type == "opening_balance"), Decimal("0")).quantize(Decimal("0.01"))
-    bill_total = sum((r.amount for r in rows if r.entry_type == "bill"), Decimal("0")).quantize(Decimal("0.01"))
+    bill_ids = {r.id for r in rows if r.entry_type == "bill"}
+    bill_total = sum((r.amount for r in rows if r.entry_type == "bill"), Decimal("0"))
+    # A bill edit after receipt (e.g. correcting GST/total once the vendor's real invoice
+    # arrives) posts a compensating `adjustment` row reversing the original `bill` entry
+    # rather than mutating it, to preserve money history. Fold those in here too, or this
+    # "Total bills" subtotal quietly stops matching `outstanding` after any such edit.
+    bill_total += sum(
+        (r.amount for r in rows if r.entry_type == "adjustment" and r.reverses_entry_id in bill_ids),
+        Decimal("0"),
+    )
+    bill_total = bill_total.quantize(Decimal("0.01"))
     payment_total = Decimal("0")
     for r in rows:
         if r.entry_type == "payment":
@@ -599,14 +609,31 @@ def build_ap_ledger(db: Session, vendor_id: int, *, auth: Optional[AuthContext] 
 
 def list_ap_vendors(db: Session) -> list[dict]:
     """One aggregate query + vendor/city joins — no per-vendor N+1."""
-    from sqlalchemy import case, func
+    from sqlalchemy import and_, case, func, or_
+    from sqlalchemy.orm import aliased
+
+    # Bill edits post a compensating `adjustment` row that reverses the original `bill`
+    # entry rather than mutating it (see vendor_ap_totals for the same fold-in). Without
+    # this join, `bill_sum` here silently stops matching `outstanding` after any such edit.
+    bill_ref = aliased(ApLedgerEntry)
 
     opening_sum = func.coalesce(
         func.sum(case((ApLedgerEntry.entry_type == "opening_balance", ApLedgerEntry.amount), else_=0)),
         0,
     )
     bill_sum = func.coalesce(
-        func.sum(case((ApLedgerEntry.entry_type == "bill", ApLedgerEntry.amount), else_=0)),
+        func.sum(
+            case(
+                (
+                    or_(
+                        ApLedgerEntry.entry_type == "bill",
+                        and_(ApLedgerEntry.entry_type == "adjustment", bill_ref.id.isnot(None)),
+                    ),
+                    ApLedgerEntry.amount,
+                ),
+                else_=0,
+            )
+        ),
         0,
     )
     dn_sum = func.coalesce(
@@ -632,6 +659,10 @@ def list_ap_vendors(db: Session) -> list[dict]:
             dn_sum,
             payment_sum,
             outstanding_sum,
+        )
+        .outerjoin(
+            bill_ref,
+            and_(bill_ref.id == ApLedgerEntry.reverses_entry_id, bill_ref.entry_type == "bill"),
         )
         .filter(ApLedgerEntry.deleted_at.is_(None))
         .group_by(ApLedgerEntry.vendor_id)

@@ -5,8 +5,10 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
+from app.deps import AuthContext
 from app.models.catalog_product import CatalogProduct
 from app.models.stock import StockBalance, StockLedger, StockReceipt, StockReceiptLine
+from app.models.vendor import Vendor
 from app.models.vendor_order import VendorOrder, VendorOrderLine, VendorOrderPlacement
 
 
@@ -93,3 +95,94 @@ def add_stock(
         )
     )
     return balance
+
+
+def build_vendor_billed_detail(db: Session, vendor_id: int, auth: AuthContext) -> dict:
+    """Detail view for the 'Billed' tab's per-vendor drill-down (hub inline expand and
+    the full-page detail view) — sources directly from StockReceipt (bill_status ==
+    'billed'), not VendorOrder, since VendorOrder.bucket never actually becomes 'billed'
+    in this one-receipt-per-bill model (see _billed_summaries in routers/vendor_orders.py).
+    Before this existed, the frontend tried to look up a real VendorOrder id that would
+    never exist for this bucket and silently fell back to an empty placements/lines list
+    — the 'Billed' tab card showed real totals but expanding/opening it always showed
+    nothing. Shape matches what renderBilledExpand / renderDetail's isBilled branch
+    already expect: one 'placement' per bill (receipt, id == receipt_id), aggregated_lines
+    grouped by product with a per-placement breakdown."""
+    from app.models.debit_note import DebitNote  # noqa: F401  (kept for readers tracing debit-note totals)
+    from app.services.ap_ledger import receipt_bill_amount, receipt_debit_note_total
+    from app.services.cost_visibility import hide_cost
+    from app.services.storage import presigned_url, presigned_urls
+
+    vendor = db.get(Vendor, vendor_id)
+    if not vendor:
+        return {"vendor_id": vendor_id, "vendor_label": f"Vendor #{vendor_id}", "placements": [], "aggregated_lines": []}
+    from app.models.city import City
+
+    city = db.get(City, vendor.city_id) if vendor.city_id else None
+    label = f"{vendor.business_name} — {city.name}" if city else vendor.business_name
+
+    receipts = (
+        db.query(StockReceipt)
+        .filter(
+            StockReceipt.vendor_id == vendor_id,
+            StockReceipt.bill_status == "billed",
+            StockReceipt.deleted_at.is_(None),
+        )
+        .order_by(StockReceipt.billed_at.desc())
+        .all()
+    )
+    receipt_ids = [r.id for r in receipts]
+    lines_by_receipt: dict[int, list[StockReceiptLine]] = {}
+    if receipt_ids:
+        for ln in db.query(StockReceiptLine).filter(StockReceiptLine.receipt_id.in_(receipt_ids)).all():
+            lines_by_receipt.setdefault(ln.receipt_id, []).append(ln)
+    product_ids = {ln.catalog_product_id for lns in lines_by_receipt.values() for ln in lns}
+    products = (
+        {p.id: p for p in db.query(CatalogProduct).filter(CatalogProduct.id.in_(product_ids)).all()}
+        if product_ids else {}
+    )
+
+    placements: list[dict] = []
+    agg_by_pid: dict[int, dict] = {}
+    for r in receipts:
+        lines = lines_by_receipt.get(r.id, [])
+        bill_amt = receipt_bill_amount(db, r.id)
+        dn_total = receipt_debit_note_total(db, r.id)
+        placements.append({
+            "id": r.id,
+            "receipt_id": r.id,
+            "bill_number": r.bill_number,
+            "placed_at": (r.billed_at or r.received_at).isoformat(),
+            "line_count": len(lines),
+            "total_quantity": sum(int(ln.quantity_received or 0) for ln in lines),
+            "bill_amount": format(bill_amt, "f"),
+            "debit_note_total": format(dn_total, "f"),
+            "net_payable": format(bill_amt + dn_total, "f"),
+            "closed_at": r.closed_at.isoformat() if r.closed_at else None,
+            "close_reason": r.close_reason,
+            "bill_file_url": presigned_url(r.bill_file_key) if r.bill_file_key else None,
+        })
+        for ln in lines:
+            prod = products.get(ln.catalog_product_id)
+            entry = agg_by_pid.setdefault(ln.catalog_product_id, {
+                "catalog_product_id": ln.catalog_product_id,
+                "our_product_id": ln.our_product_id,
+                "vendor_product_id": prod.vendor_product_id if prod else None,
+                "image_urls": presigned_urls(prod.image_keys or []) if prod else [],
+                "buying_price": hide_cost(format(ln.buying_price, "f"), auth),
+                "breakdown": [],
+            })
+            entry["breakdown"].append({
+                "placement_id": r.id,
+                "quantity": ln.quantity_received,
+                "quantity_billed": ln.quantity_billed,
+                "billed_amount": format(ln.billed_amount, "f") if ln.billed_amount is not None else None,
+            })
+
+    return {
+        "vendor_id": vendor_id,
+        "vendor_label": label,
+        "vendor_alias": vendor.alias,
+        "placements": placements,
+        "aggregated_lines": list(agg_by_pid.values()),
+    }

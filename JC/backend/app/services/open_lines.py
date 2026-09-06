@@ -33,7 +33,9 @@ def _get_or_create_open(
         row.buying_price = prod.buying_price
         row.our_product_id = prod.our_product_id
         return row
-    row = VendorOpenLine(
+    from sqlalchemy.exc import IntegrityError
+
+    new_row = VendorOpenLine(
         vendor_id=vendor_id,
         catalog_product_id=catalog_product_id,
         our_product_id=prod.our_product_id,
@@ -42,10 +44,29 @@ def _get_or_create_open(
         status="open",
     )
     if as_of is not None:
-        row.created_at = as_of
-    db.add(row)
-    db.flush()
-    return row
+        new_row.created_at = as_of
+    try:
+        with db.begin_nested():
+            db.add(new_row)
+            db.flush()
+    except IntegrityError:
+        # VendorOpenLine has a real UniqueConstraint(vendor_id, catalog_product_id) — a
+        # concurrent order-placement/receipt-edit can win the insert race between our
+        # SELECT above and this INSERT. Without this retry, that 500s the whole request
+        # (same bug class as customer_order_flow's get_or_create_customer_order, fixed
+        # via db.begin_nested() + retry there).
+        row = (
+            db.query(VendorOpenLine)
+            .filter(
+                VendorOpenLine.vendor_id == vendor_id,
+                VendorOpenLine.catalog_product_id == catalog_product_id,
+            )
+            .first()
+        )
+        if not row:
+            raise
+        return row
+    return new_row
 
 
 def add_to_open(

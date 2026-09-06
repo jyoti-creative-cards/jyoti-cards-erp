@@ -376,11 +376,23 @@ const Vendors = (() => {
     const e = vendorLedger.find(x => x.id === entryId);
     if (!e) return;
     const d = e.details || {};
-    if (!d.vendor_order_id) return ctx.toast?.("Order link missing", "error");
-    const bucket = d.bucket === "cancelled" ? "cancelled" : d.bucket === "placed" ? "placed" : "billed";
+    const vendorId = d.vendor_id || currentVendorId;
+    if (!vendorId) return ctx.toast?.("Vendor not found", "error");
+    // "stock_received" ledger entries (Bills / received cards) never carry
+    // vendor_order_id — there's no VendorOrder for those in the one-receipt-per-bill
+    // model — so this used to always toast "Order link missing" for that whole
+    // section. openDetail resolves "received"/"billed" purely from the vendor id via
+    // StockReceipt now, so no order id is needed for those buckets at all.
+    let bucket;
+    if (e.event_type === "stock_received") {
+      const billed = vendorLedger.some(x => x.event_type === "vendor_bill" && x.details?.receipt_id === d.receipt_id);
+      bucket = billed ? "billed" : "received";
+    } else {
+      bucket = d.bucket === "cancelled" ? "cancelled" : d.bucket === "placed" ? "placed" : "billed";
+    }
     ctx.closeDetail?.();
     ctx.showView?.("buying");
-    VendorOrders.openDetail(d.vendor_order_id, bucket, d.vendor_id || currentVendorId || undefined);
+    VendorOrders.openDetail(d.vendor_order_id || 0, bucket, vendorId);
   }
 
   async function openBillDebitNotes(vendorId, receiptId) {

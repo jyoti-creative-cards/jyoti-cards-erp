@@ -759,6 +759,10 @@ const VendorOrders = (() => {
         };
       } else if (bucket === "closed") {
         hubExpandCache[key] = { lines: await ctx.api(`/vendor-orders/vendor/${vendorId}/closed`, {}, 0) };
+      } else if (bucket === "billed") {
+        // VendorOrder.bucket never becomes "billed" (one-receipt-per-bill model) — this
+        // sources straight from StockReceipt, matching the card's own totals.
+        hubExpandCache[key] = await ctx.api(`/stock/vendor-order/${vendorId}/billed`, {}, 0);
       } else {
         let id = orderId;
         if (!id || id <= 0) {
@@ -814,6 +818,30 @@ const VendorOrders = (() => {
       if (b === "closed") {
         closedLines = await ctx.api(`/vendor-orders/vendor/${detailVendorId}/closed`, {}, 0);
         currentOrder = null;
+      } else if (b === "billed") {
+        // VendorOrder.bucket never becomes "billed" (one-receipt-per-bill model), so
+        // there's no real order id to look up here — always source from StockReceipt.
+        currentOrder = await ctx.api(`/stock/vendor-order/${detailVendorId}/billed`, {}, 0);
+      } else if (b === "received") {
+        // Same story for "received" (unbilled) — build the placements/aggregated_lines
+        // shape renderDetail expects from the StockReceipt-backed endpoint instead of a
+        // VendorOrder id that will never exist for this bucket either.
+        const recv = await ctx.api(`/stock/vendor-order/${detailVendorId}/received`, {}, 0);
+        const receipts = recv.receipts || [];
+        currentOrder = {
+          vendor_id: detailVendorId,
+          vendor_label: recv.vendor_label,
+          placements: receipts.map(r => ({
+            id: r.receipt_id,
+            receipt_id: r.receipt_id,
+            order_receipt_number: r.order_receipt_number,
+            placed_at: r.received_at,
+            total_quantity: r.total_quantity,
+            line_count: r.line_count,
+            notes: null,
+          })),
+          aggregated_lines: [],
+        };
       } else if (currentOrder && currentOrder.bucket === b) {
         // already loaded
       } else {

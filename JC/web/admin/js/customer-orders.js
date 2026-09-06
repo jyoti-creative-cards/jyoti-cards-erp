@@ -1981,47 +1981,16 @@ const CustomerOrders = (() => {
       return;
     }
     if (processStep === 4) {
-      if (editBillId) {
-        const lines = processLines.filter(l => Number(l.quantity_to_ship) > 0);
-        previewTotals = {
-          lines: lines.map(l => {
-            const rate = Number(l.unit_price) || 0;
-            const qty = Number(l.quantity_to_ship) || 0;
-            const discPct = discountEnabled && useOverallDiscount
-              ? Number(overallDiscount) || 0
-              : (discountEnabled ? Number(l.discount_percent) || 0 : 0);
-            const net = discPct > 0 ? rate * (1 - Math.min(100, discPct) / 100) : (Number(l.net_rate) || rate);
-            const lineTotal = net * qty;
-            const lineDisc = (rate * qty) - lineTotal;
-            return {
-              our_product_id: l.our_product_id,
-              quantity: qty,
-              unit_price: l.unit_price,
-              rate_inclusive: l.unit_price,
-              item_discount_percent: discPct || null,
-              net_rate: (Math.round(net * 100) / 100).toString(),
-              line_discount: lineDisc > 0 ? lineDisc : 0,
-              line_total: lineTotal,
-            };
-          }),
-          subtotal_inclusive: lines.reduce((s, l) => s + (Number(l.unit_price) || 0) * Number(l.quantity_to_ship || 0), 0),
-          discount_amount: 0,
-          freight_charges: transportMode === "self_pickup" ? null : freightCharges,
-          transport_mode: transportMode,
-          transport_receipt_number: transportReceiptNumber,
-          packaging_charges: packagingCharges,
-          grand_total: 0,
-        };
-        previewTotals.discount_amount = previewTotals.lines.reduce((s, l) => s + Number(l.line_discount || 0), 0);
-        previewTotals.grand_total = previewTotals.lines.reduce((s, l) => s + Number(l.line_total || 0), 0)
-          + Number(previewTotals.freight_charges || 0) + Number(packagingCharges || 0);
-        processStep = 5;
-        renderProcessWizard();
-        return;
-      }
       ctx.showLoading?.();
       try {
-        previewTotals = await ctx.api(`/customer-orders/customer/${detailCustomerId}/process/preview`, {
+        // Real server-side totals (GST + additional charges included) for both create
+        // and edit — the edit path used to hand-roll a client estimate that silently
+        // dropped GST/additional charges, so what staff approved here didn't match what
+        // PUT .../bills/{id} actually saved.
+        const url = editBillId
+          ? `/customer-orders/bills/${editBillId}/edit-preview`
+          : `/customer-orders/customer/${detailCustomerId}/process/preview`;
+        previewTotals = await ctx.api(url, {
           method: "POST",
           body: JSON.stringify(buildProcessBody()),
         });

@@ -193,21 +193,24 @@ def _edit_receive(db: Session, auth: AuthContext, receipt: StockReceipt, body: V
     }
     new_by_pid = {ln.catalog_product_id: ln for ln in stock_lines}
 
-    # Received placement lines — preserve already-billed portion
+    # Received placement lines — preserved further below to re-sync placement history,
+    # but receipt.received_placement_id is hardcoded to None at receipt-creation time and
+    # never set anywhere else, so this is always empty in practice today.
     placement_lines = {}
     if receipt.received_placement_id:
         for vol in db.query(VendorOrderLine).filter(VendorOrderLine.placement_id == receipt.received_placement_id).all():
             placement_lines[vol.catalog_product_id] = vol
 
-    for pid in set(old_lines) | set(new_by_pid) | set(placement_lines):
+    # The already-billed guard used to derive `already_billed` from placement_lines
+    # above, which (per the note) is always empty — so it read like an active safety
+    # check while enforcing nothing (harmless only because edits are reachable pre-bill
+    # anyway, when quantity_billed is always 0). Check directly against this receipt's
+    # own quantity_billed instead, so the check stays real even if a future change
+    # allows editing partially-billed receipts.
+    for pid in set(old_lines) | set(new_by_pid):
         old_recv = int(old_lines[pid].quantity_received or 0) if pid in old_lines else 0
         new_recv = int(new_by_pid[pid].quantity_received or 0) if pid in new_by_pid else 0
-        vol = placement_lines.get(pid)
-        already_billed = 0
-        if vol:
-            already_billed = max(0, int(vol.quantity or 0) - int(vol.quantity_remaining or 0))
-            if already_billed == 0 and vol.quantity_billed:
-                already_billed = int(vol.quantity_billed or 0)
+        already_billed = int(old_lines[pid].quantity_billed or 0) if pid in old_lines else 0
         if new_recv < already_billed:
             prod = db.get(CatalogProduct, pid)
             raise HTTPException(

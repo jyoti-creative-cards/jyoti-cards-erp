@@ -1455,33 +1455,37 @@ def cancel_open_line_endpoint(
     return _open_vendor_detail(db, row.vendor_id, auth=auth)
 
 
-@router.post("/placements/{placement_id}/close", response_model=VendorOrderDetail)
+@router.post("/placements/{placement_id}/close")
 def close_billed_placement(
     placement_id: int,
     body: ReasonIn,
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("vendor_orders.write")),
 ):
-    placement = db.get(VendorOrderPlacement, placement_id)
-    if not placement:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="placement not found")
-    order = db.get(VendorOrder, placement.vendor_order_id)
-    if not order or order.bucket != "billed":
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="only billed placements can be closed")
-    if placement.closed_at:
+    """`placement_id` is a StockReceipt id here — see build_vendor_billed_detail. This
+    used to require a VendorOrder with bucket == "billed", which never exists in the
+    one-receipt-per-bill model, so every call 400'd with "only billed placements can be
+    closed" and the per-bill Close button inside the Billed tab's drill-down never worked."""
+    from app.services.stock_receipt import build_vendor_billed_detail
+
+    receipt = db.get(StockReceipt, placement_id)
+    if not receipt or receipt.deleted_at:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="bill not found")
+    if receipt.bill_status != "billed":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="only billed shipments can be closed")
+    if receipt.closed_at:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="already closed")
-    vendor, _, label = _vendor_context(db, order.vendor_id)
+    _vendor, _city, label = _vendor_context(db, receipt.vendor_id, require_active=False)
     reason = body.reason.strip()
-    placement.closed_at = datetime.now(timezone.utc)
-    placement.close_reason = reason
-    order.updated_at = placement.closed_at
+    receipt.closed_at = datetime.now(timezone.utc)
+    receipt.close_reason = reason
+    receipt.closed_by_name = auth.actor_name
     log_from_auth(
-        db, auth, action="close", entity_type="vendor_order", entity_id=order.id,
-        entity_label=label, detail=f"closed billed placement #{placement_id}: {reason[:120]}",
+        db, auth, action="close", entity_type="stock_receipt", entity_id=receipt.id,
+        entity_label=label, detail=f"closed billed shipment #{placement_id}: {reason[:120]}",
     )
     db.commit()
-    db.refresh(order)
-    return _build_detail(db, order, auth=auth)
+    return build_vendor_billed_detail(db, receipt.vendor_id, auth)
 
 
 @router.post("/placements/{placement_id}/cancel", response_model=VendorOrderDetail)

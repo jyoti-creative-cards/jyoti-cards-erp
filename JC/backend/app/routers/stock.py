@@ -643,6 +643,22 @@ def get_pending_bill_receipts(
     return VendorPendingBillList(vendor_id=vendor_id, vendor_label=label, vendor_alias=vendor.alias, receipts=receipts)
 
 
+@router.get("/vendor-order/{vendor_id}/billed")
+def get_billed_receipts_detail(
+    vendor_id: int,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("vendor_orders.read")),
+) -> dict:
+    """Detail for the 'Billed' tab's per-vendor expand/drill-down — see
+    build_vendor_billed_detail docstring for why this can't come from /vendor-orders/{id}."""
+    from app.services.stock_receipt import build_vendor_billed_detail
+
+    vendor = db.get(Vendor, vendor_id)
+    if not vendor or vendor.deleted_at:
+        raise HTTPException(404, "vendor not found")
+    return build_vendor_billed_detail(db, vendor_id, auth)
+
+
 @router.get("/receipts/{receipt_id}/for-bill", response_model=ReceiptForBillDetail)
 def get_receipt_for_bill(
     receipt_id: int,

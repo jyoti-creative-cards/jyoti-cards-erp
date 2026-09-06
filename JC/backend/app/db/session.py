@@ -1174,11 +1174,11 @@ def _migrate_indexes() -> None:
         "CREATE INDEX IF NOT EXISTS ix_jc_ap_ledger_vendor_type ON jc_ap_ledger_entries (vendor_id, entry_type)",
         "CREATE INDEX IF NOT EXISTS ix_jc_customers_active_list ON jc_customers (is_active) WHERE deleted_at IS NULL",
     ]
-    if not _is_sqlite:
-        stmts.append(
-            "CREATE UNIQUE INDEX IF NOT EXISTS uq_jc_vendor_orders_one_open "
-            "ON jc_vendor_orders (vendor_id, bucket) WHERE is_open = true"
-        )
+    # NB: no uq_jc_vendor_orders_one_open here — _migrate_vendor_order_unique_open()
+    # already creates the real one (uq_jc_vendor_orders_open, same predicate) with the
+    # pre-migration dedup logic a bare CREATE UNIQUE INDEX here doesn't have. Having two
+    # differently-named unique indexes on the identical predicate was harmless (both
+    # IF NOT EXISTS) but confusing and doubled write-time index maintenance.
     with engine.begin() as conn:
         try:
             conn.execute(text("SET LOCAL lock_timeout = '3s'"))

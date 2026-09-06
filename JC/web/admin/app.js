@@ -2059,8 +2059,12 @@ const App = (() => {
     const rows = TableUtils.apply(items, "recycle", RECYCLE_COLS);
     const typeBadge = t => ({ route: "badge-blue", city: "badge-green", customer: "badge-gray", vendor: "badge-amber", catalog_product: "badge-blue", addon: "badge-gray", staff: "badge-blue", receipt: "badge-amber", debit_note: "badge-red", customer_bill: "badge-amber", customer_placement: "badge-blue", customer_return: "badge-red" }[t] || "badge-gray");
     const canRecycleWrite = canWrite("recycle");
-    const ADMIN_ONLY_TYPES = ["receipt", "debit_note", "customer_bill", "customer_placement", "customer_return"];
-    const canAct = i => ADMIN_ONLY_TYPES.includes(i.type) ? isAdmin() : canRecycleWrite;
+    // Purge (permanent delete) is require_admin server-side for EVERY entity type,
+    // regardless of recycle.write — was only gating the button on recycle.write for
+    // route/city/customer/vendor/catalog_product/addon, so a recycle.write-but-not-
+    // admin staffer saw a "Delete Forever" button that always 403'd when clicked.
+    const canRestore = i => canRecycleWrite;
+    const canPurge = () => isAdmin();
     el.innerHTML = `<table class="data">${TableUtils.headerHtml("recycle", RECYCLE_COLS)}<tbody>
       ${rows.map(i => `<tr class="clickable" onclick="App.openRecycleDetail('${i.type}',${i.id})">
         <td><span class="badge ${typeBadge(i.type)}">${i.type}</span></td>
@@ -2068,8 +2072,9 @@ const App = (() => {
         <td style="color:var(--muted);font-size:13px;">${esc(i.subtitle || "—")}</td>
         <td style="font-size:13px;">${fmtDate(i.deleted_at)}</td>
         <td onclick="event.stopPropagation()">
-          ${canAct(i) ? `<button class="btn btn-primary btn-sm" onclick="App.restoreItem('${i.type}',${i.id})">Restore</button>
-          <button class="btn btn-danger btn-sm" onclick="App.purgeItem('${i.type}',${i.id})">Delete Forever</button>` : "—"}
+          ${canRestore(i) ? `<button class="btn btn-primary btn-sm" onclick="App.restoreItem('${i.type}',${i.id})">Restore</button>` : ""}
+          ${canPurge() ? `<button class="btn btn-danger btn-sm" onclick="App.purgeItem('${i.type}',${i.id})">Delete Forever</button>` : ""}
+          ${!canRestore(i) && !canPurge() ? "—" : ""}
         </td>
       </tr>`).join("")}
     </tbody></table>`;
@@ -2187,11 +2192,13 @@ const App = (() => {
       </div>`;
     }
 
-    const adminOnlyType = ["receipt", "debit_note", "customer_bill", "customer_placement", "customer_return"].includes(type);
-    const canActOnThis = adminOnlyType ? isAdmin() : canWrite("recycle");
+    // Purge is require_admin server-side for every type (see recycle-bin list view
+    // for why) — only restore is gated on the delegable recycle.write permission.
+    const canRestoreThis = canWrite("recycle");
+    const canPurgeThis = isAdmin();
     openDetail(`Deleted ${type}`, body,
-      `${canActOnThis ? `<button class="btn btn-primary" style="flex:1;" onclick="App.restoreItem('${type}',${id})">Restore</button>
-       <button class="btn btn-danger" onclick="App.purgeItem('${type}',${id})">Delete Forever</button>` : ""}
+      `${canRestoreThis ? `<button class="btn btn-primary" style="flex:1;" onclick="App.restoreItem('${type}',${id})">Restore</button>` : ""}
+       ${canPurgeThis ? `<button class="btn btn-danger" onclick="App.purgeItem('${type}',${id})">Delete Forever</button>` : ""}
        <button class="btn btn-secondary" onclick="App.closeDetail()">Close</button>`,
       "md"
     );

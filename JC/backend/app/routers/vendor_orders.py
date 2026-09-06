@@ -1688,8 +1688,11 @@ def get_placement_document(
             generate_vendor_placement_document(db, placement.id)
             db.commit()
             db.refresh(placement)
-        except Exception:
+        except Exception as exc:
             db.rollback()
+            import logging
+            logging.getLogger(__name__).exception("placement PDF generate failed for %s", placement_id)
+            raise HTTPException(500, f"document generation failed: {exc}") from exc
     if not placement.document_key:
         raise HTTPException(404, "document not available")
     url = presigned_url(placement.document_key)

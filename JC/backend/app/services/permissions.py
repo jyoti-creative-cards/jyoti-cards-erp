@@ -10,7 +10,10 @@ PERMISSION_GROUPS = [
     ("Catalog", [("catalog.read", "View catalog products"), ("catalog.write", "Create / edit / delete catalog")]),
     ("Add-ons", [("addons.read", "View add-ons"), ("addons.write", "Create / edit / delete add-ons")]),
     ("Setup", [("setup.read", "View routes, cities, product options"), ("setup.write", "Manage setup data")]),
-    ("Recycle Bin", [("recycle.read", "View recycle bin"), ("recycle.write", "Restore / permanently delete")]),
+    # Label intentionally doesn't say "permanently delete" — every purge endpoint is
+    # hard-gated to require_admin server-side regardless of this permission (see
+    # recycle_bin.py), so recycle.write only ever grants restore, never purge.
+    ("Recycle Bin", [("recycle.read", "View recycle bin"), ("recycle.write", "Restore items (permanent delete is admin-only)")]),
     ("Vendor Orders", [("vendor_orders.read", "View vendor orders"), ("vendor_orders.write", "Place & edit vendor orders")]),
     ("Customer Orders", [("customer_orders.read", "View customer orders"), ("customer_orders.write", "Place & bill customer orders")]),
     ("Returns", [("returns.read", "View customer returns"), ("returns.write", "Create customer returns")]),

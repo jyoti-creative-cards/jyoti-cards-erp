@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.deps import AuthContext, require_admin, require_any_permission, require_permission
+from app.deps import AuthContext, require_admin, require_permission
 from app.integrations.whatsapp.client import send_document, upload_media, wa_me_link
 from app.models.customer import Customer
 from app.models.customer_bill import CustomerBill
@@ -42,7 +42,10 @@ def _pdf_response(data: bytes, filename: str) -> Response:
 def bill_pdf(
     bill_id: int,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(require_any_permission("customer_orders.read", "vendor_orders.read")),
+    # Customer bill PDFs carry customer address/GST/outstanding — vendor_orders.read
+    # was accepted here too, letting vendor-only staff pull arbitrary customer bill
+    # PDFs (only frontend caller is the customer-orders hub; no vendor-side use).
+    auth: AuthContext = Depends(require_permission("customer_orders.read")),
 ):
     bill = db.get(CustomerBill, bill_id)
     if not bill:

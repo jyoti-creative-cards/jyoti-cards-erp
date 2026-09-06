@@ -288,7 +288,11 @@ def build_customer_ledger(db: Session, customer_id: int, *, show_actor: bool = T
                 our_product_id=ln.our_product_id,
                 quantity=ln.quantity,
                 quantity_billed=ln.quantity_billed,
-                buying_price=format(ln.unit_price, "f"),
+                # NB: no buying_price here — this is the customer-side ledger, so
+                # ln.unit_price is our *selling* price, not a cost figure. Reusing
+                # the buying_price field name (as build_vendor_ledger legitimately
+                # does for real cost data) would be a redaction trap for any future
+                # code that pattern-matches on that field name to apply hide_cost().
                 unit_price=format(ln.unit_price, "f"),
                 selling_price=format(ln.unit_price, "f"),
             )
@@ -339,7 +343,7 @@ def build_customer_ledger(db: Session, customer_id: int, *, show_actor: bool = T
                 quantity=ln.quantity_shipped,
                 quantity_billed=ln.quantity_shipped,
                 billed_amount=_fmt_amount(ln.line_total),
-                buying_price=format(ln.unit_price, "f"),
+                # NB: no buying_price here — see comment in build_customer_ledger above.
                 unit_price=format(ln.unit_price, "f"),
                 selling_price=format(ln.unit_price, "f"),
             )

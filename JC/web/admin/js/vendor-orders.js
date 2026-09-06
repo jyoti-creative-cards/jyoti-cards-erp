@@ -1747,25 +1747,6 @@ const VendorOrders = (() => {
     });
   }
 
-  function runHubAction() {
-    if (currentBucket === "placed") {
-      Stock.openReceiveForVendor(null);
-      return;
-    }
-    if (currentBucket === "received" || currentBucket === "open") {
-      if (currentBucket === "received") Stock.openBillForVendor(null);
-      else ctx.toast("Use Receive Order or Bill Order on a row", "error");
-      return;
-    }
-    if (currentBucket === "billed") openCloseBatch(null);
-  }
-
-  function runDetailAction() {
-    if (currentBucket === "placed" || currentBucket === "open") receiveOrder();
-    else if (currentBucket === "received") billOrder();
-    else if (currentBucket === "billed") openCloseBatch(detailVendorId);
-  }
-
   async function openCloseBatch(vendorId) {
     ctx.showLoading?.();
     try {
@@ -2490,7 +2471,7 @@ const VendorOrders = (() => {
   return {
     init, showHub, setBucket, setHubMode, setQueueFilter, setHubSearch, loadList, openDetail, switchDetailBucket, refreshIfOpen,
     toggleSummaryRow, togglePlacementRow, toggleClosedRow, loadPlacementExpand,
-    showCreateMenu, showCreateMenuFromVendor, runHubAction, runDetailAction, openCloseBatch,
+    showCreateMenu, showCreateMenuFromVendor, openCloseBatch,
     openWizard, closeWizard, primeVendors, pickVendor, toggleWizardProduct, setWizardQty, bumpWizardQty, swapProduct,
     onVendorSearch, onProductSearch,
     billOrder, receiveOrder, billVendor, receiveVendor, billOpenLine, editPlacedLine, deletePlacedLine, closePlacedLine, cancelPlacedLine,

@@ -78,6 +78,15 @@ const App = (() => {
     document.getElementById("setup-tile-activity")?.classList.toggle("hidden", !isAdmin());
     document.getElementById("setup-tile-documents")?.classList.toggle("hidden", !isAdmin());
     document.getElementById("setup-tile-billseries")?.classList.toggle("hidden", !isAdmin());
+    // These three were missing from this list entirely — any setup.read-only staffer
+    // (e.g. the built-in "Setup" role preset in staff.js) saw all three tiles and got
+    // a 403 on every one, since each needs a real permission (or admin) the Setup
+    // preset alone doesn't grant.
+    document.getElementById("setup-tile-freight")?.classList.toggle("hidden",
+      !(isAdmin() || canRead("vendor_orders") || canRead("customer_orders")));
+    document.getElementById("setup-tile-paymodes")?.classList.toggle("hidden",
+      !(isAdmin() || can("finance.write") || can("ap.write") || can("ar.write")));
+    document.getElementById("setup-tile-export")?.classList.toggle("hidden", !isAdmin());
     document.getElementById("staff-new-btn")?.classList.toggle("hidden", !isAdmin());
     document.querySelector(".big-tile-customers")?.classList.toggle("hidden", !canRead("customers"));
     document.querySelector(".big-tile-vendors")?.classList.toggle("hidden", !canRead("vendors"));
@@ -148,7 +157,7 @@ const App = (() => {
           headers: { ...headers(), ...(fetchOpts.headers || {}) },
         });
         if (res.status === 401) {
-          logout();
+          logout("Session expired — please sign in again");
           throw new Error("Session expired — please sign in again");
         }
         if (!res.ok) {
@@ -395,8 +404,25 @@ const App = (() => {
     permissions = new Set();
     try {
       const h = { "Content-Type": "application/json", "X-Admin-Key": key };
-      const res = await fetch(`${API}/routes`, { headers: h });
-      if (!res.ok) throw new Error("Invalid admin key");
+      let res;
+      try {
+        res = await fetch(`${API}/routes`, { headers: h });
+      } catch (netErr) {
+        // fetch() itself throws (TypeError) for network-level failures — backend
+        // down, DNS failure, offline — before res even exists. This used to fall
+        // through to the generic catch below and get reported as "Invalid admin
+        // key", telling an admin debugging an outage that their key was wrong when
+        // the server was actually unreachable.
+        throw new Error("Could not reach server — check your connection");
+      }
+      if (!res.ok) {
+        // 401/403 from this endpoint always means a bad key (it has no other
+        // precondition) — anything else (500, etc.) is a real backend problem, not
+        // a wrong key, so don't tell the admin their password is wrong when the
+        // server is actually broken.
+        if (res.status === 401 || res.status === 403) throw new Error("Invalid admin key");
+        throw new Error(`Server error (${res.status}) — try again in a moment`);
+      }
       sessionStorage.setItem("jc_auth_mode", "admin");
       sessionStorage.setItem("jc_admin_key", key);
       sessionStorage.removeItem("jc_staff_token");
@@ -437,11 +463,17 @@ const App = (() => {
     }
   }
 
-  function logout() {
+  function logout(msg) {
     sessionStorage.removeItem("jc_admin_key");
     sessionStorage.removeItem("jc_staff_token");
     sessionStorage.removeItem("jc_staff_user");
     sessionStorage.removeItem("jc_auth_mode");
+    // location.reload() only schedules a navigation — it doesn't halt this script,
+    // so a plain thrown Error after logout() used to get destroyed by the reload
+    // before any toast could paint. Stash the reason so init() can show it on the
+    // fresh login screen instead of silently dropping the user with no explanation.
+    if (msg) sessionStorage.setItem("jc_logout_msg", msg);
+    else sessionStorage.removeItem("jc_logout_msg");
     location.reload();
   }
 
@@ -2025,6 +2057,13 @@ const App = (() => {
     }
   }
 
+  // Restore (not just purge) is require_admin server-side for these types
+  // (recycle_bin.py's restore_receipt_endpoint/restore_debit_note_endpoint/
+  // restore_customer_bill_endpoint/restore_customer_placement_endpoint/
+  // restore_customer_return_endpoint/restore_staff all depend on require_admin, not
+  // recycle.write) — a recycle.write-but-not-admin staffer used to see a normal
+  // Restore button here too and always got a 403.
+  const ADMIN_ONLY_RECYCLE_TYPES = new Set(["receipt", "debit_note", "customer_bill", "customer_placement", "customer_return", "staff"]);
   const RECYCLE_COLS = [
     { key: "type", label: "Type", get: i => i.type },
     { key: "name", label: "Name", get: i => i.name },
@@ -2063,7 +2102,7 @@ const App = (() => {
     // regardless of recycle.write — was only gating the button on recycle.write for
     // route/city/customer/vendor/catalog_product/addon, so a recycle.write-but-not-
     // admin staffer saw a "Delete Forever" button that always 403'd when clicked.
-    const canRestore = i => canRecycleWrite;
+    const canRestore = i => isAdmin() || (canRecycleWrite && !ADMIN_ONLY_RECYCLE_TYPES.has(i.type));
     const canPurge = () => isAdmin();
     el.innerHTML = `<table class="data">${TableUtils.headerHtml("recycle", RECYCLE_COLS)}<tbody>
       ${rows.map(i => `<tr class="clickable" onclick="App.openRecycleDetail('${i.type}',${i.id})">
@@ -2193,8 +2232,9 @@ const App = (() => {
     }
 
     // Purge is require_admin server-side for every type (see recycle-bin list view
-    // for why) — only restore is gated on the delegable recycle.write permission.
-    const canRestoreThis = canWrite("recycle");
+    // for why); restore is also admin-only for the same subset as the list view
+    // (see ADMIN_ONLY_RECYCLE_TYPES) — everything else only needs recycle.write.
+    const canRestoreThis = isAdmin() || (canWrite("recycle") && !ADMIN_ONLY_RECYCLE_TYPES.has(type));
     const canPurgeThis = isAdmin();
     openDetail(`Deleted ${type}`, body,
       `${canRestoreThis ? `<button class="btn btn-primary" style="flex:1;" onclick="App.restoreItem('${type}',${id})">Restore</button>` : ""}
@@ -2655,6 +2695,11 @@ const App = (() => {
     try { staffUser = JSON.parse(sessionStorage.getItem("jc_staff_user") || "null"); } catch (_) { staffUser = null; }
     permissions = new Set((staffUser && staffUser.permissions) || []);
     setLoginTab("admin");
+    const logoutMsg = sessionStorage.getItem("jc_logout_msg");
+    if (logoutMsg) {
+      sessionStorage.removeItem("jc_logout_msg");
+      showLoginShell(logoutMsg);
+    }
     TableUtils.register("routes", renderRoutesTable);
     TableUtils.register("cities", renderCitiesTable);
     TableUtils.register("customers", renderCustomersTable);

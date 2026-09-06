@@ -238,6 +238,11 @@ const Returns = (() => {
   function pickCustomer(id) {
     wizard.customer_id = id || null;
     wizard.search = "";
+    // credit_amount/notes are per-customer/item-mix — carrying them over when
+    // "Change" swaps the customer mid-wizard let a stale calculated credit amount
+    // from customer A's items silently pre-fill and get submitted for customer B.
+    wizard.credit_amount = "";
+    wizard.notes = "";
     if (!id) { wizard.returnable = []; wizard.qtys = {}; renderWizard(); return; }
     loadReturnable();
   }

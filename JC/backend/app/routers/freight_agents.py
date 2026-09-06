@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.deps import AuthContext, require_admin, require_any_permission
+from app.deps import AuthContext, require_admin, require_any_permission, require_permission
 from app.models.expense import Expense
 from app.models.freight_agent import FreightAgent, FreightLedgerEntry
 from app.services.activity import log_from_auth
@@ -169,7 +169,11 @@ def list_all_parcels(
     status: str = Query("all", pattern="^(all|pending|picked)$"),
     day: str = Query("all", pattern="^(all|today)$"),
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(require_admin),
+    # Dispatch is the very next step after billing for every non-admin staffer with
+    # customer_orders.write — this used to be require_admin, so the parcel list (and
+    # pick/reassign below) 403'd for everyone but a full admin account even though
+    # nothing else in the bill lifecycle needs admin.
+    auth: AuthContext = Depends(require_permission("customer_orders.read")),
 ):
     """Parcels assigned to freight agents — pending until ticked picked (then dues post)."""
     return list_parcels(db, agent_id=agent_id, status=status, day=day)
@@ -179,7 +183,7 @@ def list_all_parcels(
 def pick_freight_parcel(
     bill_id: int,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(require_admin),
+    auth: AuthContext = Depends(require_permission("customer_orders.write")),
 ):
     bill = pick_parcel(db, bill_id=bill_id, actor_name=auth.actor_name)
     agent = db.get(FreightAgent, bill.freight_agent_id) if bill.freight_agent_id else None
@@ -197,7 +201,7 @@ def reassign_freight_parcel(
     bill_id: int,
     body: FreightReassignIn,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(require_admin),
+    auth: AuthContext = Depends(require_permission("customer_orders.write")),
 ):
     bill = reassign_parcel(
         db,

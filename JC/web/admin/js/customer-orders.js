@@ -1217,8 +1217,10 @@ const CustomerOrders = (() => {
   }
 
   function cancelBill(billId) {
+    // Same fix as voidBill below: promptReason's modal already states the
+    // consequence and has its own Confirm/Cancel — a second native confirm() after
+    // it was a redundant double dialog that silently swallowed the reason on Cancel.
     promptReason("Cancel bill — qty returns to To bill. Freight cleared.", async (reason) => {
-      if (!confirm("Cancel this bill? Order stays open to bill again.")) return;
       ctx.showLoading?.();
       try {
         await ctx.api(`/customer-orders/bills/${billId}/cancel`, {
@@ -1918,9 +1920,6 @@ const CustomerOrders = (() => {
     }
     renderProcessWizard();
   }
-  function setDiscMode(overall) {
-    setDiscToggle(overall ? "overall" : "line");
-  }
   function setOverallDisc(v) { overallDiscount = v; }
   function setBillEditSearch(v) { billEditSearch = v || ""; renderProcessWizard(); }
   function setFreightAgent(v) { freightAgentId = v; }
@@ -2105,16 +2104,6 @@ const CustomerOrders = (() => {
 
   function showCreateMenu() {
     openOfflineWizard(detailCustomerId || null);
-  }
-
-  function runHubAction() {
-    if (currentBucket === "open" || currentBucket === "received") ctx.toast("Open a customer to process", "error");
-    else if (currentBucket === "billed") openCloseBatch(null);
-  }
-
-  function runDetailAction() {
-    if (currentBucket === "open") processOrder();
-    else if (currentBucket === "billed") openCloseBatch(detailCustomerId);
   }
 
   async function openCloseBatch(customerId) {
@@ -2478,19 +2467,6 @@ const CustomerOrders = (() => {
       <button class="btn btn-primary" ${offlineBusy ? "disabled" : ""} onclick="CustomerOrders.submitOffline()">${offlineBusy ? "Saving…" : (editing ? "Save changes" : (warnings.length ? "Place anyway" : "Place for customer"))}</button>`;
   }
 
-  function setOfflineCustomer(id, name) {
-    offlineCustomerId = id || null;
-    if (!id) {
-      offlineCustomerName = "";
-    } else if (name && name !== "— Select customer —") {
-      offlineCustomerName = name.split(" · ")[0];
-    } else {
-      const c = (offlineCustomers || []).find(x => x.id === id);
-      offlineCustomerName = c?.business_name || offlineCustomerName;
-    }
-    renderOfflineWizard();
-  }
-
   function setOfflineNotes(v) { offlineNotes = v || ""; }
   function setOfflinePlacedOn(v) { offlinePlacedOn = v || localToday(); }
 
@@ -2551,10 +2527,6 @@ const CustomerOrders = (() => {
       offlineLines = offlineLines.filter(l => l.catalog_product_id !== catalogProductId);
     }
     renderOfflineWizard();
-  }
-
-  function addOfflineProduct(catalogProductId) {
-    toggleOfflineProduct(catalogProductId, true);
   }
 
   function removeOfflineLine(catalogProductId) {
@@ -2693,12 +2665,12 @@ const CustomerOrders = (() => {
     init, loadList, setBucket, setHubMode, setQueueFilter, setHubSearch, showHub, openDetail, openCustomer, switchBucket, toggleDetailExpand,
     openSlidePanel, closeSlidePanel, toggleCardMore, closeAllCardMore,
     goToDispatch, goCollectPayment, setDispatchStatus, setDispatchAgent, pickParcel, reassignParcel, submitParcelReassign,
-    showCreateMenu, showCreateMenuFromCustomer, runHubAction, runDetailAction, openCloseBatch,
+    showCreateMenu, showCreateMenuFromCustomer, openCloseBatch,
     processOrder, processFromHub, billNow, closeProcessWizard, renderProcessWizard,
     openEditBill, editLatestBill, promptEditBillNumber, saveBillNumber, enableDiscount, clearDiscount, setBillEditSearch, addBillEditProduct, removeProcessLine,
     openEditFromOpen,
     _detailCustomerId,
-    setShipQty, setLineDisc, setLineNetRate, setDiscMode, setDiscToggle, setOverallDisc,
+    setShipQty, setLineDisc, setLineNetRate, setDiscToggle, setOverallDisc,
     setFreightAgent, setFreightCharges, setTransportMode, setTransportReceipt, setPackagingCharges,
     setGst, setGstRate, setBillSeries, setNarration, setEditBillNumber, setBillDate, setAddCharge, addChargeRow,
     setOfflinePlacedOn,
@@ -2706,8 +2678,8 @@ const CustomerOrders = (() => {
     processNext, processBack, submitProcess,
     confirmOrder, _doConfirm, cancelOpenLine, cancelPlacement, cancelCustomerOpen, cancelAllOpen, editOpenLine, editReceivedLine, deleteReceivedLine, openEditPlacement, closeBillLine, cancelBill, voidBill, voidPlacement, openBillDoc, shareBillWhatsApp,
     openOfflineWizard, closeOfflineWizard, renderOfflineWizard,
-    setOfflineCustomer, pickOfflineCustomer, onOfflineCustomerSearch, setOfflineNotes,
-    onOfflineSearchInput, onOfflineSearchKey, toggleOfflineProduct, addOfflineProduct, removeOfflineLine,
+    pickOfflineCustomer, onOfflineCustomerSearch, setOfflineNotes,
+    onOfflineSearchInput, onOfflineSearchKey, toggleOfflineProduct, removeOfflineLine,
     setOfflineQty, bumpOfflineQty, offlineNext, offlineBack, submitOffline,
   };
 })();

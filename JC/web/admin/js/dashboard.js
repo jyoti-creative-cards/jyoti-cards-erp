@@ -211,7 +211,7 @@ const Dashboard = (() => {
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button type="button" class="btn btn-secondary btn-sm" onclick="App.showView('selling')">Customer orders</button>
         <button type="button" class="btn btn-secondary btn-sm" onclick="App.showView('buying')">Vendor orders</button>
-        ${ctx.isAdmin?.() ? `<button type="button" class="btn btn-secondary btn-sm" onclick="App.showView('money')">Money</button>` : ""}
+        ${(ctx.isAdmin?.() || ctx.can?.("ar.read") || ctx.can?.("ar.write") || ctx.can?.("ap.read") || ctx.can?.("ap.write") || ctx.can?.("finance.write")) ? `<button type="button" class="btn btn-secondary btn-sm" onclick="App.showView('money')">Money</button>` : ""}
         <button type="button" class="btn btn-ghost btn-sm" onclick="Dashboard.load()">Refresh</button>
       </div>
     </header>`;
@@ -263,8 +263,12 @@ const Dashboard = (() => {
       </section>`;
     }
 
-    /* Money focus (admin) */
-    if (ctx.isAdmin?.() && (collect.length || pay.length)) {
+    /* Money focus — backend already zeroes collect/pay to [] for staff with no
+       AR/AP visibility at all (see dashboard.py's can_see_ar/can_see_ap), so gating
+       this on isAdmin() too hid it from exactly the staff the backend built it for
+       (e.g. an accountant handed real ar.read/ap.write access) — the length check
+       below is the real gate, same as the "Cash today" section above. */
+    if (collect.length || pay.length) {
       html += `<section class="home-money">
         <div class="home-card">
           <div class="home-card-head">

@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.deps import AuthContext, require_admin, require_permission
+from app.deps import AuthContext, get_auth_context, require_admin, require_permission
 from app.integrations.whatsapp.client import send_document, upload_media, wa_me_link
 from app.models.customer import Customer
 from app.models.customer_bill import CustomerBill
@@ -159,11 +159,24 @@ class WhatsAppShareIn(BaseModel):
 def whatsapp_share(
     body: WhatsAppShareIn,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(require_admin),
+    auth: AuthContext = Depends(get_auth_context),
 ):
     """Upload PDF to WhatsApp and send as document (24h session window).
     Also returns wa.me fallback link.
+
+    kind == "bill" only needs customer_orders.write (same level as GET
+    /share/bills/{id}/pdf, which the frontend shows right next to this button on
+    every bill) — the button used to be unconditionally admin-only here, so any
+    non-admin staff who can create/edit/print that exact bill still got a bare
+    "admin only" 403 on Share specifically. Every other kind (AR/AP statements,
+    daybook, ageing, freight) stays admin-only — those are genuinely sensitive
+    financial exports with no non-admin frontend caller.
     """
+    if body.kind == "bill":
+        if not (auth.is_admin or auth.has("customer_orders.write")):
+            raise HTTPException(403, "not permitted")
+    elif not auth.is_admin:
+        raise HTTPException(403, "admin only")
     pdf: bytes
     filename: str
     phone = (body.phone or "").strip()

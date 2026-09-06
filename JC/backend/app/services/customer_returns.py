@@ -115,7 +115,7 @@ def create_customer_return(
     actor_name: str,
 ) -> CustomerReturn:
     customer = db.get(Customer, customer_id)
-    if not customer:
+    if not customer or customer.deleted_at is not None:
         raise HTTPException(404, "customer not found")
     if not lines:
         raise HTTPException(400, "add at least one return line")

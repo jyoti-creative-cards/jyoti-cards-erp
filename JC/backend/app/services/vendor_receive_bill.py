@@ -326,11 +326,15 @@ def preview_bill_deviations(
                 reason = f"billed amount ₹{raw_amt} vs expected ₹{expected_raw} (qty {bq})"
             else:
                 reason = f"billed {bq} vs received {ln.quantity_received}"
+            # Debit note is always at the full item price (₹{ln.buying_price}/unit here),
+            # never scaled by the vendor's billing % — that setting only splits the value
+            # between the paper invoice and untaxed "extra cash" for tax purposes, it
+            # doesn't make a missing/extra unit worth less.
             suggestions.append({
                 "note_type": "value", "direction": dn["direction"], "amount": str(abs(dn["amount"])),
                 "catalog_product_id": ln.catalog_product_id, "our_product_id": ln.our_product_id,
                 "vendor_product_id": prod.vendor_product_id if prod else None,
-                "notes": f"Auto: {reason} for {ln.our_product_id}",
+                "notes": f"Auto: {reason} for {ln.our_product_id} (at full price ₹{ln.buying_price}/unit — billing % doesn't reduce this)",
                 "source": "auto",
             })
     bill_total, extra_cash = compute_bill_totals(

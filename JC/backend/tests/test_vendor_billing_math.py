@@ -53,12 +53,14 @@ def test_qty_deviation_none_when_equal():
         billed_qty=100, received_qty=100, buying_price=Decimal("10"), billing_pct=Decimal("100"),
     ) is None
 
-def test_qty_deviation_applies_billing_pct():
-    # VEE PEE: 10 unit gap at 50% billing → only half the value is disputed
+def test_qty_deviation_ignores_billing_pct():
+    # Regression: billing_pct only controls the paper-invoice/tax split (see
+    # compute_bill_totals) — it must NOT shrink the debit note. A 10-unit gap at ₹10/unit
+    # is still ₹100 of real goods, whether the vendor's billing % is 100% or 50%.
     dn = qty_deviation_debit_note(
         billed_qty=110, received_qty=100, buying_price=Decimal("10"), billing_pct=Decimal("50"),
     )
-    assert dn == {"direction": "over", "amount": Decimal("-50.00")}
+    assert dn == {"direction": "over", "amount": Decimal("-100.00")}
 
 def test_amount_deviation_entered_more_than_expected_is_over():
     dn = amount_deviation_debit_note(
@@ -94,9 +96,12 @@ def test_line_value_deviation_none_when_matches_expected():
     )
     assert dn is None
 
-def test_line_value_deviation_applies_billing_pct():
+def test_line_value_deviation_ignores_billing_pct():
+    # Same regression as qty_deviation above, for the generalized value check: a 10-unit
+    # over-bill at ₹10/unit is ₹100 of real value regardless of the vendor's billing %
+    # (billing % is a tax-invoice split only, not a real price cut).
     dn = line_value_deviation_debit_note(
         billed_amount=Decimal("110") * Decimal("10"), received_qty=100,
         buying_price=Decimal("10"), billing_pct=Decimal("50"),
     )
-    assert dn == {"direction": "over", "amount": Decimal("-50.00")}
+    assert dn == {"direction": "over", "amount": Decimal("-100.00")}

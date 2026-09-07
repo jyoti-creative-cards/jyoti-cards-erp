@@ -31,9 +31,17 @@ def compute_bill_totals(
 
 
 def qty_deviation_debit_note(
-    *, billed_qty: int, received_qty: int, buying_price: Decimal, billing_pct: Decimal,
+    *, billed_qty: int, received_qty: int, buying_price: Decimal, billing_pct: Decimal | None = None,
 ) -> Optional[dict]:
-    """Value-type debit note for a line's billed-vs-received mismatch, scaled by billing_pct.
+    """Value-type debit note for a line's billed-vs-received mismatch, at the FULL
+    (real) item price — never scaled by billing_pct.
+
+    NOTE on billing_pct: that setting only controls what fraction of the value goes on
+    the vendor's *paper* invoice (for tax) vs. paid as untaxed "extra cash" — it does not
+    make the goods actually worth less. A missing/extra unit is still worth the full
+    buying_price, so the debit note (which corrects the real money owed to/from the
+    vendor) must use the full price. `billing_pct` is accepted but intentionally unused
+    here — kept only so callers don't need special-casing.
 
     billed > received → vendor's paper claims more than physically arrived → 'over' → reduces payable.
     received > billed → vendor billed less than arrived → 'under' → increases payable.
@@ -41,17 +49,26 @@ def qty_deviation_debit_note(
     diff = billed_qty - received_qty
     if diff == 0:
         return None
-    amount_abs = (abs(Decimal(diff)) * buying_price * billing_pct / _HUNDRED).quantize(_CENTS)
+    amount_abs = (abs(Decimal(diff)) * buying_price).quantize(_CENTS)
     direction = "over" if diff > 0 else "under"
     amount = -amount_abs if direction == "over" else amount_abs
     return {"direction": direction, "amount": amount}
 
 
 def line_value_deviation_debit_note(
-    *, billed_amount: Decimal, received_qty: int, buying_price: Decimal, billing_pct: Decimal,
+    *, billed_amount: Decimal, received_qty: int, buying_price: Decimal, billing_pct: Decimal | None = None,
 ) -> Optional[dict]:
     """Value-type debit note for a line's actual billed amount vs the expected value for
-    the received qty (received_qty * buying_price), scaled by billing_pct.
+    the received qty (received_qty * buying_price) — at the FULL (real) item price.
+
+    NOTE on billing_pct: billing_pct is a tax-invoice split only (how much of the value
+    appears on the vendor's paper bill vs. is paid as untaxed "extra cash" — see
+    compute_bill_totals). It does NOT reduce the real value of the goods. So a quantity
+    or rate mismatch must always be debited/credited at the full buying_price, never at
+    the billing_pct-reduced paper rate — otherwise a 50%-billing vendor short-shipping 10
+    units of a ₹10 item would only get debited ₹50 instead of the real ₹100 owed back.
+    `billing_pct` is accepted but intentionally unused here — kept only so callers don't
+    need special-casing.
 
     Generalizes the old qty-only check: `billed_amount` is the raw (pre-billing_pct) value
     the vendor's paper bill states for this line — qty x their rate. When it equals
@@ -66,7 +83,7 @@ def line_value_deviation_debit_note(
     diff = billed_amount - expected
     if diff == 0:
         return None
-    amount_abs = (abs(diff) * billing_pct / _HUNDRED).quantize(_CENTS)
+    amount_abs = abs(diff).quantize(_CENTS)
     if amount_abs == 0:
         return None
     direction = "over" if diff > 0 else "under"

@@ -291,15 +291,15 @@ def list_customer_orders(
         return out
 
     if bucket == "received":
-        # NB: "New" is an unconfirmed-order backlog, not a daily log — never day-scope it
-        # away, or an order placed yesterday and not yet confirmed silently disappears
-        # from the default "Today" queue view (staff never sees it to confirm/bill it).
-        orders = (
-            db.query(CustomerOrder)
-            .filter(CustomerOrder.is_open.is_(True), CustomerOrder.bucket == "received")
-            .order_by(CustomerOrder.updated_at.asc())
-            .all()
-        )
+        # "New" is day-scoped by when it was last touched (created or a placement
+        # appended) — day=today shows only today's activity so the queue doesn't get
+        # cluttered with old entries; day=all (Past) still shows full history, so an
+        # order placed yesterday and never confirmed is never actually lost — it just
+        # moves from "Today" to "Past" instead of disappearing from both.
+        q = db.query(CustomerOrder).filter(CustomerOrder.is_open.is_(True), CustomerOrder.bucket == "received")
+        if day_start is not None:
+            q = q.filter(CustomerOrder.updated_at >= day_start, CustomerOrder.updated_at < day_end)
+        orders = q.order_by(CustomerOrder.updated_at.desc()).all()
         return [_summary(db, o) for o in orders]
 
     if bucket == "billed":

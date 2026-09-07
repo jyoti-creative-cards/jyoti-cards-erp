@@ -6,6 +6,7 @@ const CustomerOrders = (() => {
   let currentBucket = "open"; // same stages for Today + Past
   let hubMode = "queue"; // queue (Today) | past — date scope only
   let hubSearch = "";
+  let hubSort = "latest"; // latest | oldest — unfiltered hub-list order
   let coExpandedId = null;
   let hubExpandedCustomerId = null;
   let hubExpandCache = {};
@@ -177,12 +178,18 @@ const CustomerOrders = (() => {
               oninput: "CustomerOrders.setHubSearch(this.value)",
             })}
           </div>`
-        : HubUI.searchBar({
-          id: "co-hub-search",
-          value: hubSearch,
-          placeholder: "Search customer…",
-          oninput: "CustomerOrders.setHubSearch(this.value)",
-        });
+        : `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;width:100%;">
+            ${HubUI.searchBar({
+              id: "co-hub-search",
+              value: hubSearch,
+              placeholder: "Search customer…",
+              oninput: "CustomerOrders.setHubSearch(this.value)",
+            })}
+            <div class="ord-mode-toggle" style="flex:0 0 auto;" role="tablist" aria-label="Sort order">
+              <button type="button" class="ord-mode-btn${hubSort === "latest" ? " active" : ""}" onclick="CustomerOrders.setHubSort('latest')">Latest first</button>
+              <button type="button" class="ord-mode-btn${hubSort === "oldest" ? " active" : ""}" onclick="CustomerOrders.setHubSort('oldest')">Oldest first</button>
+            </div>
+          </div>`;
     }
   }
 
@@ -240,6 +247,17 @@ const CustomerOrders = (() => {
   }
 
   function filterHubOrders(list) {
+    if (!hubSearch.trim()) {
+      // No search — sort by recency (toggle), not OrdersUI's default party_number
+      // order. party_number ordering is right for a customer directory, but wrong
+      // here: a just-created order could land anywhere in a long numeric list,
+      // making it look "missing" from the queue until you scroll to find it.
+      return [...(list || [])].sort((a, b) => {
+        const ta = new Date(a.updated_at || 0).getTime() || 0;
+        const tb = new Date(b.updated_at || 0).getTime() || 0;
+        return hubSort === "oldest" ? ta - tb : tb - ta;
+      });
+    }
     // Hub rows only have customer_name — still token-match; rank by name starts-with
     const ranked = OrdersUI.filterAndRankParties(
       (list || []).map(o => ({
@@ -249,6 +267,12 @@ const CustomerOrders = (() => {
       hubSearch,
     );
     return ranked;
+  }
+
+  function setHubSort(val) {
+    hubSort = val === "oldest" ? "oldest" : "latest";
+    if (isDispatchBucket()) renderDispatchList();
+    else renderList();
   }
 
   function addonsUnderHtml(addons, qtyScale) {
@@ -2662,7 +2686,7 @@ const CustomerOrders = (() => {
   }
 
   return {
-    init, loadList, setBucket, setHubMode, setQueueFilter, setHubSearch, showHub, openDetail, openCustomer, switchBucket, toggleDetailExpand,
+    init, loadList, setBucket, setHubMode, setQueueFilter, setHubSearch, setHubSort, showHub, openDetail, openCustomer, switchBucket, toggleDetailExpand,
     openSlidePanel, closeSlidePanel, toggleCardMore, closeAllCardMore,
     goToDispatch, goCollectPayment, setDispatchStatus, setDispatchAgent, pickParcel, reassignParcel, submitParcelReassign,
     showCreateMenu, showCreateMenuFromCustomer, openCloseBatch,

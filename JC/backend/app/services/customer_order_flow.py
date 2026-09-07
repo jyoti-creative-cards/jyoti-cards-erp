@@ -28,7 +28,14 @@ def get_or_create_customer_order(db: Session, customer_id: int, bucket: str, sta
         return order
     try:
         with db.begin_nested():
-            order = CustomerOrder(customer_id=customer_id, bucket=bucket, status=status, is_open=True)
+            now = datetime.now(timezone.utc)
+            # Set updated_at explicitly (not just server_default) — day-scoping queries
+            # compare it against tz-aware IST-day bounds, and a raw server-side
+            # CURRENT_TIMESTAMP bypasses the column's tz-aware bind/result processing.
+            order = CustomerOrder(
+                customer_id=customer_id, bucket=bucket, status=status, is_open=True,
+                created_at=now, updated_at=now,
+            )
             db.add(order)
             db.flush()
     except IntegrityError:
@@ -788,5 +795,9 @@ def create_received_placement(
     # CustomerOpenLine (the "Confirmed" bucket tally used for billing) is only populated
     # once staff explicitly confirms this order — see confirm_received_order. Until then it
     # only lives in "New" (received bucket), so it can't double-show under Confirmed.
-    received.updated_at = when
+    # NB: updated_at tracks when this hit the queue (real time) for Today/Past scoping —
+    # not the (possibly backdated) business date `when`/`placed_on`, which only affects
+    # placement.placed_at for reporting. A backdated admin entry should land in "Past",
+    # not silently masquerade as "Today".
+    received.updated_at = datetime.now(timezone.utc)
     return placement

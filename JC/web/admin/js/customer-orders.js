@@ -50,6 +50,10 @@ const CustomerOrders = (() => {
   // Past stages — Dispatch is an ops stage (parcels), not a Today/Past peer.
   const PAST_BUCKETS = ["received", "open", "billed", "dispatch", "cancelled", "closed"];
   const BROWSE_BUCKETS = PAST_BUCKETS; // legacy alias
+  // "Confirmed" and "Billed" are pending-action backlogs — the backend never day-scopes
+  // them (see list_customer_orders), so they always show full history regardless of the
+  // Today/Past toggle. Never title these "Today · X" — that's a lie about the data.
+  const NOT_DAY_SCOPED_BUCKETS = ["open", "billed"];
   const BUCKET_LABELS = {
     needs_action: "Today",
     queue: "Today",
@@ -154,7 +158,8 @@ const CustomerOrders = (() => {
         title.textContent = today ? `Today · ${sub}` : sub;
         if (hint) hint.textContent = BUCKET_HINTS["dispatch"] || "";
       } else {
-        title.textContent = today ? `Today · ${stage}` : stage;
+        const showToday = today && !NOT_DAY_SCOPED_BUCKETS.includes(currentBucket);
+        title.textContent = showToday ? `Today · ${stage}` : stage;
         if (hint) hint.textContent = today ? (BUCKET_HINTS[currentBucket] || "") : "";
       }
     }

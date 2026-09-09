@@ -178,6 +178,25 @@ def _sources_for_received(db: Session, received_order_id: int | None) -> list[st
     return sorted(found)
 
 
+def _sources_for_received_many(db: Session, received_order_ids: list[int]) -> dict[int, list[str]]:
+    """Batched version of _sources_for_received — one query for all orders instead of
+    one query per order (was an N+1 hit on every "Confirmed" hub load)."""
+    if not received_order_ids:
+        return {}
+    rows = (
+        db.query(CustomerOrderPlacement.customer_order_id, CustomerOrderPlacement.customer_notes)
+        .filter(
+            CustomerOrderPlacement.customer_order_id.in_(received_order_ids),
+            CustomerOrderPlacement.deleted_at.is_(None),
+        )
+        .all()
+    )
+    found: dict[int, set[str]] = {}
+    for order_id, note in rows:
+        found.setdefault(order_id, set()).add(_placement_source(note))
+    return {oid: sorted(s) for oid, s in found.items()}
+
+
 def _summary(db: Session, order: CustomerOrder) -> CustomerOrderSummary:
     placements = db.query(CustomerOrderPlacement).filter(
         CustomerOrderPlacement.customer_order_id == order.id, CustomerOrderPlacement.deleted_at.is_(None)
@@ -247,29 +266,48 @@ def list_customer_orders(
         )
         # NB: "Confirmed" is a pending-action backlog (needs billing), not a daily log —
         # never day-scope it away or a customer confirmed yesterday and not yet billed
-        # silently vanishes from the default "Today" queue view.
-        out: list[CustomerOrderSummary] = []
-        for customer_id, total_qty, line_count in rows:
-            cid = int(customer_id)
-            received = (
-                db.query(CustomerOrder)
-                .filter(CustomerOrder.customer_id == cid, CustomerOrder.bucket == "received", CustomerOrder.is_open.is_(True))
-                .first()
-            )
-            earliest = None
-            if received:
-                pq = db.query(func.min(CustomerOrderPlacement.placed_at)).filter(
-                    CustomerOrderPlacement.customer_order_id == received.id,
+        # silently vanishes from the default "Today" queue view. (Title in the hub
+        # should not say "Today" for this bucket either — see BUCKET_LABELS usage in
+        # the frontend; this bucket always shows full history regardless of day param.)
+        cids = [int(r[0]) for r in rows]
+        if not cids:
+            return []
+
+        # Batch every per-customer lookup below — this used to run up to 4 queries PER
+        # CUSTOMER (received order, earliest placement, customer row, sources), which
+        # noticeably hung the UI once dozens of customers had a confirmed-but-unbilled
+        # order sitting in this backlog bucket.
+        received_rows = (
+            db.query(CustomerOrder)
+            .filter(CustomerOrder.customer_id.in_(cids), CustomerOrder.bucket == "received", CustomerOrder.is_open.is_(True))
+            .all()
+        )
+        received_by_cid = {r.customer_id: r for r in received_rows}
+        received_ids = [r.id for r in received_rows]
+
+        earliest_by_order_id: dict[int, datetime] = {}
+        if received_ids:
+            eq = (
+                db.query(CustomerOrderPlacement.customer_order_id, func.min(CustomerOrderPlacement.placed_at))
+                .filter(
+                    CustomerOrderPlacement.customer_order_id.in_(received_ids),
                     CustomerOrderPlacement.status == "received",
                     CustomerOrderPlacement.deleted_at.is_(None),
                 )
-                if day_start is not None:
-                    pq = pq.filter(
-                        CustomerOrderPlacement.placed_at >= day_start,
-                        CustomerOrderPlacement.placed_at < day_end,
-                    )
-                earliest = pq.scalar()
-            cust_obj = db.get(Customer, cid)
+            )
+            if day_start is not None:
+                eq = eq.filter(CustomerOrderPlacement.placed_at >= day_start, CustomerOrderPlacement.placed_at < day_end)
+            earliest_by_order_id = {oid: earliest for oid, earliest in eq.group_by(CustomerOrderPlacement.customer_order_id).all()}
+
+        sources_by_order_id = _sources_for_received_many(db, received_ids)
+        customers_by_id = {c.id: c for c in db.query(Customer).filter(Customer.id.in_(cids)).all()}
+
+        out: list[CustomerOrderSummary] = []
+        for customer_id, total_qty, line_count in rows:
+            cid = int(customer_id)
+            received = received_by_cid.get(cid)
+            earliest = earliest_by_order_id.get(received.id) if received else None
+            cust_obj = customers_by_id.get(cid)
             out.append(
                 CustomerOrderSummary(
                     id=received.id if received else 0,
@@ -280,7 +318,7 @@ def list_customer_orders(
                     line_count=int(line_count or 0),
                     total_quantity=int(total_qty or 0),
                     updated_at=earliest or (received.updated_at if received else datetime.now(timezone.utc)),
-                    sources=_sources_for_received(db, received.id if received else None),
+                    sources=sources_by_order_id.get(received.id, []) if received else [],
                     party_number=getattr(cust_obj, "party_number", None) if cust_obj else None,
                     marker_1=getattr(cust_obj, "marker_1", None) if cust_obj else None,
                     marker_2=getattr(cust_obj, "marker_2", None) if cust_obj else None,
@@ -318,13 +356,20 @@ def list_customer_orders(
             .group_by(CustomerBill.customer_id)
             .all()
         )
+        # Batch the customer-name lookup — was one query PER customer (N+1), which
+        # noticeably hung the UI once dozens of customers had unclosed bills sitting
+        # here (this bucket is auto-opened right after every new bill save).
+        bill_cids = [int(cid) for cid, _, _ in bill_rows]
+        names_by_cid = {
+            c.id: c.business_name for c in db.query(Customer).filter(Customer.id.in_(bill_cids)).all()
+        } if bill_cids else {}
         out = []
         for cid, cnt, earliest in bill_rows:
             out.append(
                 CustomerOrderSummary(
                     id=0,
                     customer_id=int(cid),
-                    customer_name=_customer_name(db, int(cid)),
+                    customer_name=names_by_cid.get(int(cid), f"Customer #{int(cid)}"),
                     bucket="billed",
                     placement_count=int(cnt or 0),
                     bill_count=int(cnt or 0),

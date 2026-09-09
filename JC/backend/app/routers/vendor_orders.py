@@ -724,26 +724,13 @@ def list_vendor_orders(
         summaries.sort(key=lambda x: x.updated_at or datetime.min.replace(tzinfo=timezone.utc))
         return summaries
 
-    if bucket == "placed":
-        # "To receive" is an unactioned-order backlog, not a daily log — never day-scope
-        # it away, or an order placed yesterday and not yet received silently disappears
-        # from the default "Today" queue view (staff never sees it to receive it).
-        orders = (
-            db.query(VendorOrder)
-            .filter(VendorOrder.is_open.is_(True), VendorOrder.bucket == "placed")
-            .order_by(VendorOrder.updated_at.asc())
-            .all()
-        )
-        summaries = _summaries_from_orders(db, orders)
-        if view == "open":
-            summaries = [s for s in summaries if s.total_quantity > 0]
-        return summaries
-
     if bucket == "received":
         # "To bill" stage — VendorOrder.bucket never becomes "received" (see
-        # _to_bill_summaries); source from StockReceipt.bill_status instead. Also a
-        # pending-action backlog — never day-scope it away (same reasoning as "placed").
-        return _to_bill_summaries(db)
+        # _to_bill_summaries); source from StockReceipt.bill_status instead.
+        # Day-scoped like every other bucket now: day=today shows only receipts that
+        # came in today (StockReceipt.received_at), day=all shows the full backlog —
+        # nothing is lost, it just moves from Today to Past.
+        return _to_bill_summaries(db, day_start=day_start, day_end=day_end)
 
     if bucket == "billed":
         # Same story as "received" — VendorOrder.bucket never becomes "billed" either.

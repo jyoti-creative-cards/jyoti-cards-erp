@@ -467,10 +467,9 @@ def test_edit_bill_reuses_originally_applied_pct_not_current_vendor_default(db):
     assert line.billed_amount == Decimal("250.00")  # still 100 x 10 x 25%, not x 100%
 
 
-def test_to_bill_receipt_from_yesterday_still_shows_in_today_queue(db):
-    """Regression: "To bill" (bucket=received) day-scoped itself by received_at — a
-    receipt received yesterday and never billed would vanish from the default "Today"
-    queue (same class of bug as the customer-order New/Confirmed day-scope issue)."""
+def test_to_bill_receipt_from_yesterday_moves_from_today_to_past(db):
+    """"To bill" (bucket=received) is now day-scoped by received_at like every other
+    queue: an old unbilled receipt isn't in Today, but is never lost — still in "all"."""
     from datetime import datetime, timedelta, timezone
 
     from app.routers.vendor_orders import list_vendor_orders
@@ -481,16 +480,55 @@ def test_to_bill_receipt_from_yesterday_still_shows_in_today_queue(db):
     db.commit()
 
     today_rows = list_vendor_orders(bucket="received", view="default", day="today", db=db, auth=AUTH)
-    assert any(r2.vendor_id == v.id for r2 in today_rows)
+    assert not any(r2.vendor_id == v.id for r2 in today_rows)
     all_rows = list_vendor_orders(bucket="received", view="default", day="all", db=db, auth=AUTH)
     assert any(r2.vendor_id == v.id for r2 in all_rows)
 
 
-def test_placed_order_from_yesterday_still_shows_in_today_queue(db):
-    """Same issue, one stage earlier: a vendor order placed yesterday and never
-    received must not vanish from the "To receive" (bucket=placed) Today queue."""
+def test_fresh_to_bill_receipt_shows_in_today_queue(db):
+    from app.routers.vendor_orders import list_vendor_orders
+
+    v = _vendor(db)
+    r, ln = _pending_receipt(db, v.id, qty=10, price=Decimal("10"))
+    db.commit()
+
+    today_rows = list_vendor_orders(bucket="received", view="default", day="today", db=db, auth=AUTH)
+    assert any(r2.vendor_id == v.id for r2 in today_rows)
+
+
+def test_placed_order_from_yesterday_moves_from_today_to_past(db):
+    """Same day-scoping, one stage earlier: a vendor order placed yesterday and never
+    received isn't in the "To receive" (bucket=placed) Today queue, but is never lost —
+    it's still in "all" (Past)."""
     from datetime import datetime, timedelta, timezone
 
+    from app.models.vendor_order import VendorOrder, VendorOrderLine, VendorOrderPlacement
+    from app.routers.vendor_orders import list_vendor_orders
+
+    v = _vendor(db)
+    yesterday = datetime.now(timezone.utc) - timedelta(days=2)
+    order = VendorOrder(vendor_id=v.id, bucket="placed", status="placed", is_open=True, updated_at=yesterday)
+    db.add(order)
+    db.flush()
+    placement = VendorOrderPlacement(
+        vendor_order_id=order.id, status="placed", placed_by_type="admin", placed_by_name="Test",
+        placed_at=yesterday,
+    )
+    db.add(placement)
+    db.flush()
+    db.add(VendorOrderLine(
+        placement_id=placement.id, catalog_product_id=1, our_product_id="P1",
+        quantity=10, quantity_remaining=10, buying_price=Decimal("10"),
+    ))
+    db.commit()
+
+    today_rows = list_vendor_orders(bucket="placed", view="default", day="today", db=db, auth=AUTH)
+    assert not any(r.vendor_id == v.id for r in today_rows)
+    all_rows = list_vendor_orders(bucket="placed", view="default", day="all", db=db, auth=AUTH)
+    assert any(r.vendor_id == v.id for r in all_rows)
+
+
+def test_fresh_placed_order_shows_in_today_queue(db):
     from app.models.vendor_order import VendorOrder, VendorOrderLine, VendorOrderPlacement
     from app.routers.vendor_orders import list_vendor_orders
 
@@ -500,7 +538,6 @@ def test_placed_order_from_yesterday_still_shows_in_today_queue(db):
     db.flush()
     placement = VendorOrderPlacement(
         vendor_order_id=order.id, status="placed", placed_by_type="admin", placed_by_name="Test",
-        placed_at=datetime.now(timezone.utc) - timedelta(days=2),
     )
     db.add(placement)
     db.flush()
@@ -512,8 +549,6 @@ def test_placed_order_from_yesterday_still_shows_in_today_queue(db):
 
     today_rows = list_vendor_orders(bucket="placed", view="default", day="today", db=db, auth=AUTH)
     assert any(r.vendor_id == v.id for r in today_rows)
-    all_rows = list_vendor_orders(bucket="placed", view="default", day="all", db=db, auth=AUTH)
-    assert any(r.vendor_id == v.id for r in all_rows)
 
 
 def test_closeable_billed_lists_receipt_and_close_batch_archives_it(db):

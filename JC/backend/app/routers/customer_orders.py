@@ -259,16 +259,19 @@ def list_customer_orders(
                 CustomerOpenLine.customer_id,
                 func.coalesce(func.sum(CustomerOpenLine.quantity_open), 0),
                 func.count(CustomerOpenLine.id),
+                func.max(CustomerOpenLine.updated_at),
             )
             .filter(CustomerOpenLine.status == "open", CustomerOpenLine.quantity_open > 0)
             .group_by(CustomerOpenLine.customer_id)
             .all()
         )
-        # NB: "Confirmed" is a pending-action backlog (needs billing), not a daily log —
-        # never day-scope it away or a customer confirmed yesterday and not yet billed
-        # silently vanishes from the default "Today" queue view. (Title in the hub
-        # should not say "Today" for this bucket either — see BUCKET_LABELS usage in
-        # the frontend; this bucket always shows full history regardless of day param.)
+        # Like "received": day=today shows only customers whose Confirmed backlog was
+        # touched today (a new confirmation, or more qty merged into an existing open
+        # line today) — CustomerOpenLine.updated_at bumps on every such write. day=all
+        # still shows full history, so nothing is ever lost — it just moves from Today
+        # to Past, exactly like "New" does.
+        if day_start is not None:
+            rows = [r for r in rows if r[3] and day_start <= r[3].astimezone(timezone.utc) < day_end]
         cids = [int(r[0]) for r in rows]
         if not cids:
             return []
@@ -285,28 +288,14 @@ def list_customer_orders(
         received_by_cid = {r.customer_id: r for r in received_rows}
         received_ids = [r.id for r in received_rows]
 
-        earliest_by_order_id: dict[int, datetime] = {}
-        if received_ids:
-            eq = (
-                db.query(CustomerOrderPlacement.customer_order_id, func.min(CustomerOrderPlacement.placed_at))
-                .filter(
-                    CustomerOrderPlacement.customer_order_id.in_(received_ids),
-                    CustomerOrderPlacement.status == "received",
-                    CustomerOrderPlacement.deleted_at.is_(None),
-                )
-            )
-            if day_start is not None:
-                eq = eq.filter(CustomerOrderPlacement.placed_at >= day_start, CustomerOrderPlacement.placed_at < day_end)
-            earliest_by_order_id = {oid: earliest for oid, earliest in eq.group_by(CustomerOrderPlacement.customer_order_id).all()}
-
         sources_by_order_id = _sources_for_received_many(db, received_ids)
         customers_by_id = {c.id: c for c in db.query(Customer).filter(Customer.id.in_(cids)).all()}
+        touched_by_cid = {int(r[0]): r[3] for r in rows}
 
         out: list[CustomerOrderSummary] = []
-        for customer_id, total_qty, line_count in rows:
+        for customer_id, total_qty, line_count, _touched in rows:
             cid = int(customer_id)
             received = received_by_cid.get(cid)
-            earliest = earliest_by_order_id.get(received.id) if received else None
             cust_obj = customers_by_id.get(cid)
             out.append(
                 CustomerOrderSummary(
@@ -317,7 +306,7 @@ def list_customer_orders(
                     placement_count=0,
                     line_count=int(line_count or 0),
                     total_quantity=int(total_qty or 0),
-                    updated_at=earliest or (received.updated_at if received else datetime.now(timezone.utc)),
+                    updated_at=touched_by_cid.get(cid) or (received.updated_at if received else datetime.now(timezone.utc)),
                     sources=sources_by_order_id.get(received.id, []) if received else [],
                     party_number=getattr(cust_obj, "party_number", None) if cust_obj else None,
                     marker_1=getattr(cust_obj, "marker_1", None) if cust_obj else None,
@@ -342,20 +331,26 @@ def list_customer_orders(
 
     if bucket == "billed":
         # Always derive from active bills — cancelled bills/orders must not linger in Billed.
-        # NB: like "received"/"open" above, "Billed" is a pending-action backlog (dispatch
-        # or collect payment, then close) not a daily log — never day-scope it away, or a
-        # bill from yesterday that's still awaiting dispatch/collection silently disappears
-        # from the default "Today" queue view.
+        # Like "received"/"open" above: day=today shows only customers who got a NEW bill
+        # today (func.max(created_at), not min — a customer with an old unclosed bill who
+        # gets billed again today should surface under Today); day=all shows every
+        # customer with any unclosed bill, so nothing is ever lost — it just moves from
+        # Today to Past.
         bill_rows = (
             db.query(
                 CustomerBill.customer_id,
                 func.count(CustomerBill.id),
-                func.min(CustomerBill.created_at),
+                func.max(CustomerBill.created_at),
             )
             .filter(CustomerBill.cancelled_at.is_(None), CustomerBill.closed_at.is_(None))
             .group_by(CustomerBill.customer_id)
             .all()
         )
+        if day_start is not None:
+            bill_rows = [
+                r for r in bill_rows
+                if r[2] and day_start <= r[2].astimezone(timezone.utc) < day_end
+            ]
         # Batch the customer-name lookup — was one query PER customer (N+1), which
         # noticeably hung the UI once dozens of customers had unclosed bills sitting
         # here (this bucket is auto-opened right after every new bill save).
@@ -364,7 +359,7 @@ def list_customer_orders(
             c.id: c.business_name for c in db.query(Customer).filter(Customer.id.in_(bill_cids)).all()
         } if bill_cids else {}
         out = []
-        for cid, cnt, earliest in bill_rows:
+        for cid, cnt, latest in bill_rows:
             out.append(
                 CustomerOrderSummary(
                     id=0,
@@ -375,7 +370,7 @@ def list_customer_orders(
                     bill_count=int(cnt or 0),
                     line_count=0,
                     total_quantity=0,
-                    updated_at=earliest or datetime.now(timezone.utc),
+                    updated_at=latest or datetime.now(timezone.utc),
                     sources=[],
                 )
             )

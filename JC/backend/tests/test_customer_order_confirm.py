@@ -191,9 +191,9 @@ def test_old_untouched_new_order_moves_from_today_to_past_queue(db):
     assert any(r.customer_id == customer.id for r in all_rows)
 
 
-def test_confirmed_unbilled_order_from_yesterday_still_shows_in_today_confirmed_queue(db):
-    """Same issue as above, one stage later: a customer confirmed yesterday and not yet
-    billed must not vanish from the "Confirmed" (bucket=open) Today queue either."""
+def test_freshly_confirmed_order_shows_in_today_confirmed_queue(db):
+    """A customer confirmed just now must show under the "Confirmed" (bucket=open)
+    Today queue."""
     from app.routers.customer_orders import list_customer_orders
 
     customer, prod = _setup(db)
@@ -206,3 +206,75 @@ def test_confirmed_unbilled_order_from_yesterday_still_shows_in_today_confirmed_
 
     today_rows = list_customer_orders(bucket="open", day="today", db=db, auth=AUTH)
     assert any(r.customer_id == customer.id for r in today_rows)
+
+
+def test_old_untouched_confirmed_order_moves_from_today_to_past_queue(db):
+    """Consistent with "New": a customer confirmed days ago and still not billed drops
+    out of the "Confirmed" Today queue, but is never lost — still visible under "Past"
+    (day=all), matched by CustomerOpenLine.updated_at."""
+    from datetime import timedelta
+
+    from app.routers.customer_orders import list_customer_orders
+
+    customer, prod = _setup(db)
+    create_received_placement(
+        db, customer_id=customer.id, customer_name=customer.business_name,
+        lines=[{"catalog_product_id": prod.id, "quantity": 5}],
+    )
+    confirm_received_order(db, customer.id)
+    db.commit()
+
+    old_line = (
+        db.query(CustomerOpenLine)
+        .filter(CustomerOpenLine.customer_id == customer.id, CustomerOpenLine.catalog_product_id == prod.id)
+        .first()
+    )
+    old_line.updated_at = datetime.now(timezone.utc) - timedelta(days=2)
+    db.commit()
+
+    today_rows = list_customer_orders(bucket="open", day="today", db=db, auth=AUTH)
+    assert not any(r.customer_id == customer.id for r in today_rows)
+    all_rows = list_customer_orders(bucket="open", day="all", db=db, auth=AUTH)
+    assert any(r.customer_id == customer.id for r in all_rows)
+
+
+def test_fresh_bill_shows_in_today_billed_queue(db):
+    """A bill created just now must show under the "Billed" Today queue."""
+    from app.models.customer_bill import CustomerBill
+    from app.routers.customer_orders import list_customer_orders
+
+    customer, prod = _setup(db)
+    db.add(CustomerBill(
+        customer_id=customer.id, bill_number="B-FRESH-1",
+        subtotal_inclusive=Decimal("100"), grand_total=Decimal("100"),
+        created_by_type="admin", created_by_name="Test Admin",
+    ))
+    db.commit()
+
+    today_rows = list_customer_orders(bucket="billed", day="today", db=db, auth=AUTH)
+    assert any(r.customer_id == customer.id for r in today_rows)
+
+
+def test_old_bill_moves_from_today_to_past_billed_queue(db):
+    """A bill created days ago and still not closed drops out of the "Billed" Today
+    queue, but is never lost — still visible under "Past" (day=all)."""
+    from datetime import timedelta
+
+    from app.models.customer_bill import CustomerBill
+    from app.routers.customer_orders import list_customer_orders
+
+    customer, prod = _setup(db)
+    bill = CustomerBill(
+        customer_id=customer.id, bill_number="B-OLD-1",
+        subtotal_inclusive=Decimal("100"), grand_total=Decimal("100"),
+        created_by_type="admin", created_by_name="Test Admin",
+    )
+    db.add(bill)
+    db.flush()
+    bill.created_at = datetime.now(timezone.utc) - timedelta(days=2)
+    db.commit()
+
+    today_rows = list_customer_orders(bucket="billed", day="today", db=db, auth=AUTH)
+    assert not any(r.customer_id == customer.id for r in today_rows)
+    all_rows = list_customer_orders(bucket="billed", day="all", db=db, auth=AUTH)
+    assert any(r.customer_id == customer.id for r in all_rows)

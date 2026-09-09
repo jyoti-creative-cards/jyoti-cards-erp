@@ -50,10 +50,10 @@ const CustomerOrders = (() => {
   // Past stages — Dispatch is an ops stage (parcels), not a Today/Past peer.
   const PAST_BUCKETS = ["received", "open", "billed", "dispatch", "cancelled", "closed"];
   const BROWSE_BUCKETS = PAST_BUCKETS; // legacy alias
-  // "Confirmed" and "Billed" are pending-action backlogs — the backend never day-scopes
-  // them (see list_customer_orders), so they always show full history regardless of the
-  // Today/Past toggle. Never title these "Today · X" — that's a lie about the data.
-  const NOT_DAY_SCOPED_BUCKETS = ["open", "billed"];
+  // All backlog buckets (New/Confirmed/Billed) now day-scope consistently: day=today
+  // shows only entries touched today, day=all shows full history — nothing is ever
+  // lost, it just moves from Today to Past (see list_customer_orders on the backend).
+  const NOT_DAY_SCOPED_BUCKETS = [];
   const BUCKET_LABELS = {
     needs_action: "Today",
     queue: "Today",
@@ -1688,6 +1688,7 @@ const CustomerOrders = (() => {
     let q = Math.max(0, parseInt(val, 10) || 0);
     if (!editBillId) q = Math.min(ln.quantity_open, q);
     ln.quantity_to_ship = q;
+    renderWizardTotalsBar();
   }
 
   function setLineDisc(idx, val) {
@@ -1696,6 +1697,7 @@ const CustomerOrders = (() => {
     ln.discount_percent = val;
     ln.discSource = val === "" || val == null ? "" : "pct";
     ln.net_rate = val === "" || val == null ? "" : calcNetFromDisc(ln.unit_price, val);
+    renderWizardTotalsBar();
   }
 
   function setLineNetRate(idx, val) {
@@ -1705,11 +1707,41 @@ const CustomerOrders = (() => {
     ln.discSource = val === "" || val == null ? "" : "net";
     if (val === "" || val == null) {
       ln.discount_percent = "";
+      renderWizardTotalsBar();
       return;
     }
     ln.discount_percent = calcDiscFromNet(ln.unit_price, val);
     discountEnabled = true;
     useOverallDiscount = false;
+    renderWizardTotalsBar();
+  }
+
+  /** Running qty/amount from the line items alone (pre-GST/pre-freight/pre-charges) —
+   * kept visible on every wizard step (not just Review) since staff use it to judge
+   * additional charges while still on the Transport/Charges steps. */
+  function wizardLinesTotals() {
+    let qty = 0, amount = 0;
+    for (const ln of processLines) {
+      const q = Number(ln.quantity_to_ship) || 0;
+      if (q <= 0) continue;
+      qty += q;
+      // Mirror the "shownNet" logic used in the Step-1 table so this bar always matches
+      // what's on screen there (overall-discount mode ignores the per-line net_rate).
+      const rate = useOverallDiscount && overallDiscount
+        ? Number(calcNetFromDisc(ln.unit_price, overallDiscount)) || 0
+        : (Number(ln.net_rate) || Number(calcNetFromDisc(ln.unit_price, ln.discount_percent || 0)) || 0);
+      amount += q * rate;
+    }
+    return { qty, amount };
+  }
+
+  function renderWizardTotalsBar() {
+    const bar = document.getElementById("co-wizard-totals");
+    if (!bar) return;
+    const { qty, amount } = wizardLinesTotals();
+    bar.innerHTML = qty > 0
+      ? `<span><span class="wtb-muted">Total qty</span>${qty}</span><span><span class="wtb-muted">Total amount</span>${fmtPrice(amount)}</span>`
+      : "";
   }
 
   function renderProcessWizard() {
@@ -1717,6 +1749,7 @@ const CustomerOrders = (() => {
     const bodyEl = document.getElementById("co-wizard-body");
     const footerEl = document.getElementById("co-wizard-footer");
     if (!stepsEl || !bodyEl || !footerEl) return;
+    renderWizardTotalsBar();
 
     const labels = ["Lines", "Transport", "Charges", "Narration", "Review"];
     stepsEl.innerHTML = labels.map((l, i) => {
@@ -1962,7 +1995,7 @@ const CustomerOrders = (() => {
     }
     renderProcessWizard();
   }
-  function setOverallDisc(v) { overallDiscount = v; }
+  function setOverallDisc(v) { overallDiscount = v; renderWizardTotalsBar(); }
   function setBillEditSearch(v) { billEditSearch = v || ""; renderProcessWizard(); }
   function setFreightAgent(v) { freightAgentId = v; }
   function setFreightCharges(v) { freightCharges = v; }

@@ -48,19 +48,28 @@ def _bill(db, *, transport_mode="road", picked_at=None, created_at=None) -> Cust
     return bill
 
 
-def test_pending_parcel_from_yesterday_still_shows_in_today_dispatch_queue(db):
+def test_pending_parcel_from_yesterday_moves_from_today_to_past(db):
+    """day=today now filters "pending" like every other queue in the app: a parcel from
+    an old bill isn't in Today, but is never lost — it's still in "all" (Past)."""
     yesterday = datetime.now(timezone.utc) - timedelta(days=2)
     bill = _bill(db, created_at=yesterday)
 
     today_rows = list_parcels(db, status="pending", day="today")
-    assert any(r["bill_id"] == bill.id for r in today_rows)
+    assert not any(r["bill_id"] == bill.id for r in today_rows)
     all_rows = list_parcels(db, status="pending", day="all")
     assert any(r["bill_id"] == bill.id for r in all_rows)
 
 
+def test_fresh_pending_parcel_shows_in_today_dispatch_queue(db):
+    bill = _bill(db, created_at=datetime.now(timezone.utc))
+
+    today_rows = list_parcels(db, status="pending", day="today")
+    assert any(r["bill_id"] == bill.id for r in today_rows)
+
+
 def test_picked_parcel_from_yesterday_is_correctly_scoped_out_of_today(db):
-    """Sanity check: "picked" (historical/completed) is still meaningfully day-scoped —
-    only "pending" (actionable backlog) is exempt."""
+    """Sanity check: "picked" (historical/completed) is day-scoped the same way as
+    "pending" — both use CustomerBill.created_at now."""
     yesterday = datetime.now(timezone.utc) - timedelta(days=2)
     bill = _bill(db, picked_at=yesterday, created_at=yesterday)
 

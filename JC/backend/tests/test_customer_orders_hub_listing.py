@@ -3,9 +3,10 @@
 Both buckets used to run several extra queries PER CUSTOMER (received order lookup,
 earliest-placement lookup, customer-name lookup, sources lookup) instead of batching
 them — noticeably hanging the UI once dozens of customers had a pending order in one of
-these backlog buckets (which never day-scope away, so they only grow). These tests use
-multiple customers to make sure the batched rewrite still returns correct, per-customer
-data (not mixed up between customers, not silently dropped)."""
+these backlog buckets. These tests (which use day="all") use multiple customers to make
+sure the batched rewrite still returns correct, per-customer data (not mixed up between
+customers, not silently dropped). See test_customer_order_confirm.py for the separate
+day=today vs day=all scoping regression tests."""
 
 from __future__ import annotations
 

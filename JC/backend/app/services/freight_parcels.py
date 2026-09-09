@@ -255,13 +255,10 @@ def list_parcels(
         q = q.filter(CustomerBill.freight_picked_at.is_(None))
     elif status == "picked":
         q = q.filter(CustomerBill.freight_picked_at.isnot(None))
-    # NB: "pending" is an actionable backlog (awaiting pickup), not a daily log — never
-    # day-scope it away, or a bill created yesterday and still unpicked silently
-    # disappears from the default "Today" dispatch queue. "all" mixes pending + picked,
-    # so day-scoping it would silently reintroduce that same bug for old pending parcels
-    # viewed via the "All" tab — only a pure "picked" (fully actioned) view is meaningful
-    # to scope by day.
-    if day == "today" and status == "picked":
+    # Day-scoped consistently with every other queue in the app now: day=today shows
+    # only bills created today, day=all shows the full backlog regardless of status —
+    # nothing is ever lost, it just moves from Today to Past.
+    if day == "today":
         local_now = datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Kolkata"))
         start_local = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
         day_start = start_local.astimezone(timezone.utc)

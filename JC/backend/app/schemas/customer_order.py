@@ -211,6 +211,7 @@ class ProcessContextOut(BaseModel):
     marker_1: Optional[str] = None
     marker_2: Optional[str] = None
     payment_type: Optional[str] = None
+    city_name: Optional[str] = None
 
 
 class OfflineLineIn(BaseModel):

@@ -1521,6 +1521,14 @@ const CustomerOrders = (() => {
       }
       detailCustomerId = bill.customer_id || detailCustomerId;
       processContext = { customer_id: bill.customer_id, customer_name: currentOrder?.customer_name || "" };
+      // City wasn't already on hand here (bill/detail payloads don't carry it) — fetch
+      // it separately for the review screen's "Customer / City" line. Best-effort only.
+      ctx.api(`/customers/${bill.customer_id}`, {}, 30000).then(c => {
+        if (processContext && processContext.customer_id === bill.customer_id) {
+          processContext.city_name = c?.city_name || null;
+          renderProcessWizard();
+        }
+      }).catch(() => {});
       freightAgents = agents || [];
       billSeries = [];
       processLines = (bill.lines || []).filter(ln => ln.status === "billed").map(l => ({
@@ -1886,6 +1894,8 @@ const CustomerOrders = (() => {
         <td>${fmtPrice(ln.line_total)}</td>
       </tr>`;
     }).join("");
+    const totalQty = (tot.lines || []).reduce((s, ln) => s + (Number(ln.quantity) || 0), 0);
+    const totalLineAmount = (tot.lines || []).reduce((s, ln) => s + (Number(ln.line_total) || 0), 0);
     const modeLabel = transportMode === "bus" ? "Bus" : transportMode === "transport" ? "Transport" : transportMode === "self_pickup" ? "Self-pickup" : "—";
     const chargeLabel = transportMode === "transport" ? "Transport charges" : "Freight";
     const agentName = (freightAgents.find(a => String(a.id) === String(freightAgentId)) || {}).name;
@@ -1896,10 +1906,13 @@ const CustomerOrders = (() => {
           <th>Item</th><th>Qty</th><th>Rate</th><th>Disc</th><th>Net</th><th>Total</th>
         </tr></thead><tbody>
           ${lineRows || `<tr><td colspan="6" style="text-align:center;color:var(--muted);">No lines</td></tr>`}
-        </tbody></table>
+        </tbody>${lineRows ? `<tfoot><tr style="font-weight:600;border-top:2px solid var(--border);">
+          <td>Total</td><td>${totalQty}</td><td></td><td></td><td></td><td>${fmtPrice(totalLineAmount)}</td>
+        </tr></tfoot>` : ""}</table>
       </div>
       <div class="review-grid" style="margin-bottom:16px;">
         ${ctx.reviewRow("Customer", processContext?.customer_name)}
+        ${processContext?.city_name ? ctx.reviewRow("City", processContext.city_name) : ""}
         ${!editBillId ? ctx.reviewRow("Bill number", nextBillNumberFromSeries() || "auto") : ""}
         ${!editBillId ? ctx.reviewRow("Bill date", billDate || localToday()) : ""}
         ${ctx.reviewRow("Lines shipping", shipCount)}

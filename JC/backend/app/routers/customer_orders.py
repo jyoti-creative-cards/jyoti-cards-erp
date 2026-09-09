@@ -571,6 +571,7 @@ def get_process_context(
                 addons=ln.get("addons") or [],
             )
         )
+    city = db.get(City, customer.city_id) if customer.city_id else None
     return ProcessContextOut(
         customer_id=customer_id,
         customer_name=customer.business_name,
@@ -581,6 +582,7 @@ def get_process_context(
         marker_1=getattr(customer, "marker_1", None),
         marker_2=getattr(customer, "marker_2", None),
         payment_type=getattr(customer, "payment_type", None),
+        city_name=city.name if city else None,
     )
 
 

@@ -110,6 +110,11 @@ def serialize_customer_bill(
         agent = db.get(FreightAgent, bill.freight_agent_id)
         agent_name = agent.name if agent else None
     mode = bill.transport_mode or ("bus" if bill.freight_agent_id else "self_pickup")
+    bline_cids = [int(ln.catalog_product_id) for ln in blines if ln.catalog_product_id]
+    marking_by_cid = {
+        p.id: p.marking
+        for p in (db.query(CatalogProduct).filter(CatalogProduct.id.in_(bline_cids)).all() if bline_cids else [])
+    }
     return CustomerBillOut(
         id=bill.id,
         bill_number=bill.bill_number,
@@ -148,6 +153,7 @@ def serialize_customer_bill(
                 status=ln.status,
                 close_reason=ln.close_reason,
                 addons=addon_by_cid.get(int(ln.catalog_product_id), []),
+                marking=marking_by_cid.get(int(ln.catalog_product_id)),
             )
             for ln in blines
         ],
@@ -430,6 +436,7 @@ def get_customer_order_detail(
                     cancel_reason=row.cancel_reason,
                     image_urls=presigned_urls(prod.image_keys or []) if prod else [],
                     addons=addon_map.get(int(row.catalog_product_id), []),
+                    marking=prod.marking if prod else None,
                 )
             )
         received = db.query(CustomerOrder).filter(
@@ -460,14 +467,20 @@ def get_customer_order_detail(
     from app.services.catalog_addons import addon_snapshots_map
 
     all_line_cids: list[int] = []
+    missing_addon_cids: list[int] = []
     placement_lines: list[tuple] = []
     for p in placements:
         lines = db.query(CustomerOrderLine).filter(CustomerOrderLine.placement_id == p.id).order_by(CustomerOrderLine.id.asc()).all()
         placement_lines.append((p, lines))
         for ln in lines:
+            all_line_cids.append(int(ln.catalog_product_id))
             if not ln.addons_json:
-                all_line_cids.append(int(ln.catalog_product_id))
-    live_addons = addon_snapshots_map(db, all_line_cids, with_images=False) if all_line_cids else {}
+                missing_addon_cids.append(int(ln.catalog_product_id))
+    live_addons = addon_snapshots_map(db, missing_addon_cids, with_images=False) if missing_addon_cids else {}
+    marking_by_cid = {
+        p.id: p.marking
+        for p in (db.query(CatalogProduct).filter(CatalogProduct.id.in_(all_line_cids)).all() if all_line_cids else [])
+    }
     pl_out: list[CustomerPlacementOut] = []
     for p, lines in placement_lines:
         pl_out.append(
@@ -490,6 +503,7 @@ def get_customer_order_detail(
                         status=ln.status,
                         cancel_reason=ln.cancel_reason,
                         addons=list(ln.addons_json or live_addons.get(int(ln.catalog_product_id), [])),
+                        marking=marking_by_cid.get(int(ln.catalog_product_id)),
                     )
                     for ln in lines
                 ],
@@ -564,6 +578,7 @@ def get_process_context(
                 quantity_on_hand=ln["quantity_on_hand"],
                 image_urls=presigned_urls(keys),
                 addons=ln.get("addons") or [],
+                marking=prod.marking if prod else None,
             )
         )
     city = db.get(City, customer.city_id) if customer.city_id else None

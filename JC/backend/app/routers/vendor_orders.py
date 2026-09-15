@@ -317,6 +317,7 @@ def _build_detail(db: Session, order: VendorOrder, *, auth: AuthContext, open_on
                     "buying_price": hide_cost(str(ln.buying_price), auth),
                     "unit": prod.unit if prod else None,
                     "image_urls": presigned_urls(prod.image_keys or []) if prod else [],
+                    "marking": prod.marking if prod else None,
                     "breakdown": [],
                 },
             )
@@ -1154,6 +1155,7 @@ def _open_line_out(db: Session, row: VendorOpenLine, *, auth: AuthContext) -> Op
         buying_price=hide_cost(str(row.buying_price), auth),
         unit=prod.unit if prod else None,
         image_urls=presigned_urls(prod.image_keys or []) if prod else [],
+        marking=prod.marking if prod else None,
         status=row.status,
     )
 

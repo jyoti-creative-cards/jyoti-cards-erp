@@ -137,6 +137,7 @@ def _to_public(
         series=row.series,
         unit=row.unit,
         year_group=row.year_group,
+        marking=row.marking,
         buying_price=hide_cost(format(row.buying_price, "f") if row.buying_price is not None else None, auth),
         selling_price=(
             format(eff, "f")
@@ -548,6 +549,7 @@ def bulk_create(body: CatalogBulkCreate, db: Session = Depends(get_db), auth: Au
             series=item.series,
             unit=item.unit,
             year_group=_year_for_item(item.year_group),
+            marking=(item.marking.strip() if item.marking else None),
             buying_price=item.buying_price.quantize(Decimal("0.01")),
             selling_price=coerce_selling_price(item.buying_price, item.selling_price),
             image_keys=item.image_keys or [],

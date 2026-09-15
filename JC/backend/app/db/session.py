@@ -143,6 +143,7 @@ def init_db() -> None:
         _migrate_customer_order_unique_open()
         _migrate_customer_bill_closed()
         _migrate_bill_number_unique()
+        _migrate_catalog_marking()
         with engine.begin() as conn:
             conn.execute(text("SELECT 1"))
         _DB_READY = True
@@ -390,6 +391,17 @@ def _migrate_receipt_gst_pct() -> None:
             _exec_sql(conn, "ALTER TABLE jc_stock_receipts ADD COLUMN gst_rate_pct_applied NUMERIC(5,2)", critical=False)
         else:
             _exec_sql(conn, "ALTER TABLE jc_stock_receipts ADD COLUMN IF NOT EXISTS gst_rate_pct_applied NUMERIC(5,2)", critical=False)
+
+
+def _migrate_catalog_marking() -> None:
+    """Internal-only operational tag on catalog products (e.g. "Fragile", "Check
+    quality") — surfaced to staff on orders/catalog/stock screens, never on customer
+    bill PDFs. Mirrors Customer.marker_1/marker_2."""
+    with engine.begin() as conn:
+        if _is_sqlite:
+            _exec_sql(conn, "ALTER TABLE jc_catalog_products ADD COLUMN marking VARCHAR(200)", critical=False)
+        else:
+            _exec_sql(conn, "ALTER TABLE jc_catalog_products ADD COLUMN IF NOT EXISTS marking VARCHAR(200)", critical=False)
 
 
 def _migrate_receipt_closed() -> None:

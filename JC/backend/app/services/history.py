@@ -16,10 +16,11 @@ TRACKED_FIELDS = {
     "customer": (
         "business_name", "phone", "person_name", "secondary_phone", "alias", "address",
         "additional_details", "city_id", "route_id", "gst_number", "credit_limit", "credit_override",
+        "marker_1", "marker_2",
     ),
     "catalog_product": (
         "our_product_id", "vendor_id", "vendor_product_id", "category", "series",
-        "unit", "year_group", "buying_price", "selling_price", "image_keys",
+        "unit", "year_group", "marking", "buying_price", "selling_price", "image_keys",
     ),
     "addon_product": (
         "our_product_id", "vendor_id", "vendor_product_id", "name", "description",

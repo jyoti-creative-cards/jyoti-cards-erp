@@ -1851,6 +1851,11 @@ const App = (() => {
         </div>
         <div><label class="label">GST Number</label><input id="ed-gst_number" class="input" value="${esc(c.gst_number || "")}" placeholder="22AAAAA0000A1Z5" maxlength="15" style="text-transform:uppercase;" /></div>
         <div><label class="label">Address</label><textarea id="ed-address" class="input" rows="2">${esc(c.address || "")}</textarea></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:12px;border:1px dashed var(--border);border-radius:10px;background:#f8fafc;">
+          <div><label class="label">Marking 1</label><input id="ed-marker_1" class="input" maxlength="100" placeholder="e.g. Genuine party" value="${esc(c.marker_1 || "")}" /></div>
+          <div><label class="label">Marking 2</label><input id="ed-marker_2" class="input" maxlength="100" placeholder="e.g. Only cash" value="${esc(c.marker_2 || "")}" /></div>
+          <p style="grid-column:1/-1;margin:0;font-size:12px;color:var(--muted);">Internal only — shown on orders/bill screens for staff, never on the customer's bill PDF.</p>
+        </div>
         <div><label class="label">Additional details</label><textarea id="ed-additional_details" class="input" rows="2">${esc(c.additional_details || "")}</textarea></div>
         <div>
           <label class="label">Payment type *</label>
@@ -1935,6 +1940,8 @@ const App = (() => {
         city_id: cityId,
         gst_number: gst.value,
         address: document.getElementById("ed-address").value.trim() || null,
+        marker_1: document.getElementById("ed-marker_1")?.value.trim() || null,
+        marker_2: document.getElementById("ed-marker_2")?.value.trim() || null,
         additional_details: document.getElementById("ed-additional_details")?.value.trim() || null,
         payment_type: (document.querySelector('input[name="ed-payment_type"]:checked')?.value) || "CREDIT",
         credit_limit: (() => {
@@ -2498,6 +2505,10 @@ const App = (() => {
             </div>
             <div><label class="label">GST</label><input id="wf-gst_number" class="input" value="${esc(wizardForm.gst_number || "")}" maxlength="15" style="text-transform:uppercase;" /></div>
             <div><label class="label">Address</label><textarea id="wf-address" class="input" rows="2">${esc(wizardForm.address || "")}</textarea></div>
+            <div class="create-field-row">
+              <div><label class="label">Marking 1</label><input id="wf-marker_1" class="input" maxlength="100" placeholder="e.g. Genuine party" value="${esc(wizardForm.marker_1 || "")}" /></div>
+              <div><label class="label">Marking 2</label><input id="wf-marker_2" class="input" maxlength="100" placeholder="e.g. Only cash" value="${esc(wizardForm.marker_2 || "")}" /></div>
+            </div>
             <div><label class="label">Notes</label><textarea id="wf-additional_details" class="input" rows="2">${esc(wizardForm.additional_details || "")}</textarea></div>
           </div>
         </details>
@@ -2638,7 +2649,7 @@ const App = (() => {
   }
 
   function collectWizard() {
-    ["business_name","person_name","phone","secondary_phone","alias","gst_number","address","additional_details","credit_limit"].forEach(k => {
+    ["business_name","person_name","phone","secondary_phone","alias","gst_number","address","additional_details","credit_limit","marker_1","marker_2"].forEach(k => {
       const el = document.getElementById(`wf-${k}`); if (el) wizardForm[k] = el.value.trim();
     });
     const cityEl = document.getElementById("wf-city_id");
@@ -2676,6 +2687,7 @@ const App = (() => {
         phone: wizardForm.phone, secondary_phone: sec.value,
         alias: wizardForm.alias || null, city_id: wizardForm.city_id,
         gst_number: gst.value, address: wizardForm.address || null,
+        marker_1: wizardForm.marker_1 || null, marker_2: wizardForm.marker_2 || null,
         additional_details: wizardForm.additional_details || null,
         payment_type: wizardForm.payment_type || "CREDIT",
         credit_limit: (wizardForm.payment_type === "CASH") ? 0 : (wizardForm.credit_limit ? parseFloat(wizardForm.credit_limit) : null),

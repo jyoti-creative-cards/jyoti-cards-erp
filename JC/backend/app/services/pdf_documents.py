@@ -128,6 +128,47 @@ def _party_blocks(our_lines: List[str], vendor_lines: List[str]) -> Table:
     return tbl
 
 
+def _party_block_single(lines: List[str]) -> Table:
+    """Full-width 'Bill to' block with no 'From' column — used on non-GST customer
+    estimates, which intentionally omit our own name/address (see Order Estimate PDF)."""
+    styles = getSampleStyleSheet()
+    label_style = ParagraphStyle(
+        "party_lbl_s", parent=styles["Normal"], fontName="Helvetica-Bold",
+        fontSize=8, textColor=colors.HexColor("#64748b"), spaceAfter=4, leading=10,
+    )
+    body_style = ParagraphStyle("party_l_s", parent=styles["Normal"], fontSize=9, leading=12, textColor=colors.HexColor("#0f172a"))
+
+    if not lines:
+        flow = [Paragraph("—", body_style)]
+    else:
+        flow = [Paragraph(escape(lines[0]).upper(), label_style)]
+        for i, line in enumerate(lines[1:]):
+            st = body_style
+            if i == 0:
+                st = ParagraphStyle("party_name_s", parent=st, fontName="Helvetica-Bold", fontSize=10, leading=13)
+            flow.append(Paragraph(escape(line), st))
+
+    inner = Table([[x] for x in flow], colWidths=[16 * cm])
+    inner.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 1),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+    ]))
+    tbl = Table([[inner]], colWidths=[17 * cm])
+    tbl.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#eff6ff")),
+        ("BOX", (0, 0), (-1, -1), 0.8, colors.HexColor("#cbd5e1")),
+        ("LEFTPADDING", (0, 0), (-1, -1), 10),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+        ("TOPPADDING", (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+    ]))
+    return tbl
+
+
 def _vendor_order_table(
     lines: List[Dict[str, Any]],
     image_urls: Dict[int, str | None],
@@ -258,11 +299,11 @@ def _totals_block(rows: List[List[str]]) -> Table:
     return table
 
 
-def _header(story: list, title: str, subtitle: str, meta: str) -> None:
+def _header(story: list, title: str, subtitle: str, meta: str, *, brand_override: str | None = None) -> None:
     styles = getSampleStyleSheet()
     brand_bar = Table(
         [[Paragraph(
-            escape(company_lines()[0]),
+            escape(brand_override or company_lines()[0]),
             ParagraphStyle(
                 "brand", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=14,
                 alignment=TA_CENTER, textColor=colors.white, leading=18,

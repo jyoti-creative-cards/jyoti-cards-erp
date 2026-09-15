@@ -81,8 +81,10 @@ def test_pdf_summary_transport_label():
 def test_pdf_item_headers_include_rate_disc_net():
     from app.services.customer_bill_pdf import bill_item_headers
 
+    # Non-GST "Order Estimate" layout: Photo, Code, Qty, Rate, Disc., Net, Amount —
+    # no Description column (see PDF customization for non-GST bills).
     plain = bill_item_headers(False)
-    assert plain[4:7] == ["Rate", "Disc.", "Net"]
+    assert plain == ["Photo", "Code", "Qty", "Rate", "Disc.", "Net", "Amount"]
     gst = bill_item_headers(True, "18%")
     assert gst[4:7] == ["Rate", "Disc.", "Net"]
 

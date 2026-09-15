@@ -358,6 +358,8 @@ def create_customer(body: CustomerCreate, db: Session = Depends(get_db), auth: A
         existing.credit_limit = Decimal(str(body.credit_limit)) if body.credit_limit is not None else None
         existing.credit_override = body.credit_override
         existing.gst_number = (body.gst_number.strip().upper() if body.gst_number else None)
+        existing.marker_1 = (body.marker_1.strip() if body.marker_1 else None)
+        existing.marker_2 = (body.marker_2.strip() if body.marker_2 else None)
         existing.is_active = True
         existing.deleted_at = None
         db.add(existing)

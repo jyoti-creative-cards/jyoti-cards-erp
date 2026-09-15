@@ -22,6 +22,9 @@ class CatalogProduct(Base):
     series: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
     unit: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     year_group: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    # Internal-only operational tag (e.g. "Fragile", "Check quality") — surfaced to staff
+    # on orders/catalog/stock screens, never on customer-facing bill PDFs.
+    marking: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     buying_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 2), nullable=True)
     selling_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 2), nullable=True)
     image_keys: Mapped[list] = mapped_column(JSON, nullable=False, default=list)

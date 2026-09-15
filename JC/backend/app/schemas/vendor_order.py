@@ -61,6 +61,7 @@ class AggregatedLine(BaseModel):
     buying_price: str
     unit: Optional[str]
     image_urls: List[str] = []
+    marking: Optional[str] = None
     breakdown: List[PlacementLineDetail] = []
 
 
@@ -178,6 +179,7 @@ class OpenLineOut(BaseModel):
     buying_price: str
     unit: Optional[str] = None
     image_urls: List[str] = []
+    marking: Optional[str] = None
     status: str
 
 

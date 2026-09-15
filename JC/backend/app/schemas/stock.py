@@ -36,6 +36,7 @@ class StockProductSummary(BaseModel):
     category: Optional[str] = None
     series: Optional[str] = None
     year_group: Optional[str] = None
+    marking: Optional[str] = None
     quantity_on_hand: int
     low_stock_threshold: int = 5
     stock_status: str = "out_of_stock"

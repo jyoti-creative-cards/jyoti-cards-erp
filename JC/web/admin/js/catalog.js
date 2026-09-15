@@ -800,6 +800,11 @@ const Catalog = (() => {
           <div><label class="label">Selling Price</label>
             <input id="ce-selling_price" class="input" type="number" min="0" step="0.01" value="${ctx.esc(p.selling_price || "")}" /></div>
         </div>
+        <div style="padding:12px;border:1px dashed var(--border);border-radius:10px;background:#f8fafc;">
+          <label class="label">Marking</label>
+          <input id="ce-marking" class="input" maxlength="200" placeholder="e.g. Fragile, check quality" value="${ctx.esc(p.marking || "")}" />
+          <p style="margin:6px 0 0;font-size:12px;color:var(--muted);">Internal only — shown on orders/bill/catalog/stock screens for staff, never on the customer's bill PDF.</p>
+        </div>
         <div>
           <label class="label">Product Image</label>
           <div style="display:flex;align-items:center;gap:16px;">
@@ -914,6 +919,7 @@ const Catalog = (() => {
       category: document.getElementById("ce-category").value || null,
       series: document.getElementById("ce-series").value || null,
       unit: document.getElementById("ce-unit").value || null,
+      marking: document.getElementById("ce-marking")?.value.trim() || null,
       year_group: ctx.isAdmin?.()
         ? (document.getElementById("ce-year_group")?.value || null)
         : undefined,

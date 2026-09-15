@@ -429,7 +429,7 @@ const VendorOrders = (() => {
     for (const agg of order.aggregated_lines || []) {
       for (const b of agg.breakdown || []) {
         if (b.placement_id === placementId) {
-          lines.push({ ...b, our_product_id: agg.our_product_id, image_urls: agg.image_urls, buying_price: agg.buying_price });
+          lines.push({ ...b, our_product_id: agg.our_product_id, image_urls: agg.image_urls, buying_price: agg.buying_price, marking: agg.marking });
         }
       }
     }
@@ -437,7 +437,7 @@ const VendorOrders = (() => {
     return `<table class="data vo-hub-table"><thead><tr><th></th><th>Product</th><th>Qty</th><th>Price</th>${canEdit ? "<th></th>" : ""}</tr></thead><tbody>
       ${lines.map(l => `<tr>
         <td>${thumb((l.image_urls && l.image_urls[0]) || "", "vo-thumb-sm")}</td>
-        <td><strong>${ctx.esc(ctx.productIdLabel(l))}</strong></td>
+        <td><strong>${ctx.esc(ctx.productIdLabel(l))}</strong>${l.marking ? ` <span class="badge badge-amber" style="font-size:9px;padding:1px 4px;">${ctx.esc(l.marking)}</span>` : ""}</td>
         <td><strong>${l.quantity}</strong></td>
         <td>${fmtPrice(l.buying_price)}</td>
         ${canEdit ? `<td style="white-space:nowrap;">
@@ -500,7 +500,7 @@ const VendorOrders = (() => {
     for (const agg of order.aggregated_lines || []) {
       for (const b of agg.breakdown || []) {
         if (b.placement_id === p.id) {
-          lines.push({ ...b, our_product_id: agg.our_product_id, image_urls: agg.image_urls });
+          lines.push({ ...b, our_product_id: agg.our_product_id, image_urls: agg.image_urls, marking: agg.marking });
         }
       }
     }
@@ -508,7 +508,7 @@ const VendorOrders = (() => {
     let html = `<table class="data vo-hub-table"><thead><tr><th></th><th>Product</th><th>Recv</th><th>Billed qty</th>${showAmt ? "<th>Amount</th>" : ""}</tr></thead><tbody>
       ${lines.map(l => `<tr>
         <td>${thumb((l.image_urls && l.image_urls[0]) || "", "vo-thumb-sm")}</td>
-        <td><strong>${ctx.esc(ctx.productIdLabel(l))}</strong></td>
+        <td><strong>${ctx.esc(ctx.productIdLabel(l))}</strong>${l.marking ? ` <span class="badge badge-amber" style="font-size:9px;padding:1px 4px;">${ctx.esc(l.marking)}</span>` : ""}</td>
         <td>${l.quantity}</td>
         <td>${l.quantity_billed ?? "—"}</td>
         ${showAmt ? `<td>${fmtAmtOrDash(l.billed_amount)}</td>` : ""}

@@ -25,6 +25,7 @@ class CustomerOrderLineOut(BaseModel):
     status: str
     cancel_reason: Optional[str] = None
     addons: List[AddonSnapOut] = []
+    marking: Optional[str] = None
 
 
 class CustomerPlacementOut(BaseModel):
@@ -50,6 +51,7 @@ class CustomerOpenLineOut(BaseModel):
     cancel_reason: Optional[str] = None
     image_urls: List[str] = []
     addons: List[AddonSnapOut] = []
+    marking: Optional[str] = None
 
 
 class CustomerOrderSummary(BaseModel):
@@ -87,6 +89,7 @@ class CustomerBillLineOut(BaseModel):
     status: str
     close_reason: Optional[str] = None
     addons: List[AddonSnapOut] = []
+    marking: Optional[str] = None
 
 
 class CustomerBillOut(BaseModel):
@@ -199,6 +202,7 @@ class ProcessLineOut(BaseModel):
     quantity_on_hand: int
     image_urls: List[str] = []
     addons: List[AddonSnapOut] = []
+    marking: Optional[str] = None
 
 
 class ProcessContextOut(BaseModel):

@@ -16,7 +16,15 @@ from reportlab.platypus import Image, PageBreak, Paragraph, SimpleDocTemplate, S
 
 from app.services.company_info import company_lines
 from app.services.customer_bill_math import fmt_discount_pct
-from app.services.pdf_documents import _fetch_image, _header, _party_blocks, _safe, _totals_block, add_page_number
+from app.services.pdf_documents import (
+    _fetch_image,
+    _header,
+    _party_block_single,
+    _party_blocks,
+    _safe,
+    _totals_block,
+    add_page_number,
+)
 
 COPY_LABELS = ["ORIGINAL", "DUPLICATE", "TRIPLICATE", "QUADRUPLICATE"]
 
@@ -122,7 +130,10 @@ def _addon_qty(addon: Dict[str, Any], line_qty: int) -> int:
 def bill_item_headers(gst_on: bool, gst_label: str = "") -> list[str]:
     if gst_on:
         return ["", "Code", "Description", "Qty", "Rate", "Disc.", "Net", "Taxable", f"GST ({gst_label})", "Total"]
-    return ["", "Code", "Description", "Qty", "Rate", "Disc.", "Net", "Amount"]
+    # Non-GST "Order Estimate": no Description column (our_product_id already appears
+    # in Code, and the narrow Code column used to force it onto a second line) — that
+    # width goes to Code + a proper Photo column instead.
+    return ["Photo", "Code", "Qty", "Rate", "Disc.", "Net", "Amount"]
 
 
 def _bill_items_table(
@@ -132,14 +143,15 @@ def _bill_items_table(
     gst_label: str,
     overall_disc_pct: object = None,
 ) -> Table:
-    prefetched = _prefetch_images_parallel(image_urls or {}, 1.1 * cm, 1.1 * cm)
+    img_size = 1.1 * cm if gst_on else 1.3 * cm
+    prefetched = _prefetch_images_parallel(image_urls or {}, img_size, img_size)
 
     if gst_on:
         head = bill_item_headers(True, gst_label)
         col_widths = [0.9 * cm, 1.4 * cm, 2.6 * cm, 1.0 * cm, 1.6 * cm, 1.2 * cm, 1.6 * cm, 1.6 * cm, 1.5 * cm, 1.6 * cm]
     else:
         head = bill_item_headers(False)
-        col_widths = [1.1 * cm, 1.6 * cm, 3.4 * cm, 1.2 * cm, 2.0 * cm, 1.5 * cm, 2.0 * cm, 2.2 * cm]
+        col_widths = [1.5 * cm, 3.6 * cm, 1.3 * cm, 2.2 * cm, 1.6 * cm, 2.2 * cm, 2.8 * cm]
 
     dash = _cell("—", right=True, muted=True)
     data: list[list[Any]] = [head]
@@ -189,7 +201,6 @@ def _bill_items_table(
             data.append([
                 img,
                 code,
-                desc,
                 _cell(str(qty), right=True),
                 rate,
                 disc_cell,
@@ -206,16 +217,25 @@ def _bill_items_table(
             if not unit or unit == "-":
                 unit = "pc"
             row = [""] * len(head)
-            row[2] = _cell(f"+ {label}", muted=True)
-            row[3] = _cell(f"{aq} {unit}", right=True, muted=True)
-            for i in range(4, len(head)):
+            if gst_on:
+                row[2] = _cell(f"+ {label}", muted=True)
+                row[3] = _cell(f"{aq} {unit}", right=True, muted=True)
+                start = 4
+            else:
+                row[1] = _cell(f"+ {label}", muted=True)
+                row[2] = _cell(f"{aq} {unit}", right=True, muted=True)
+                start = 3
+            for i in range(start, len(head)):
                 row[i] = dash
             data.append(row)
 
     if len(data) < 2:
         empty = [""] * len(head)
-        empty[1] = _cell("-")
-        empty[2] = _cell("No line items")
+        if gst_on:
+            empty[1] = _cell("-")
+            empty[2] = _cell("No line items")
+        else:
+            empty[1] = _cell("No line items")
         data.append(empty)
 
     table = Table(data, colWidths=col_widths, repeatRows=1)
@@ -230,7 +250,7 @@ def _bill_items_table(
         ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
         ("LEFTPADDING", (0, 0), (-1, -1), 3),
         ("RIGHTPADDING", (0, 0), (-1, -1), 3),
-        ("ALIGN", (3, 1), (-1, -1), "RIGHT"),
+        ("ALIGN", (3 if gst_on else 2, 1), (-1, -1), "RIGHT"),
         ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#cbd5e1")),
         ("LINEBELOW", (0, 1), (-1, -2), 0.4, colors.HexColor("#e2e8f0")),
     ]
@@ -360,8 +380,14 @@ def _build_bill_story(
 
     from app.services.biz_date import format_ist, format_ist_day
 
+    gst_on = bool(totals.get("gst_enabled"))
     bill_lbl = _safe(bill_number, 40) if bill_number else f"#{bill_id}"
-    _header(story, "TAX INVOICE", "Customer bill — GST inclusive rates", f"Bill {bill_lbl}")
+    if gst_on:
+        _header(story, "TAX INVOICE", "Customer bill — GST inclusive rates", f"Bill {bill_lbl}")
+    else:
+        # Non-GST bills carry no tax details, so we can't present ourselves as the
+        # seller of record here — no company name/address, no "TAX INVOICE" label.
+        _header(story, "ORDER ESTIMATE", "Estimate of goods & pricing — not a tax invoice", f"Bill {bill_lbl}", brand_override="Order Estimate")
     stamp_style = ParagraphStyle(
         "bill_stamp",
         parent=styles["Normal"],
@@ -402,7 +428,6 @@ def _build_bill_story(
     story.append(stamp)
     story.append(Spacer(1, 0.3 * cm))
 
-    our = ["From (Seller)"] + company_lines()
     bill_to = ["Bill to", _safe(customer_name, 80)]
     if customer_company:
         bill_to.append(_safe(customer_company, 80))
@@ -412,11 +437,15 @@ def _build_bill_story(
         bill_to.append(_safe(customer_address, 120))
     if customer_city:
         bill_to.append(_safe(customer_city, 60))
-    story.append(_party_blocks(our, bill_to))
+    if gst_on:
+        our = ["From (Seller)"] + company_lines()
+        story.append(_party_blocks(our, bill_to))
+    else:
+        # No "From" column on the estimate — see header note above.
+        story.append(_party_block_single(bill_to))
     story.append(Spacer(1, 0.35 * cm))
 
     lines = totals.get("lines") if isinstance(totals.get("lines"), list) else []
-    gst_on = bool(totals.get("gst_enabled"))
     gst_label = str(totals.get("gst_rate_label") or totals.get("gst_rate_percent") or "")
     story.append(_bill_items_table(
         lines, item_image_urls or {}, gst_on, gst_label,

@@ -18,6 +18,7 @@ class CatalogProductPublic(BaseModel):
     series: Optional[str]
     unit: Optional[str]
     year_group: Optional[str]
+    marking: Optional[str] = None
     buying_price: Optional[str] = None
     selling_price: Optional[str] = None
     image_keys: List[str]
@@ -66,6 +67,7 @@ class CatalogBulkItem(BaseModel):
     series: Optional[str] = None
     unit: Optional[str] = None
     year_group: Optional[str] = None
+    marking: Optional[str] = None
     buying_price: Decimal = Field(..., ge=0)
     selling_price: Optional[Decimal] = Field(None, ge=0)
     image_keys: List[str] = []
@@ -126,6 +128,7 @@ class CatalogUpdate(BaseModel):
     series: Optional[str] = None
     unit: Optional[str] = None
     year_group: Optional[str] = None
+    marking: Optional[str] = Field(None, max_length=200)
     buying_price: Optional[Decimal] = Field(None, ge=0)
     selling_price: Optional[Decimal] = Field(None, ge=0)
     image_keys: Optional[List[str]] = None

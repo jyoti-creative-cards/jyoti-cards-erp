@@ -543,6 +543,7 @@ const Products = (() => {
           category: p.category,
           series: p.series,
           year_group: p.year_group,
+          marking: p.marking,
           vendor_id: p.vendor_id,
           price: p.selling_price,
           buying_price: p.buying_price,
@@ -586,6 +587,7 @@ const Products = (() => {
           category: p.category,
           series: p.series,
           year_group: p.year_group,
+          marking: p.marking,
           vendor_id: p.vendor_id,
           price: p.selling_price,
           buying_price: p.buying_price,
@@ -813,6 +815,7 @@ const Products = (() => {
             ${it.category
               ? `<div class="prod-card-cat"><span class="prod-cat-badge">${ctx.esc(it.category)}</span>${it.series ? `<span class="prod-card-series">${ctx.esc(it.series)}</span>` : ""}</div>`
               : `<div class="prod-card-cat"><span class="prod-cat-badge is-empty">No category</span></div>`}
+            ${it.marking ? `<div class="prod-card-cat"><span class="badge badge-blue" style="font-size:10px;">${ctx.esc(it.marking)}</span></div>` : ""}
             ${(isStockProduct || showsAddonStock) ? `<div class="prod-card-qty-block">
               <span class="prod-card-qty-num">${fmtQty(it.qty ?? 0)}</span>
               <span class="prod-card-qty-label">on hand</span>
@@ -842,6 +845,7 @@ const Products = (() => {
             ${it.year_group ? `<span class="prod-year-pill">${ctx.esc(it.year_group)}</span>` : ""}
             ${it.vendor_product_id ? `<div class="prod-list-sub">Vendor # ${ctx.esc(it.vendor_product_id)}</div>` : ""}
             ${it.series ? `<div class="prod-list-sub">${ctx.esc(it.series)}</div>` : ""}
+            ${it.marking ? `<div class="prod-list-sub"><span class="badge badge-blue" style="font-size:10px;">${ctx.esc(it.marking)}</span></div>` : ""}
           </td>
           <td><span class="badge ${it.kind === "addon" ? "badge-amber" : "badge-blue"}">${it.kind === "addon" ? "Add-on" : "Product"}</span></td>
           <td>${ctx.esc(vendorLine(it))}</td>
@@ -986,6 +990,7 @@ const Products = (() => {
           ${ctx.reviewRow("Unit", cat.unit)}
           ${ctx.reviewRow("Year Group", cat.year_group)}
           ${ctx.reviewRow("Category", cat.category)}
+          ${ctx.reviewRow("Marking", cat.marking)}
           ${ctx.reviewRow("Created", ctx.fmtDate(cat.created_at))}
           ${ctx.reviewRow("Updated", ctx.fmtDate(cat.updated_at))}
         </div>
@@ -1046,6 +1051,7 @@ const Products = (() => {
                  <span class="badge ${statusBadge}">${ctx.esc((stock.stock_status || "").replace(/_/g, " "))}</span>`
               : `<span class="badge badge-gray">No stock yet</span>`}
             ${cat?.category ? `<span class="badge badge-gray">${ctx.esc(cat.category)}</span>` : ""}
+            ${(cat?.marking || stock?.marking) ? `<span class="badge badge-amber">${ctx.esc(cat?.marking || stock?.marking)}</span>` : ""}
           </div>
           ${images}
         </div>

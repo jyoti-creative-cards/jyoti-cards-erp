@@ -128,9 +128,14 @@ def _party_blocks(our_lines: List[str], vendor_lines: List[str]) -> Table:
     return tbl
 
 
-def _party_block_single(lines: List[str]) -> Table:
+def _party_block_single(lines: List[str], *, bold_idxs: set[int] | None = None) -> Table:
     """Full-width 'Bill to' block with no 'From' column — used on non-GST customer
-    estimates, which intentionally omit our own name/address (see Order Estimate PDF)."""
+    estimates, which intentionally omit our own name/address (see Order Estimate PDF).
+
+    bold_idxs: indices into lines[1:] (0 = the party name, already always bold) that
+    should also render in the same bold/larger style — e.g. the city, since the
+    transport company reads it off this printout to route the goods."""
+    bold_idxs = bold_idxs or set()
     styles = getSampleStyleSheet()
     label_style = ParagraphStyle(
         "party_lbl_s", parent=styles["Normal"], fontName="Helvetica-Bold",
@@ -144,8 +149,8 @@ def _party_block_single(lines: List[str]) -> Table:
         flow = [Paragraph(escape(lines[0]).upper(), label_style)]
         for i, line in enumerate(lines[1:]):
             st = body_style
-            if i == 0:
-                st = ParagraphStyle("party_name_s", parent=st, fontName="Helvetica-Bold", fontSize=10, leading=13)
+            if i == 0 or i in bold_idxs:
+                st = ParagraphStyle(f"party_name_s_{i}", parent=st, fontName="Helvetica-Bold", fontSize=10, leading=13)
             flow.append(Paragraph(escape(line), st))
 
     inner = Table([[x] for x in flow], colWidths=[16 * cm])
@@ -257,18 +262,19 @@ def _vendor_receipt_table(
     return table
 
 
-def _totals_block(rows: List[List[str]]) -> Table:
+def _totals_block(rows: List[List[str]], *, highlight_prefixes: tuple[str, ...] = ()) -> Table:
     styles = getSampleStyleSheet()
     data = []
     for i, (label, value) in enumerate(rows):
         is_last = i == len(rows) - 1
+        is_hl = (not is_last) and label.startswith(highlight_prefixes)
         lbl = Paragraph(
             escape(label),
             ParagraphStyle(
                 f"tot_l_{i}", parent=styles["Normal"],
-                fontName="Helvetica-Bold" if is_last else "Helvetica",
+                fontName="Helvetica-Bold" if (is_last or is_hl) else "Helvetica",
                 fontSize=10 if is_last else 9,
-                textColor=colors.HexColor("#0f172a" if is_last else "#475569"),
+                textColor=colors.HexColor("#0f172a" if is_last else ("#b45309" if is_hl else "#475569")),
             ),
         )
         val = Paragraph(
@@ -278,7 +284,7 @@ def _totals_block(rows: List[List[str]]) -> Table:
                 fontName="Helvetica-Bold",
                 fontSize=11 if is_last else 9,
                 alignment=TA_RIGHT,
-                textColor=colors.HexColor("#1e40af" if is_last else "#0f172a"),
+                textColor=colors.HexColor("#1e40af" if is_last else ("#b45309" if is_hl else "#0f172a")),
             ),
         )
         data.append([lbl, val])
@@ -292,6 +298,9 @@ def _totals_block(rows: List[List[str]]) -> Table:
         ("RIGHTPADDING", (0, 0), (-1, -1), 10),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
     ]
+    for i, (label, _value) in enumerate(rows):
+        if i != len(rows) - 1 and label.startswith(highlight_prefixes):
+            style.append(("BACKGROUND", (0, i), (-1, i), colors.HexColor("#fff7ed")))
     if len(rows) > 1:
         style.append(("LINEABOVE", (0, -1), (-1, -1), 1.2, colors.HexColor("#1e40af")))
         style.append(("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#eff6ff")))
@@ -319,18 +328,24 @@ def _header(story: list, title: str, subtitle: str, meta: str, *, brand_override
     ]))
     story.append(brand_bar)
     story.append(Spacer(1, 0.35 * cm))
-    story.append(Paragraph(escape(title), ParagraphStyle(
-        "doc_title", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=16,
-        alignment=TA_CENTER, textColor=colors.HexColor("#0f172a"), spaceAfter=4,
-    )))
-    story.append(Paragraph(escape(subtitle), ParagraphStyle(
-        "doc_sub", parent=styles["Normal"], fontSize=9, alignment=TA_CENTER,
-        textColor=colors.HexColor("#64748b"), spaceAfter=6,
-    )))
-    story.append(Paragraph(escape(meta), ParagraphStyle(
-        "doc_meta", parent=styles["Normal"], fontSize=8, alignment=TA_CENTER,
-        textColor=colors.HexColor("#94a3b8"), spaceAfter=12,
-    )))
+    # Empty title/subtitle/meta are skipped entirely (not just blank) — used by the
+    # non-GST "Order Estimate" bill, which shows only the one brand-bar heading, no
+    # second "ORDER ESTIMATE" title line underneath it.
+    if title:
+        story.append(Paragraph(escape(title), ParagraphStyle(
+            "doc_title", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=16,
+            alignment=TA_CENTER, textColor=colors.HexColor("#0f172a"), spaceAfter=4,
+        )))
+    if subtitle:
+        story.append(Paragraph(escape(subtitle), ParagraphStyle(
+            "doc_sub", parent=styles["Normal"], fontSize=9, alignment=TA_CENTER,
+            textColor=colors.HexColor("#64748b"), spaceAfter=6,
+        )))
+    if meta:
+        story.append(Paragraph(escape(meta), ParagraphStyle(
+            "doc_meta", parent=styles["Normal"], fontSize=8, alignment=TA_CENTER,
+            textColor=colors.HexColor("#94a3b8"), spaceAfter=12,
+        )))
     rule = Table([[""]], colWidths=[17 * cm])
     rule.setStyle(TableStyle([
         ("LINEBELOW", (0, 0), (-1, -1), 1.5, colors.HexColor("#1e40af")),

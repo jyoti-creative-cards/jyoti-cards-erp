@@ -182,6 +182,7 @@ def generate_customer_bill_document(db: Session, bill_id: int) -> str | None:
         customer_phone=customer.phone,
         customer_address=customer.address,
         customer_city=city_name,
+        customer_party_number=customer.party_number,
         totals=totals,
         generated_at=bill.created_at or datetime.now(timezone.utc),
         invoice_date=bill_invoice_date(bill),

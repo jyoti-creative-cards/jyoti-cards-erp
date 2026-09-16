@@ -1249,7 +1249,7 @@ const Stock = (() => {
             <td style="font-weight:600;">${fmtPrice(billAmt)}</td>
           </tr>
           ${extraCash > 0 ? `<tr>
-            <td>Entry 2 — extra cash (half-price balance, no GST)</td>
+            <td>Entry 2 — extra cash (half-price balance, no GST${billingTerms?.cash_discount_equals_gst ? " — less GST discount" : ""})</td>
             <td style="font-weight:600;">${fmtPrice(extraCash)}</td>
           </tr>
           <tr style="border-top:2px solid var(--border);">

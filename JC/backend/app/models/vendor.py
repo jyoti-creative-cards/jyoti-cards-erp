@@ -4,7 +4,7 @@ from decimal import Decimal
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, func, true as sql_true
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, func, false as sql_false, true as sql_true
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -30,6 +30,12 @@ class Vendor(Base):
     discount_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False, default=Decimal("0"), server_default="0")
     gst_included: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=sql_true())
     gst_rate_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False, default=Decimal("18"), server_default="18")
+    # Tax-saving arrangement some split-billing vendors use: they give us, in the
+    # untaxed "extra cash" portion, a discount equal to the GST charged on the paper
+    # bill — so paper (incl. GST) + cash together still equal the real item value, no
+    # markup for the tax. Off by default; see compute_bill_totals(). VEE VEE
+    # ENTERPRISES is the first vendor using this (2026-09).
+    cash_discount_equals_gst: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=sql_false())
     billing_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=sql_true())
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

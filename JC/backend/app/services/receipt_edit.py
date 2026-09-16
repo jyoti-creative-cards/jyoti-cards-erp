@@ -36,6 +36,7 @@ def _refresh_expected_bill(db: Session, receipt: StockReceipt) -> None:
         total_actual_value=total_actual_value,
         billing_pct=vendor.billing_pct, additional_charge=vendor.additional_charge,
         discount_pct=vendor.discount_pct, gst_included=vendor.gst_included, gst_rate_pct=vendor.gst_rate_pct,
+        cash_discount_equals_gst=vendor.cash_discount_equals_gst,
     )
     receipt.expected_bill_amount = bill_total
     receipt.expected_extra_cash = extra_cash if vendor.billing_pct < 100 else None
@@ -339,6 +340,7 @@ def _edit_bill(db: Session, auth: AuthContext, receipt: StockReceipt, body: Vend
         total_actual_value=total_actual_value,
         billing_pct=billing_pct, additional_charge=vendor.additional_charge,
         discount_pct=vendor.discount_pct, gst_included=vendor.gst_included, gst_rate_pct=gst_rate_pct,
+        cash_discount_equals_gst=vendor.cash_discount_equals_gst,
     )
     entered_total = (body.total_billed_amount if body.total_billed_amount is not None else bill_total).quantize(Decimal("0.01"))
     is_split = billing_pct < 100

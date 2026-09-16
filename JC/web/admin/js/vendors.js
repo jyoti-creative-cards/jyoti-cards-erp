@@ -679,6 +679,7 @@ const Vendors = (() => {
       discount_pct: 0,
       gst_included: true,
       gst_rate_pct: 18,
+      cash_discount_equals_gst: false,
       billing_notes: "",
     };
     document.getElementById("vendor-edit-body").innerHTML = `
@@ -711,6 +712,8 @@ const Vendors = (() => {
                 <div><label class="label">GST rate %</label><input id="ve-gst_rate_pct" class="input" type="number" min="0" max="100" step="0.01" value="${ctx.esc(String(billing.gst_rate_pct ?? 18))}" /></div>
               </div>
               <label style="display:flex;align-items:center;gap:8px;"><input id="ve-gst_included" type="checkbox" ${billing.gst_included !== false ? "checked" : ""} /> GST included</label>
+              <label style="display:flex;align-items:center;gap:8px;"><input id="ve-cash_discount_equals_gst" type="checkbox" ${billing.cash_discount_equals_gst ? "checked" : ""} /> Cash discount = GST (tax-saving split billing)</label>
+              <div style="font-size:12px;color:var(--muted);margin-top:-6px;">When on, the cash (untaxed) portion is reduced by the GST amount charged on the paper bill — so paper + cash together still equal the real item value, no markup for tax. Only matters when Billing % is below 100.</div>
               <div><label class="label">Billing notes</label><textarea id="ve-billing_notes" class="input" rows="3">${ctx.esc(billing.billing_notes || "")}</textarea></div>
             </div>
           </div>
@@ -749,6 +752,7 @@ const Vendors = (() => {
     const discountPct = ctx.isAdmin?.() ? parseFloat(document.getElementById("ve-discount_pct").value) : null;
     const gstRatePct = ctx.isAdmin?.() ? parseFloat(document.getElementById("ve-gst_rate_pct").value) : null;
     const gstIncluded = ctx.isAdmin?.() ? document.getElementById("ve-gst_included").checked : null;
+    const cashDiscountEqualsGst = ctx.isAdmin?.() ? document.getElementById("ve-cash_discount_equals_gst").checked : null;
     const billingNotes = ctx.isAdmin?.() ? (document.getElementById("ve-billing_notes").value.trim() || null) : null;
     if (ctx.isAdmin?.()) {
       if (!Number.isFinite(billingPct) || billingPct <= 0 || billingPct > 100) return ctx.toast("Billing % must be between 0.01 and 100", "error");
@@ -780,6 +784,7 @@ const Vendors = (() => {
           discount_pct: discountPct,
           gst_included: gstIncluded,
           gst_rate_pct: gstRatePct,
+          cash_discount_equals_gst: cashDiscountEqualsGst,
           billing_notes: billingNotes,
         })});
       }

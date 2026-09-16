@@ -15,11 +15,19 @@ def compute_bill_totals(
     discount_pct: Decimal,
     gst_included: bool,
     gst_rate_pct: Decimal,
+    cash_discount_equals_gst: bool = False,
 ) -> tuple[Decimal, Decimal]:
     """Returns (bill_total, extra_cash) per the vendor billing formula.
 
     bill_total is the paper-invoice amount (Entry 1 in AP).
     extra_cash is the untaxed remainder for split-billing vendors (0 when billing_pct == 100).
+
+    cash_discount_equals_gst: a genuine tax-saving arrangement some split-billing
+    vendors use (e.g. VEE VEE ENTERPRISES) — they knock the GST amount charged on the
+    paper bill straight off the untaxed cash portion, so paper (incl. GST) + cash
+    together still equal total_actual_value exactly: no tax paid on the cash side, and
+    no markup either. Example: ₹200 item, 50% billing, 18% GST → paper bill ₹118
+    (₹100 + ₹18 GST), cash ₹82 (₹100 − ₹18) → total paid ₹200, same as the real price.
     """
     on_paper = (total_actual_value * billing_pct / _HUNDRED).quantize(_CENTS)
     after_discount = (on_paper * (_HUNDRED - discount_pct) / _HUNDRED).quantize(_CENTS)
@@ -27,6 +35,8 @@ def compute_bill_totals(
     gst_amount = (base * gst_rate_pct / _HUNDRED).quantize(_CENTS) if gst_included else Decimal("0.00")
     bill_total = (base + gst_amount).quantize(_CENTS)
     extra_cash = (total_actual_value * (_HUNDRED - billing_pct) / _HUNDRED).quantize(_CENTS)
+    if cash_discount_equals_gst and gst_amount > 0:
+        extra_cash = max(extra_cash - gst_amount, Decimal("0.00")).quantize(_CENTS)
     return bill_total, extra_cash
 
 

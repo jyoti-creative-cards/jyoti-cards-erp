@@ -148,6 +148,7 @@ def receive_vendor_goods(
         discount_pct=vendor.discount_pct,
         gst_included=vendor.gst_included,
         gst_rate_pct=vendor.gst_rate_pct,
+        cash_discount_equals_gst=vendor.cash_discount_equals_gst,
     )
     receipt.expected_bill_amount = bill_total
     receipt.expected_extra_cash = extra_cash if vendor.billing_pct < 100 else None
@@ -233,6 +234,7 @@ def bill_receipt(db: Session, auth: AuthContext, receipt_id: int, body: VendorBi
         total_actual_value=total_actual_value,
         billing_pct=billing_pct, additional_charge=vendor.additional_charge,
         discount_pct=vendor.discount_pct, gst_included=vendor.gst_included, gst_rate_pct=gst_rate_pct,
+        cash_discount_equals_gst=vendor.cash_discount_equals_gst,
     )
     entered_total = body.total_billed_amount.quantize(Decimal("0.01"))
     is_split = billing_pct < 100
@@ -264,9 +266,14 @@ def bill_receipt(db: Session, auth: AuthContext, receipt_id: int, body: VendorBi
         value_date=as_biz_date(now), created_at=now,
     )
     if is_split and extra_cash > 0:
+        cash_desc = (
+            f"Bill {bill_num_label} — extra cash (half-price balance, less GST discount) ₹{extra_cash}"
+            if vendor.cash_discount_equals_gst
+            else f"Bill {bill_num_label} — extra cash (half-price balance) ₹{extra_cash}"
+        )
         post_bill_entry(
             db, vendor_id=receipt.vendor_id, receipt_id=receipt.id, amount=extra_cash,
-            description=f"Bill {bill_num_label} — extra cash (half-price balance) ₹{extra_cash}",
+            description=cash_desc,
             actor_type=auth.actor_type, actor_id=auth.actor_id, actor_name=auth.actor_name,
             value_date=as_biz_date(now), created_at=now,
         )
@@ -341,6 +348,7 @@ def preview_bill_deviations(
         total_actual_value=total_actual_value, billing_pct=billing_pct,
         additional_charge=vendor.additional_charge, discount_pct=vendor.discount_pct,
         gst_included=vendor.gst_included, gst_rate_pct=gst_rate_pct,
+        cash_discount_equals_gst=vendor.cash_discount_equals_gst,
     )
     amt_dn = amount_deviation_debit_note(expected_bill_total=bill_total, entered_bill_total=entered_total)
     if amt_dn:

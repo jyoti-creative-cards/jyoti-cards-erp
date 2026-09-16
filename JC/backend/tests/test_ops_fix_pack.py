@@ -395,6 +395,38 @@ def test_bill_receipt_one_off_billing_pct_override_ignores_vendor_default(db):
     assert v.billing_pct == Decimal("100")  # vendor profile untouched
 
 
+def test_bill_receipt_cash_discount_equals_gst_reduces_extra_cash_entry(db):
+    """VEE VEE ENTERPRISES-style tax-saving split billing: cash_discount_equals_gst=True
+    means the cash (extra) AP entry is reduced by the GST charged on the paper bill —
+    so the two AP entries together equal the real item value, not more."""
+    v = _vendor(db)
+    v.billing_pct = Decimal("50")
+    v.additional_charge = Decimal("0")  # Vendor model defaults this to 100 — zero it for round numbers
+    v.discount_pct = Decimal("0")
+    v.gst_included = True
+    v.gst_rate_pct = Decimal("18")
+    v.cash_discount_equals_gst = True
+    db.commit()
+    # 20 units @ 10 = 200 actual value
+    r, ln = _pending_receipt(db, v.id, qty=20, price=Decimal("10"))
+    body = VendorBillIn(
+        total_billed_amount=Decimal("118.00"),  # 100 on-paper + 18 gst
+        lines=[VendorBillLineIn(catalog_product_id=ln.catalog_product_id, quantity_billed=20)],
+    )
+    bill_receipt(db, AUTH, r.id, body)
+    r2 = db.get(StockReceipt, r.id)
+    assert r2.bill_status == "billed"
+    # actual_ap_amount = 118 (paper) + 82 (cash, i.e. 100 - 18 gst discount) = 200
+    assert r2.actual_ap_amount == Decimal("200.00")
+    entries = db.query(ApLedgerEntry).filter(
+        ApLedgerEntry.receipt_id == r.id, ApLedgerEntry.entry_type == "bill",
+    ).order_by(ApLedgerEntry.id.asc()).all()
+    assert len(entries) == 2
+    assert entries[0].amount == Decimal("118.00")
+    assert entries[1].amount == Decimal("82.00")
+    assert sum(e.amount for e in entries) == Decimal("200.00")  # == the real item value
+
+
 def test_bill_receipt_one_off_gst_pct_override_ignores_vendor_default(db):
     """Vendor defaults to 18% GST, but this one paper bill states 12% — override must
     apply that rate without touching the vendor's profile."""

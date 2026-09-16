@@ -36,6 +36,44 @@ def test_veepee_half_billing_with_packing_and_extra_cash():
     assert bill_total == Decimal("708.00")
     assert extra_cash == Decimal("500.00")
 
+def test_veevee_cash_discount_equals_gst():
+    # VEE VEE ENTERPRISES tax-saving arrangement: ₹200 item, 50% billing, no
+    # discount/charge, 18% gst. Paper bill = ₹118 (₹100 + ₹18 gst). Cash is
+    # discounted by that same ₹18 gst, so cash = ₹100 - ₹18 = ₹82. Paper + cash =
+    # ₹200 = the real item value — no markup for the tax-saving.
+    bill_total, extra_cash = compute_bill_totals(
+        total_actual_value=Decimal("200"), billing_pct=Decimal("50"),
+        additional_charge=Decimal("0"), discount_pct=Decimal("0"),
+        gst_included=True, gst_rate_pct=Decimal("18"),
+        cash_discount_equals_gst=True,
+    )
+    assert bill_total == Decimal("118.00")
+    assert extra_cash == Decimal("82.00")
+    assert bill_total + extra_cash == Decimal("200.00")
+
+def test_cash_discount_equals_gst_off_by_default():
+    # Same inputs as above but the flag is off (or omitted) — extra_cash must be
+    # the plain half-price balance, unaffected by GST. Guards against the new
+    # parameter accidentally changing behavior for every other vendor.
+    bill_total, extra_cash = compute_bill_totals(
+        total_actual_value=Decimal("200"), billing_pct=Decimal("50"),
+        additional_charge=Decimal("0"), discount_pct=Decimal("0"),
+        gst_included=True, gst_rate_pct=Decimal("18"),
+    )
+    assert bill_total == Decimal("118.00")
+    assert extra_cash == Decimal("100.00")
+
+def test_cash_discount_equals_gst_noop_when_billing_pct_100():
+    # billing_pct=100 means extra_cash is already 0 — the flag must not push it
+    # negative.
+    bill_total, extra_cash = compute_bill_totals(
+        total_actual_value=Decimal("1000"), billing_pct=Decimal("100"),
+        additional_charge=Decimal("0"), discount_pct=Decimal("0"),
+        gst_included=True, gst_rate_pct=Decimal("18"),
+        cash_discount_equals_gst=True,
+    )
+    assert extra_cash == Decimal("0.00")
+
 def test_qty_deviation_billed_more_than_received_is_over():
     dn = qty_deviation_debit_note(
         billed_qty=110, received_qty=100, buying_price=Decimal("10"), billing_pct=Decimal("100"),

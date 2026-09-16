@@ -144,6 +144,7 @@ def init_db() -> None:
         _migrate_customer_bill_closed()
         _migrate_bill_number_unique()
         _migrate_catalog_marking()
+        _migrate_vendor_cash_discount_gst()
         with engine.begin() as conn:
             conn.execute(text("SELECT 1"))
         _DB_READY = True
@@ -463,6 +464,24 @@ def _migrate_vendor_billing_terms() -> None:
         "UPDATE jc_vendors SET billing_pct = 50, additional_charge = 100, additional_charge_label = 'Packing charges', discount_pct = 0, gst_included = TRUE, gst_rate_pct = 18 WHERE business_name = 'VEE PEE CREATIONS'",
         "UPDATE jc_vendors SET billing_pct = 100, additional_charge = 0, additional_charge_label = 'Additional charge', discount_pct = 0, gst_included = TRUE, gst_rate_pct = 18 WHERE business_name = 'SINGHAL PRINT & GRAPHICS'",
         "UPDATE jc_vendors SET billing_pct = 100, additional_charge = 100, additional_charge_label = 'Freight charges', discount_pct = 6, gst_included = TRUE, gst_rate_pct = 18 WHERE business_name = 'GARG ENTERPRISES'",
+    ]
+    for stmt in stmts:
+        try:
+            with engine.begin() as conn:
+                s = stmt.replace(" ADD COLUMN IF NOT EXISTS ", " ADD COLUMN ") if _is_sqlite else stmt
+                conn.execute(text(s))
+        except Exception:
+            log.warning("Migration step skipped", exc_info=True)
+
+
+def _migrate_vendor_cash_discount_gst() -> None:
+    """Tax-saving split-billing variant: cash portion is discounted by the GST amount
+    on the paper bill, so paper+cash together equal the real item value (no markup for
+    tax). See Vendor.cash_discount_equals_gst / compute_bill_totals(). VEE VEE
+    ENTERPRISES is the first vendor on this arrangement."""
+    stmts = [
+        "ALTER TABLE jc_vendors ADD COLUMN IF NOT EXISTS cash_discount_equals_gst BOOLEAN NOT NULL DEFAULT FALSE",
+        "UPDATE jc_vendors SET cash_discount_equals_gst = TRUE WHERE business_name = 'VEE VEE ENTERPRISES'",
     ]
     for stmt in stmts:
         try:

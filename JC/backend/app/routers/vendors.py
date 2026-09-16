@@ -62,7 +62,8 @@ def _to_public(row: Vendor, db: Session, include_history: bool = False) -> Vendo
         billing_terms=VendorBillingTerms(
             billing_pct=float(row.billing_pct), additional_charge=float(row.additional_charge),
             additional_charge_label=row.additional_charge_label, discount_pct=float(row.discount_pct),
-            gst_included=row.gst_included, gst_rate_pct=float(row.gst_rate_pct), billing_notes=row.billing_notes,
+            gst_included=row.gst_included, gst_rate_pct=float(row.gst_rate_pct),
+            cash_discount_equals_gst=row.cash_discount_equals_gst, billing_notes=row.billing_notes,
         ),
         created_at=row.created_at,
         updated_at=row.updated_at,
@@ -140,7 +141,8 @@ def list_vendors(
                 billing_terms=VendorBillingTerms(
                     billing_pct=float(r.billing_pct), additional_charge=float(r.additional_charge),
                     additional_charge_label=r.additional_charge_label, discount_pct=float(r.discount_pct),
-                    gst_included=r.gst_included, gst_rate_pct=float(r.gst_rate_pct), billing_notes=r.billing_notes,
+                    gst_included=r.gst_included, gst_rate_pct=float(r.gst_rate_pct),
+                    cash_discount_equals_gst=r.cash_discount_equals_gst, billing_notes=r.billing_notes,
                 ),
                 created_at=r.created_at,
                 updated_at=r.updated_at,
@@ -216,6 +218,7 @@ def update_vendor_billing_terms(
     row.discount_pct = body.discount_pct
     row.gst_included = body.gst_included
     row.gst_rate_pct = body.gst_rate_pct
+    row.cash_discount_equals_gst = body.cash_discount_equals_gst
     row.billing_notes = body.billing_notes
     db.add(row)
     db.commit()

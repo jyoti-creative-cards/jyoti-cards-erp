@@ -39,6 +39,10 @@ class VendorBillingTerms(BaseModel):
     discount_pct: float = Field(0.0, ge=0, le=100)
     gst_included: bool = True
     gst_rate_pct: float = Field(18.0, ge=0, le=100)
+    # Tax-saving split-billing variant: cash portion is discounted by the GST amount on
+    # the paper bill (see compute_bill_totals). Only meaningful when billing_pct < 100
+    # and gst_included is True.
+    cash_discount_equals_gst: bool = False
     billing_notes: Optional[str] = None
 
 

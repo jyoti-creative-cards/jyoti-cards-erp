@@ -283,7 +283,10 @@ def bill_receipt(db: Session, auth: AuthContext, receipt_id: int, body: VendorBi
     for dn_in in body.debit_notes or []:
         if dn_in.note_type == "item" and dn_in.catalog_product_id not in bill_product_ids:
             raise HTTPException(400, "debit note item must be from billed lines")
-        create_debit_note(db, auth, vendor_id=receipt.vendor_id, receipt_id=receipt.id, body=dn_in, source="manual")
+        create_debit_note(
+            db, auth, vendor_id=receipt.vendor_id, receipt_id=receipt.id, body=dn_in, source="manual",
+            created_at=now,
+        )
 
     log_from_auth(
         db, auth, action="bill_received", entity_type="stock_receipt", entity_id=receipt.id,

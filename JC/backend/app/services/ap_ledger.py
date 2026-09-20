@@ -33,9 +33,19 @@ def get_or_create_ap_account(db: Session, vendor_id: int) -> VendorApAccount:
     row = db.query(VendorApAccount).filter(VendorApAccount.vendor_id == vendor_id).first()
     if row:
         return row
-    row = VendorApAccount(vendor_id=vendor_id, is_open=True)
-    db.add(row)
-    db.flush()
+    from sqlalchemy.exc import IntegrityError
+
+    try:
+        with db.begin_nested():
+            row = VendorApAccount(vendor_id=vendor_id, is_open=True)
+            db.add(row)
+            db.flush()
+    except IntegrityError:
+        # vendor_id is unique — two concurrent first-ever bills/payments for the same
+        # vendor can both miss the SELECT above and both try to insert.
+        row = db.query(VendorApAccount).filter(VendorApAccount.vendor_id == vendor_id).first()
+        if not row:
+            raise
     return row
 
 
@@ -137,6 +147,7 @@ def post_debit_note_entry(
     actor_type: str,
     actor_id: Optional[int],
     actor_name: str,
+    created_at: Optional[datetime] = None,
 ) -> ApLedgerEntry:
     get_or_create_ap_account(db, vendor_id)
     effect = debit_note_payable_effect(amount, note_type)
@@ -151,6 +162,8 @@ def post_debit_note_entry(
         created_by_id=actor_id,
         created_by_name=actor_name,
     )
+    if created_at is not None:
+        entry.created_at = created_at
     db.add(entry)
     db.flush()
     return entry

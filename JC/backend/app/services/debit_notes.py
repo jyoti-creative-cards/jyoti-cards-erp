@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal
 from typing import Optional, Tuple
 
@@ -81,7 +82,11 @@ def create_debit_note(
     receipt_id: int,
     body: DebitNoteIn,
     source: str = "manual",
+    created_at: Optional[datetime] = None,
 ) -> DebitNote:
+    """created_at: pass the vendor bill's (possibly backdated) business date so this
+    note's timestamp, its AP ledger row, and its item-DN stock ledger row all line up
+    with the bill instead of always stamping real "now" — same fix as add_stock()."""
     from app.models.stock import StockReceipt
 
     receipt = db.get(StockReceipt, receipt_id)
@@ -113,6 +118,8 @@ def create_debit_note(
             created_by_id=auth.actor_id,
             created_by_name=auth.actor_name,
         )
+        if created_at is not None:
+            note.created_at = created_at
         detail = f"{our_product_id} × {signed_qty} ({direction}) = ₹{amount}"
     else:
         direction, _, signed_amt = normalize_signed_values(
@@ -151,6 +158,8 @@ def create_debit_note(
             created_by_id=auth.actor_id,
             created_by_name=auth.actor_name,
         )
+        if created_at is not None:
+            note.created_at = created_at
         detail = (
             f"{our_product_id} value debit ₹{signed_amt} ({direction})"
             if our_product_id else f"value debit ₹{signed_amt} ({direction})"
@@ -169,6 +178,7 @@ def create_debit_note(
         actor_type=auth.actor_type,
         actor_id=auth.actor_id,
         actor_name=auth.actor_name,
+        created_at=created_at,
     )
     if note.note_type == "item" and note.catalog_product_id and note.quantity:
         # short (+) → stock down; extra (−) → stock up
@@ -184,6 +194,7 @@ def create_debit_note(
             reference_id=note.id,
             party=party,
             notes=f"Item DN {direction}: qty {note.quantity}",
+            created_at=created_at,
         )
     vendor = db.get(Vendor, vendor_id)
     city_name = None

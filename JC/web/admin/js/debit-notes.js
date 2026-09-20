@@ -320,7 +320,9 @@ const DebitNotes = (() => {
     };
   }
 
+  let saveBusy = false; // guard submitNew/saveEdit double-click — both post real AP rows
   async function submitNew() {
+    if (saveBusy) return;
     const payload = buildPayload();
     if (!payload) return;
     if (!state.receiptId) {
@@ -328,6 +330,7 @@ const DebitNotes = (() => {
       return;
     }
     const done = state.onDone;
+    saveBusy = true;
     ctx.showLoading?.();
     try {
       await ctx.api(`/debit-notes?vendor_id=${state.vendorId}&receipt_id=${state.receiptId}`, {
@@ -347,11 +350,11 @@ const DebitNotes = (() => {
       close();
       if (done) await done(null);
     } catch (e) { ctx.toast(e.message, "error"); }
-    finally { ctx.hideLoading?.(); }
+    finally { saveBusy = false; ctx.hideLoading?.(); }
   }
 
   async function saveEdit() {
-    if (!state.editing) return;
+    if (saveBusy || !state.editing) return;
     const payload = buildPayload();
     if (!payload) return;
     const body = {
@@ -365,6 +368,7 @@ const DebitNotes = (() => {
     } else {
       body.amount = payload.amount;
     }
+    saveBusy = true;
     ctx.showLoading?.();
     try {
       await ctx.api(`/debit-notes/${state.editing.id}`, { method: "PATCH", body: JSON.stringify(body) });
@@ -374,7 +378,7 @@ const DebitNotes = (() => {
       close();
       if (state.onDone) state.onDone(null);
     } catch (e) { ctx.toast(e.message, "error"); }
-    finally { ctx.hideLoading?.(); }
+    finally { saveBusy = false; ctx.hideLoading?.(); }
   }
 
   function saveLocalEdit() {

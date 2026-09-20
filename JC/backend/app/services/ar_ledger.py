@@ -27,9 +27,20 @@ def get_or_create_ar_account(db: Session, customer_id: int) -> CustomerArAccount
     row = db.query(CustomerArAccount).filter(CustomerArAccount.customer_id == customer_id).first()
     if row:
         return row
-    row = CustomerArAccount(customer_id=customer_id, is_open=True)
-    db.add(row)
-    db.flush()
+    from sqlalchemy.exc import IntegrityError
+
+    try:
+        with db.begin_nested():
+            row = CustomerArAccount(customer_id=customer_id, is_open=True)
+            db.add(row)
+            db.flush()
+    except IntegrityError:
+        # customer_id is unique — two concurrent first-ever bills/payments for the same
+        # customer can both miss the SELECT above and both try to insert (same shape as
+        # get_or_create_customer_order / add_stock's StockBalance race).
+        row = db.query(CustomerArAccount).filter(CustomerArAccount.customer_id == customer_id).first()
+        if not row:
+            raise
     return row
 
 

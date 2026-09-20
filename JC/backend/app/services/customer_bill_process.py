@@ -206,11 +206,17 @@ def process_customer_bill(
     grand_check = Decimal(str(totals.get("rounded_grand_total") or totals["grand_total"]))
     assert_credit_allows_bill(db, customer_id, grand_check, force=force_credit_override)
 
-    from app.services.biz_date import resolve_invoice_date
+    from app.services.biz_date import resolve_biz_dt, resolve_invoice_date
 
     bill_number = resolve_bill_number(db, bill_series_id, bill_number)
     entered_at = datetime.now(timezone.utc)
     invoice_day = resolve_invoice_date(bill_date)
+    # bill.created_at / placement.placed_at stay real "now" on purpose — the Billed hub
+    # tab's Today/Past scoping keys off these (same rule as backdated customer orders:
+    # a backdated entry lands in Past, it doesn't masquerade as Today). The AR *ledger*
+    # row is different — it's a money record, not a queue item, so it should carry the
+    # bill's real (possibly backdated) date the same way vendor AP entries already do.
+    ar_posted_at = resolve_biz_dt(bill_date)
 
     billed_order = get_or_create_customer_order(db, customer_id, "billed", "billed")
     placement = CustomerOrderPlacement(
@@ -309,7 +315,7 @@ def process_customer_bill(
         actor_id=actor_id,
         actor_name=actor_name,
         value_date=invoice_day,
-        created_at=entered_at,
+        created_at=ar_posted_at,
     )
     _persist_totals_addons(db, bill)
     billed_order.updated_at = entered_at

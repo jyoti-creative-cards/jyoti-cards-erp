@@ -5,6 +5,7 @@ const OrderMenus = (() => {
   let closeItems = [];
   let closeSelected = new Set();
   let confirmHandler = null;
+  let confirmBusy = false; // guard double-click on the confirm button — modal only closes AFTER the request succeeds
 
   function openCreate(handler) {
     createHandler = handler;
@@ -88,12 +89,15 @@ const OrderMenus = (() => {
     closeSelected = new Set();
   }
 
+  let closeBusy = false;
   async function submitClose() {
+    if (closeBusy) return; // same double-click gap as submitConfirm — modal closes only after success
     const reason = (document.getElementById("close-order-reason")?.value || "").trim();
     if (!reason) return closeHandler?.ctx?.toast?.("Enter a reason", "error");
     if (!closeSelected.size) return closeHandler?.ctx?.toast?.("Select at least one row", "error");
     const ids = [...closeSelected];
     const h = closeHandler;
+    closeBusy = true;
     closeHandler?.ctx?.showLoading?.();
     try {
       await h.onSubmit(ids, reason);
@@ -101,6 +105,7 @@ const OrderMenus = (() => {
     } catch (e) {
       closeHandler?.ctx?.toast?.(e.message, "error");
     } finally {
+      closeBusy = false;
       closeHandler?.ctx?.hideLoading?.();
     }
   }
@@ -138,6 +143,9 @@ const OrderMenus = (() => {
   }
 
   async function submitConfirm() {
+    if (confirmBusy) return; // this modal used for void/cancel across stock, vendor & customer
+    // orders — a fast double-click here was firing two requests before the first's
+    // response closed the modal (e.g. two void-receipt calls → two stock reversals).
     const h = confirmHandler;
     if (!h?.onConfirm) return closeConfirm();
     let reason = "";
@@ -145,6 +153,7 @@ const OrderMenus = (() => {
       reason = (document.getElementById("vo-confirm-reason")?.value || "").trim();
       if (h.requireReason && !reason) return h.ctx?.toast?.("Enter a note", "error");
     }
+    confirmBusy = true;
     h.ctx?.showLoading?.();
     try {
       await h.onConfirm(reason);
@@ -152,6 +161,7 @@ const OrderMenus = (() => {
     } catch (e) {
       h.ctx?.toast?.(e.message, "error");
     } finally {
+      confirmBusy = false;
       h.ctx?.hideLoading?.();
     }
   }

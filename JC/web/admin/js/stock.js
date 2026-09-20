@@ -5,6 +5,7 @@ const Stock = (() => {
   let viewMode = "grid";
   let wizardStep = 1;
   let wizardMode = null;
+  let receiptSubmitBusy = false; // guard against double-click firing two receive/bill requests
   let wizardVendorId = null;
   let placedOrder = null;
   let wizardLines = [];
@@ -1694,6 +1695,15 @@ const Stock = (() => {
     return data.key;
   }
   async function submitReceipt() {
+    if (receiptSubmitBusy) return; // double-click/double-submit guard — was creating duplicate receipts
+    receiptSubmitBusy = true;
+    try {
+      await _submitReceiptInner();
+    } finally {
+      receiptSubmitBusy = false;
+    }
+  }
+  async function _submitReceiptInner() {
     saveReceiptMeta();
     const isEdit = wizardMode === "edit_receipt" && editReceiptId;
     const isOffline = wizardMode === "offline_vendor";

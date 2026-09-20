@@ -137,6 +137,10 @@ def create_customer_return(
                 400,
                 f"{info['our_product_id']}: max returnable {info['quantity_returnable']}",
             )
+        # Decrement remaining cap in place — two rows for the same bill_line_id in one
+        # request must not each pass the check against the same untouched total (that
+        # would let their sum exceed what was actually sold, over-restoring stock).
+        info["quantity_returnable"] -= qty
         sold = _d(info["sold_unit_price"])
         line_calc = (sold * Decimal(qty)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         calc_total += line_calc

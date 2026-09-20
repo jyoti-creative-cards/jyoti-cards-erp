@@ -437,11 +437,13 @@ const Returns = (() => {
     }
   }
 
+  let submitBusy = false; // guard double-click — creates a real stock+AR credit return
   async function submit() {
-    if (!wizard?.customer_id) return;
+    if (submitBusy || !wizard?.customer_id) return;
     const credit = parseFloat(wizard.credit_amount);
     if (!Number.isFinite(credit) || credit < 0) return ctx.toast("Enter credit amount", "error");
     const lines = selectedLines().map(ln => ({ bill_line_id: ln.bill_line_id, quantity: ln.quantity }));
+    submitBusy = true;
     ctx.showLoading?.();
     try {
       const res = await ctx.api("/customer-returns", {
@@ -469,7 +471,7 @@ const Returns = (() => {
       await showHub();
       if (detailCustomerId) await openDetail(detailCustomerId);
     } catch (e) { ctx.toast(e.message, "error"); }
-    finally { ctx.hideLoading?.(); }
+    finally { submitBusy = false; ctx.hideLoading?.(); }
   }
 
   function openCreateFromDetail() {

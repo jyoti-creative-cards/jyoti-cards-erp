@@ -1091,6 +1091,8 @@ const CustomerOrders = (() => {
       try {
         await ctx.api(`/customer-orders/open-lines/${lineId}/cancel`, { method: "POST", body: JSON.stringify({ reason }) });
         ctx.toast("Line cancelled — billed kept", "success");
+        ctx.invalidateCache?.("/customer-orders");
+        ctx.invalidateCache?.("/stock");
         await openDetail(detailCustomerId, currentBucket);
         loadList();
       } catch (e) { ctx.toast(e.message, "error"); }
@@ -1114,6 +1116,7 @@ const CustomerOrders = (() => {
         });
         ctx.toast(hasBilled ? "Remaining cancelled — billed kept" : "Order cancelled", "success");
         ctx.invalidateCache?.("/customer-orders");
+        ctx.invalidateCache?.("/stock");
         await openDetail(detailCustomerId, hasBilled ? "received" : "cancelled");
         loadList();
       } catch (e) { ctx.toast(e.message, "error"); }
@@ -1219,6 +1222,7 @@ const CustomerOrders = (() => {
           if (failed) ctx.toast(`Cancelled ${ok}, failed ${failed}`, "error");
           else ctx.toast(hasBilled ? `Remaining cancelled ${ok} — billed kept` : `Order cancelled (${ok})`, "success");
           ctx.invalidateCache?.("/customer-orders");
+          ctx.invalidateCache?.("/stock");
           detailCustomerId = cid;
           currentOrder = detail;
           await openDetail(cid, "open");
@@ -1260,6 +1264,7 @@ const CustomerOrders = (() => {
         ctx.toast("Bill cancelled — stock released", "success");
         ctx.invalidateCache?.("/customer-orders");
         ctx.invalidateCache?.("/freight-agents");
+        ctx.invalidateCache?.("/stock");
         await openDetail(detailCustomerId, "open");
       } catch (e) { ctx.toast(e.message, "error"); }
       finally { ctx.hideLoading?.(); }
@@ -1277,6 +1282,7 @@ const CustomerOrders = (() => {
         ctx.toast("Bill voided — moved to recycle bin", "success");
         ctx.invalidateCache?.("/customer-orders");
         ctx.invalidateCache?.("/accounts-receivable");
+        ctx.invalidateCache?.("/stock");
         await openDetail(detailCustomerId, currentBucket);
         loadList();
       } catch (e) { ctx.toast(e.message, "error"); }
@@ -1291,6 +1297,7 @@ const CustomerOrders = (() => {
         await ctx.api(`/customer-orders/placements/${placementId}/void`, { method: "POST", body: JSON.stringify({ reason }) });
         ctx.toast("Order voided — moved to recycle bin", "success");
         ctx.invalidateCache?.("/customer-orders");
+        ctx.invalidateCache?.("/stock");
         await openDetail(detailCustomerId, currentBucket);
         loadList();
       } catch (e) { ctx.toast(e.message, "error"); }

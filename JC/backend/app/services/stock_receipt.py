@@ -53,7 +53,12 @@ def add_stock(
     reference_id: int,
     party: str | None = None,
     notes: str | None = None,
+    created_at: datetime | None = None,
 ) -> StockBalance:
+    """created_at: pass the (possibly backdated) business date so the ledger row lines
+    up with the order/receipt it came from — e.g. a backdated customer order or vendor
+    receive. None (default) = real time, for actions that genuinely happen "now"
+    (manual adjustment, void/restore, offline sale, receipt edit)."""
     balance = (
         db.query(StockBalance)
         .filter(StockBalance.catalog_product_id == catalog_product_id)
@@ -82,18 +87,19 @@ def add_stock(
             if not balance:
                 raise
     balance.quantity_on_hand += quantity
-    db.add(
-        StockLedger(
-            catalog_product_id=catalog_product_id,
-            entry_type=entry_type,
-            quantity_delta=quantity,
-            balance_after=balance.quantity_on_hand,
-            reference_type=reference_type,
-            reference_id=reference_id,
-            party=party,
-            notes=notes,
-        )
+    ledger_row = StockLedger(
+        catalog_product_id=catalog_product_id,
+        entry_type=entry_type,
+        quantity_delta=quantity,
+        balance_after=balance.quantity_on_hand,
+        reference_type=reference_type,
+        reference_id=reference_id,
+        party=party,
+        notes=notes,
     )
+    if created_at is not None:
+        ledger_row.created_at = created_at
+    db.add(ledger_row)
     return balance
 
 

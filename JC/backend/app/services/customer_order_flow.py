@@ -126,6 +126,7 @@ def reserve_stock(
     reference_id: int,
     party: str,
     allow_negative: bool = False,
+    when: datetime | None = None,
 ) -> None:
     balance = (
         db.query(StockBalance)
@@ -155,6 +156,7 @@ def reserve_stock(
         reference_id=reference_id,
         party=party,
         notes=note,
+        created_at=when,
     )
     deduct_addons_for_product(
         db,
@@ -164,10 +166,11 @@ def reserve_stock(
         reference_id=reference_id,
         party=party,
         note=f"Order for {our_product_id} x{quantity}",
+        when=when,
     )
 
 
-def restore_stock(db: Session, *, catalog_product_id: int, our_product_id: str, quantity: int, reference_id: int, party: str, notes: str) -> None:
+def restore_stock(db: Session, *, catalog_product_id: int, our_product_id: str, quantity: int, reference_id: int, party: str, notes: str, when: datetime | None = None) -> None:
     if quantity <= 0:
         return
     add_stock(
@@ -180,6 +183,7 @@ def restore_stock(db: Session, *, catalog_product_id: int, our_product_id: str, 
         reference_id=reference_id,
         party=party,
         notes=notes,
+        created_at=when,
     )
     deduct_addons_for_product(
         db,
@@ -189,6 +193,7 @@ def restore_stock(db: Session, *, catalog_product_id: int, our_product_id: str, 
         reference_id=reference_id,
         party=party,
         note=notes,
+        when=when,
     )
 
 
@@ -790,6 +795,7 @@ def create_received_placement(
             reference_id=placement.id,
             party=customer_name,
             allow_negative=allow_negative_stock,
+            when=when,
         )
 
     # CustomerOpenLine (the "Confirmed" bucket tally used for billing) is only populated

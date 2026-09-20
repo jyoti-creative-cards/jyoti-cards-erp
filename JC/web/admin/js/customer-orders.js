@@ -1250,14 +1250,14 @@ const CustomerOrders = (() => {
     // Same fix as voidBill below: promptReason's modal already states the
     // consequence and has its own Confirm/Cancel — a second native confirm() after
     // it was a redundant double dialog that silently swallowed the reason on Cancel.
-    promptReason("Cancel bill — qty returns to To bill. Freight cleared.", async (reason) => {
+    promptReason("Cancel bill — stock is released back to available. This qty drops off the order; place a fresh order to sell it again. Freight cleared.", async (reason) => {
       ctx.showLoading?.();
       try {
         await ctx.api(`/customer-orders/bills/${billId}/cancel`, {
           method: "POST",
           body: JSON.stringify({ reason }),
         });
-        ctx.toast("Bill cancelled — order open again", "success");
+        ctx.toast("Bill cancelled — stock released", "success");
         ctx.invalidateCache?.("/customer-orders");
         ctx.invalidateCache?.("/freight-agents");
         await openDetail(detailCustomerId, "open");

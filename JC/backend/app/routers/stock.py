@@ -23,6 +23,7 @@ from app.schemas.stock import (
     PlacedLineForReceipt,
     ReceiptForBillDetail,
     ReceiptLineForBill,
+    ReservedByPartyRow,
     SellingPriceUpdate,
     StockAdjustIn,
     StockThresholdUpdate,
@@ -44,7 +45,7 @@ from app.schemas.ledger import StockLedgerDetail
 from app.models.debit_note import DebitNote
 from app.services.ap_ledger import debit_note_payable_effect, receipt_bill_amount, receipt_debit_note_total
 from app.services.activity import log_from_auth
-from app.services.order_summary import pending_qty_by_product, placed_qty_by_product, received_qty_by_product
+from app.services.order_summary import pending_qty_by_product, placed_qty_by_product, received_qty_by_product, reserved_by_party
 from app.services.stock_receipt import get_open_order
 from app.services.doc_gen import generate_vendor_receipt_document
 from app.services import response_cache
@@ -343,6 +344,8 @@ def get_stock_detail(
             "image_urls": list(presigned_urls(addon.image_keys or []) or []),
         })
 
+    reserved_rows = [ReservedByPartyRow(**r) for r in reserved_by_party(db, catalog_product_id)]
+
     base = _product_public(row, db, qty, threshold, auth=auth)
     return StockProductDetail(
         **base,
@@ -351,6 +354,7 @@ def get_stock_detail(
         quantity_pending=int(pending),
         quantity_sold=0,
         ledger=ledger,
+        reserved_by_party=reserved_rows,
     )
 
 

@@ -936,6 +936,7 @@ const Products = (() => {
             <td style="font-size:12px;color:var(--muted);">${ctx.esc(e.notes || "—")}</td>
           </tr>`).join("")
         : `<tr><td colspan="5" style="color:var(--muted);">No movements yet</td></tr>`;
+      const reservedByPartyHtml = Stock.reservedByPartyTable ? Stock.reservedByPartyTable(stock?.reserved_by_party) : "";
 
       const stockPane = stock ? `
         <div class="stock-price-panel">
@@ -960,8 +961,9 @@ const Products = (() => {
         <div class="review-grid" style="margin:16px 0 20px;">
           ${ctx.reviewRow("On hand", stock.quantity_on_hand)}
           ${ctx.reviewRow("Status", (stock.stock_status || "").replace(/_/g, " "))}
-          ${ctx.reviewRow("Pending order", stock.quantity_pending)}
+          ${ctx.reviewRow("Pending order (vendor inbound)", stock.quantity_pending)}
         </div>
+        ${reservedByPartyHtml}
         <div class="detail-section">
           <h4>Stock Ledger</h4>
           <table class="data history-table"><thead><tr>

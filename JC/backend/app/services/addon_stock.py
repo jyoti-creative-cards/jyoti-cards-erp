@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 
 from sqlalchemy.orm import Session
 
@@ -22,26 +23,31 @@ def add_addon_stock(
     party: str | None = None,
     notes: str | None = None,
     created_by_name: str | None = None,
+    created_at: datetime | None = None,
 ) -> AddonProduct:
     """Apply a signed quantity delta to an add-on's stock and log it. Never blocks —
-    add-on stock is allowed to go negative, same philosophy as product stock."""
+    add-on stock is allowed to go negative, same philosophy as product stock.
+
+    created_at: pass the (possibly backdated) business date so this mirrors the
+    linked product's stock ledger timestamp — see add_stock()."""
     addon = db.query(AddonProduct).filter(AddonProduct.id == addon_product_id).with_for_update().first()
     if not addon:
         raise ValueError(f"addon product {addon_product_id} not found")
     addon.quantity_on_hand = int(addon.quantity_on_hand or 0) + quantity
-    db.add(
-        AddonStockLedger(
-            addon_product_id=addon_product_id,
-            entry_type=entry_type,
-            quantity_delta=quantity,
-            balance_after=addon.quantity_on_hand,
-            reference_type=reference_type,
-            reference_id=reference_id,
-            party=party,
-            notes=notes,
-            created_by_name=created_by_name,
-        )
+    ledger_row = AddonStockLedger(
+        addon_product_id=addon_product_id,
+        entry_type=entry_type,
+        quantity_delta=quantity,
+        balance_after=addon.quantity_on_hand,
+        reference_type=reference_type,
+        reference_id=reference_id,
+        party=party,
+        notes=notes,
+        created_by_name=created_by_name,
     )
+    if created_at is not None:
+        ledger_row.created_at = created_at
+    db.add(ledger_row)
     db.flush()
     return addon
 
@@ -55,6 +61,7 @@ def deduct_addons_for_product(
     reference_id: int,
     party: str | None = None,
     note: str | None = None,
+    when: datetime | None = None,
 ) -> None:
     """Apply add-on stock movement for `units` of a catalog product being reserved
     (units > 0 shrinks add-on stock) or restored (units < 0 grows it back), based on
@@ -88,6 +95,7 @@ def deduct_addons_for_product(
                 reference_id=reference_id,
                 party=party,
                 notes=note,
+                created_at=when,
             )
         except ValueError:
             logger.warning(

@@ -441,54 +441,6 @@ def _cancel_received_qty(db: Session, customer_id: int, catalog_product_id: int,
             )
 
 
-def _unapply_billed_from_received_lines(
-    db: Session, customer_id: int, catalog_product_id: int, qty: int
-) -> None:
-    """Undo FIFO billed markers on received placements (newest billed first)."""
-    remaining = qty
-    received = (
-        db.query(CustomerOrder)
-        .filter(
-            CustomerOrder.customer_id == customer_id,
-            CustomerOrder.bucket == "received",
-            CustomerOrder.is_open.is_(True),
-        )
-        .first()
-    )
-    if not received:
-        return
-    placements = (
-        db.query(CustomerOrderPlacement)
-        .filter(
-            CustomerOrderPlacement.customer_order_id == received.id,
-            CustomerOrderPlacement.status == "received",
-        )
-        .order_by(CustomerOrderPlacement.placed_at.desc())
-        .all()
-    )
-    for p in placements:
-        if remaining <= 0:
-            break
-        lines = (
-            db.query(CustomerOrderLine)
-            .filter(
-                CustomerOrderLine.placement_id == p.id,
-                CustomerOrderLine.catalog_product_id == catalog_product_id,
-                CustomerOrderLine.status == "active",
-            )
-            .all()
-        )
-        for ln in lines:
-            if remaining <= 0:
-                break
-            billed = int(ln.quantity_billed or 0)
-            if billed <= 0:
-                continue
-            take = min(remaining, billed)
-            ln.quantity_billed = billed - take
-            remaining -= take
-
-
 def cancel_customer_bill(
     db: Session,
     *,
@@ -496,12 +448,15 @@ def cancel_customer_bill(
     reason: str,
     actor_name: str,
 ) -> CustomerBill:
-    """Cancel a bill: AR cleared, freight cleared, qty returns to open (yet to bill).
+    """Cancel a bill: AR cleared, freight cleared, stock released back to on-hand.
 
-    Stock stays reserved for the open order (portal flow). Offline sold stock is restored
-    then re-reserved for open.
+    The cancelled qty is dropped from the customer's order entirely (not sent back to
+    "to bill") — it is deliberately NOT re-added to CustomerOpenLine.quantity_open,
+    because that stock is no longer actually held for this customer once released. If
+    it were silently re-opened, a later re-bill would ship it without re-reserving,
+    double-selling the same units. If the customer still wants these items, place a
+    fresh order — that reserves stock again the normal way.
     """
-    from app.models.stock import StockLedger
     from app.services.freight_parcels import remove_charge_for_bill
 
     bill = db.get(CustomerBill, bill_id)
@@ -535,36 +490,21 @@ def cancel_customer_bill(
             ln.closed_at = datetime.now(timezone.utc)
             continue
 
-        # Offline bills sold stock at bill time — restore then keep reserved via open.
-        sold = (
-            db.query(StockLedger)
-            .filter(
-                StockLedger.reference_type == "customer_bill",
-                StockLedger.reference_id == bill.id,
-                StockLedger.catalog_product_id == ln.catalog_product_id,
-                StockLedger.entry_type == "sold",
-            )
-            .first()
+        # Release the stock this bill line held — whether it came from a portal
+        # reservation (at order time) or an offline sale (at bill time), the deal is
+        # off: give the units back to on-hand.
+        restore_stock(
+            db,
+            catalog_product_id=ln.catalog_product_id,
+            our_product_id=ln.our_product_id,
+            quantity=qty,
+            reference_id=bill.id,
+            party=customer_name,
+            notes=f"Bill {bill.bill_number} cancelled — stock released",
         )
-        if sold:
-            restore_stock(
-                db,
-                catalog_product_id=ln.catalog_product_id,
-                our_product_id=ln.our_product_id,
-                quantity=qty,
-                reference_id=bill.id,
-                party=customer_name,
-                notes=f"Bill {bill.bill_number} cancelled",
-            )
-            reserve_stock(
-                db,
-                catalog_product_id=ln.catalog_product_id,
-                our_product_id=ln.our_product_id,
-                quantity=qty,
-                reference_id=bill.placement_id or bill.id,
-                party=customer_name,
-            )
 
+        # Drop the qty from the customer's outstanding order (do not reopen it — see
+        # docstring). Reduce billed/received tallies only; quantity_open is untouched.
         open_row = (
             db.query(CustomerOpenLine)
             .filter(
@@ -573,22 +513,15 @@ def cancel_customer_bill(
             )
             .first()
         )
-        if not open_row:
-            open_row = _get_or_create_open_line(
-                db, bill.customer_id, ln.catalog_product_id, ln.unit_price
-            )
-            open_row.quantity_received = qty
-            open_row.quantity_open = qty
-            open_row.quantity_billed = 0
-        else:
-            open_row.quantity_open = int(open_row.quantity_open or 0) + qty
+        if open_row:
             open_row.quantity_billed = max(0, int(open_row.quantity_billed or 0) - qty)
             open_row.quantity_received = max(
-                int(open_row.quantity_received or 0),
-                int(open_row.quantity_open) + int(open_row.quantity_billed or 0),
+                int(open_row.quantity_open or 0),
+                int(open_row.quantity_received or 0) - qty,
             )
-        open_row.status = "open"
-        _unapply_billed_from_received_lines(db, bill.customer_id, ln.catalog_product_id, qty)
+            if int(open_row.quantity_open or 0) <= 0 and int(open_row.quantity_billed or 0) <= 0:
+                open_row.status = "cancelled"
+        _shrink_received_for_bill_delta(db, bill.customer_id, ln.catalog_product_id, qty)
 
         ln.status = "closed"
         ln.close_reason = f"Bill cancelled — {reason}"[:500]

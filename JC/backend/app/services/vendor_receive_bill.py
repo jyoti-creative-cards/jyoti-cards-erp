@@ -130,6 +130,7 @@ def receive_vendor_goods(
             reference_id=receipt.id,
             party=label,
             notes=note or ("Offline goods received" if offline else "Goods received"),
+            created_at=now,
         )
         line_summary.append(f"{prod.our_product_id}+{recv_qty}")
 

@@ -55,6 +55,23 @@ const Stock = (() => {
     if (url) return `<img src="${ctx.esc(url)}" alt="" class="vo-thumb" />`;
     return `<div class="vo-thumb vo-thumb-empty">—</div>`;
   }
+  function reservedByPartyTable(rows) {
+    if (!rows || !rows.length) return "";
+    const body = rows.map(r => `<tr>
+        <td>${ctx.esc(r.customer_name)}</td>
+        <td>${r.unconfirmed || 0}</td>
+        <td>${r.to_bill || 0}</td>
+        <td>${r.billed_not_dispatched || 0}</td>
+        <td><strong>${r.total_held || 0}</strong></td>
+      </tr>`).join("");
+    return `<div class="detail-section">
+        <h4>Reserved by party</h4>
+        <p style="color:var(--muted);font-size:12px;margin:0 0 8px;">Who is holding this stock right now — New (not yet confirmed), To bill (confirmed, unbilled), Billed (invoiced, not yet dispatched).</p>
+        <table class="data history-table"><thead><tr>
+          <th>Party</th><th>New</th><th>To bill</th><th>Billed (not dispatched)</th><th>Total held</th>
+        </tr></thead><tbody>${body}</tbody></table>
+      </div>`;
+  }
   async function load() {
     // Live hub is Products — keep picker cache warm, then refresh hub
     try {
@@ -113,7 +130,7 @@ const Stock = (() => {
             <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
               <span class="badge badge-blue">On hand: ${p.quantity_on_hand}</span>
               <span class="badge ${statusBadge}">${ctx.esc((p.stock_status || "").replace(/_/g, " "))}</span>
-              <span class="badge badge-gray">Pending order: ${p.quantity_pending}</span>
+              <span class="badge badge-gray" title="Vendor inbound goods not yet received — not a customer reservation">Pending order (vendor inbound): ${p.quantity_pending}</span>
               ${ctx.isAdmin?.() ? `<button class="btn btn-secondary btn-sm" onclick="Stock.adjustStock(${p.catalog_product_id}, ${p.quantity_on_hand})">Adjust stock</button>` : ""}
             </div>
           </div>
@@ -145,6 +162,7 @@ const Stock = (() => {
           ${ctx.reviewRow("Category", p.category || "—")}
         </div>
         <div style="margin-bottom:16px;"><strong style="font-size:13px;">Alternatives</strong><div style="margin-top:8px;">${altRows}</div></div>
+        ${reservedByPartyTable(p.reserved_by_party)}
         <div class="detail-section">
           <h4>Stock Ledger</h4>
           <table class="data history-table"><thead><tr>
@@ -2171,5 +2189,6 @@ const Stock = (() => {
     openReceiptPdf, fetchReceiptPdf, openEditReceipt, selectPendingReceipt, changePendingReceipt,
     voidReceipt, editPendingDebitNote,
     removeEditLine, toggleEditAddPicker, onEditAddSearch, addEditLine,
+    reservedByPartyTable,
   };
 })();

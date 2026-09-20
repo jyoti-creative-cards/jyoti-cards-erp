@@ -60,12 +60,22 @@ class StockLedgerEntry(BaseModel):
     reference_id: Optional[int] = None
 
 
+class ReservedByPartyRow(BaseModel):
+    customer_id: int
+    customer_name: str
+    unconfirmed: int = 0  # still in "New", not yet confirmed
+    to_bill: int = 0  # confirmed, awaiting billing
+    billed_not_dispatched: int = 0  # billed, not yet closed/dispatched
+    total_held: int = 0
+
+
 class StockProductDetail(StockProductSummary):
     alternatives: List[dict] = []
     addon_links: List[dict] = []
     quantity_pending: int = 0
     quantity_sold: int = 0
     ledger: List[StockLedgerEntry] = []
+    reserved_by_party: List[ReservedByPartyRow] = []
 
 
 class SellingPriceUpdate(BaseModel):

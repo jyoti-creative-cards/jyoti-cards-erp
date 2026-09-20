@@ -269,13 +269,32 @@ def build_customer_ledger(db: Session, customer_id: int, *, show_actor: bool = T
 
     entries: list[tuple[datetime, EntityLedgerEntry]] = []
 
+    # Billing (process_customer_bill) and per-line close (close_bill_line) each spawn a
+    # fresh internal "billed"/"closed"-bucket placement to carry their own line history —
+    # they are not a second real order. Without this exclusion, one logical order shows
+    # up twice under Activity → Orders: once from its real received/open placement, once
+    # again from this internal mirror (e.g. the "488 and 489 look identical" bug). The
+    # mirror's content already surfaces via its own "Bill {number}" entry below, so
+    # hiding it here loses nothing.
+    mirror_placement_ids = {
+        r[0]
+        for r in db.query(CustomerBill.placement_id)
+        .filter(CustomerBill.customer_id == customer_id, CustomerBill.placement_id.isnot(None))
+        .all()
+    }
+
     placements = (
         db.query(CustomerOrderPlacement, CustomerOrder)
         .join(CustomerOrder, CustomerOrderPlacement.customer_order_id == CustomerOrder.id)
-        .filter(CustomerOrder.customer_id == customer_id, CustomerOrderPlacement.deleted_at.is_(None))
+        .filter(
+            CustomerOrder.customer_id == customer_id,
+            CustomerOrderPlacement.deleted_at.is_(None),
+            CustomerOrder.bucket != "closed",
+        )
         .order_by(CustomerOrderPlacement.placed_at.desc())
         .all()
     )
+    placements = [(p, o) for p, o in placements if p.id not in mirror_placement_ids]
     placement_ids = [p.id for p, _ in placements]
     olines_by: dict[int, list] = defaultdict(list)
     if placement_ids:

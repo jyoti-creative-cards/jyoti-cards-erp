@@ -14,17 +14,23 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from app.services.company_info import company_lines
 from app.services.customer_bill_math import fmt_discount_pct
+from app.services.company_info import company_lines
 from app.services.pdf_documents import (
     _fetch_image,
     _header,
-    _party_block_single,
-    _party_blocks,
     _safe,
     _totals_block,
     add_page_number,
 )
+
+# Tight page chrome so ~25 item rows stay on one A4 sheet. Side margins match
+# every table width below — a wider item table, a short bill-to line, a short
+# totals block, and a small photo grid.
+_BILL_MARGIN_X = 0.85 * cm
+_BILL_MARGIN_TOP = 0.45 * cm
+_BILL_MARGIN_BOTTOM = 1.15 * cm
+_BILL_CONTENT_W = A4[0] - 2 * _BILL_MARGIN_X
 
 COPY_LABELS = ["ORIGINAL", "DUPLICATE", "TRIPLICATE", "QUADRUPLICATE"]
 
@@ -83,7 +89,7 @@ def _cell(text: str, *, right: bool = False, muted: bool = False, size: int = 8)
             key,
             parent=styles["Normal"],
             fontSize=size,
-            leading=size + 2,
+            leading=size + 1,
             alignment=TA_RIGHT if right else TA_LEFT,
             textColor=colors.HexColor("#64748b" if muted else "#0f172a"),
             wordWrap="CJK",
@@ -138,6 +144,11 @@ def bill_item_headers(gst_on: bool, gst_label: str = "") -> list[str]:
     return ["Code", "Qty", "Rate", "Net", "Amount"]
 
 
+def _col_widths(weights: list[float], total: float) -> list[float]:
+    scale = total / (sum(weights) or 1)
+    return [w * scale for w in weights]
+
+
 def _bill_items_table(
     lines: List[Dict[str, Any]],
     image_urls: Dict[int, str | None],
@@ -147,14 +158,18 @@ def _bill_items_table(
 ) -> Table:
     if gst_on:
         head = bill_item_headers(True, gst_label)
-        col_widths = [0.9 * cm, 1.4 * cm, 2.6 * cm, 1.0 * cm, 1.6 * cm, 1.2 * cm, 1.6 * cm, 1.6 * cm, 1.5 * cm, 1.6 * cm]
-        img_size = 1.1 * cm
+        # Thumb stays smaller than the text row so 20–25 lines still fit one page.
+        img_size = 0.52 * cm
+        rest = _BILL_CONTENT_W - img_size
+        col_widths = [img_size, *_col_widths(
+            [1.7, 3.6, 0.9, 1.5, 1.15, 1.5, 1.55, 1.45, 1.55], rest,
+        )]
         prefetched = _prefetch_images_parallel(image_urls or {}, img_size, img_size)
     else:
         # Non-GST estimate has no in-table Photo column — see _photos_section, which
-        # renders images after the table instead.
+        # renders images after the table instead. Code takes the spare width.
         head = bill_item_headers(False)
-        col_widths = [4.6 * cm, 1.5 * cm, 2.6 * cm, 2.6 * cm, 3.2 * cm]
+        col_widths = _col_widths([6.4, 1.35, 2.5, 2.5, 2.9], _BILL_CONTENT_W)
         prefetched = {}
 
     dash = _cell("—", right=True, muted=True)
@@ -254,10 +269,10 @@ def _bill_items_table(
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1e40af")),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING", (0, 0), (-1, -1), 6),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-        ("LEFTPADDING", (0, 0), (-1, -1), 3),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("LEFTPADDING", (0, 0), (-1, -1), 2),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 2),
         ("ALIGN", (numeric_start, 0), (-1, -1), "RIGHT"),
         ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#cbd5e1")),
         ("LINEBELOW", (0, 1), (-1, -2), 0.4, colors.HexColor("#e2e8f0")),
@@ -270,20 +285,21 @@ def _bill_items_table(
 
 
 def _photos_section(lines: List[Dict[str, Any]], image_urls: Dict[int, str | None]) -> list:
-    """Numbered photo tiles for every billed item, placed after the items table (and
-    narration/notes) instead of a cramped in-table Photo column — see PDF redesign."""
-    img_px = 2.1 * cm
+    """Small numbered photo tiles under the totals. Ten across keeps 25 items to
+    three short rows so the item table above can stay on the same page."""
+    per_row = 10
+    tile_w = _BILL_CONTENT_W / per_row
+    img_px = 1.05 * cm
     prefetched = _prefetch_images_parallel(image_urls or {}, img_px, img_px)
     styles = getSampleStyleSheet()
     cap_style = ParagraphStyle(
-        "photo_cap", parent=styles["Normal"], fontSize=7.5, alignment=TA_CENTER,
-        textColor=colors.HexColor("#334155"), leading=9,
+        "photo_cap", parent=styles["Normal"], fontSize=5.5, alignment=TA_CENTER,
+        textColor=colors.HexColor("#334155"), leading=6.5,
     )
     placeholder_style = ParagraphStyle(
-        "photo_ph", parent=styles["Normal"], fontSize=7, alignment=TA_CENTER,
-        textColor=colors.HexColor("#94a3b8"),
+        "photo_ph", parent=styles["Normal"], fontSize=5, alignment=TA_CENTER,
+        textColor=colors.HexColor("#94a3b8"), leading=6,
     )
-    tile_w = img_px + 0.4 * cm
     tiles: list[Any] = []
     n = 0
     for ln in lines:
@@ -292,44 +308,158 @@ def _photos_section(lines: List[Dict[str, Any]], image_urls: Dict[int, str | Non
         n += 1
         cid = int(ln.get("catalog_product_id") or 0)
         img = prefetched.get(cid)
-        code = _safe(ln.get("our_product_id"), 20)
+        code = _safe(ln.get("our_product_id"), 14)
         if img:
             pic: Any = img
         else:
-            pic = Table([[Paragraph("No photo", placeholder_style)]], colWidths=[img_px], rowHeights=[img_px])
+            pic = Table([[Paragraph("—", placeholder_style)]], colWidths=[img_px], rowHeights=[img_px])
             pic.setStyle(TableStyle([
                 ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f1f5f9")),
-                ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
+                ("BOX", (0, 0), (-1, -1), 0.3, colors.HexColor("#e2e8f0")),
                 ("ALIGN", (0, 0), (-1, -1), "CENTER"),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
             ]))
         cap = Paragraph(f"{n}. {escape(code)}", cap_style)
         tile = Table([[pic], [cap]], colWidths=[tile_w])
         tile.setStyle(TableStyle([
             ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-            ("TOPPADDING", (0, 0), (-1, -1), 2),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
         ]))
         tiles.append(tile)
 
     if not tiles:
         return []
 
-    per_row = 6
     grid_rows = [tiles[i:i + per_row] for i in range(0, len(tiles), per_row)]
     if grid_rows and len(grid_rows[-1]) < per_row:
         grid_rows[-1] = grid_rows[-1] + [""] * (per_row - len(grid_rows[-1]))
     grid = Table(grid_rows, colWidths=[tile_w] * per_row)
     grid.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("TOPPADDING", (0, 0), (-1, -1), 6),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 1),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 1),
+        ("TOPPADDING", (0, 0), (-1, -1), 1),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
     ]))
     heading = Paragraph("Photos", ParagraphStyle(
-        "photos_head", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=11,
-        textColor=colors.HexColor("#0f172a"), spaceBefore=4, spaceAfter=8,
+        "photos_head", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=8,
+        textColor=colors.HexColor("#0f172a"), spaceBefore=1, spaceAfter=1, leading=9,
     ))
-    return [Spacer(1, 0.25 * cm), heading, grid]
+    return [Spacer(1, 0.08 * cm), heading, grid]
+
+
+def _party_chip(label: str, line_html: str, second: str | None, width: float) -> Table:
+    """One or two lines: 'BILL TO  Name · phone · CITY' then company/address."""
+    styles = getSampleStyleSheet()
+    body = ParagraphStyle(
+        "bill_party", parent=styles["Normal"], fontSize=8, leading=10,
+        textColor=colors.HexColor("#0f172a"),
+    )
+    flows: list[Any] = [Paragraph(
+        f'<font color="#64748b"><b>{escape(label)}</b></font>&nbsp;&nbsp;{line_html}',
+        body,
+    )]
+    if second:
+        flows.append(Paragraph(escape(second), ParagraphStyle(
+            "bill_party_2", parent=body, fontSize=7.5, leading=9,
+            textColor=colors.HexColor("#334155"),
+        )))
+    inner = Table([[f] for f in flows], colWidths=[max(width - 8, 20)])
+    inner.setStyle(TableStyle([
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    tbl = Table([[inner]], colWidths=[width])
+    tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#eff6ff")),
+        ("BOX", (0, 0), (-1, -1), 0.4, colors.HexColor("#cbd5e1")),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    return tbl
+
+
+def _customer_party_html(
+    *,
+    customer_name: str,
+    customer_phone: str | None,
+    customer_city: str | None,
+    customer_party_number: int | str | None,
+    customer_company: str | None,
+    customer_address: str | None,
+    addr_limit: int,
+) -> tuple[str, str | None]:
+    parts = [f"<b>{escape(_safe(customer_name, 70))}</b>"]
+    if customer_party_number:
+        parts.append(escape(f"Party #{_safe(customer_party_number, 16)}"))
+    phone = _safe(customer_phone, 20) if customer_phone else ""
+    if phone and phone != "-":
+        parts.append(escape(phone))
+    city = _safe(customer_city, 36) if customer_city else ""
+    if city and city != "-":
+        parts.append(f"<b>{escape(city)}</b>")
+    second_bits: list[str] = []
+    company = _safe(customer_company, 36) if customer_company else ""
+    if company and company != "-":
+        second_bits.append(company)
+    address = _safe(customer_address, addr_limit) if customer_address else ""
+    if address and address != "-":
+        second_bits.append(address)
+    second = " · ".join(second_bits) or None
+    return " &middot; ".join(parts), second
+
+
+def _bill_to_flow(
+    *,
+    gst_on: bool,
+    customer_name: str,
+    customer_company: str | None,
+    customer_phone: str | None,
+    customer_address: str | None,
+    customer_city: str | None,
+    customer_party_number: int | str | None,
+) -> Table:
+    addr_limit = 42 if gst_on else 88
+    line_html, second = _customer_party_html(
+        customer_name=customer_name,
+        customer_phone=customer_phone,
+        customer_city=customer_city,
+        customer_party_number=customer_party_number,
+        customer_company=customer_company,
+        customer_address=customer_address,
+        addr_limit=addr_limit,
+    )
+    if not gst_on:
+        return _party_chip("BILL TO", line_html, second, _BILL_CONTENT_W)
+    seller_lines = [ln for ln in company_lines() if ln]
+    seller_name = seller_lines[0] if seller_lines else "Seller"
+    seller_rest = " · ".join(seller_lines[1:]) or None
+    half = _BILL_CONTENT_W / 2
+    left = _party_chip("FROM", f"<b>{escape(seller_name)}</b>", seller_rest, half)
+    right = _party_chip("BILL TO", line_html, second, half)
+    pair = Table([[left, right]], colWidths=[half, half])
+    pair.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    return pair
 
 
 def _build_summary_rows(totals: Dict[str, Any], gst_on: bool, gst_label: str) -> list[list[str]]:
@@ -439,99 +569,64 @@ def _build_bill_story(
             "copy_label",
             parent=styles["Normal"],
             fontName="Helvetica-Bold",
-            fontSize=10,
+            fontSize=8,
             alignment=TA_RIGHT,
             textColor=colors.white,
+            leading=9,
         )
-        label_table = Table([[Paragraph(f"  {copy_label} COPY  ", label_style)]], colWidths=["100%"])
+        label_table = Table(
+            [[Paragraph(f"  {copy_label} COPY  ", label_style)]],
+            colWidths=[_BILL_CONTENT_W],
+        )
         label_table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#1d4ed8")),
-            ("TOPPADDING", (0, 0), (-1, -1), 5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("TOPPADDING", (0, 0), (-1, -1), 1),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
             ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
         ]))
         story.append(label_table)
-        story.append(Spacer(1, 0.25 * cm))
+        story.append(Spacer(1, 0.06 * cm))
 
-    from app.services.biz_date import format_ist, format_ist_day
+    from app.services.biz_date import format_ist_day
 
     gst_on = bool(totals.get("gst_enabled"))
     bill_lbl = _safe(bill_number, 40) if bill_number else f"#{bill_id}"
     if gst_on:
-        _header(story, "TAX INVOICE", "Customer bill — GST inclusive rates", f"Bill {bill_lbl}")
-        stamp_style = ParagraphStyle(
-            "bill_stamp", parent=styles["Normal"], fontSize=8, leading=11,
-            textColor=colors.HexColor("#334155"),
+        # One title line. Entered/Printed stay in the page footer.
+        _header(
+            story, "TAX INVOICE", "", f"Bill {bill_lbl}  ·  {format_ist_day(invoice_date or generated_at)}",
+            compact=True, content_width=_BILL_CONTENT_W,
         )
-        stamp_lbl = ParagraphStyle(
-            "bill_stamp_lbl", parent=stamp_style, fontName="Helvetica-Bold",
-            textColor=colors.HexColor("#64748b"),
-        )
-        stamp = Table(
-            [
-                [
-                    Paragraph("BILL DATE", stamp_lbl),
-                    Paragraph("ENTERED", stamp_lbl),
-                    Paragraph("PRINTED", stamp_lbl),
-                ],
-                [
-                    Paragraph(escape(format_ist_day(invoice_date or generated_at)), stamp_style),
-                    Paragraph(escape(format_ist(generated_at)), stamp_style),
-                    Paragraph(escape(format_ist(printed_at)), stamp_style),
-                ],
-            ],
-            colWidths=[5.6 * cm, 5.7 * cm, 5.7 * cm],
-        )
-        stamp.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f8fafc")),
-            ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
-            ("LEFTPADDING", (0, 0), (-1, -1), 8),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-            ("TOPPADDING", (0, 0), (-1, -1), 5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ]))
-        story.append(stamp)
-        story.append(Spacer(1, 0.3 * cm))
     else:
         # Non-GST estimate: one heading only (the brand bar above says "Order
         # Estimate") — no second "ORDER ESTIMATE" title/subtitle underneath it, and no
-        # "not a tax invoice" line. Bill number + date are combined into one bold line
-        # instead of a separate stamp table; Entered/Printed move to the bottom-right
-        # footer of every page (see render_copies_pdf), since they're provenance
-        # metadata, not something the customer needs up top.
-        _header(story, "", "", "", brand_override="Order Estimate")
+        # "not a tax invoice" line. Bill number + date are one short line.
+        # Entered/Printed stay in the page footer (see render_copies_pdf).
+        _header(
+            story, "", "", "", brand_override="Order Estimate",
+            compact=True, content_width=_BILL_CONTENT_W,
+        )
         story.append(Paragraph(
             escape(f"Bill {bill_lbl}  ·  {format_ist_day(invoice_date or generated_at)}"),
             ParagraphStyle(
                 "bill_stamp_combined", parent=styles["Normal"], fontName="Helvetica-Bold",
-                fontSize=13, alignment=TA_CENTER, textColor=colors.HexColor("#0f172a"),
-                spaceAfter=10,
+                fontSize=9, leading=11, alignment=TA_CENTER, textColor=colors.HexColor("#0f172a"),
+                spaceBefore=1, spaceAfter=2,
             ),
         ))
 
-    bill_to = ["Bill to", _safe(customer_name, 80)]
-    if customer_party_number:
-        bill_to.append(f"Party #{_safe(customer_party_number, 20)}")
-    if customer_company:
-        bill_to.append(_safe(customer_company, 80))
-    if customer_phone:
-        bill_to.append(f"Phone: {_safe(customer_phone, 24)}")
-    if customer_address:
-        bill_to.append(_safe(customer_address, 120))
-    city_bold_idx: set[int] = set()
-    if customer_city:
-        bill_to.append(_safe(customer_city, 60))
-        # Bold + bigger like the party name — the transport company reads the city
-        # straight off this printout to route the goods.
-        city_bold_idx = {len(bill_to) - 2}
-    if gst_on:
-        our = ["From (Seller)"] + company_lines()
-        story.append(_party_blocks(our, bill_to))
-    else:
-        # No "From" column on the estimate — see header note above.
-        story.append(_party_block_single(bill_to, bold_idxs=city_bold_idx))
-    story.append(Spacer(1, 0.35 * cm))
+    # Name, party, phone, and city on one line. Company and address share a second
+    # line only when present. City stays bold so transport can still read it.
+    story.append(_bill_to_flow(
+        gst_on=gst_on,
+        customer_name=customer_name,
+        customer_company=customer_company,
+        customer_phone=customer_phone,
+        customer_address=customer_address,
+        customer_city=customer_city,
+        customer_party_number=customer_party_number,
+    ))
+    story.append(Spacer(1, 0.12 * cm))
 
     lines = totals.get("lines") if isinstance(totals.get("lines"), list) else []
     gst_label = str(totals.get("gst_rate_label") or totals.get("gst_rate_percent") or "")
@@ -539,42 +634,49 @@ def _build_bill_story(
         lines, item_image_urls or {}, gst_on, gst_label,
         overall_disc_pct=totals.get("discount_percent"),
     ))
-    story.append(Spacer(1, 0.35 * cm))
+    story.append(Spacer(1, 0.1 * cm))
     highlight_prefixes = ("Discount", "Freight", "Transport charges", "Packaging charges") if not gst_on else ()
-    story.append(_totals_block(_build_summary_rows(totals, gst_on, gst_label), highlight_prefixes=highlight_prefixes))
-    story.append(Spacer(1, 0.4 * cm))
+    story.append(_totals_block(
+        _build_summary_rows(totals, gst_on, gst_label),
+        highlight_prefixes=highlight_prefixes,
+        compact=True,
+        content_width=_BILL_CONTENT_W,
+    ))
+    story.append(Spacer(1, 0.08 * cm))
 
     notes_style = ParagraphStyle(
-        "cnotes", parent=styles["Normal"], fontSize=9,
-        textColor=colors.HexColor("#0f172a"), spaceAfter=6, leading=12,
+        "cnotes", parent=styles["Normal"], fontSize=7.5,
+        textColor=colors.HexColor("#0f172a"), spaceAfter=1, leading=9,
     )
     if narration:
-        story.append(Paragraph(f"<b>Narration:</b> {escape(_safe(narration, 1000))}", notes_style))
+        story.append(Paragraph(f"<b>Narration:</b> {escape(_safe(narration, 220))}", notes_style))
     if customer_notes:
-        story.append(Paragraph(f"<b>Customer notes:</b> {escape(_safe(customer_notes, 500))}", notes_style))
+        story.append(Paragraph(f"<b>Customer notes:</b> {escape(_safe(customer_notes, 180))}", notes_style))
 
     if outstanding is not None:
         # Customer-facing: only the amount outstanding (incl. this bill) — no internal
         # credit-limit figures on the printed bill.
         out_text = f"Outstanding (incl. this bill): Rs.{outstanding:,.2f}"
         story.append(Paragraph(escape(out_text), ParagraphStyle(
-            "outstanding_line", parent=styles["Normal"], fontSize=8.5, fontName="Helvetica-Bold",
-            textColor=colors.HexColor("#1d4ed8"), spaceBefore=6, spaceAfter=4,
+            "outstanding_line", parent=styles["Normal"], fontSize=7.5, leading=9,
+            fontName="Helvetica-Bold",
+            textColor=colors.HexColor("#1d4ed8"), spaceBefore=1, spaceAfter=1,
         )))
 
     if not gst_on:
-        # Photos live after the table + narration/notes/outstanding — "everything" —
-        # as numbered tiles, instead of a cramped in-table column.
+        # Photos live after the table + narration/notes/outstanding — small tiles,
+        # so the item table above keeps the page.
         story.extend(_photos_section(lines, item_image_urls or {}))
 
     foot = (
-        "Amounts in Indian Rupees (Rs.). Rates are GST-inclusive; taxable value and GST are derived per line."
+        "Amounts in Indian Rupees (Rs.). Rates are GST-inclusive."
         if gst_on
         else "Amounts in Indian Rupees (Rs.). Thank you for your business!"
     )
-    story.append(Spacer(1, 0.35 * cm))
+    story.append(Spacer(1, 0.08 * cm))
     story.append(Paragraph(escape(foot), ParagraphStyle(
-        "foot", parent=styles["Normal"], fontSize=8, alignment=TA_CENTER, textColor=colors.HexColor("#64748b"),
+        "foot", parent=styles["Normal"], fontSize=6.5, leading=8, alignment=TA_CENTER,
+        textColor=colors.HexColor("#64748b"),
     )))
     return story
 
@@ -685,10 +787,10 @@ def render_copies_pdf(
     doc = SimpleDocTemplate(
         buf,
         pagesize=A4,
-        rightMargin=1.5 * cm,
-        leftMargin=1.5 * cm,
-        topMargin=1.4 * cm,
-        bottomMargin=1.4 * cm,
+        rightMargin=_BILL_MARGIN_X,
+        leftMargin=_BILL_MARGIN_X,
+        topMargin=_BILL_MARGIN_TOP,
+        bottomMargin=_BILL_MARGIN_BOTTOM,
     )
 
     gst_on = bool(totals.get("gst_enabled"))
@@ -705,8 +807,9 @@ def render_copies_pdf(
             canvas.saveState()
             canvas.setFont("Helvetica", 6.5)
             canvas.setFillColor(colors.HexColor("#94a3b8"))
-            canvas.drawRightString(
-                doc_.pagesize[0] - 1.5 * cm, 1.0 * cm,
+            # Left side — page number stays bottom-right, so the two don't stack.
+            canvas.drawString(
+                _BILL_MARGIN_X, 0.72 * cm,
                 f"Entered {entered_str}  ·  Printed {printed_str}",
             )
             canvas.restoreState()

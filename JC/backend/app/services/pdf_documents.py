@@ -262,8 +262,19 @@ def _vendor_receipt_table(
     return table
 
 
-def _totals_block(rows: List[List[str]], *, highlight_prefixes: tuple[str, ...] = ()) -> Table:
+def _totals_block(
+    rows: List[List[str]],
+    *,
+    highlight_prefixes: tuple[str, ...] = (),
+    compact: bool = False,
+    content_width: float | None = None,
+) -> Table:
     styles = getSampleStyleSheet()
+    body = 7 if compact else 9
+    last_l = 8 if compact else 10
+    last_v = 8.5 if compact else 11
+    pad = 1.5 if compact else 7
+    side = 5 if compact else 10
     data = []
     for i, (label, value) in enumerate(rows):
         is_last = i == len(rows) - 1
@@ -271,31 +282,37 @@ def _totals_block(rows: List[List[str]], *, highlight_prefixes: tuple[str, ...] 
         lbl = Paragraph(
             escape(label),
             ParagraphStyle(
-                f"tot_l_{i}", parent=styles["Normal"],
+                f"tot_l_{i}_{int(compact)}", parent=styles["Normal"],
                 fontName="Helvetica-Bold" if (is_last or is_hl) else "Helvetica",
-                fontSize=10 if is_last else 9,
+                fontSize=last_l if is_last else body,
+                leading=(last_l if is_last else body) + 1,
                 textColor=colors.HexColor("#0f172a" if is_last else ("#b45309" if is_hl else "#475569")),
             ),
         )
         val = Paragraph(
             escape(value),
             ParagraphStyle(
-                f"tot_v_{i}", parent=styles["Normal"],
+                f"tot_v_{i}_{int(compact)}", parent=styles["Normal"],
                 fontName="Helvetica-Bold",
-                fontSize=11 if is_last else 9,
+                fontSize=last_v if is_last else body,
+                leading=(last_v if is_last else body) + 1,
                 alignment=TA_RIGHT,
                 textColor=colors.HexColor("#1e40af" if is_last else ("#b45309" if is_hl else "#0f172a")),
             ),
         )
         data.append([lbl, val])
-    table = Table(data, colWidths=[11 * cm, 5 * cm])
+    if content_width:
+        col_widths = [content_width * 0.72, content_width * 0.28]
+    else:
+        col_widths = [11 * cm, 5 * cm]
+    table = Table(data, colWidths=col_widths)
     style = [
         ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f8fafc")),
-        ("BOX", (0, 0), (-1, -1), 0.8, colors.HexColor("#cbd5e1")),
-        ("TOPPADDING", (0, 0), (-1, -1), 7),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
-        ("LEFTPADDING", (0, 0), (-1, -1), 10),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+        ("BOX", (0, 0), (-1, -1), 0.6 if compact else 0.8, colors.HexColor("#cbd5e1")),
+        ("TOPPADDING", (0, 0), (-1, -1), pad),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), pad),
+        ("LEFTPADDING", (0, 0), (-1, -1), side),
+        ("RIGHTPADDING", (0, 0), (-1, -1), side),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
     ]
     for i, (label, _value) in enumerate(rows):
@@ -308,49 +325,68 @@ def _totals_block(rows: List[List[str]], *, highlight_prefixes: tuple[str, ...] 
     return table
 
 
-def _header(story: list, title: str, subtitle: str, meta: str, *, brand_override: str | None = None) -> None:
+def _header(
+    story: list,
+    title: str,
+    subtitle: str,
+    meta: str,
+    *,
+    brand_override: str | None = None,
+    compact: bool = False,
+    content_width: float | None = None,
+) -> None:
     styles = getSampleStyleSheet()
+    width = content_width if content_width is not None else 17 * cm
+    brand_size = 11 if compact else 14
     brand_bar = Table(
         [[Paragraph(
             escape(brand_override or company_lines()[0]),
             ParagraphStyle(
-                "brand", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=14,
-                alignment=TA_CENTER, textColor=colors.white, leading=18,
+                "brand", parent=styles["Normal"], fontName="Helvetica-Bold",
+                fontSize=brand_size,
+                alignment=TA_CENTER, textColor=colors.white, leading=brand_size + 2,
             ),
         )]],
-        colWidths=[17 * cm],
+        colWidths=[width],
     )
+    brand_pad = 3 if compact else 12
     brand_bar.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#1e40af")),
-        ("TOPPADDING", (0, 0), (-1, -1), 12),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
+        ("TOPPADDING", (0, 0), (-1, -1), brand_pad),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), brand_pad),
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
     ]))
     story.append(brand_bar)
-    story.append(Spacer(1, 0.35 * cm))
+    story.append(Spacer(1, 0.08 * cm if compact else 0.35 * cm))
     # Empty title/subtitle/meta are skipped entirely (not just blank) — used by the
     # non-GST "Order Estimate" bill, which shows only the one brand-bar heading, no
     # second "ORDER ESTIMATE" title line underneath it.
     if title:
         story.append(Paragraph(escape(title), ParagraphStyle(
-            "doc_title", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=16,
-            alignment=TA_CENTER, textColor=colors.HexColor("#0f172a"), spaceAfter=4,
+            "doc_title", parent=styles["Normal"], fontName="Helvetica-Bold",
+            fontSize=11 if compact else 16,
+            alignment=TA_CENTER, textColor=colors.HexColor("#0f172a"),
+            spaceAfter=1 if compact else 4, leading=13 if compact else 18,
         )))
     if subtitle:
         story.append(Paragraph(escape(subtitle), ParagraphStyle(
-            "doc_sub", parent=styles["Normal"], fontSize=9, alignment=TA_CENTER,
-            textColor=colors.HexColor("#64748b"), spaceAfter=6,
+            "doc_sub", parent=styles["Normal"], fontSize=7.5 if compact else 9,
+            alignment=TA_CENTER,
+            textColor=colors.HexColor("#64748b"), spaceAfter=1 if compact else 6,
+            leading=9 if compact else 11,
         )))
     if meta:
         story.append(Paragraph(escape(meta), ParagraphStyle(
-            "doc_meta", parent=styles["Normal"], fontSize=8, alignment=TA_CENTER,
-            textColor=colors.HexColor("#94a3b8"), spaceAfter=12,
+            "doc_meta", parent=styles["Normal"], fontSize=7.5 if compact else 8,
+            alignment=TA_CENTER,
+            textColor=colors.HexColor("#94a3b8"), spaceAfter=1 if compact else 12,
+            leading=9 if compact else 10,
         )))
-    rule = Table([[""]], colWidths=[17 * cm])
+    rule = Table([[""]], colWidths=[width])
     rule.setStyle(TableStyle([
-        ("LINEBELOW", (0, 0), (-1, -1), 1.5, colors.HexColor("#1e40af")),
+        ("LINEBELOW", (0, 0), (-1, -1), 0.6 if compact else 1.5, colors.HexColor("#1e40af")),
         ("TOPPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 1 if compact else 8),
     ]))
     story.append(rule)
 

@@ -47,7 +47,7 @@ from app.services.open_lines import add_to_open, cancel_open_qty, close_open_lin
 from app.services.order_summary import pending_qty_by_product, placed_qty_by_product, received_qty_by_product
 from app.services.stock_receipt import get_or_create_open_order
 from app.services.doc_gen import generate_vendor_placement_document
-from app.services.document_present import is_locked, present
+from app.services.document_present import present
 from app.services.storage import presigned_url, presigned_urls, storage_configured
 
 router = APIRouter(prefix="/vendor-orders", tags=["vendor-orders"])
@@ -90,7 +90,8 @@ def _vendor_ids_matching_product_search(
     matched: set[int] = set()
 
     # Placements: locked → card via present(); unlocked → live. Scoped to order bucket.
-    if bucket is None or bucket in ("placed", "cancelled", "closed"):
+    # Closed hub does not list placements — only closed open lines + billed receipts.
+    if bucket is None or bucket in ("placed", "cancelled"):
         for placement in db.query(VendorOrderPlacement).all():
             order = db.get(VendorOrder, placement.vendor_order_id)
             if not order:
@@ -99,8 +100,6 @@ def _vendor_ids_matching_product_search(
                 if bucket not in (None, "cancelled"):
                     continue
             if bucket in ("placed", "cancelled") and order.bucket != bucket:
-                continue
-            if bucket == "closed" and order.bucket != "closed" and not is_locked("vendor_order", placement):
                 continue
             view = present(db, "vendor_order", placement)
             if _view_matches_product_search(view, needle, live_pids):

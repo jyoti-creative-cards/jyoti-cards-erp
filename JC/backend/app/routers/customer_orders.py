@@ -120,7 +120,16 @@ def _customer_ids_matching_product_search(
                 matched.add(int(order.customer_id))
 
     if bucket is None or bucket == "billed":
-        for bill in db.query(CustomerBill).filter(CustomerBill.deleted_at.is_(None)).all():
+        # Match the billed hub: active bills only (not cancelled / closed / deleted).
+        for bill in (
+            db.query(CustomerBill)
+            .filter(
+                CustomerBill.cancelled_at.is_(None),
+                CustomerBill.closed_at.is_(None),
+                CustomerBill.deleted_at.is_(None),
+            )
+            .all()
+        ):
             view = present(db, "customer_bill", bill)
             if _view_matches_product_search(view, needle, live_pids):
                 matched.add(int(bill.customer_id))

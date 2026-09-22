@@ -794,6 +794,109 @@ def test_customer_order_search_matches_card_and_live_product_names(db):
     billed_leak = list_customer_orders(bucket="billed", day="all", search="OPEN-ONLY", db=db, auth=AUTH)
     assert not any(r.customer_id == other.id for r in billed_leak)
 
+    # Cancelled bill for product X must not put the customer in billed search for X
+    # when their only active billed doc does not contain X.
+    prod_x = CatalogProduct(
+        our_product_id="CANCEL-X",
+        vendor_id=prod.vendor_id,
+        vendor_product_id="VP-CX",
+        buying_price=Decimal("10"),
+        selling_price=Decimal("20"),
+    )
+    prod_y = CatalogProduct(
+        our_product_id="ACTIVE-Y",
+        vendor_id=prod.vendor_id,
+        vendor_product_id="VP-AY",
+        buying_price=Decimal("10"),
+        selling_price=Decimal("20"),
+    )
+    db.add_all([prod_x, prod_y])
+    db.flush()
+    db.add_all(
+        [
+            StockBalance(catalog_product_id=prod_x.id, quantity_on_hand=10),
+            StockBalance(catalog_product_id=prod_y.id, quantity_on_hand=10),
+        ]
+    )
+    db.flush()
+
+    cancelled_bill = CustomerBill(
+        customer_id=customer.id,
+        bill_number="B-CANCEL-X",
+        subtotal_inclusive=Decimal("40"),
+        grand_total=Decimal("40"),
+        created_by_type="admin",
+        created_by_name="Test",
+        bill_date=date.today(),
+        cancelled_at=datetime.now(timezone.utc),
+        cancel_reason="test cancel",
+        card_json={
+            "kind": "customer_bill",
+            "bill_number": "B-CANCEL-X",
+            "party_name": customer.business_name,
+            "lines": [
+                {
+                    "catalog_product_id": prod_x.id,
+                    "our_product_id": "CANCEL-X",
+                }
+            ],
+        },
+    )
+    db.add(cancelled_bill)
+    db.flush()
+    db.add(
+        CustomerBillLine(
+            bill_id=cancelled_bill.id,
+            catalog_product_id=prod_x.id,
+            our_product_id="CANCEL-X",
+            quantity_shipped=2,
+            unit_price=Decimal("20"),
+            line_total=Decimal("40"),
+            status="billed",
+        )
+    )
+
+    active_bill = CustomerBill(
+        customer_id=customer.id,
+        bill_number="B-ACTIVE-Y",
+        subtotal_inclusive=Decimal("20"),
+        grand_total=Decimal("20"),
+        created_by_type="admin",
+        created_by_name="Test",
+        bill_date=date.today(),
+        card_json={
+            "kind": "customer_bill",
+            "bill_number": "B-ACTIVE-Y",
+            "party_name": customer.business_name,
+            "lines": [
+                {
+                    "catalog_product_id": prod_y.id,
+                    "our_product_id": "ACTIVE-Y",
+                }
+            ],
+        },
+    )
+    db.add(active_bill)
+    db.flush()
+    db.add(
+        CustomerBillLine(
+            bill_id=active_bill.id,
+            catalog_product_id=prod_y.id,
+            our_product_id="ACTIVE-Y",
+            quantity_shipped=1,
+            unit_price=Decimal("20"),
+            line_total=Decimal("20"),
+            status="billed",
+        )
+    )
+    db.flush()
+
+    cancel_search = list_customer_orders(bucket="billed", day="all", search="CANCEL-X", db=db, auth=AUTH)
+    assert not any(r.customer_id == customer.id for r in cancel_search)
+
+    active_search = list_customer_orders(bucket="billed", day="all", search="ACTIVE-Y", db=db, auth=AUTH)
+    assert any(r.customer_id == customer.id for r in active_search)
+
 
 def test_vendor_order_search_matches_card_and_live_product_names(db):
     from app.models.vendor_order import VendorOrder, VendorOrderLine, VendorOrderPlacement

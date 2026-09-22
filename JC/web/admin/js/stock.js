@@ -1051,7 +1051,7 @@ const Stock = (() => {
               <span class="vo-wiz-vendor-letter">#${r.receipt_id}</span>
               <span class="vo-wiz-vendor-meta">
                 <strong>${ctx.esc(r.display_name || r.order_receipt_number || `Receipt #${r.receipt_id}`)}</strong>
-                <span>${new Date(r.display_date || r.received_at).toLocaleDateString()} · ${r.line_count} line${r.line_count === 1 ? "" : "s"} · ${r.total_quantity} qty</span>
+                <span>${ctx.fmtDate?.(r.display_date || r.value_date || r.created_at) || "—"} · ${r.line_count} line${r.line_count === 1 ? "" : "s"} · ${r.total_quantity} qty</span>
               </span>
               <span class="vo-wiz-vendor-meta" style="text-align:right;">
                 <strong>${r.expected_bill_amount != null ? fmtPrice(r.expected_bill_amount) : "—"}</strong>
@@ -1928,7 +1928,7 @@ const Stock = (() => {
     ctx.showLoading?.();
     try {
       const receipt = await ctx.api(`/stock/receipts/${receiptId}`, {}, 0);
-      renderReceiptDetail("Stock receipt", "receipt", null, null, receipt.received_at, null, receipt);
+      renderReceiptDetail("Stock receipt", "receipt", null, null, receipt.display_date || receipt.value_date || receipt.created_at, null, receipt);
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
   }

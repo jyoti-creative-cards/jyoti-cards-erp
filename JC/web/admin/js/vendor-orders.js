@@ -344,7 +344,7 @@ const VendorOrders = (() => {
     </tr></thead><tbody>
       ${receipts.map(r => `<tr>
         <td><strong>${ctx.esc(r.order_receipt_number || `#${r.receipt_id}`)}</strong></td>
-        <td class="vo-muted">${(r.display_date || r.received_at) ? new Date(r.display_date || r.received_at).toLocaleDateString() : "—"}</td>
+        <td class="vo-muted">${ctx.fmtDate(r.display_date || r.value_date || r.created_at) || "—"}</td>
         <td>${r.line_count}</td>
         <td><strong>${r.total_quantity}</strong></td>
         <td>${r.expected_bill_amount != null ? fmtPrice(r.expected_bill_amount) : "—"}${r.expected_extra_cash ? ` <span class="vo-muted">+ ${fmtPrice(r.expected_extra_cash)}</span>` : ""}</td>
@@ -1333,7 +1333,7 @@ const VendorOrders = (() => {
       message: "Marks paid / done. Moves to Closed with your note.",
       rows: [
         ["Bill", ctx.esc(placement.display_name || placement.bill_number || `Shipment #${placementId}`)],
-        ["Placed", ctx.fmtDate(placement.display_date || placement.placed_at)],
+        ["Placed", ctx.fmtDate(placement.display_date || placement.value_date || placement.created_at)],
         ["Lines", lines.join(", ") || `${placement.line_count} items`],
       ],
       confirmLabel: "Close shipment",
@@ -1421,7 +1421,7 @@ const VendorOrders = (() => {
       message: "Clears Open for these items. Placed record stays. History goes to Cancelled.",
       rows: [
         ["Placement", placement ? `#${placement.color_index + 1}` : String(placementId)],
-        ["Placed", placement ? ctx.fmtDate(placement.display_date || placement.placed_at) : "—"],
+        ["Placed", placement ? ctx.fmtDate(placement.display_date || placement.value_date || placement.created_at) : "—"],
         ...lineRows.map(([prod, detail]) => ["Product", `${prod} — ${detail}`]),
       ],
       confirmLabel: "Cancel Order",

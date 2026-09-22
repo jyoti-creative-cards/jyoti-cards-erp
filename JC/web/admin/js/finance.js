@@ -921,7 +921,7 @@ const Finance = (() => {
         <button type="button" class="fin-bill-head" onclick="Finance.toggleBill(${b.receipt_id})">
           <div>
             <div class="fin-bill-title">${ctx.esc(b.display_name || b.bill_number || `Bill #${b.receipt_id}`)}</div>
-            <div class="fin-bill-meta">${fmtDocDate(b.display_date || b.created_at)} · ${dns.length} correction${dns.length === 1 ? "" : "s"}</div>
+            <div class="fin-bill-meta">${fmtDocDate(b.display_date || b.value_date || b.created_at)} · ${dns.length} correction${dns.length === 1 ? "" : "s"}</div>
           </div>
           <div class="fin-bill-amounts">
             <span>Bill ${fmtPrice(b.bill_amount)}</span>
@@ -949,7 +949,7 @@ const Finance = (() => {
               const canVoidDn = ctx.isAdmin?.();
               return `<div class="fin-dn-row">
                 <div><strong>${title}</strong>${d.notes ? `<div class="fin-dn-note">${ctx.esc(d.notes)}</div>` : ""}
-                <div class="fin-muted">${(d.display_date || d.created_at) ? new Date(d.display_date || d.created_at).toLocaleString() : ""}</div>
+                <div class="fin-muted">${fmtDocDate(d.display_date || d.value_date || d.created_at)}</div>
                 ${(canEditDn || canVoidDn) && d.id ? `<div style="margin-top:6px;">
                   ${canEditDn ? `<button type="button" class="btn btn-ghost btn-sm" onclick="Finance.editDebitNote(${b.receipt_id},${d.id})">Edit</button>` : ""}
                   ${canVoidDn ? `<button type="button" class="btn btn-ghost btn-sm" onclick="Finance.voidDebitNote(${b.receipt_id},${d.id})">Void</button>` : ""}
@@ -2267,7 +2267,7 @@ const Finance = (() => {
             if (r.has_document) links.push(`<button type="button" class="btn btn-secondary btn-sm" onclick="Finance.printFreightPayment(${r.id})">Print</button>`);
             if (r.payment_receipt_url) links.push(`<a href="${ctx.esc(r.payment_receipt_url)}" target="_blank" class="btn btn-secondary btn-sm">Receipt</a>`);
             return `<tr>
-              <td>${ctx.fmtDate?.(r.display_date || r.created_at) || (r.display_date || r.created_at)?.slice?.(0, 10) || "—"}</td>
+              <td>${fmtDocDate(r.display_date || r.value_date || r.created_at)}</td>
               <td><span class="badge ${badge}">${ctx.esc(r.entry_type)}</span></td>
               <td><strong>${ctx.esc(party)}</strong>${r.bill_number && isCharge ? `<div style="font-size:11px;color:var(--muted);">${ctx.esc(r.bill_number)}</div>` : ""}</td>
               <td>${fmtPrice(r.amount)}</td>
@@ -2502,7 +2502,7 @@ const Finance = (() => {
             <th>When</th><th>Type</th><th>Detail</th><th>Amount</th><th>Balance</th>
           </tr></thead><tbody>
             ${(c.ledger || []).map(e => `<tr>
-              <td style="font-size:12px;">${e.created_at ? new Date(e.created_at).toLocaleString() : "—"}</td>
+              <td style="font-size:12px;">${fmtDocDate(e.display_date || e.value_date || e.created_at)}</td>
               <td><span class="badge ${e.entry_type === "bill" ? "badge-amber" : "badge-green"}">${ctx.esc(e.entry_type)}</span></td>
               <td>${ctx.esc(e.description || "—")}</td>
               <td>${fmtPrice(e.signed_amount || e.amount)}</td>

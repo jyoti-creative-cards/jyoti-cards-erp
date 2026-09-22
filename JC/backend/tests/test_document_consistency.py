@@ -522,6 +522,66 @@ def test_vendor_bill_locks_and_receipt_stays_live(db):
     assert again["lines"][0]["our_product_id"] == "AFTER"
 
 
+def test_locked_customer_bill_pdf_keeps_card_party_and_product(db, monkeypatch):
+    from app.services import doc_gen
+
+    customer, prod, _ = _setup(db)
+    create_received_placement(
+        db,
+        customer_id=customer.id,
+        customer_name=customer.business_name,
+        lines=[{"catalog_product_id": prod.id, "quantity": 2}],
+    )
+    confirm_received_order(db, customer.id)
+    bill = process_customer_bill(
+        db,
+        customer_id=customer.id,
+        customer_name=customer.business_name,
+        lines_in=[{"catalog_product_id": prod.id, "quantity_to_ship": 2}],
+        overall_discount_percent=None,
+        gst_enabled=False,
+        gst_rate_percent=Decimal("0"),
+        freight_agent_id=None,
+        freight_charges=None,
+        packaging_charges=None,
+        additional_charges=None,
+        bill_series_id=_bill_series(db).id,
+        narration=None,
+        actor_type="admin",
+        actor_id=1,
+        actor_name="Test",
+        transport_mode="self_pickup",
+    )
+    db.flush()
+    old_party = customer.business_name
+    old_code = prod.our_product_id
+    customer.business_name = "RENAMED-CUSTOMER"
+    prod.our_product_id = "RENAMED"
+    db.flush()
+
+    captured: dict = {}
+
+    def _capture_pdf(**kw):
+        captured.update(kw)
+        return b"%PDF-fake%"
+
+    monkeypatch.setattr(doc_gen, "render_customer_bill_pdf", _capture_pdf)
+    monkeypatch.setattr(doc_gen, "upload_bytes", lambda *a, **kw: None)
+    monkeypatch.setattr(doc_gen, "presigned_urls", lambda keys: [])
+
+    doc_gen.generate_customer_bill_document(db, bill.id)
+
+    assert captured["customer_name"] == old_party
+    assert captured["customer_name"] != "RENAMED-CUSTOMER"
+    line_codes = [
+        ln.get("our_product_id") or ln.get("name")
+        for ln in (captured["totals"].get("lines") or [])
+        if isinstance(ln, dict)
+    ]
+    assert old_code in line_codes
+    assert "RENAMED" not in line_codes
+
+
 def test_ledger_bill_uses_card_and_marks_cancelled(db):
     customer, prod, _ = _setup(db)
     create_received_placement(

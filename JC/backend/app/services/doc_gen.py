@@ -33,6 +33,13 @@ from app.services.storage import (
 )
 
 
+def _card_or_live(view: dict, card_val, live_val):
+    """Locked docs stay on the card; unlocked may fall back to live master."""
+    if view.get("locked"):
+        return card_val
+    return card_val or live_val
+
+
 def _customer_ctx(db: Session, customer_id: int) -> tuple[Customer, str | None]:
     c = db.get(Customer, customer_id)
     if not c:
@@ -87,10 +94,10 @@ def generate_customer_order_document(db: Session, placement_id: int) -> str | No
     outstanding = float(ar["outstanding"])
     pdf = render_customer_order_pdf(
         placement_id=placement.id,
-        customer_name=view.get("party_name") or customer.business_name,
-        customer_phone=party.get("phone") or customer.phone,
-        customer_address=party.get("address") or customer.address,
-        customer_city=party.get("city_name") or city_name,
+        customer_name=_card_or_live(view, view.get("party_name"), customer.business_name),
+        customer_phone=_card_or_live(view, party.get("phone"), customer.phone),
+        customer_address=_card_or_live(view, party.get("address"), customer.address),
+        customer_city=_card_or_live(view, party.get("city_name"), city_name),
         lines=pdf_lines,
         image_urls=image_urls,
         customer_notes=placement.customer_notes,
@@ -196,12 +203,12 @@ def generate_customer_bill_document(db: Session, bill_id: int) -> str | None:
         bill_id=bill.id,
         order_id=bill.placement_id or bill.id,
         bill_number=view.get("bill_number") or bill.bill_number,
-        customer_name=view.get("party_name") or customer.business_name,
-        customer_company=party.get("person_name") or customer.person_name,
-        customer_phone=party.get("phone") or customer.phone,
-        customer_address=party.get("address") or customer.address,
-        customer_city=party.get("city_name") or city_name,
-        customer_party_number=party.get("party_number") or customer.party_number,
+        customer_name=_card_or_live(view, view.get("party_name"), customer.business_name),
+        customer_company=_card_or_live(view, party.get("person_name"), customer.person_name),
+        customer_phone=_card_or_live(view, party.get("phone"), customer.phone),
+        customer_address=_card_or_live(view, party.get("address"), customer.address),
+        customer_city=_card_or_live(view, party.get("city_name"), city_name),
+        customer_party_number=_card_or_live(view, party.get("party_number"), customer.party_number),
         totals=totals,
         generated_at=bill.created_at or datetime.now(timezone.utc),
         invoice_date=bill_invoice_date(bill),
@@ -387,12 +394,12 @@ def generate_vendor_receipt_document(db: Session, receipt_id: int, auth: AuthCon
             extra_cash = receipt.expected_extra_cash
     pdf = render_vendor_receipt_pdf(
         receipt_id=receipt.id,
-        vendor_name=view.get("party_name") or vendor.business_name,
-        vendor_phone=party.get("phone") or vendor.phone,
-        vendor_address=party.get("address") or vendor.address,
-        vendor_city=party.get("city_name") or city_name,
-        vendor_gst=party.get("gst_number") or vendor.gst_number,
-        vendor_person=party.get("person_name") or vendor.person_name,
+        vendor_name=_card_or_live(view, view.get("party_name"), vendor.business_name),
+        vendor_phone=_card_or_live(view, party.get("phone"), vendor.phone),
+        vendor_address=_card_or_live(view, party.get("address"), vendor.address),
+        vendor_city=_card_or_live(view, party.get("city_name"), city_name),
+        vendor_gst=_card_or_live(view, party.get("gst_number"), vendor.gst_number),
+        vendor_person=_card_or_live(view, party.get("person_name"), vendor.person_name),
         bill_number=view.get("bill_number") or receipt.bill_number,
         lines=pdf_lines,
         image_urls=image_urls,

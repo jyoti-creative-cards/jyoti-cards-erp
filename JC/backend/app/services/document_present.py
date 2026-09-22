@@ -60,7 +60,7 @@ def freeze_card(db: Session, kind: str, row) -> dict:
     if kind == "customer_order":
         if not isinstance(row, CustomerOrderPlacement):
             raise TypeError("customer_order freeze_card expects CustomerOrderPlacement")
-        card = _live_customer_order_card(db, row)
+        card = _stored_customer_order_card(db, row)
         row.card_json = card
         return card
     raise ValueError(f"freeze_card not implemented for kind: {kind}")
@@ -97,9 +97,14 @@ def _status(row) -> str:
         return "voided"
     if getattr(row, "cancelled_at", None):
         return "cancelled"
-    if getattr(row, "status", None) == "closed":
-        return "closed"
-    if getattr(row, "closed_at", None):
+    if getattr(row, "status", None) == "cancelled":
+        return "cancelled"
+    if (
+        getattr(row, "closed_at", None)
+        or getattr(row, "status", None) == "closed"
+        or _customer_order_bucket(row) == "closed"
+        or _vendor_order_bucket(row) == "closed"
+    ):
         return "closed"
     return "open"
 
@@ -121,6 +126,14 @@ def _stored_or_live_customer_bill_card(db: Session, bill: CustomerBill) -> dict:
 
 
 def _live_customer_order_card(db: Session, placement: CustomerOrderPlacement) -> dict:
+    return _customer_order_card(db, placement, use_live_unit_price=True)
+
+
+def _stored_customer_order_card(db: Session, placement: CustomerOrderPlacement) -> dict:
+    return _customer_order_card(db, placement, use_live_unit_price=False)
+
+
+def _customer_order_card(db: Session, placement: CustomerOrderPlacement, *, use_live_unit_price: bool) -> dict:
     customer = _customer_for_order(db, placement)
     lines = (
         db.query(CustomerOrderLine)
@@ -132,7 +145,7 @@ def _live_customer_order_card(db: Session, placement: CustomerOrderPlacement) ->
         "kind": "customer_order",
         "party_name": customer.business_name if customer else f"Customer #{placement.customer_order_id}",
         "party": _customer_party_card(db, customer),
-        "lines": _line_cards_for_order(db, lines),
+        "lines": _line_cards_for_order(db, lines, use_live_unit_price=use_live_unit_price),
     }
 
 
@@ -167,7 +180,7 @@ def _line_cards_for_bill(db: Session, lines: list[CustomerBillLine]) -> list[dic
     return out
 
 
-def _line_cards_for_order(db: Session, lines: list[CustomerOrderLine]) -> list[dict]:
+def _line_cards_for_order(db: Session, lines: list[CustomerOrderLine], *, use_live_unit_price: bool) -> list[dict]:
     product_ids = [int(line.catalog_product_id) for line in lines]
     products = _products_by_id(db, product_ids)
     addon_map = addon_snapshots_map(db, product_ids, with_images=False) if product_ids else {}
@@ -181,7 +194,7 @@ def _line_cards_for_order(db: Session, lines: list[CustomerOrderLine]) -> list[d
                 prod,
                 catalog_product_id=int(line.catalog_product_id),
                 fallback_our_product_id=line.our_product_id,
-                unit_price=prod.selling_price if prod else line.unit_price,
+                unit_price=prod.selling_price if use_live_unit_price and prod else line.unit_price,
                 addons=addons,
                 alternatives=alt_map.get(int(line.catalog_product_id)) or [],
             )

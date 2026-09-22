@@ -186,7 +186,10 @@ def test_closed_customer_order_locks_by_parent_bucket(db):
     order = db.get(CustomerOrder, placement.customer_order_id)
     order.bucket = "closed"
     db.flush()
+    view = present(db, "customer_order", placement)
     assert is_locked("customer_order", placement) is True
+    assert view["locked"] is True
+    assert view["status"] == "closed"
 
 
 def test_closed_bill_line_freezes_customer_order_card(db):
@@ -219,6 +222,9 @@ def test_closed_bill_line_freezes_customer_order_card(db):
     )
     db.flush()
     bill_line = db.query(CustomerBillLine).filter(CustomerBillLine.bill_id == bill.id).one()
+    old_billed_price = str(bill_line.unit_price)
+    prod.selling_price = Decimal("99")
+    db.flush()
     close_bill_line(db, bill_line.id, "dispatched")
     db.flush()
 
@@ -240,6 +246,10 @@ def test_closed_bill_line_freezes_customer_order_card(db):
     assert before["status"] == "closed"
     assert after["status"] == "closed"
     assert after["locked"] is True
+    assert before["lines"][0]["unit_price"] == old_billed_price
+    assert before["lines"][0]["unit_price"] != "99"
+    assert after["lines"][0]["unit_price"] == old_billed_price
+    assert after["lines"][0]["unit_price"] != "99"
     assert after["lines"][0]["our_product_id"] == before["lines"][0]["our_product_id"]
     assert after["lines"][0]["our_product_id"] != "RENAMED"
     assert after["lines"][0]["category"] == before["lines"][0]["category"]

@@ -20,6 +20,7 @@ from app.models.city import City
 from app.services.ap_ledger import _vendor_label, vendor_ap_totals
 from app.services.ar_ledger import _customer_label, customer_ar_totals
 from app.services.biz_date import ist_day_bounds_utc, ist_range_bounds_utc
+from app.services.document_present import present
 
 
 def _day_bounds(d: date) -> tuple[datetime, datetime]:
@@ -115,17 +116,16 @@ def list_sales(db: Session, from_date: Optional[date] = None, to_date: Optional[
     if end:
         q = q.filter(CustomerBill.created_at <= end)
     bills = q.limit(500).all()
-    customers = {c.id: c for c in db.query(Customer).filter(Customer.id.in_({b.customer_id for b in bills})).all()} if bills else {}
     out = []
     for b in bills:
-        c = customers.get(b.customer_id)
+        view = present(db, "customer_bill", b)
         out.append(
             {
                 "id": b.id,
                 "doc_type": "sales_bill",
                 "doc_number": b.bill_number,
                 "party_id": b.customer_id,
-                "party_label": c.business_name if c else f"Customer #{b.customer_id}",
+                "party_label": view.get("party_name") or f"Customer #{b.customer_id}",
                 "amount": format(b.grand_total or Decimal("0"), "f"),
                 "date": b.created_at.date().isoformat() if b.created_at else None,
                 "created_at": b.created_at.isoformat() if b.created_at else None,
@@ -156,6 +156,11 @@ def list_purchases(db: Session, from_date: Optional[date] = None, to_date: Optio
     out = []
     for e in rows:
         receipt = receipts.get(e.receipt_id) if e.receipt_id else None
+        if receipt is not None:
+            kind = "vendor_bill" if getattr(receipt, "bill_status", None) == "billed" else "vendor_receipt"
+            party_label = present(db, kind, receipt).get("party_name") or vendor_labels.get(e.vendor_id)
+        else:
+            party_label = vendor_labels.get(e.vendor_id)
         out.append(
             {
                 "id": e.receipt_id or e.id,
@@ -163,7 +168,7 @@ def list_purchases(db: Session, from_date: Optional[date] = None, to_date: Optio
                 "doc_type": "purchase_bill",
                 "doc_number": (receipt.bill_number if receipt else None) or f"R-{e.receipt_id}",
                 "party_id": e.vendor_id,
-                "party_label": vendor_labels.get(e.vendor_id) or f"Vendor #{e.vendor_id}",
+                "party_label": party_label or f"Vendor #{e.vendor_id}",
                 "amount": format(e.amount, "f"),
                 "date": e.created_at.date().isoformat() if e.created_at else None,
                 "created_at": e.created_at.isoformat() if e.created_at else None,
@@ -254,12 +259,12 @@ def daybook(db: Session, day: date) -> dict:
     for b in db.query(CustomerBill).filter(
         CustomerBill.created_at >= start, CustomerBill.created_at <= end, CustomerBill.deleted_at.is_(None)
     ).all():
-        c = db.get(Customer, b.customer_id)
+        view = present(db, "customer_bill", b)
         rows.append(
             {
                 "kind": "sales",
                 "label": f"Sales bill {b.bill_number}",
-                "party": c.business_name if c else f"#{b.customer_id}",
+                "party": view.get("party_name") or f"#{b.customer_id}",
                 "amount": format(b.grand_total or Decimal("0"), "f"),
                 "signed": format(b.grand_total or Decimal("0"), "f"),
                 "ref_id": b.id,
@@ -273,11 +278,17 @@ def daybook(db: Session, day: date) -> dict:
         ApLedgerEntry.created_at >= start,
         ApLedgerEntry.created_at <= end,
     ).all():
+        party = _vendor_label(db, e.vendor_id)
+        if e.receipt_id:
+            receipt = db.get(StockReceipt, e.receipt_id)
+            if receipt is not None:
+                kind = "vendor_bill" if getattr(receipt, "bill_status", None) == "billed" else "vendor_receipt"
+                party = present(db, kind, receipt).get("party_name") or party
         rows.append(
             {
                 "kind": "purchase",
                 "label": e.description,
-                "party": _vendor_label(db, e.vendor_id),
+                "party": party,
                 "amount": format(e.amount, "f"),
                 "signed": format(e.amount, "f"),
                 "ref_id": e.receipt_id or e.id,

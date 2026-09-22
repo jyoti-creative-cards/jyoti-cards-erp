@@ -58,6 +58,7 @@ from app.services.customer_order_flow import (
     replace_received_placement,
 )
 from app.services.doc_gen import generate_customer_bill_document, generate_customer_order_document
+from app.services.document_present import present
 from app.services import response_cache
 from app.services.storage import presigned_url, storage_configured
 from app.schemas.stock import VoidIn
@@ -73,6 +74,57 @@ def _sort_business_date(value: date | datetime | None) -> tuple[int, datetime]:
     if isinstance(value, date):
         return (1, ist_day_bounds_utc(value)[0])
     return (0, datetime.min.replace(tzinfo=timezone.utc))
+
+
+def _product_ids_matching_live_name(db: Session, needle: str) -> set[int]:
+    needle_l = needle.lower()
+    return {
+        int(p.id)
+        for p in db.query(CatalogProduct).filter(CatalogProduct.deleted_at.is_(None)).all()
+        if needle_l in (p.our_product_id or "").lower()
+    }
+
+
+def _view_matches_product_search(view: dict, needle: str, live_pids: set[int]) -> bool:
+    needle_l = needle.lower()
+    for ln in view.get("lines") or []:
+        name = str(ln.get("our_product_id") or "").lower()
+        cid = int(ln.get("catalog_product_id") or 0)
+        if needle_l in name or (cid and cid in live_pids):
+            return True
+    return False
+
+
+def _customer_ids_matching_product_search(db: Session, search: str | None) -> set[int] | None:
+    """None = no filter. Empty set = no matches. Otherwise customer ids with a matching product line."""
+    if not isinstance(search, str):
+        return None
+    needle = search.strip()
+    if not needle:
+        return None
+    live_pids = _product_ids_matching_live_name(db, needle)
+    matched: set[int] = set()
+
+    for placement in db.query(CustomerOrderPlacement).filter(CustomerOrderPlacement.deleted_at.is_(None)).all():
+        order = db.get(CustomerOrder, placement.customer_order_id)
+        if not order:
+            continue
+        view = present(db, "customer_order", placement)
+        if _view_matches_product_search(view, needle, live_pids):
+            matched.add(int(order.customer_id))
+
+    for bill in db.query(CustomerBill).filter(CustomerBill.deleted_at.is_(None)).all():
+        view = present(db, "customer_bill", bill)
+        if _view_matches_product_search(view, needle, live_pids):
+            matched.add(int(bill.customer_id))
+
+    for row in db.query(CustomerOpenLine).filter(CustomerOpenLine.status == "open", CustomerOpenLine.quantity_open > 0).all():
+        prod = db.get(CatalogProduct, row.catalog_product_id)
+        name = (prod.our_product_id if prod else row.our_product_id or "").lower()
+        if needle.lower() in name or int(row.catalog_product_id or 0) in live_pids:
+            matched.add(int(row.customer_id))
+
+    return matched
 
 
 def _customer_name(db: Session, customer_id: int) -> str:
@@ -247,6 +299,7 @@ def _summary(db: Session, order: CustomerOrder) -> CustomerOrderSummary:
 def list_customer_orders(
     bucket: str = Query("open", pattern="^(summary|received|open|billed|cancelled|closed)$"),
     day: str = Query("all", pattern="^(all|today)$"),
+    search: Optional[str] = None,
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("customer_orders.read")),
 ):
@@ -259,6 +312,13 @@ def list_customer_orders(
     day_start = day_end = None
     if day == "today":
         day_start, day_end = ist_day_bounds_utc(today_ist())
+
+    product_match_cids = _customer_ids_matching_product_search(db, search)
+
+    def _filter_by_product(rows: list) -> list:
+        if product_match_cids is None:
+            return rows
+        return [r for r in rows if int(getattr(r, "customer_id", 0) or 0) in product_match_cids]
 
     if bucket == "open":
         rows = (
@@ -279,6 +339,8 @@ def list_customer_orders(
         # to Past, exactly like "New" does.
         if day_start is not None:
             rows = [r for r in rows if r[3] and day_start <= r[3].astimezone(timezone.utc) < day_end]
+        if product_match_cids is not None:
+            rows = [r for r in rows if int(r[0]) in product_match_cids]
         cids = [int(r[0]) for r in rows]
         if not cids:
             return []
@@ -349,7 +411,7 @@ def list_customer_orders(
             summary.updated_at = display_date or order.updated_at
             summary.display_date = display_date or order.updated_at
             out.append(summary)
-        return out
+        return _filter_by_product(out)
 
     if bucket == "billed":
         bill_rows_by_customer: dict[int, dict[str, int | date | datetime]] = {}
@@ -401,7 +463,7 @@ def list_customer_orders(
                     sources=[],
                 )
             )
-        return out
+        return _filter_by_product(out)
 
     orders = (
         db.query(CustomerOrder)
@@ -414,7 +476,7 @@ def list_customer_orders(
             o for o in orders
             if o.updated_at and day_start <= o.updated_at.astimezone(timezone.utc) < day_end
         ]
-    return [_summary(db, o) for o in orders]
+    return _filter_by_product([_summary(db, o) for o in orders])
 
 
 @router.get("/customer/{customer_id}", response_model=CustomerOrderDetail)

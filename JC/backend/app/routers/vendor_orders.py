@@ -47,6 +47,7 @@ from app.services.open_lines import add_to_open, cancel_open_qty, close_open_lin
 from app.services.order_summary import pending_qty_by_product, placed_qty_by_product, received_qty_by_product
 from app.services.stock_receipt import get_or_create_open_order
 from app.services.doc_gen import generate_vendor_placement_document
+from app.services.document_present import present
 from app.services.storage import presigned_url, presigned_urls, storage_configured
 
 router = APIRouter(prefix="/vendor-orders", tags=["vendor-orders"])
@@ -56,6 +57,80 @@ def _sort_dt(value: datetime | None) -> datetime:
     if value is None:
         return datetime.min.replace(tzinfo=timezone.utc)
     return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def _product_ids_matching_live_name(db: Session, needle: str) -> set[int]:
+    needle_l = needle.lower()
+    return {
+        int(p.id)
+        for p in db.query(CatalogProduct).filter(CatalogProduct.deleted_at.is_(None)).all()
+        if needle_l in (p.our_product_id or "").lower()
+    }
+
+
+def _view_matches_product_search(view: dict, needle: str, live_pids: set[int]) -> bool:
+    needle_l = needle.lower()
+    for ln in view.get("lines") or []:
+        name = str(ln.get("our_product_id") or "").lower()
+        cid = int(ln.get("catalog_product_id") or 0)
+        if needle_l in name or (cid and cid in live_pids):
+            return True
+    return False
+
+
+def _vendor_ids_matching_product_search(db: Session, search: str | None) -> set[int] | None:
+    if not isinstance(search, str):
+        return None
+    needle = search.strip()
+    if not needle:
+        return None
+    live_pids = _product_ids_matching_live_name(db, needle)
+    matched: set[int] = set()
+    needle_l = needle.lower()
+
+    # Open / unlocked placements follow the live catalog name.
+    for placement in db.query(VendorOrderPlacement).all():
+        order = db.get(VendorOrder, placement.vendor_order_id)
+        if not order:
+            continue
+        if getattr(placement, "status", None) in ("cancelled", "voided"):
+            continue
+        lines = (
+            db.query(VendorOrderLine)
+            .filter(VendorOrderLine.placement_id == placement.id)
+            .all()
+        )
+        for ln in lines:
+            prod = db.get(CatalogProduct, ln.catalog_product_id)
+            name = (prod.our_product_id if prod else ln.our_product_id or "").lower()
+            if needle_l in name or int(ln.catalog_product_id or 0) in live_pids:
+                matched.add(int(order.vendor_id))
+                break
+
+    # Receipts stay live; billed receipts also match card names via present(vendor_bill).
+    for receipt in db.query(StockReceipt).filter(StockReceipt.deleted_at.is_(None)).all():
+        kinds = ["vendor_receipt"]
+        if getattr(receipt, "bill_status", None) == "billed":
+            kinds.append("vendor_bill")
+        for kind in kinds:
+            view = present(db, kind, receipt)
+            if _view_matches_product_search(view, needle, live_pids):
+                matched.add(int(receipt.vendor_id))
+                break
+
+    for row in db.query(VendorOpenLine).filter(VendorOpenLine.status == "open", VendorOpenLine.quantity > 0).all():
+        prod = db.get(CatalogProduct, row.catalog_product_id)
+        name = (prod.our_product_id if prod else row.our_product_id or "").lower()
+        if needle_l in name or int(row.catalog_product_id or 0) in live_pids:
+            matched.add(int(row.vendor_id))
+
+    return matched
+
+
+def _filter_vendor_summaries(rows: list, match_vids: set[int] | None) -> list:
+    if match_vids is None:
+        return rows
+    return [r for r in rows if int(getattr(r, "vendor_id", 0) or 0) in match_vids]
 
 
 def _vendor_label(vendor: Vendor, city_name: Optional[str]) -> str:
@@ -477,6 +552,7 @@ def list_vendor_orders(
     bucket: str = Query("open", pattern="^(open|placed|received|billed|cancelled|closed)$"),
     view: str = Query("default", pattern="^(default|open|placed)$"),
     day: str = Query("all", pattern="^(all|today)$"),
+    search: Optional[str] = None,
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("vendor_orders.read")),
 ):
@@ -486,6 +562,8 @@ def list_vendor_orders(
     day_start = day_end = None
     if day == "today":
         day_start, day_end = ist_day_bounds_utc(today_ist())
+
+    product_match_vids = _vendor_ids_matching_product_search(db, search)
 
     def _vids_with_placement_today(statuses: tuple[str, ...] | None = None) -> set[int]:
         assert day_start is not None and day_end is not None
@@ -628,7 +706,7 @@ def list_vendor_orders(
         # Yet to bill (pending StockReceipts, one-to-one model)
         out.extend(_to_bill_summaries(db, only_vendor_ids=today_bill))
         out.sort(key=lambda x: _sort_dt(x.display_date), reverse=True)
-        return out
+        return _filter_vendor_summaries(out, product_match_vids)
 
     if bucket == "closed":
         summaries: list[VendorOrderSummary] = []
@@ -715,7 +793,7 @@ def list_vendor_orders(
                 )
             )
         summaries.sort(key=lambda x: _sort_dt(x.display_date), reverse=True)
-        return summaries
+        return _filter_vendor_summaries(summaries, product_match_vids)
 
     if bucket == "received":
         # "To bill" stage — VendorOrder.bucket never becomes "received" (see
@@ -723,11 +801,17 @@ def list_vendor_orders(
         # Day-scoped like every other bucket now: day=today shows only receipts that
         # came in today (StockReceipt.received_at), day=all shows the full backlog —
         # nothing is lost, it just moves from Today to Past.
-        return _to_bill_summaries(db, day_start=day_start, day_end=day_end)
+        return _filter_vendor_summaries(
+            _to_bill_summaries(db, day_start=day_start, day_end=day_end),
+            product_match_vids,
+        )
 
     if bucket == "billed":
         # Same story as "received" — VendorOrder.bucket never becomes "billed" either.
-        return _billed_summaries(db, day_start=day_start, day_end=day_end)
+        return _filter_vendor_summaries(
+            _billed_summaries(db, day_start=day_start, day_end=day_end),
+            product_match_vids,
+        )
 
     orders = (
         db.query(VendorOrder)
@@ -765,7 +849,7 @@ def list_vendor_orders(
         summaries = _summaries_from_orders(db, orders)
     if bucket == "placed" and view == "open":
         summaries = [s for s in summaries if s.total_quantity > 0]
-    return summaries
+    return _filter_vendor_summaries(summaries, product_match_vids)
 
 
 @router.get("/vendor/{vendor_id}/order-summary", response_model=VendorOrderSummaryDetail)

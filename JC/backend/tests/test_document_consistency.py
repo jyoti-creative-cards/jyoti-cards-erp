@@ -642,6 +642,134 @@ def test_debit_note_stays_live_while_vendor_bill_locks(db):
     assert still_live["lines"][0]["our_product_id"] == "RENAMED-2"
 
 
+def test_item_report_groups_by_id_and_uses_present_labels(db):
+    from app.services.reports_extended import item_wise_purchases, item_wise_sales
+
+    customer, prod, vendor = _setup(db)
+    old_code = prod.our_product_id
+    create_received_placement(
+        db,
+        customer_id=customer.id,
+        customer_name=customer.business_name,
+        lines=[{"catalog_product_id": prod.id, "quantity": 2}],
+    )
+    confirm_received_order(db, customer.id)
+    process_customer_bill(
+        db,
+        customer_id=customer.id,
+        customer_name=customer.business_name,
+        lines_in=[{"catalog_product_id": prod.id, "quantity_to_ship": 2}],
+        overall_discount_percent=None,
+        gst_enabled=False,
+        gst_rate_percent=Decimal("0"),
+        freight_agent_id=None,
+        freight_charges=None,
+        packaging_charges=None,
+        additional_charges=None,
+        bill_series_id=_bill_series(db).id,
+        narration=None,
+        actor_type="admin",
+        actor_id=1,
+        actor_name="Test",
+        transport_mode="self_pickup",
+    )
+    db.flush()
+
+    prod.our_product_id = "RENAMED"
+    db.flush()
+
+    receive_vendor_goods(
+        db,
+        AUTH,
+        VendorReceiveCreate(
+            vendor_id=vendor.id,
+            lines=[VendorReceiptLineIn(catalog_product_id=prod.id, quantity_received=3)],
+            order_receipt_number="R-ITEM-1",
+        ),
+        offline=True,
+    )
+    receipt = db.query(StockReceipt).one()
+    bill_receipt(
+        db,
+        AUTH,
+        receipt.id,
+        VendorBillIn(
+            total_billed_amount=Decimal("30"),
+            lines=[{"catalog_product_id": prod.id, "quantity_billed": 3}],
+        ),
+    )
+    db.flush()
+
+    sales = item_wise_sales(db, None, None)
+    assert len(sales) == 1
+    assert sales[0]["catalog_product_id"] == prod.id
+    assert sales[0]["label"] == "RENAMED"
+    bill_labels = [ln["label"] for ln in sales[0]["lines"]]
+    assert old_code in bill_labels
+    assert "RENAMED" not in bill_labels
+
+    purchases = item_wise_purchases(db, None, None)
+    assert len(purchases) == 1
+    assert purchases[0]["catalog_product_id"] == prod.id
+    receipt_labels = [ln["label"] for ln in purchases[0]["lines"]]
+    assert "RENAMED" in receipt_labels
+
+
+def test_customer_order_search_matches_card_and_live_product_names(db):
+    from app.routers.customer_orders import list_customer_orders
+
+    customer, prod, _ = _setup(db)
+    old_code = prod.our_product_id
+    create_received_placement(
+        db,
+        customer_id=customer.id,
+        customer_name=customer.business_name,
+        lines=[{"catalog_product_id": prod.id, "quantity": 2}],
+    )
+    confirm_received_order(db, customer.id)
+    process_customer_bill(
+        db,
+        customer_id=customer.id,
+        customer_name=customer.business_name,
+        lines_in=[{"catalog_product_id": prod.id, "quantity_to_ship": 2}],
+        overall_discount_percent=None,
+        gst_enabled=False,
+        gst_rate_percent=Decimal("0"),
+        freight_agent_id=None,
+        freight_charges=None,
+        packaging_charges=None,
+        additional_charges=None,
+        bill_series_id=_bill_series(db).id,
+        narration=None,
+        actor_type="admin",
+        actor_id=1,
+        actor_name="Test",
+        transport_mode="self_pickup",
+    )
+    db.flush()
+
+    prod.our_product_id = "RENAMED"
+    db.flush()
+
+    # Open placement after rename — live name.
+    create_received_placement(
+        db,
+        customer_id=customer.id,
+        customer_name=customer.business_name,
+        lines=[{"catalog_product_id": prod.id, "quantity": 1}],
+    )
+    db.flush()
+
+    by_old = list_customer_orders(bucket="billed", day="all", search=old_code, db=db, auth=AUTH)
+    assert any(r.customer_id == customer.id for r in by_old)
+
+    by_new = list_customer_orders(bucket="billed", day="all", search="RENAMED", db=db, auth=AUTH)
+    assert any(r.customer_id == customer.id for r in by_new)
+
+    open_by_new = list_customer_orders(bucket="received", day="all", search="RENAMED", db=db, auth=AUTH)
+    assert any(r.customer_id == customer.id for r in open_by_new)
+
+
 def test_ledger_bill_uses_card_and_marks_cancelled(db):
     customer, prod, _ = _setup(db)
     create_received_placement(

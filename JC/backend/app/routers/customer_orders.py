@@ -71,7 +71,7 @@ def _sort_business_date(value: date | datetime | None) -> tuple[int, datetime]:
         ts = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
         return (1, ts.astimezone(timezone.utc))
     if isinstance(value, date):
-        return (0, ist_day_bounds_utc(value)[0])
+        return (1, ist_day_bounds_utc(value)[0])
     return (0, datetime.min.replace(tzinfo=timezone.utc))
 
 

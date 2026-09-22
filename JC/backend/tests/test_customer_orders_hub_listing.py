@@ -110,6 +110,41 @@ def test_billed_bucket_batched_customer_names(db):
     assert by_cid[cust_b.id].bill_count == 1
 
 
+def test_billed_bucket_prefers_newer_bill_date_over_old_null_bill_date_created_at(db):
+    cust = _customer(db, "Epsilon Co", "9000000005")
+    today = date.today()
+    old_created_at = datetime.now(timezone.utc).replace(microsecond=0).replace(year=datetime.now(timezone.utc).year - 1)
+
+    db.add(
+        CustomerBill(
+            customer_id=cust.id,
+            bill_number="B-OLD-NULL-DATE",
+            subtotal_inclusive=Decimal("100"),
+            grand_total=Decimal("100"),
+            created_by_type="admin",
+            created_by_name="Test Admin",
+            bill_date=None,
+            created_at=old_created_at,
+        )
+    )
+    db.add(
+        CustomerBill(
+            customer_id=cust.id,
+            bill_number="B-TODAY",
+            subtotal_inclusive=Decimal("100"),
+            grand_total=Decimal("100"),
+            created_by_type="admin",
+            created_by_name="Test Admin",
+            bill_date=today,
+        )
+    )
+    db.commit()
+
+    rows = list_customer_orders(bucket="billed", day="all", db=db, auth=AUTH)
+    row = next(row for row in rows if row.customer_id == cust.id)
+    assert row.display_date == today
+
+
 def test_billed_bucket_empty_returns_empty_list(db):
     assert list_customer_orders(bucket="billed", day="all", db=db, auth=AUTH) == []
 

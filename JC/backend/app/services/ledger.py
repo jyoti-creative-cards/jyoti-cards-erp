@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import List, Optional
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
@@ -15,8 +16,11 @@ from app.models.vendor_order import VendorOrder, VendorOrderLine, VendorOrderPla
 from app.deps import AuthContext
 from app.services.ap_ledger import debit_note_payable_effect
 from app.services.cost_visibility import hide_cost
+from app.services.document_present import present
 from app.schemas.ledger import EntityLedgerEntry, LedgerLineDetail
 from app.services.storage import presigned_url
+
+_IST = ZoneInfo("Asia/Kolkata")
 
 
 def _fmt_amount(val: Optional[Decimal]) -> Optional[str]:
@@ -29,6 +33,19 @@ def _actor_fields(actor_name: str, actor_type: str, show_actor: bool) -> dict:
     if not show_actor:
         return {"actor_name": None, "actor_type": None}
     return {"actor_name": actor_name, "actor_type": actor_type}
+
+
+def _occurred_at_from_display(display_date, fallback: datetime) -> datetime:
+    """Ledger sort key from present() display_date; plain dates → IST noon as naive UTC."""
+    if display_date is None:
+        return fallback
+    if isinstance(display_date, datetime):
+        ts = display_date if display_date.tzinfo else display_date.replace(tzinfo=timezone.utc)
+        return ts.astimezone(timezone.utc).replace(tzinfo=None)
+    if isinstance(display_date, date):
+        local = datetime(display_date.year, display_date.month, display_date.day, 12, 0, 0, tzinfo=_IST)
+        return local.astimezone(timezone.utc).replace(tzinfo=None)
+    return fallback
 
 
 def build_vendor_ledger(
@@ -159,16 +176,47 @@ def build_vendor_ledger(
             ),
         ))
         if receipt.bill_status == "billed":
+            view = present(db, "vendor_bill", receipt)
+            if view.get("status") == "voided":
+                continue
             bill_amt = _receipt_bill_amount(receipt, rlines)
             dn_total = _receipt_debit_note_total(receipt.id)
+            card_by_cid = {
+                int(cl["catalog_product_id"]): cl
+                for cl in (view.get("lines") or [])
+                if isinstance(cl, dict) and cl.get("catalog_product_id") is not None
+            }
+            line_details = [
+                LedgerLineDetail(
+                    our_product_id=(
+                        card_by_cid[ln.catalog_product_id]["our_product_id"]
+                        if ln.catalog_product_id in card_by_cid
+                        else ln.our_product_id
+                    ),
+                    vendor_product_id=(
+                        card_by_cid[ln.catalog_product_id].get("vendor_product_id")
+                        if ln.catalog_product_id in card_by_cid
+                        else vendor_products.get(ln.catalog_product_id)
+                    ),
+                    quantity_received=ln.quantity_received,
+                    quantity_billed=ln.quantity_billed,
+                    billed_amount=_fmt_amount(ln.billed_amount),
+                    buying_price=hide_cost(format(ln.buying_price, "f"), auth),
+                )
+                for ln in rlines
+            ]
+            bill_number = view.get("bill_number") or receipt.bill_number
+            occurred = _occurred_at_from_display(
+                view.get("display_date"), receipt.billed_at or receipt.received_at
+            )
             entries.append((
-                receipt.billed_at or receipt.received_at,
+                occurred,
                 EntityLedgerEntry(
                     id=f"bill-{receipt.id}", event_type="vendor_bill", title="Bill",
-                    summary=f"{receipt.bill_number or receipt.id} — ₹{bill_amt}", occurred_at=receipt.billed_at or receipt.received_at,
+                    summary=f"{bill_number or receipt.id} — ₹{bill_amt}", occurred_at=occurred,
                     **_actor_fields(receipt.received_by_name, receipt.received_by_type, show_actor),
                     details={
-                        "receipt_id": receipt.id, "bill_number": receipt.bill_number,
+                        "receipt_id": receipt.id, "bill_number": bill_number,
                         "bill_amount": format(bill_amt, "f"), "debit_note_total": format(dn_total, "f"),
                         "net_payable": format(bill_amt + dn_total, "f"),
                         "additional_charges": _fmt_amount(receipt.additional_charges),
@@ -355,10 +403,22 @@ def build_customer_ledger(db: Session, customer_id: int, *, show_actor: bool = T
         for ln in db.query(CustomerBillLine).filter(CustomerBillLine.bill_id.in_(bill_ids)).all():
             blines_by[ln.bill_id].append(ln)
     for bill in bills:
+        view = present(db, "customer_bill", bill)
+        if view.get("status") == "voided":
+            continue
         blines = blines_by.get(bill.id) or []
+        card_by_cid = {
+            int(cl["catalog_product_id"]): cl
+            for cl in (view.get("lines") or [])
+            if isinstance(cl, dict) and cl.get("catalog_product_id") is not None
+        }
         line_details = [
             LedgerLineDetail(
-                our_product_id=ln.our_product_id,
+                our_product_id=(
+                    card_by_cid[ln.catalog_product_id]["our_product_id"]
+                    if ln.catalog_product_id in card_by_cid
+                    else ln.our_product_id
+                ),
                 quantity=ln.quantity_shipped,
                 quantity_billed=ln.quantity_shipped,
                 billed_amount=_fmt_amount(ln.line_total),
@@ -368,20 +428,33 @@ def build_customer_ledger(db: Session, customer_id: int, *, show_actor: bool = T
             )
             for ln in blines
         ]
-        summary = ", ".join(f"{ln.our_product_id} × {ln.quantity_shipped}" for ln in blines[:8]) or "—"
+        summary = (
+            ", ".join(
+                f"{(card_by_cid[ln.catalog_product_id]['our_product_id'] if ln.catalog_product_id in card_by_cid else ln.our_product_id)} × {ln.quantity_shipped}"
+                for ln in blines[:8]
+            )
+            or "—"
+        )
+        bill_number = view.get("bill_number") or bill.bill_number
+        title = (
+            f"Cancelled bill {bill_number}"
+            if view.get("status") == "cancelled"
+            else f"Bill {bill_number}"
+        )
+        occurred = _occurred_at_from_display(view.get("display_date"), bill.created_at)
         entries.append(
             (
-                bill.created_at,
+                occurred,
                 EntityLedgerEntry(
                     id=f"co-bill-{bill.id}",
                     event_type="customer_bill",
-                    title=f"Bill {bill.bill_number}",
+                    title=title,
                     summary=f"₹{bill.grand_total} · {summary}",
-                    occurred_at=bill.created_at,
+                    occurred_at=occurred,
                     **_actor_fields(bill.created_by_name, bill.created_by_type, show_actor),
                     details={
                         "bill_id": bill.id,
-                        "bill_number": bill.bill_number,
+                        "bill_number": bill_number,
                         "grand_total": format(bill.grand_total, "f"),
                         "placement_id": bill.placement_id,
                         "customer_id": customer_id,

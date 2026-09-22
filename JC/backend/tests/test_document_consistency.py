@@ -20,9 +20,10 @@ from app.models.customer_order import CustomerOrder, CustomerOrderPlacement
 from app.models.stock import StockBalance, StockReceipt
 from app.models.vendor import Vendor
 from app.schemas.stock import VendorBillIn, VendorReceiptLineIn, VendorReceiveCreate
-from app.services.customer_bill_process import close_bill_line, process_customer_bill
+from app.services.customer_bill_process import cancel_customer_bill, close_bill_line, process_customer_bill
 from app.services.customer_order_flow import confirm_received_order, create_received_placement
 from app.services.document_present import is_locked, present
+from app.services.ledger import build_customer_ledger
 from app.services.vendor_receive_bill import bill_receipt, receive_vendor_goods
 
 AUTH = AuthContext(actor_type="admin", actor_id=1, actor_name="Test Admin")
@@ -519,3 +520,48 @@ def test_vendor_bill_locks_and_receipt_stays_live(db):
 
     again = present(db, "vendor_receipt", receipt)
     assert again["lines"][0]["our_product_id"] == "AFTER"
+
+
+def test_ledger_bill_uses_card_and_marks_cancelled(db):
+    customer, prod, _ = _setup(db)
+    create_received_placement(
+        db,
+        customer_id=customer.id,
+        customer_name=customer.business_name,
+        lines=[{"catalog_product_id": prod.id, "quantity": 2}],
+    )
+    confirm_received_order(db, customer.id)
+    backdate = date.today() - timedelta(days=3)
+    bill = process_customer_bill(
+        db,
+        customer_id=customer.id,
+        customer_name=customer.business_name,
+        lines_in=[{"catalog_product_id": prod.id, "quantity_to_ship": 2}],
+        overall_discount_percent=None,
+        gst_enabled=False,
+        gst_rate_percent=Decimal("0"),
+        freight_agent_id=None,
+        freight_charges=None,
+        packaging_charges=None,
+        additional_charges=None,
+        bill_series_id=_bill_series(db).id,
+        narration=None,
+        actor_type="admin",
+        actor_id=1,
+        actor_name="Test",
+        transport_mode="self_pickup",
+        bill_date=backdate,
+    )
+    db.flush()
+    prod.our_product_id = "RENAMED"
+    db.flush()
+    cancel_customer_bill(db, bill_id=bill.id, reason="customer backed out", actor_name="Test")
+    db.commit()
+    db.refresh(bill)
+
+    entries = build_customer_ledger(db, customer.id)
+    bill_rows = [e for e in entries if e.event_type == "customer_bill"]
+    assert len(bill_rows) == 1
+    assert bill_rows[0].title.startswith("Cancelled")
+    assert "RENAMED" not in bill_rows[0].summary
+    assert bill_rows[0].occurred_at.date() == bill.bill_date or bill.bill_date is None

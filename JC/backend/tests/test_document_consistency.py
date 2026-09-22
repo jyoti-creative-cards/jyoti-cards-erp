@@ -183,6 +183,8 @@ def test_closed_bill_line_freezes_customer_order_card(db):
     prod.category = "NEW-CAT"
     db.flush()
     after = present(db, "customer_order", placement)
+    assert before["status"] == "closed"
+    assert after["status"] == "closed"
     assert after["locked"] is True
     assert after["lines"][0]["our_product_id"] == before["lines"][0]["our_product_id"]
     assert after["lines"][0]["our_product_id"] != "RENAMED"

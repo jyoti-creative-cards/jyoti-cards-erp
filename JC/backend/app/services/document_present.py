@@ -97,6 +97,8 @@ def _status(row) -> str:
         return "voided"
     if getattr(row, "cancelled_at", None):
         return "cancelled"
+    if getattr(row, "status", None) == "closed":
+        return "closed"
     if getattr(row, "closed_at", None):
         return "closed"
     return "open"

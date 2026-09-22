@@ -585,15 +585,17 @@ def close_bill_line(db: Session, bill_line_id: int, reason: str) -> None:
     bill = db.get(CustomerBill, row.bill_id)
     if not bill:
         raise HTTPException(404, "bill not found")
+    now = datetime.now(timezone.utc)
     row.status = "closed"
     row.close_reason = reason
-    row.closed_at = datetime.now(timezone.utc)
+    row.closed_at = now
     closed_order = get_or_create_customer_order(db, bill.customer_id, "closed", "closed")
     placement = CustomerOrderPlacement(
         customer_order_id=closed_order.id,
         status="closed",
         cancel_reason=reason,
-        placed_at=datetime.now(timezone.utc),
+        placed_at=now,
+        closed_at=now,
     )
     db.add(placement)
     db.flush()
@@ -609,7 +611,7 @@ def close_bill_line(db: Session, bill_line_id: int, reason: str) -> None:
             cancel_reason=reason,
         )
     )
-    closed_order.updated_at = datetime.now(timezone.utc)
+    closed_order.updated_at = now
     db.flush()
 
     # Once every line on this bill is closed, the bill itself is done — drop it out of
@@ -621,7 +623,7 @@ def close_bill_line(db: Session, bill_line_id: int, reason: str) -> None:
         .count()
     )
     if remaining_open == 0 and not bill.closed_at:
-        bill.closed_at = datetime.now(timezone.utc)
+        bill.closed_at = now
     freeze_card(db, "customer_order", placement)
 
 

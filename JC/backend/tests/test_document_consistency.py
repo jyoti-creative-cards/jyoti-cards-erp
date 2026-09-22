@@ -15,7 +15,7 @@ from app.models.bill_series import BillSeries
 from app.models.catalog_addon_link import CatalogAddonLink
 from app.models.catalog_product import CatalogProduct
 from app.models.customer import Customer
-from app.models.customer_bill import CustomerBillLine
+from app.models.customer_bill import CustomerBill, CustomerBillLine
 from app.models.customer_order import CustomerOrder, CustomerOrderPlacement
 from app.models.stock import StockBalance, StockReceipt
 from app.models.vendor import Vendor
@@ -216,6 +216,57 @@ def test_backdated_received_order_uses_business_date_in_hub(db):
     row = next(row for row in all_rows if row.customer_id == customer.id)
     assert row.display_date == placement.placed_at
     assert row.updated_at == placement.placed_at
+
+
+def test_soft_deleted_customer_bill_stays_out_of_billed_hub(db):
+    from app.routers.customer_orders import list_customer_orders
+
+    customer, _prod, _ = _setup(db)
+    bill = CustomerBill(
+        customer_id=customer.id,
+        bill_number="B-DELETED-1",
+        subtotal_inclusive=Decimal("100"),
+        grand_total=Decimal("100"),
+        created_by_type="admin",
+        created_by_name="Test Admin",
+        bill_date=date.today(),
+        deleted_at=datetime.now(timezone.utc),
+        deleted_reason="voided",
+        deleted_by_name="Test Admin",
+    )
+    db.add(bill)
+    db.commit()
+
+    rows = list_customer_orders(bucket="billed", day="all", db=db, auth=AUTH)
+    assert not any(row.customer_id == customer.id for row in rows)
+
+
+def test_null_bill_date_stays_in_all_but_not_today(db):
+    from app.routers.customer_orders import list_customer_orders
+
+    customer, _prod, _ = _setup(db)
+    created_at = datetime.now(timezone.utc) - timedelta(days=2)
+    bill = CustomerBill(
+        customer_id=customer.id,
+        bill_number="B-NO-DATE-1",
+        subtotal_inclusive=Decimal("100"),
+        grand_total=Decimal("100"),
+        created_by_type="admin",
+        created_by_name="Test Admin",
+        bill_date=None,
+        created_at=created_at,
+    )
+    db.add(bill)
+    db.commit()
+    db.refresh(bill)
+
+    all_rows = list_customer_orders(bucket="billed", day="all", db=db, auth=AUTH)
+    row = next(row for row in all_rows if row.customer_id == customer.id)
+    assert row.display_date == bill.created_at
+    assert row.updated_at == bill.created_at
+
+    today_rows = list_customer_orders(bucket="billed", day="today", db=db, auth=AUTH)
+    assert not any(today_row.customer_id == customer.id for today_row in today_rows)
 
 
 def test_backdated_vendor_order_uses_business_date_in_hub(db):

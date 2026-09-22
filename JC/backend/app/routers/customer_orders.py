@@ -352,25 +352,29 @@ def list_customer_orders(
         return out
 
     if bucket == "billed":
-        bill_rows_by_customer: dict[int, dict[str, int | date]] = {}
+        bill_rows_by_customer: dict[int, dict[str, int | date | datetime]] = {}
         for bill in (
             db.query(CustomerBill)
-            .filter(CustomerBill.cancelled_at.is_(None), CustomerBill.closed_at.is_(None))
+            .filter(
+                CustomerBill.cancelled_at.is_(None),
+                CustomerBill.closed_at.is_(None),
+                CustomerBill.deleted_at.is_(None),
+            )
             .all()
         ):
-            if bill.bill_date is None:
+            if day_start is not None and bill.bill_date != today_ist():
                 continue
+            display_date = bill.bill_date or bill.created_at
             entry = bill_rows_by_customer.setdefault(
                 int(bill.customer_id),
-                {"count": 0, "display_date": bill.bill_date},
+                {"count": 0, "display_date": display_date},
             )
             entry["count"] = int(entry["count"]) + 1
-            if bill.bill_date > entry["display_date"]:
-                entry["display_date"] = bill.bill_date
+            if _sort_business_date(display_date) > _sort_business_date(entry["display_date"]):
+                entry["display_date"] = display_date
         bill_rows = [
             (cid, int(info["count"]), info["display_date"])
             for cid, info in bill_rows_by_customer.items()
-            if day_start is None or info["display_date"] == today_ist()
         ]
         bill_rows.sort(key=lambda row: _sort_business_date(row[2]), reverse=True)
         # Batch the customer-name lookup — was one query PER customer (N+1), which

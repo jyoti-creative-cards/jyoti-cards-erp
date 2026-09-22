@@ -105,13 +105,15 @@ def _vendor_ids_matching_product_search(
             if _view_matches_product_search(view, needle, live_pids):
                 matched.add(int(order.vendor_id))
 
-    # Receipts: pending → open/received; billed → billed/closed/open(to_bill already separate).
+    # Receipts: match the same document filters each hub bucket uses in list_vendor_orders.
     if bucket is None or bucket in ("open", "received", "billed", "closed"):
         for receipt in db.query(StockReceipt).filter(StockReceipt.deleted_at.is_(None)).all():
-            is_billed = getattr(receipt, "bill_status", None) == "billed"
-            if bucket == "received" and is_billed:
+            bill_status = getattr(receipt, "bill_status", None)
+            is_billed = bill_status == "billed"
+            is_pending = bill_status == "pending_bill"
+            if bucket == "received" and not is_pending:
                 continue
-            if bucket == "billed" and not is_billed:
+            if bucket == "billed" and (not is_billed or receipt.closed_at is not None):
                 continue
             if bucket == "open" and is_billed:
                 continue

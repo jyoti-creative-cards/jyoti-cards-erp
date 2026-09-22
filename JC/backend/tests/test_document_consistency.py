@@ -947,6 +947,75 @@ def test_vendor_order_search_matches_card_and_live_product_names(db):
     assert any(r.vendor_id == vendor.id for r in by_new)
 
 
+def test_closed_billed_receipt_stays_out_of_billed_search(db):
+    from app.routers.vendor_orders import list_vendor_orders
+
+    vendor, prod_y = _vendor_and_product(db)
+    prod_y.our_product_id = "ACTIVE-Y"
+    db.flush()
+
+    prod_x = CatalogProduct(
+        our_product_id="CLOSED-X",
+        vendor_id=vendor.id,
+        vendor_product_id="VP-CX",
+        buying_price=Decimal("10"),
+    )
+    db.add(prod_x)
+    db.flush()
+    db.add(StockBalance(catalog_product_id=prod_x.id, quantity_on_hand=0))
+    db.flush()
+
+    receive_vendor_goods(
+        db,
+        AUTH,
+        VendorReceiveCreate(
+            vendor_id=vendor.id,
+            lines=[VendorReceiptLineIn(catalog_product_id=prod_y.id, quantity_received=5)],
+            order_receipt_number="R-ACTIVE-Y",
+        ),
+        offline=True,
+    )
+    receipt_y = db.query(StockReceipt).filter(StockReceipt.order_receipt_number == "R-ACTIVE-Y").one()
+    bill_receipt(
+        db,
+        AUTH,
+        receipt_y.id,
+        VendorBillIn(
+            total_billed_amount=Decimal("50"),
+            lines=[{"catalog_product_id": prod_y.id, "quantity_billed": 5}],
+        ),
+    )
+
+    receive_vendor_goods(
+        db,
+        AUTH,
+        VendorReceiveCreate(
+            vendor_id=vendor.id,
+            lines=[VendorReceiptLineIn(catalog_product_id=prod_x.id, quantity_received=3)],
+            order_receipt_number="R-CLOSED-X",
+        ),
+        offline=True,
+    )
+    receipt_x = db.query(StockReceipt).filter(StockReceipt.order_receipt_number == "R-CLOSED-X").one()
+    bill_receipt(
+        db,
+        AUTH,
+        receipt_x.id,
+        VendorBillIn(
+            total_billed_amount=Decimal("30"),
+            lines=[{"catalog_product_id": prod_x.id, "quantity_billed": 3}],
+        ),
+    )
+    receipt_x.closed_at = datetime.now(timezone.utc)
+    db.flush()
+
+    closed_search = list_vendor_orders(bucket="billed", day="all", search="CLOSED-X", db=db, auth=AUTH)
+    assert not any(r.vendor_id == vendor.id for r in closed_search)
+
+    active_search = list_vendor_orders(bucket="billed", day="all", search="ACTIVE-Y", db=db, auth=AUTH)
+    assert any(r.vendor_id == vendor.id for r in active_search)
+
+
 def test_ledger_bill_uses_card_and_marks_cancelled(db):
     customer, prod, _ = _setup(db)
     create_received_placement(

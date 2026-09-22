@@ -600,8 +600,11 @@ def list_vendor_orders(
                     )
                     .count()
                 )
-            if latest is None:
-                continue
+            # Open qty can exist without a status="placed" placement (e.g. receipt
+            # restore via add_to_open). Keep the row for day=all; day=today stays
+            # gated by today_receive (placed_at in IST today). No placed_at →
+            # display_date null; updated_at is required so use datetime.min UTC
+            # (same sentinel _sort_dt uses for a missing date).
             out.append(
                 VendorOrderSummary(
                     id=placed_order.id if placed_order else 0,
@@ -616,7 +619,7 @@ def list_vendor_orders(
                     placement_count=placement_count,
                     line_count=int(line_count or 0),
                     total_quantity=int(total_qty or 0),
-                    updated_at=latest,
+                    updated_at=latest if latest is not None else datetime.min.replace(tzinfo=timezone.utc),
                     display_date=latest,
                     open_kind="to_receive",
                 )

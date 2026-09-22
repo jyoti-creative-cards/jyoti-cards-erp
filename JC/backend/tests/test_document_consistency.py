@@ -359,6 +359,36 @@ def test_backdated_vendor_open_order_stays_out_of_today_bucket(db):
     assert row.updated_at == placement.placed_at
 
 
+def test_open_vendor_without_placed_placement_lists_in_all_not_today(db):
+    """Open qty from add_to_open (e.g. receipt restore) with no status=placed placement."""
+    from app.models.vendor_open_line import VendorOpenLine
+    from app.routers.vendor_orders import list_vendor_orders
+
+    vendor, prod = _vendor_and_product(db)
+    db.add(
+        VendorOpenLine(
+            vendor_id=vendor.id,
+            catalog_product_id=prod.id,
+            our_product_id=prod.our_product_id,
+            quantity=5,
+            buying_price=Decimal("10"),
+            status="open",
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+    db.commit()
+
+    today_rows = list_vendor_orders(bucket="open", view="default", day="today", db=db, auth=AUTH)
+    assert not any(
+        row.vendor_id == vendor.id and row.open_kind == "to_receive" for row in today_rows
+    )
+
+    all_rows = list_vendor_orders(bucket="open", view="default", day="all", db=db, auth=AUTH)
+    row = next(row for row in all_rows if row.vendor_id == vendor.id and row.open_kind == "to_receive")
+    assert row.display_date is None
+    assert row.total_quantity == 5
+
+
 def test_closed_customer_order_locks_by_parent_bucket(db):
     customer, prod, _ = _setup(db)
     placement = create_received_placement(

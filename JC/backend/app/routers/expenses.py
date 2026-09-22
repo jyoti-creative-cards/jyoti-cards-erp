@@ -101,6 +101,35 @@ def create_expense(
     return ExpensePublic.from_row(row)
 
 
+@router.patch("/{expense_id}", response_model=ExpensePublic)
+def patch_expense(
+    expense_id: int,
+    body: ExpenseIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("finance.write")),
+):
+    row = db.get(Expense, expense_id)
+    if not row:
+        raise HTTPException(404, "expense not found")
+    row.expense_date = body.expense_date
+    row.category = body.category.lower().strip()
+    row.description = (body.description or "").strip() or None
+    row.amount = body.amount
+    row.reference = (body.reference or "").strip() or None
+    log_from_auth(
+        db,
+        auth,
+        action="edit",
+        entity_type="expense",
+        entity_id=row.id,
+        entity_label=row.category,
+        detail=f"₹{row.amount}",
+    )
+    db.commit()
+    db.refresh(row)
+    return ExpensePublic.from_row(row)
+
+
 @router.delete("/{expense_id}", status_code=204)
 def delete_expense(
     expense_id: int,

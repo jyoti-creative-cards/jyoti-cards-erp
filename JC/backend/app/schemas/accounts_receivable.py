@@ -66,6 +66,13 @@ class ArSettlementIn(BaseModel):
     value_date: Optional[date] = None
 
 
+class ArPaymentPatchIn(BaseModel):
+    amount: Decimal = Field(..., gt=0)
+    value_date: Optional[date] = None
+    payment_mode: Optional[str] = Field(None, max_length=80)
+    description: Optional[str] = Field(None, max_length=500)
+
+
 class OpeningBalanceIn(BaseModel):
     amount: Decimal  # signed: positive = customer owes us; negative = we owe customer (credit)
     as_on: date

@@ -12,6 +12,7 @@ from app.deps import AuthContext, require_admin, require_permission
 from app.models.vendor import Vendor
 from app.schemas.accounts_payable import (
     ApLedgerEntryOut,
+    ApPaymentPatchIn,
     ApSettlementIn,
     ApVendorDetail,
     ApVendorSummary,
@@ -30,6 +31,7 @@ from app.services.ap_ledger import (
     vendor_ap_totals,
     _vendor_label,
 )
+from app.services.money import as_signed_decrease
 from app.services.payment_reverse import reverse_ap_payment
 from app.services.storage import payment_receipt_key, presigned_url, storage_configured, upload_bytes, vendor_folder_slug
 
@@ -233,6 +235,41 @@ def _ap_payment_out(db: Session, vendor_id: int, entry_id: int, auth: Optional[A
     if not match:
         raise HTTPException(500, "ledger entry missing")
     return ApLedgerEntryOut(**match)
+
+
+@router.patch("/payments/{entry_id}", response_model=ApLedgerEntryOut)
+def patch_ap_payment(
+    entry_id: int,
+    body: ApPaymentPatchIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("ap.write")),
+):
+    from app.models.accounts_payable import ApLedgerEntry
+
+    entry = db.get(ApLedgerEntry, entry_id)
+    if not entry or entry.entry_type != "payment" or entry.deleted_at is not None:
+        raise HTTPException(404, "AP payment not found")
+    lock_ap_account(db, entry.vendor_id)
+    amount = body.amount.quantize(Decimal("0.01"))
+    entry.amount = as_signed_decrease(amount)
+    if body.value_date is not None:
+        entry.value_date = body.value_date
+    if body.payment_mode is not None:
+        entry.payment_mode = (body.payment_mode or "").strip() or None
+    if body.description is not None:
+        entry.description = (body.description or "").strip() or entry.description
+    log_from_auth(
+        db,
+        auth,
+        action="ap_payment_edit",
+        entity_type="accounts_payable",
+        entity_id=entry.vendor_id,
+        entity_label=_vendor_label(db, entry.vendor_id),
+        detail=f"edit #{entry_id} → ₹{amount}",
+    )
+    db.commit()
+    db.refresh(entry)
+    return _ap_payment_out(db, entry.vendor_id, entry.id, auth=auth)
 
 
 @router.post("/payments/{entry_id}/reverse", response_model=ApLedgerEntryOut, status_code=status.HTTP_201_CREATED)

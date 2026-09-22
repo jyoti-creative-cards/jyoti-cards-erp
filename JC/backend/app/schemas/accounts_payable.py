@@ -72,6 +72,13 @@ class ApSettlementIn(BaseModel):
     payment_mode_id: Optional[int] = None
 
 
+class ApPaymentPatchIn(BaseModel):
+    amount: Decimal = Field(..., gt=0)
+    value_date: Optional[date] = None
+    payment_mode: Optional[str] = Field(None, max_length=80)
+    description: Optional[str] = Field(None, max_length=500)
+
+
 class OpeningBalanceIn(BaseModel):
     amount: Decimal = Field(..., ge=0)
     as_on: date

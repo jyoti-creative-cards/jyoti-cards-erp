@@ -685,3 +685,91 @@ def test_ledger_bill_uses_card_and_marks_cancelled(db):
     assert bill_rows[0].title.startswith("Cancelled")
     assert "RENAMED" not in bill_rows[0].summary
     assert bill_rows[0].occurred_at.date() == bill.bill_date or bill.bill_date is None
+
+
+def test_payment_edit_replaces_amount_in_place(db):
+    from app.models.accounts_receivable import ArLedgerEntry
+    from app.routers.accounts_receivable import patch_ar_payment, settle_customer_ar
+    from app.schemas.accounts_receivable import ArPaymentPatchIn, ArSettlementIn
+    from app.services.ar_ledger import post_bill_entry as post_ar_bill
+    from app.services.money import mag
+
+    customer, _prod, _ = _setup(db)
+    post_ar_bill(
+        db,
+        customer_id=customer.id,
+        bill_id=None,
+        amount=Decimal("100.00"),
+        description="seed due",
+        actor_type="admin",
+        actor_id=1,
+        actor_name="Test",
+    )
+    db.commit()
+    settle_customer_ar(
+        customer.id,
+        ArSettlementIn(amount=Decimal("100.00"), payment_ref="CASH"),
+        db,
+        AUTH,
+    )
+    pay = (
+        db.query(ArLedgerEntry)
+        .filter(ArLedgerEntry.entry_type == "payment", ArLedgerEntry.deleted_at.is_(None))
+        .one()
+    )
+    new_day = date.today() - timedelta(days=2)
+    patch_ar_payment(
+        pay.id,
+        ArPaymentPatchIn(
+            amount=Decimal("40.00"),
+            value_date=new_day,
+            payment_mode="UPI",
+            description="Corrected payment",
+        ),
+        db,
+        AUTH,
+    )
+    rows = db.query(ArLedgerEntry).filter(ArLedgerEntry.entry_type == "payment").all()
+    assert len(rows) == 1
+    assert mag(rows[0].amount) == Decimal("40.00")
+    assert rows[0].value_date == new_day
+    assert rows[0].payment_mode == "UPI"
+    assert rows[0].description == "Corrected payment"
+
+
+def test_expense_edit_updates_row_in_place(db):
+    from app.models.expense import Expense
+    from app.routers.expenses import ExpenseIn, create_expense, patch_expense
+
+    old_day = date.today() - timedelta(days=5)
+    new_day = date.today() - timedelta(days=1)
+    created = create_expense(
+        ExpenseIn(
+            expense_date=old_day,
+            category="misc",
+            description="typo",
+            amount=Decimal("100.00"),
+            reference="R1",
+        ),
+        db,
+        AUTH,
+    )
+    patch_expense(
+        created.id,
+        ExpenseIn(
+            expense_date=new_day,
+            category="travel",
+            description="fixed",
+            amount=Decimal("40.00"),
+            reference="R2",
+        ),
+        db,
+        AUTH,
+    )
+    rows = db.query(Expense).all()
+    assert len(rows) == 1
+    assert rows[0].amount == Decimal("40.00")
+    assert rows[0].expense_date == new_day
+    assert rows[0].category == "travel"
+    assert rows[0].description == "fixed"
+    assert rows[0].reference == "R2"

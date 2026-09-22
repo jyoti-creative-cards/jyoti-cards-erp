@@ -20,7 +20,7 @@ from app.models.freight_agent import FreightAgent, FreightLedgerEntry
 from app.models.route import Route
 from app.models.stock import StockReceipt, StockReceiptLine
 from app.models.vendor import Vendor
-from app.models.vendor_order import VendorOrder
+from app.models.vendor_order import VendorOrder, VendorOrderLine, VendorOrderPlacement
 from app.services.catalog_addons import addon_snapshots_map
 
 
@@ -117,6 +117,19 @@ def present(db: Session, kind: str, row) -> dict:
         card["display_date"] = getattr(row, "received_at", None)
         card["status"] = _status(row)
         card["party_name"] = card.get("party_name") or _vendor_name(db, row.vendor_id)
+        return card
+
+    if kind == "vendor_order":
+        if not isinstance(row, VendorOrderPlacement):
+            raise TypeError("vendor_order present expects VendorOrderPlacement")
+        if locked and isinstance(getattr(row, "card_json", None), dict):
+            card = deepcopy(row.card_json)
+        else:
+            card = _live_vendor_order_card(db, row)
+        card["locked"] = locked
+        card["display_date"] = row.placed_at
+        card["status"] = _status(row)
+        card["party_name"] = card.get("party_name") or _vendor_name_for_order(db, row)
         return card
 
     if kind == "debit_note":
@@ -276,6 +289,43 @@ def _live_customer_order_card(db: Session, placement: CustomerOrderPlacement) ->
 
 def _stored_customer_order_card(db: Session, placement: CustomerOrderPlacement) -> dict:
     return _customer_order_card(db, placement, use_live_unit_price=False)
+
+
+def _live_vendor_order_card(db: Session, placement: VendorOrderPlacement) -> dict:
+    vendor_name = _vendor_name_for_order(db, placement)
+    lines = (
+        db.query(VendorOrderLine)
+        .filter(VendorOrderLine.placement_id == placement.id)
+        .order_by(VendorOrderLine.id.asc())
+        .all()
+    )
+    product_ids = [int(ln.catalog_product_id) for ln in lines]
+    products = _products_by_id(db, product_ids)
+    out_lines: list[dict] = []
+    for ln in lines:
+        prod = products.get(int(ln.catalog_product_id))
+        out_lines.append(
+            _product_line_card(
+                prod,
+                catalog_product_id=int(ln.catalog_product_id),
+                fallback_our_product_id=ln.our_product_id,
+                unit_price=ln.buying_price,
+                addons=[],
+                alternatives=[],
+            )
+        )
+    return {
+        "kind": "vendor_order",
+        "party_name": vendor_name,
+        "lines": out_lines,
+    }
+
+
+def _vendor_name_for_order(db: Session, placement: VendorOrderPlacement) -> str:
+    order = db.get(VendorOrder, placement.vendor_order_id)
+    if order:
+        return _vendor_name(db, order.vendor_id)
+    return f"Vendor order #{placement.vendor_order_id}"
 
 
 def _customer_order_card(db: Session, placement: CustomerOrderPlacement, *, use_live_unit_price: bool) -> dict:

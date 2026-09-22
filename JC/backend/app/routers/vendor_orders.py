@@ -47,7 +47,7 @@ from app.services.open_lines import add_to_open, cancel_open_qty, close_open_lin
 from app.services.order_summary import pending_qty_by_product, placed_qty_by_product, received_qty_by_product
 from app.services.stock_receipt import get_or_create_open_order
 from app.services.doc_gen import generate_vendor_placement_document
-from app.services.document_present import present
+from app.services.document_present import is_locked, present
 from app.services.storage import presigned_url, presigned_urls, storage_configured
 
 router = APIRouter(prefix="/vendor-orders", tags=["vendor-orders"])
@@ -78,7 +78,9 @@ def _view_matches_product_search(view: dict, needle: str, live_pids: set[int]) -
     return False
 
 
-def _vendor_ids_matching_product_search(db: Session, search: str | None) -> set[int] | None:
+def _vendor_ids_matching_product_search(
+    db: Session, search: str | None, *, bucket: str | None = None
+) -> set[int] | None:
     if not isinstance(search, str):
         return None
     needle = search.strip()
@@ -86,43 +88,60 @@ def _vendor_ids_matching_product_search(db: Session, search: str | None) -> set[
         return None
     live_pids = _product_ids_matching_live_name(db, needle)
     matched: set[int] = set()
-    needle_l = needle.lower()
 
-    # Open / unlocked placements follow the live catalog name.
-    for placement in db.query(VendorOrderPlacement).all():
-        order = db.get(VendorOrder, placement.vendor_order_id)
-        if not order:
-            continue
-        if getattr(placement, "status", None) in ("cancelled", "voided"):
-            continue
-        lines = (
-            db.query(VendorOrderLine)
-            .filter(VendorOrderLine.placement_id == placement.id)
-            .all()
-        )
-        for ln in lines:
-            prod = db.get(CatalogProduct, ln.catalog_product_id)
-            name = (prod.our_product_id if prod else ln.our_product_id or "").lower()
-            if needle_l in name or int(ln.catalog_product_id or 0) in live_pids:
-                matched.add(int(order.vendor_id))
-                break
-
-    # Receipts stay live; billed receipts also match card names via present(vendor_bill).
-    for receipt in db.query(StockReceipt).filter(StockReceipt.deleted_at.is_(None)).all():
-        kinds = ["vendor_receipt"]
-        if getattr(receipt, "bill_status", None) == "billed":
-            kinds.append("vendor_bill")
-        for kind in kinds:
-            view = present(db, kind, receipt)
+    # Placements: locked → card via present(); unlocked → live. Scoped to order bucket.
+    if bucket is None or bucket in ("placed", "cancelled", "closed"):
+        for placement in db.query(VendorOrderPlacement).all():
+            order = db.get(VendorOrder, placement.vendor_order_id)
+            if not order:
+                continue
+            if getattr(placement, "status", None) in ("cancelled", "voided"):
+                if bucket not in (None, "cancelled"):
+                    continue
+            if bucket in ("placed", "cancelled") and order.bucket != bucket:
+                continue
+            if bucket == "closed" and order.bucket != "closed" and not is_locked("vendor_order", placement):
+                continue
+            view = present(db, "vendor_order", placement)
             if _view_matches_product_search(view, needle, live_pids):
-                matched.add(int(receipt.vendor_id))
-                break
+                matched.add(int(order.vendor_id))
 
-    for row in db.query(VendorOpenLine).filter(VendorOpenLine.status == "open", VendorOpenLine.quantity > 0).all():
-        prod = db.get(CatalogProduct, row.catalog_product_id)
-        name = (prod.our_product_id if prod else row.our_product_id or "").lower()
-        if needle_l in name or int(row.catalog_product_id or 0) in live_pids:
-            matched.add(int(row.vendor_id))
+    # Receipts: pending → open/received; billed → billed/closed/open(to_bill already separate).
+    if bucket is None or bucket in ("open", "received", "billed", "closed"):
+        for receipt in db.query(StockReceipt).filter(StockReceipt.deleted_at.is_(None)).all():
+            is_billed = getattr(receipt, "bill_status", None) == "billed"
+            if bucket == "received" and is_billed:
+                continue
+            if bucket == "billed" and not is_billed:
+                continue
+            if bucket == "open" and is_billed:
+                continue
+            if bucket == "closed" and not is_billed:
+                continue
+            kinds = ["vendor_bill"] if is_billed else ["vendor_receipt"]
+            if bucket is None:
+                kinds = ["vendor_receipt"]
+                if is_billed:
+                    kinds.append("vendor_bill")
+            for kind in kinds:
+                view = present(db, kind, receipt)
+                if _view_matches_product_search(view, needle, live_pids):
+                    matched.add(int(receipt.vendor_id))
+                    break
+
+    if bucket is None or bucket == "open":
+        for row in db.query(VendorOpenLine).filter(VendorOpenLine.status == "open", VendorOpenLine.quantity > 0).all():
+            prod = db.get(CatalogProduct, row.catalog_product_id)
+            name = (prod.our_product_id if prod else row.our_product_id or "").lower()
+            if needle.lower() in name or int(row.catalog_product_id or 0) in live_pids:
+                matched.add(int(row.vendor_id))
+
+    if bucket == "closed":
+        for row in db.query(VendorOpenLine).filter(VendorOpenLine.status == "closed").all():
+            prod = db.get(CatalogProduct, row.catalog_product_id)
+            name = (prod.our_product_id if prod else row.our_product_id or "").lower()
+            if needle.lower() in name or int(row.catalog_product_id or 0) in live_pids:
+                matched.add(int(row.vendor_id))
 
     return matched
 
@@ -563,7 +582,7 @@ def list_vendor_orders(
     if day == "today":
         day_start, day_end = ist_day_bounds_utc(today_ist())
 
-    product_match_vids = _vendor_ids_matching_product_search(db, search)
+    product_match_vids = _vendor_ids_matching_product_search(db, search, bucket=bucket)
 
     def _vids_with_placement_today(statuses: tuple[str, ...] | None = None) -> set[int]:
         assert day_start is not None and day_end is not None

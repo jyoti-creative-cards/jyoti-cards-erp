@@ -769,6 +769,80 @@ def test_customer_order_search_matches_card_and_live_product_names(db):
     open_by_new = list_customer_orders(bucket="received", day="all", search="RENAMED", db=db, auth=AUTH)
     assert any(r.customer_id == customer.id for r in open_by_new)
 
+    # Open-line-only match must not leak into billed.
+    other = Customer(business_name="C-OPEN", phone="1112223334", password_hash="x")
+    db.add(other)
+    db.flush()
+    open_only = CatalogProduct(
+        our_product_id="OPEN-ONLY",
+        vendor_id=prod.vendor_id,
+        vendor_product_id="VP-OPEN",
+        buying_price=Decimal("10"),
+        selling_price=Decimal("20"),
+    )
+    db.add(open_only)
+    db.flush()
+    db.add(StockBalance(catalog_product_id=open_only.id, quantity_on_hand=10))
+    db.flush()
+    create_received_placement(
+        db,
+        customer_id=other.id,
+        customer_name=other.business_name,
+        lines=[{"catalog_product_id": open_only.id, "quantity": 1}],
+    )
+    db.flush()
+    billed_leak = list_customer_orders(bucket="billed", day="all", search="OPEN-ONLY", db=db, auth=AUTH)
+    assert not any(r.customer_id == other.id for r in billed_leak)
+
+
+def test_vendor_order_search_matches_card_and_live_product_names(db):
+    from app.models.vendor_order import VendorOrder, VendorOrderLine, VendorOrderPlacement
+    from app.routers.vendor_orders import list_vendor_orders
+
+    vendor, prod = _vendor_and_product(db)
+    old_code = prod.our_product_id
+    order = VendorOrder(vendor_id=vendor.id, bucket="placed", status="placed", is_open=True)
+    db.add(order)
+    db.flush()
+    placement = VendorOrderPlacement(
+        vendor_order_id=order.id,
+        status="closed",
+        placed_by_type="admin",
+        placed_by_name="Test",
+        card_json={
+            "kind": "vendor_order",
+            "party_name": vendor.business_name,
+            "lines": [
+                {
+                    "catalog_product_id": prod.id,
+                    "our_product_id": old_code,
+                }
+            ],
+        },
+    )
+    db.add(placement)
+    db.flush()
+    db.add(
+        VendorOrderLine(
+            placement_id=placement.id,
+            catalog_product_id=prod.id,
+            our_product_id=old_code,
+            quantity=5,
+            quantity_remaining=5,
+            buying_price=Decimal("10"),
+        )
+    )
+    db.flush()
+
+    prod.our_product_id = "RENAMED-V"
+    db.flush()
+
+    by_old = list_vendor_orders(bucket="placed", view="default", day="all", search=old_code, db=db, auth=AUTH)
+    assert any(r.vendor_id == vendor.id for r in by_old)
+
+    by_new = list_vendor_orders(bucket="placed", view="default", day="all", search="RENAMED-V", db=db, auth=AUTH)
+    assert any(r.vendor_id == vendor.id for r in by_new)
+
 
 def test_ledger_bill_uses_card_and_marks_cancelled(db):
     customer, prod, _ = _setup(db)

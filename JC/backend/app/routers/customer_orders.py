@@ -95,8 +95,11 @@ def _view_matches_product_search(view: dict, needle: str, live_pids: set[int]) -
     return False
 
 
-def _customer_ids_matching_product_search(db: Session, search: str | None) -> set[int] | None:
-    """None = no filter. Empty set = no matches. Otherwise customer ids with a matching product line."""
+def _customer_ids_matching_product_search(
+    db: Session, search: str | None, *, bucket: str | None = None
+) -> set[int] | None:
+    """None = no filter. Empty set = no matches. Otherwise customer ids with a matching product line
+    in the given hub bucket (placements / bills / open lines as appropriate)."""
     if not isinstance(search, str):
         return None
     needle = search.strip()
@@ -105,24 +108,29 @@ def _customer_ids_matching_product_search(db: Session, search: str | None) -> se
     live_pids = _product_ids_matching_live_name(db, needle)
     matched: set[int] = set()
 
-    for placement in db.query(CustomerOrderPlacement).filter(CustomerOrderPlacement.deleted_at.is_(None)).all():
-        order = db.get(CustomerOrder, placement.customer_order_id)
-        if not order:
-            continue
-        view = present(db, "customer_order", placement)
-        if _view_matches_product_search(view, needle, live_pids):
-            matched.add(int(order.customer_id))
+    if bucket is None or bucket in ("received", "cancelled", "closed"):
+        for placement in db.query(CustomerOrderPlacement).filter(CustomerOrderPlacement.deleted_at.is_(None)).all():
+            order = db.get(CustomerOrder, placement.customer_order_id)
+            if not order:
+                continue
+            if bucket is not None and order.bucket != bucket:
+                continue
+            view = present(db, "customer_order", placement)
+            if _view_matches_product_search(view, needle, live_pids):
+                matched.add(int(order.customer_id))
 
-    for bill in db.query(CustomerBill).filter(CustomerBill.deleted_at.is_(None)).all():
-        view = present(db, "customer_bill", bill)
-        if _view_matches_product_search(view, needle, live_pids):
-            matched.add(int(bill.customer_id))
+    if bucket is None or bucket == "billed":
+        for bill in db.query(CustomerBill).filter(CustomerBill.deleted_at.is_(None)).all():
+            view = present(db, "customer_bill", bill)
+            if _view_matches_product_search(view, needle, live_pids):
+                matched.add(int(bill.customer_id))
 
-    for row in db.query(CustomerOpenLine).filter(CustomerOpenLine.status == "open", CustomerOpenLine.quantity_open > 0).all():
-        prod = db.get(CatalogProduct, row.catalog_product_id)
-        name = (prod.our_product_id if prod else row.our_product_id or "").lower()
-        if needle.lower() in name or int(row.catalog_product_id or 0) in live_pids:
-            matched.add(int(row.customer_id))
+    if bucket is None or bucket == "open":
+        for row in db.query(CustomerOpenLine).filter(CustomerOpenLine.status == "open", CustomerOpenLine.quantity_open > 0).all():
+            prod = db.get(CatalogProduct, row.catalog_product_id)
+            name = (prod.our_product_id if prod else row.our_product_id or "").lower()
+            if needle.lower() in name or int(row.catalog_product_id or 0) in live_pids:
+                matched.add(int(row.customer_id))
 
     return matched
 
@@ -313,7 +321,7 @@ def list_customer_orders(
     if day == "today":
         day_start, day_end = ist_day_bounds_utc(today_ist())
 
-    product_match_cids = _customer_ids_matching_product_search(db, search)
+    product_match_cids = _customer_ids_matching_product_search(db, search, bucket=bucket)
 
     def _filter_by_product(rows: list) -> list:
         if product_match_cids is None:

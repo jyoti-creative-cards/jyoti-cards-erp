@@ -1287,3 +1287,87 @@ def test_catalog_rename_invalidates_open_document_caches(db, monkeypatch):
     assert "catalog:" in calls
     assert "stock:" in calls
     assert "shop:" in calls
+
+
+def test_backfill_locked_cards_prefers_line_and_history_over_live_rename(db):
+    from app.models.entity_history import EntityHistory
+    from app.services.document_card_backfill import backfill_locked_cards
+    from app.services.history import row_snapshot, TRACKED_FIELDS
+    import json
+
+    customer, prod, _ = _setup(db)
+    prod.image_keys = ["old-img"]
+    db.flush()
+
+    create_received_placement(
+        db,
+        customer_id=customer.id,
+        customer_name=customer.business_name,
+        lines=[{"catalog_product_id": prod.id, "quantity": 2}],
+    )
+    confirm_received_order(db, customer.id)
+    bill = process_customer_bill(
+        db,
+        customer_id=customer.id,
+        customer_name=customer.business_name,
+        lines_in=[{"catalog_product_id": prod.id, "quantity_to_ship": 2}],
+        overall_discount_percent=None,
+        gst_enabled=False,
+        gst_rate_percent=Decimal("0"),
+        freight_agent_id=None,
+        freight_charges=None,
+        packaging_charges=None,
+        additional_charges=None,
+        bill_series_id=_bill_series(db).id,
+        narration=None,
+        actor_type="admin",
+        actor_id=1,
+        actor_name="Test",
+        transport_mode="self_pickup",
+    )
+    db.flush()
+
+    line = (
+        db.query(CustomerBillLine)
+        .filter(CustomerBillLine.bill_id == bill.id)
+        .order_by(CustomerBillLine.id.asc())
+        .first()
+    )
+    old_code = line.our_product_id
+    old_price = line.unit_price
+    bill.card_json = None
+    db.flush()
+
+    # History snapshot valid at the bill date (pre-rename product state).
+    snap = row_snapshot(prod, TRACKED_FIELDS["catalog_product"])
+    db.add(
+        EntityHistory(
+            entity_type="catalog_product",
+            entity_id=prod.id,
+            snapshot_json=json.dumps(snap),
+            change_summary="seed for backfill",
+            valid_from=datetime.combine(bill.bill_date, datetime.min.time()).replace(
+                tzinfo=timezone.utc
+            )
+            - timedelta(days=1),
+            valid_to=None,
+        )
+    )
+    db.flush()
+
+    prod.our_product_id = "RENAMED"
+    prod.image_keys = ["new-img"]
+    prod.selling_price = Decimal("99")
+    db.flush()
+
+    n = backfill_locked_cards(db)
+    assert n >= 1
+    db.refresh(bill)
+    assert bill.card_json is not None
+
+    view = present(db, "customer_bill", bill)
+    assert view["locked"] is True
+    assert view["lines"][0]["our_product_id"] == old_code
+    assert view["lines"][0]["our_product_id"] != "RENAMED"
+    assert view["lines"][0]["unit_price"] == format(old_price, "f")
+    assert view["lines"][0]["image_keys"] == ["old-img"]

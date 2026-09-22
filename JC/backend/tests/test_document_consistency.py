@@ -11,16 +11,13 @@ from app.db.session import Base
 from app.models.bill_series import BillSeries
 from app.models.catalog_product import CatalogProduct
 from app.models.customer import Customer
-from app.models.customer_order import CustomerOrder
+from app.models.customer_bill import CustomerBillLine
+from app.models.customer_order import CustomerOrder, CustomerOrderPlacement
 from app.models.stock import StockBalance
 from app.models.vendor import Vendor
-from app.services.customer_bill_process import process_customer_bill
+from app.services.customer_bill_process import close_bill_line, process_customer_bill
 from app.services.customer_order_flow import confirm_received_order, create_received_placement
-
-try:
-    from app.services.document_present import is_locked, present
-except ImportError:
-    pass
+from app.services.document_present import is_locked, present
 
 
 @pytest.fixture()
@@ -136,6 +133,61 @@ def test_closed_customer_order_locks_by_parent_bucket(db):
     order.bucket = "closed"
     db.flush()
     assert is_locked("customer_order", placement) is True
+
+
+def test_closed_bill_line_freezes_customer_order_card(db):
+    customer, prod, _ = _setup(db)
+    create_received_placement(
+        db,
+        customer_id=customer.id,
+        customer_name=customer.business_name,
+        lines=[{"catalog_product_id": prod.id, "quantity": 2}],
+    )
+    confirm_received_order(db, customer.id)
+    bill = process_customer_bill(
+        db,
+        customer_id=customer.id,
+        customer_name=customer.business_name,
+        lines_in=[{"catalog_product_id": prod.id, "quantity_to_ship": 2}],
+        overall_discount_percent=None,
+        gst_enabled=False,
+        gst_rate_percent=Decimal("0"),
+        freight_agent_id=None,
+        freight_charges=None,
+        packaging_charges=None,
+        additional_charges=None,
+        bill_series_id=_bill_series(db).id,
+        narration=None,
+        actor_type="admin",
+        actor_id=1,
+        actor_name="Test",
+        transport_mode="self_pickup",
+    )
+    db.flush()
+    bill_line = db.query(CustomerBillLine).filter(CustomerBillLine.bill_id == bill.id).one()
+    close_bill_line(db, bill_line.id, "dispatched")
+    db.flush()
+
+    closed_order = (
+        db.query(CustomerOrder)
+        .filter(CustomerOrder.customer_id == customer.id, CustomerOrder.bucket == "closed")
+        .one()
+    )
+    placement = (
+        db.query(CustomerOrderPlacement)
+        .filter_by(customer_order_id=closed_order.id, status="closed")
+        .one()
+    )
+    before = present(db, "customer_order", placement)
+    prod.our_product_id = "RENAMED"
+    prod.category = "NEW-CAT"
+    db.flush()
+    after = present(db, "customer_order", placement)
+    assert after["locked"] is True
+    assert after["lines"][0]["our_product_id"] == before["lines"][0]["our_product_id"]
+    assert after["lines"][0]["our_product_id"] != "RENAMED"
+    assert after["lines"][0]["category"] == before["lines"][0]["category"]
+    assert after["lines"][0]["category"] != "NEW-CAT"
 
 
 def test_is_locked_covers_document_kinds():

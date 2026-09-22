@@ -40,25 +40,30 @@ def is_locked(kind: str, row) -> bool:
 
 
 def freeze_card(db: Session, kind: str, row) -> dict:
-    if kind != "customer_bill":
-        raise ValueError(f"freeze_card not implemented for kind: {kind}")
-    if not isinstance(row, CustomerBill):
-        raise TypeError("customer_bill freeze_card expects CustomerBill")
-
-    customer = db.get(Customer, row.customer_id)
-    card = {
-        "kind": kind,
-        "bill_number": row.bill_number,
-        "party_name": customer.business_name if customer else f"Customer #{row.customer_id}",
-        "party": _customer_party_card(db, customer),
-        "bill_series_name": _bill_series_name(db, row.bill_series_id),
-        "bill_series_prefix": _bill_series_prefix(db, row.bill_series_id),
-        "freight_agent_name": _freight_agent_name(db, row.freight_agent_id),
-        "created_by_name": row.created_by_name,
-        "lines": _customer_bill_lines_card(db, row),
-    }
-    row.card_json = card
-    return card
+    if kind == "customer_bill":
+        if not isinstance(row, CustomerBill):
+            raise TypeError("customer_bill freeze_card expects CustomerBill")
+        customer = db.get(Customer, row.customer_id)
+        card = {
+            "kind": kind,
+            "bill_number": row.bill_number,
+            "party_name": customer.business_name if customer else f"Customer #{row.customer_id}",
+            "party": _customer_party_card(db, customer),
+            "bill_series_name": _bill_series_name(db, row.bill_series_id),
+            "bill_series_prefix": _bill_series_prefix(db, row.bill_series_id),
+            "freight_agent_name": _freight_agent_name(db, row.freight_agent_id),
+            "created_by_name": row.created_by_name,
+            "lines": _customer_bill_lines_card(db, row),
+        }
+        row.card_json = card
+        return card
+    if kind == "customer_order":
+        if not isinstance(row, CustomerOrderPlacement):
+            raise TypeError("customer_order freeze_card expects CustomerOrderPlacement")
+        card = _live_customer_order_card(db, row)
+        row.card_json = card
+        return card
+    raise ValueError(f"freeze_card not implemented for kind: {kind}")
 
 
 def present(db: Session, kind: str, row) -> dict:

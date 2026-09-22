@@ -622,6 +622,7 @@ def close_bill_line(db: Session, bill_line_id: int, reason: str) -> None:
     )
     if remaining_open == 0 and not bill.closed_at:
         bill.closed_at = datetime.now(timezone.utc)
+    freeze_card(db, "customer_order", placement)
 
 
 def process_offline_customer_order(

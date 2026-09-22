@@ -39,6 +39,7 @@ class CustomerBill(Base):
     gst_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0, server_default="0")
     grand_total: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     totals_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    card_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     document_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     cancelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     cancel_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

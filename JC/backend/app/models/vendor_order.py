@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, Numeric, String, Text, func
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -40,6 +40,7 @@ class VendorOrderPlacement(Base):
     placed_by_type: Mapped[str] = mapped_column(String(20), nullable=False)
     placed_by_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     placed_by_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    card_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     document_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     placed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

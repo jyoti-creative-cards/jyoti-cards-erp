@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.models.accounts_receivable import ArLedgerEntry, CustomerArAccount
 from app.models.customer import Customer
 from app.models.city import City
+from app.services.document_present import present
 from app.services.money import as_signed_decrease, as_signed_increase, mag
 
 
@@ -298,6 +299,9 @@ def build_ar_ledger(db: Session, customer_id: int) -> list[dict]:
     for e in entries:
         signed = Decimal(str(e.amount)).quantize(Decimal("0.01"))
         running = (running + signed).quantize(Decimal("0.01"))
+        party_name = None
+        if e.entry_type == "payment":
+            party_name = present(db, "payment", e).get("party_name")
         out.append(
             {
                 "id": e.id,
@@ -310,6 +314,7 @@ def build_ar_ledger(db: Session, customer_id: int) -> list[dict]:
                 "payment_ref": e.payment_ref,
                 "payment_mode": getattr(e, "payment_mode", None),
                 "payment_comment": e.payment_comment,
+                "party_name": party_name,
                 "description": e.description,
                 "value_date": e.value_date.isoformat() if e.value_date else None,
                 "reverses_entry_id": e.reverses_entry_id,

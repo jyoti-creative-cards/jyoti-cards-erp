@@ -582,6 +582,66 @@ def test_locked_customer_bill_pdf_keeps_card_party_and_product(db, monkeypatch):
     assert "RENAMED" not in line_codes
 
 
+def test_debit_note_stays_live_while_vendor_bill_locks(db):
+    from app.schemas.debit_note import DebitNoteIn
+    from app.services.debit_notes import create_debit_note
+
+    vendor, prod = _vendor_and_product(db)
+    body = VendorReceiveCreate(
+        vendor_id=vendor.id,
+        lines=[VendorReceiptLineIn(catalog_product_id=prod.id, quantity_received=5)],
+        order_receipt_number="DN-R1",
+    )
+    receive_vendor_goods(db, AUTH, body, offline=True)
+    receipt = db.query(StockReceipt).one()
+
+    note = create_debit_note(
+        db,
+        AUTH,
+        vendor_id=vendor.id,
+        receipt_id=receipt.id,
+        body=DebitNoteIn(
+            note_type="item",
+            direction="short",
+            catalog_product_id=prod.id,
+            quantity=1,
+        ),
+    )
+    db.flush()
+
+    prod.our_product_id = "RENAMED-1"
+    db.flush()
+    live = present(db, "debit_note", note)
+    assert live["locked"] is False
+    assert live["lines"][0]["our_product_id"] == "RENAMED-1"
+
+    bill_receipt(
+        db,
+        AUTH,
+        receipt.id,
+        VendorBillIn(
+            total_billed_amount=Decimal("50"),
+            lines=[{"catalog_product_id": prod.id, "quantity_billed": 5}],
+        ),
+    )
+    db.flush()
+    db.refresh(receipt)
+
+    frozen_at_bill = present(db, "vendor_bill", receipt)["lines"][0]["our_product_id"]
+    assert frozen_at_bill == "RENAMED-1"
+
+    prod.our_product_id = "RENAMED-2"
+    db.flush()
+    locked_bill = present(db, "vendor_bill", receipt)
+    assert locked_bill["locked"] is True
+    assert locked_bill["lines"][0]["our_product_id"] == "RENAMED-1"
+    assert locked_bill["lines"][0]["our_product_id"] != "RENAMED-2"
+
+    still_live = present(db, "debit_note", note)
+    assert still_live["locked"] is False
+    assert still_live["lines"][0]["our_product_id"] == "RENAMED-2"
+
+
 def test_ledger_bill_uses_card_and_marks_cancelled(db):
     customer, prod, _ = _setup(db)
     create_received_placement(

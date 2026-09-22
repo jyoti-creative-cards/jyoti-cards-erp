@@ -14,6 +14,7 @@ from app.models.vendor import Vendor
 from app.models.city import City
 from app.deps import AuthContext
 from app.services.cost_visibility import hide_cost
+from app.services.document_present import present
 from app.services.money import as_signed_decrease, as_signed_increase, mag
 from app.services.storage import presigned_url
 
@@ -549,9 +550,21 @@ def build_ap_ledger(db: Session, vendor_id: int, *, auth: Optional[AuthContext] 
             receipt_debit_total = debit_note_total
         details: dict = {}
         if e.receipt_id and receipt:
+            card_by_cid: dict[int, dict] = {}
+            if receipt.bill_status == "billed":
+                bill_view = present(db, "vendor_bill", receipt)
+                card_by_cid = {
+                    int(cl["catalog_product_id"]): cl
+                    for cl in (bill_view.get("lines") or [])
+                    if isinstance(cl, dict) and cl.get("catalog_product_id") is not None
+                }
             details["lines"] = [
                 {
-                    "our_product_id": ln.our_product_id,
+                    "our_product_id": (
+                        card_by_cid[ln.catalog_product_id]["our_product_id"]
+                        if ln.catalog_product_id in card_by_cid
+                        else ln.our_product_id
+                    ),
                     "quantity_received": ln.quantity_received,
                     "quantity_billed": ln.quantity_billed,
                     "billed_amount": format(ln.billed_amount, "f"),
@@ -562,27 +575,36 @@ def build_ap_ledger(db: Session, vendor_id: int, *, auth: Optional[AuthContext] 
                 details["additional_charges"] = format(receipt.additional_charges, "f")
             dns = notes_by_receipt.get(e.receipt_id, [])
             if dns:
-                details["debit_notes"] = [
-                    {
-                        "id": dn.id,
-                        "note_type": dn.note_type,
-                        "direction": dn.direction or infer_direction(dn.note_type, dn.quantity, dn.amount),
-                        "our_product_id": dn.our_product_id,
-                        "quantity": dn.quantity,
-                        "amount": format(dn.amount, "f"),
-                        "payable_effect": format(debit_note_payable_effect(dn.amount, dn.note_type), "f"),
-                        "notes": dn.notes,
-                    }
-                    for dn in dns
-                ]
+                details["debit_notes"] = []
+                for dn in dns:
+                    dn_view = present(db, "debit_note", dn)
+                    dn_line = (dn_view.get("lines") or [None])[0] if dn_view.get("lines") else None
+                    details["debit_notes"].append(
+                        {
+                            "id": dn.id,
+                            "note_type": dn.note_type,
+                            "direction": dn.direction or infer_direction(dn.note_type, dn.quantity, dn.amount),
+                            "our_product_id": (
+                                dn_line.get("our_product_id") if isinstance(dn_line, dict) else dn.our_product_id
+                            ),
+                            "quantity": dn.quantity,
+                            "amount": format(dn.amount, "f"),
+                            "payable_effect": format(debit_note_payable_effect(dn.amount, dn.note_type), "f"),
+                            "notes": dn.notes,
+                        }
+                    )
         if e.debit_note_id:
             dn = notes_by_id.get(e.debit_note_id)
             if dn:
+                dn_view = present(db, "debit_note", dn)
+                dn_line = (dn_view.get("lines") or [None])[0] if dn_view.get("lines") else None
                 details["debit_note"] = {
                     "id": dn.id,
                     "note_type": dn.note_type,
                     "direction": dn.direction or infer_direction(dn.note_type, dn.quantity, dn.amount),
-                    "our_product_id": dn.our_product_id,
+                    "our_product_id": (
+                        dn_line.get("our_product_id") if isinstance(dn_line, dict) else dn.our_product_id
+                    ),
                     "quantity": dn.quantity,
                     # unit_price is the catalog buying_price at receive time — a cost hint,
                     # not the bill amount owed. Redact for AP-visibility-only staff.
@@ -591,6 +613,9 @@ def build_ap_ledger(db: Session, vendor_id: int, *, auth: Optional[AuthContext] 
                     "payable_effect": format(debit_note_payable_effect(dn.amount, dn.note_type), "f"),
                     "notes": dn.notes,
                 }
+        payment_party = None
+        if e.entry_type == "payment":
+            payment_party = present(db, "payment", e).get("party_name")
         out.append(
             {
                 "id": e.id,
@@ -605,6 +630,7 @@ def build_ap_ledger(db: Session, vendor_id: int, *, auth: Optional[AuthContext] 
                 "payment_receipt_url": presigned_url(e.payment_receipt_key) if e.payment_receipt_key else None,
                 "payment_comment": e.payment_comment,
                 "payment_mode": e.payment_mode,
+                "party_name": payment_party,
                 "bill_number": receipt.bill_number if receipt else None,
                 "bill_amount": format(bill_amount, "f") if bill_amount is not None else None,
                 "debit_note_total": format(receipt_debit_total, "f") if receipt_debit_total is not None else None,

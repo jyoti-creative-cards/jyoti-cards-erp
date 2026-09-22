@@ -6,6 +6,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session, object_session
 
+from app.models.addon_product import AddonProduct
 from app.models.bill_series import BillSeries
 from app.models.catalog_alternative import CatalogAlternative
 from app.models.catalog_product import CatalogProduct
@@ -13,7 +14,9 @@ from app.models.city import City
 from app.models.customer import Customer
 from app.models.customer_bill import CustomerBill, CustomerBillLine
 from app.models.customer_order import CustomerOrder, CustomerOrderLine, CustomerOrderPlacement
-from app.models.freight_agent import FreightAgent
+from app.models.debit_note import DebitNote
+from app.models.expense import Expense
+from app.models.freight_agent import FreightAgent, FreightLedgerEntry
 from app.models.route import Route
 from app.models.stock import StockReceipt, StockReceiptLine
 from app.models.vendor import Vendor
@@ -116,7 +119,122 @@ def present(db: Session, kind: str, row) -> dict:
         card["party_name"] = card.get("party_name") or _vendor_name(db, row.vendor_id)
         return card
 
+    if kind == "debit_note":
+        return _present_debit_note(db, row, locked=locked)
+
+    if kind == "expense":
+        return _present_expense(db, row, locked=locked)
+
+    if kind == "freight":
+        return _present_freight(db, row, locked=locked)
+
+    if kind == "payment":
+        return _present_payment(db, row, locked=locked)
+
     raise ValueError(f"present not implemented for kind: {kind}")
+
+
+def _present_debit_note(db: Session, note: DebitNote, *, locked: bool) -> dict:
+    if not isinstance(note, DebitNote):
+        raise TypeError("debit_note present expects DebitNote")
+    receipt = db.get(StockReceipt, note.receipt_id) if note.receipt_id else None
+    if receipt is not None and getattr(receipt, "billed_at", None):
+        display_date = receipt.billed_at
+    else:
+        display_date = note.created_at
+    lines: list[dict] = []
+    if note.catalog_product_id and (note.note_type == "item" or note.our_product_id is not None):
+        prod = db.get(CatalogProduct, note.catalog_product_id)
+        lines.append(
+            _product_line_card(
+                prod,
+                catalog_product_id=int(note.catalog_product_id),
+                fallback_our_product_id=note.our_product_id or "",
+                unit_price=note.unit_price,
+                addons=[],
+                alternatives=[],
+            )
+        )
+    return {
+        "kind": "debit_note",
+        "locked": locked,
+        "display_date": display_date,
+        "status": _status(note),
+        "party_name": _vendor_name(db, note.vendor_id),
+        "note_type": note.note_type,
+        "direction": note.direction,
+        "quantity": note.quantity,
+        "amount": _money_str(note.amount),
+        "lines": lines,
+    }
+
+
+def _present_expense(db: Session, expense: Expense, *, locked: bool) -> dict:
+    if not isinstance(expense, Expense):
+        raise TypeError("expense present expects Expense")
+    party_name = None
+    if expense.freight_agent_id:
+        party_name = _freight_agent_name(db, expense.freight_agent_id)
+    elif expense.addon_product_id:
+        addon = db.get(AddonProduct, expense.addon_product_id)
+        party_name = addon.our_product_id if addon else None
+    return {
+        "kind": "expense",
+        "locked": locked,
+        "display_date": expense.expense_date,
+        "status": _status(expense),
+        "party_name": party_name,
+        "category": expense.category,
+        "amount": _money_str(expense.amount),
+        "description": expense.description,
+        "reference": expense.reference,
+    }
+
+
+def _present_freight(db: Session, entry: FreightLedgerEntry, *, locked: bool) -> dict:
+    if not isinstance(entry, FreightLedgerEntry):
+        raise TypeError("freight present expects FreightLedgerEntry")
+    party_name = _freight_agent_name(db, entry.freight_agent_id)
+    display_date = None
+    if entry.customer_bill_id:
+        bill = db.get(CustomerBill, entry.customer_bill_id)
+        display_date = bill.bill_date if bill else None
+    if display_date is None:
+        display_date = getattr(entry, "business_date", None) or getattr(entry, "entry_date", None) or entry.created_at
+    return {
+        "kind": "freight",
+        "locked": locked,
+        "display_date": display_date,
+        "status": _status(entry),
+        "party_name": party_name or f"Freight agent #{entry.freight_agent_id}",
+        "entry_type": entry.entry_type,
+        "amount": _money_str(entry.amount),
+        "customer_bill_id": entry.customer_bill_id,
+    }
+
+
+def _present_payment(db: Session, row, *, locked: bool) -> dict:
+    customer_id = getattr(row, "customer_id", None)
+    vendor_id = getattr(row, "vendor_id", None)
+    if customer_id is not None:
+        party_name = _customer_name_by_id(db, int(customer_id))
+    elif vendor_id is not None:
+        party_name = _vendor_name(db, int(vendor_id))
+    else:
+        party_name = None
+    display_date = getattr(row, "value_date", None)
+    if display_date is None:
+        display_date = getattr(row, "created_at", None)
+    return {
+        "kind": "payment",
+        "locked": locked,
+        "display_date": display_date,
+        "status": _status(row),
+        "party_name": party_name,
+        "payment_ref": getattr(row, "payment_ref", None),
+        "payment_mode": getattr(row, "payment_mode", None),
+        "amount": _money_str(getattr(row, "amount", None)),
+    }
 
 
 def _status(row) -> str:
@@ -405,10 +523,14 @@ def _customer_name(db: Session, placement: CustomerOrderPlacement) -> str:
 
 
 def _customer_name_for_bill(db: Session, bill: CustomerBill) -> str:
-    customer = db.get(Customer, bill.customer_id)
+    return _customer_name_by_id(db, bill.customer_id)
+
+
+def _customer_name_by_id(db: Session, customer_id: int) -> str:
+    customer = db.get(Customer, customer_id)
     if customer:
         return customer.business_name
-    return f"Customer #{bill.customer_id}"
+    return f"Customer #{customer_id}"
 
 
 def _vendor_name(db: Session, vendor_id: int) -> str:

@@ -228,31 +228,45 @@ def build_vendor_ledger(
 
     for note in all_notes:
         receipt = receipts_by_id.get(note.receipt_id)
+        view = present(db, "debit_note", note)
+        if view.get("status") == "voided":
+            continue
+        card_line = (view.get("lines") or [None])[0] if view.get("lines") else None
+        our_product_id = (
+            card_line.get("our_product_id") if isinstance(card_line, dict) else note.our_product_id
+        )
+        vendor_product_id = (
+            card_line.get("vendor_product_id")
+            if isinstance(card_line, dict)
+            else (vendor_products.get(note.catalog_product_id) if note.catalog_product_id else None)
+        )
         summary = (
-            f"{note.our_product_id} × {note.quantity} = ₹{note.amount}"
+            f"{our_product_id} × {note.quantity} = ₹{note.amount}"
             if note.note_type == "item"
             else f"Value debit ₹{note.amount}"
         )
+        occurred = _occurred_at_from_display(view.get("display_date"), note.created_at)
         entries.append(
             (
-                note.created_at,
+                occurred,
                 EntityLedgerEntry(
                     id=f"debit-note-{note.id}",
                     event_type="debit_note",
                     title="Debit note",
                     summary=summary,
-                    occurred_at=note.created_at,
+                    occurred_at=occurred,
                     **_actor_fields(note.created_by_name, note.created_by_type, show_actor),
                     details={
                         "debit_note_id": note.id,
                         "receipt_id": note.receipt_id,
                         "bill_number": receipt.bill_number if receipt else None,
                         "note_type": note.note_type,
-                        "our_product_id": note.our_product_id,
-                        "vendor_product_id": vendor_products.get(note.catalog_product_id) if note.catalog_product_id else None,
+                        "our_product_id": our_product_id,
+                        "vendor_product_id": vendor_product_id,
                         "quantity": note.quantity,
                         "amount": format(note.amount, "f"),
                         "notes": note.notes,
+                        "party_name": view.get("party_name"),
                     },
                 ),
             )
@@ -281,15 +295,19 @@ def build_vendor_ledger(
         )
         reversed_ap_ids = {r[0] for r in rev_rows if r[0]}
     for ap in ap_entries:
+        view = present(db, "payment", ap)
+        if view.get("status") == "voided":
+            continue
+        occurred = _occurred_at_from_display(view.get("display_date"), ap.created_at)
         entries.append(
             (
-                ap.created_at,
+                occurred,
                 EntityLedgerEntry(
                     id=f"ap-payment-{ap.id}",
                     event_type="ap_payment",
                     title="AP payment",
                     summary=f"₹{abs(ap.amount)} — {ap.payment_ref or 'payment'}",
-                    occurred_at=ap.created_at,
+                    occurred_at=occurred,
                     **_actor_fields(ap.created_by_name, ap.created_by_type, show_actor),
                     details={
                         "ledger_entry_id": ap.id,
@@ -299,6 +317,7 @@ def build_vendor_ledger(
                         "comment": ap.payment_comment,
                         "payment_mode": ap.payment_mode,
                         "reversed": ap.id in reversed_ap_ids,
+                        "party_name": view.get("party_name"),
                     },
                 ),
             )
@@ -551,15 +570,19 @@ def build_customer_ledger(db: Session, customer_id: int, *, show_actor: bool = T
                 )
             )
         else:
+            view = present(db, "payment", ar)
+            if view.get("status") == "voided":
+                continue
+            occurred = _occurred_at_from_display(view.get("display_date"), ar.created_at)
             entries.append(
                 (
-                    ar.created_at,
+                    occurred,
                     EntityLedgerEntry(
                         id=f"ar-payment-{ar.id}",
                         event_type="ar_payment",
                         title="Payment collected",
                         summary=f"₹{abs(ar.amount)} — {ar.payment_ref or 'payment'}",
-                        occurred_at=ar.created_at,
+                        occurred_at=occurred,
                         **_actor_fields(ar.created_by_name, ar.created_by_type, show_actor),
                         details={
                             "ledger_entry_id": ar.id,
@@ -568,6 +591,7 @@ def build_customer_ledger(db: Session, customer_id: int, *, show_actor: bool = T
                             "comment": ar.payment_comment,
                             "reversed": ar.id in reversed_ar_ids,
                             "customer_id": customer_id,
+                            "party_name": view.get("party_name"),
                         },
                     ),
                 )

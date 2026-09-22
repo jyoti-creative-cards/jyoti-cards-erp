@@ -87,6 +87,8 @@ def present(db: Session, kind: str, row) -> dict:
         out["display_date"] = row.bill_date
         out["status"] = _status(row)
         out["party_name"] = out.get("party_name") or f"Customer #{row.customer_id}"
+        bn = out.get("bill_number")
+        out["display_name"] = f"Bill {bn}" if bn else f"Bill #{row.id}"
         return out
 
     if kind == "customer_order":
@@ -98,6 +100,7 @@ def present(db: Session, kind: str, row) -> dict:
         card["display_date"] = row.placed_at
         card["status"] = _status(row)
         card["party_name"] = card.get("party_name") or _customer_name(db, row)
+        card["display_name"] = f"Order #{row.id}"
         return card
 
     if kind == "vendor_bill":
@@ -109,6 +112,8 @@ def present(db: Session, kind: str, row) -> dict:
         card["display_date"] = getattr(row, "billed_at", None) or getattr(row, "received_at", None)
         card["status"] = _status(row)
         card["party_name"] = card.get("party_name") or _vendor_name(db, row.vendor_id)
+        bn = card.get("bill_number")
+        card["display_name"] = bn or f"Bill #{row.id}"
         return card
 
     if kind == "vendor_receipt":
@@ -117,6 +122,8 @@ def present(db: Session, kind: str, row) -> dict:
         card["display_date"] = getattr(row, "received_at", None)
         card["status"] = _status(row)
         card["party_name"] = card.get("party_name") or _vendor_name(db, row.vendor_id)
+        orn = card.get("order_receipt_number")
+        card["display_name"] = f"Receipt {orn}" if orn else f"Receive #{row.id}"
         return card
 
     if kind == "vendor_order":
@@ -130,6 +137,7 @@ def present(db: Session, kind: str, row) -> dict:
         card["display_date"] = row.placed_at
         card["status"] = _status(row)
         card["party_name"] = card.get("party_name") or _vendor_name_for_order(db, row)
+        card["display_name"] = f"Placement #{row.id}"
         return card
 
     if kind == "debit_note":
@@ -174,6 +182,7 @@ def _present_debit_note(db: Session, note: DebitNote, *, locked: bool) -> dict:
         "display_date": display_date,
         "status": _status(note),
         "party_name": _vendor_name(db, note.vendor_id),
+        "display_name": f"Debit note #{note.id}",
         "note_type": note.note_type,
         "direction": note.direction,
         "quantity": note.quantity,
@@ -197,6 +206,7 @@ def _present_expense(db: Session, expense: Expense, *, locked: bool) -> dict:
         "display_date": expense.expense_date,
         "status": _status(expense),
         "party_name": party_name,
+        "display_name": expense.category or f"Expense #{expense.id}",
         "category": expense.category,
         "amount": _money_str(expense.amount),
         "description": expense.description,
@@ -214,12 +224,14 @@ def _present_freight(db: Session, entry: FreightLedgerEntry, *, locked: bool) ->
         display_date = bill.bill_date if bill else None
     if display_date is None:
         display_date = getattr(entry, "business_date", None) or getattr(entry, "entry_date", None) or entry.created_at
+    party = party_name or f"Freight agent #{entry.freight_agent_id}"
     return {
         "kind": "freight",
         "locked": locked,
         "display_date": display_date,
         "status": _status(entry),
-        "party_name": party_name or f"Freight agent #{entry.freight_agent_id}",
+        "party_name": party,
+        "display_name": party,
         "entry_type": entry.entry_type,
         "amount": _money_str(entry.amount),
         "customer_bill_id": entry.customer_bill_id,
@@ -238,13 +250,15 @@ def _present_payment(db: Session, row, *, locked: bool) -> dict:
     display_date = getattr(row, "value_date", None)
     if display_date is None:
         display_date = getattr(row, "created_at", None)
+    payment_ref = getattr(row, "payment_ref", None)
     return {
         "kind": "payment",
         "locked": locked,
         "display_date": display_date,
         "status": _status(row),
         "party_name": party_name,
-        "payment_ref": getattr(row, "payment_ref", None),
+        "display_name": payment_ref or party_name or f"Payment #{getattr(row, 'id', '')}",
+        "payment_ref": payment_ref,
         "payment_mode": getattr(row, "payment_mode", None),
         "amount": _money_str(getattr(row, "amount", None)),
     }

@@ -183,6 +183,7 @@ def serialize_customer_bill(
         p.id: p.marking
         for p in (db.query(CatalogProduct).filter(CatalogProduct.id.in_(bline_cids)).all() if bline_cids else [])
     }
+    view = present(db, "customer_bill", bill)
     return CustomerBillOut(
         id=bill.id,
         bill_number=bill.bill_number,
@@ -199,9 +200,12 @@ def serialize_customer_bill(
         bill_series_id=bill.bill_series_id,
         bill_date=bill.bill_date,
         created_at=bill.created_at,
+        display_date=view.get("display_date") or bill.bill_date or bill.created_at,
+        display_name=view.get("display_name") or bill.bill_number,
+        status=view.get("status"),
         transport_mode=mode,
         transport_receipt_number=bill.transport_receipt_number,
-        freight_agent_name=agent_name,
+        freight_agent_name=view.get("freight_agent_name") or agent_name,
         cancelled_at=bill.cancelled_at,
         cancel_reason=bill.cancel_reason,
         deleted_at=bill.deleted_at,
@@ -582,13 +586,16 @@ def get_customer_order_detail(
     }
     pl_out: list[CustomerPlacementOut] = []
     for p, lines in placement_lines:
+        view = present(db, "customer_order", p)
         pl_out.append(
             CustomerPlacementOut(
                 id=p.id,
-                status=p.status,
+                status=view.get("status") or p.status,
                 customer_notes=p.customer_notes,
                 cancel_reason=p.cancel_reason,
                 placed_at=p.placed_at,
+                display_date=view.get("display_date") or p.placed_at,
+                display_name=view.get("display_name") or f"Order #{p.id}",
                 deleted_at=p.deleted_at,
                 deleted_reason=p.deleted_reason,
                 lines=[
@@ -1012,12 +1019,15 @@ def get_placement_detail(
         .order_by(CustomerOrderLine.id.asc())
         .all()
     )
+    view = present(db, "customer_order", placement)
     return CustomerPlacementOut(
         id=placement.id,
-        status=placement.status,
+        status=view.get("status") or placement.status,
         customer_notes=placement.customer_notes,
         cancel_reason=placement.cancel_reason,
         placed_at=placement.placed_at,
+        display_date=view.get("display_date") or placement.placed_at,
+        display_name=view.get("display_name") or f"Order #{placement.id}",
         deleted_at=placement.deleted_at,
         deleted_reason=placement.deleted_reason,
         lines=[

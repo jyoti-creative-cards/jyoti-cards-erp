@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -19,6 +19,10 @@ class ArLedgerEntryOut(BaseModel):
     payment_ref: Optional[str] = None
     payment_mode: Optional[str] = None
     payment_comment: Optional[str] = None
+    party_name: Optional[str] = None
+    display_date: Optional[Union[date, datetime]] = None
+    display_name: Optional[str] = None
+    status: Optional[str] = None
     value_date: Optional[str] = None
     reverses_entry_id: Optional[int] = None
     created_by_name: str

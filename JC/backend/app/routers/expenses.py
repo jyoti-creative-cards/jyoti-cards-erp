@@ -6,13 +6,14 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from app.db.session import get_db
 from app.deps import AuthContext, require_admin, require_permission
 from app.models.expense import Expense
 from app.services.activity import log_from_auth
 from app.services import response_cache
+from app.services.document_present import present
 
 router = APIRouter(prefix="/expenses", tags=["expenses"])
 
@@ -35,9 +36,14 @@ class ExpensePublic(BaseModel):
     freight_agent_id: Optional[int] = None
     addon_product_id: Optional[int] = None
     created_by_name: str
+    display_date: Optional[date] = None
+    display_name: Optional[str] = None
+    status: Optional[str] = None
 
     @classmethod
     def from_row(cls, row: Expense) -> "ExpensePublic":
+        db = object_session(row)
+        view = present(db, "expense", row) if db is not None else {}
         return cls(
             id=row.id,
             expense_date=row.expense_date,
@@ -48,6 +54,9 @@ class ExpensePublic(BaseModel):
             freight_agent_id=row.freight_agent_id,
             addon_product_id=row.addon_product_id,
             created_by_name=row.created_by_name,
+            display_date=view.get("display_date") or row.expense_date,
+            display_name=view.get("display_name") or row.category,
+            status=view.get("status") or "open",
         )
 
 

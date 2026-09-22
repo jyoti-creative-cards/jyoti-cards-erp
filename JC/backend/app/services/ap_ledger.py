@@ -614,8 +614,16 @@ def build_ap_ledger(db: Session, vendor_id: int, *, auth: Optional[AuthContext] 
                     "notes": dn.notes,
                 }
         payment_party = None
+        payment_view: dict = {}
         if e.entry_type == "payment":
-            payment_party = present(db, "payment", e).get("party_name")
+            payment_view = present(db, "payment", e)
+            payment_party = payment_view.get("party_name")
+        elif e.entry_type == "bill" and receipt and receipt.bill_status == "billed":
+            payment_view = present(db, "vendor_bill", receipt)
+        elif e.entry_type == "debit_note" and e.debit_note_id:
+            dn = notes_by_id.get(e.debit_note_id)
+            if dn:
+                payment_view = present(db, "debit_note", dn)
         out.append(
             {
                 "id": e.id,
@@ -631,6 +639,9 @@ def build_ap_ledger(db: Session, vendor_id: int, *, auth: Optional[AuthContext] 
                 "payment_comment": e.payment_comment,
                 "payment_mode": e.payment_mode,
                 "party_name": payment_party,
+                "display_date": payment_view.get("display_date") or e.value_date or e.created_at,
+                "display_name": payment_view.get("display_name") or e.payment_ref or e.description,
+                "status": payment_view.get("status") or "open",
                 "bill_number": receipt.bill_number if receipt else None,
                 "bill_amount": format(bill_amount, "f") if bill_amount is not None else None,
                 "debit_note_total": format(receipt_debit_total, "f") if receipt_debit_total is not None else None,
@@ -836,6 +847,9 @@ def build_ap_statement(db: Session, vendor_id: int, *, auth: Optional[AuthContex
                 "net_payable": e.get("net_payable") or e.get("signed_amount"),
                 "description": e["description"],
                 "created_at": e["created_at"],
+                "display_date": e.get("display_date"),
+                "display_name": e.get("display_name") or e.get("bill_number"),
+                "status": e.get("status"),
                 "created_by_name": e["created_by_name"],
                 "lines": (e.get("details") or {}).get("lines") or [],
                 "debit_notes": [],
@@ -899,8 +913,13 @@ def build_ap_statement(db: Session, vendor_id: int, *, auth: Optional[AuthContex
                 "payment_ref": e.get("payment_ref"),
                 "payment_comment": e.get("payment_comment"),
                 "payment_receipt_url": e.get("payment_receipt_url"),
+                "payment_mode": e.get("payment_mode"),
                 "description": e["description"],
                 "created_at": e["created_at"],
+                "value_date": e.get("value_date"),
+                "display_date": e.get("display_date"),
+                "display_name": e.get("display_name"),
+                "status": e.get("status"),
                 "created_by_name": e["created_by_name"],
                 "running_balance_after": e["running_balance"],
                 "reversed": e["id"] in reversed_ids,

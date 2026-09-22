@@ -1201,6 +1201,29 @@ def test_expense_edit_updates_row_in_place(db):
     assert rows[0].reference == "R2"
 
 
+def test_expense_list_returns_present_display_fields(db):
+    """Task 11: expense list DTOs expose present() display_date / display_name / status."""
+    from app.routers.expenses import ExpenseIn, create_expense, list_expenses
+
+    day = date.today() - timedelta(days=3)
+    create_expense(
+        ExpenseIn(
+            expense_date=day,
+            category="rent",
+            description="shop",
+            amount=Decimal("12.00"),
+            reference=None,
+        ),
+        db,
+        AUTH,
+    )
+    rows = list_expenses(db=db, auth=AUTH, from_date=None, to_date=None, category=None)
+    assert len(rows) == 1
+    assert rows[0].display_date == day
+    assert rows[0].display_name == "rent"
+    assert rows[0].status == "open"
+
+
 def test_portal_order_history_uses_bill_card_and_live_open(db, monkeypatch):
     from app.routers import shop as shop_router
 

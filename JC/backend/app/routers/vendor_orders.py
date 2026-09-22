@@ -359,11 +359,19 @@ def _build_detail(db: Session, order: VendorOrder, *, auth: AuthContext, open_on
                 dn_total = format(dn, "f")
                 net = format(ba + dn, "f")
             bill_file = presigned_url(receipt.bill_file_key) if receipt.bill_file_key else None
+        if receipt and order.bucket == "billed":
+            view = present(db, "vendor_bill", receipt)
+        elif receipt:
+            view = present(db, "vendor_receipt", receipt)
+        else:
+            view = present(db, "vendor_order", p)
         placement_summaries.append(
             PlacementSummary(
                 id=p.id,
-                status=p.status,
+                status=view.get("status") or p.status,
                 placed_at=p.placed_at,
+                display_date=view.get("display_date") or p.placed_at,
+                display_name=view.get("display_name"),
                 placed_by_name=p.placed_by_name,
                 placed_by_type=p.placed_by_type,
                 color_index=color_map[p.id],

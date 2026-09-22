@@ -69,6 +69,8 @@ class PlacementSummary(BaseModel):
     id: int
     status: str
     placed_at: datetime
+    display_date: Optional[datetime] = None
+    display_name: Optional[str] = None
     placed_by_name: str
     placed_by_type: str
     color_index: int

@@ -543,7 +543,7 @@ const Stock = (() => {
       const isBillEdit = editReceiptType === "vendor_bill";
       setStockWizardChrome(
         isRecvEdit ? "Edit Receive" : "Edit Vendor Bill",
-        `${receiptMeta.orderReceiptNumber ? `Receipt ${ctx.esc(receiptMeta.orderReceiptNumber)}` : `Receipt #${editReceiptId}`} — ${ctx.esc(placedOrder?.vendor_label || "")}`
+        `${ctx.esc(placedOrder?.display_name || (receiptMeta.orderReceiptNumber ? `Receipt ${receiptMeta.orderReceiptNumber}` : `Receipt #${editReceiptId}`))} — ${ctx.esc(placedOrder?.vendor_label || "")}`
       );
       const totals = calcReviewTotals(isBillEdit ? wizardLines.filter(l => (l.quantity_billed || 0) > 0) : billableLines());
       if (isRecvEdit) {
@@ -1050,7 +1050,7 @@ const Stock = (() => {
             <button type="button" class="vo-wiz-vendor-card" onclick="Stock.selectPendingReceipt(${r.receipt_id})">
               <span class="vo-wiz-vendor-letter">#${r.receipt_id}</span>
               <span class="vo-wiz-vendor-meta">
-                <strong>${ctx.esc(r.order_receipt_number || `Receipt #${r.receipt_id}`)}</strong>
+                <strong>${ctx.esc(r.display_name || r.order_receipt_number || `Receipt #${r.receipt_id}`)}</strong>
                 <span>${new Date(r.received_at).toLocaleDateString()} · ${r.line_count} line${r.line_count === 1 ? "" : "s"} · ${r.total_quantity} qty</span>
               </span>
               <span class="vo-wiz-vendor-meta" style="text-align:right;">
@@ -2027,8 +2027,9 @@ const Stock = (() => {
       entryType ? ctx.reviewRow("Type", entryType) : "",
       qtyDelta != null ? ctx.reviewRow("Quantity", (qtyDelta > 0 ? "+" : "") + qtyDelta) : "",
       balanceAfter != null ? ctx.reviewRow("Balance after", balanceAfter) : "",
-      ctx.reviewRow("Date", new Date(when).toLocaleString()),
+      ctx.reviewRow("Date", ctx.fmtDate(receipt?.display_date || when)),
       notes ? ctx.reviewRow("Notes", notes) : "",
+      receipt?.display_name ? ctx.reviewRow("Label", receipt.display_name) : "",
       receipt?.order_receipt_number ? ctx.reviewRow("Order receipt #", receipt.order_receipt_number) : "",
       receipt?.bill_number ? ctx.reviewRow("Bill number", receipt.bill_number) : "",
       receipt?.bill_amount ? ctx.reviewRow("Bill amount", fmtPrice(receipt.bill_amount)) : "",

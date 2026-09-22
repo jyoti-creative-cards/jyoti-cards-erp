@@ -1199,3 +1199,70 @@ def test_expense_edit_updates_row_in_place(db):
     assert rows[0].category == "travel"
     assert rows[0].description == "fixed"
     assert rows[0].reference == "R2"
+
+
+def test_portal_order_history_uses_bill_card_and_live_open(db, monkeypatch):
+    from app.routers import shop as shop_router
+
+    monkeypatch.setattr(shop_router, "presigned_url", lambda key: f"https://img/{key}")
+
+    customer, prod, _ = _setup(db)
+    prod.image_keys = ["old-key"]
+    db.flush()
+    old_code = prod.our_product_id
+
+    create_received_placement(
+        db,
+        customer_id=customer.id,
+        customer_name=customer.business_name,
+        lines=[{"catalog_product_id": prod.id, "quantity": 2}],
+    )
+    confirm_received_order(db, customer.id)
+    process_customer_bill(
+        db,
+        customer_id=customer.id,
+        customer_name=customer.business_name,
+        lines_in=[{"catalog_product_id": prod.id, "quantity_to_ship": 2}],
+        overall_discount_percent=None,
+        gst_enabled=False,
+        gst_rate_percent=Decimal("0"),
+        freight_agent_id=None,
+        freight_charges=None,
+        packaging_charges=None,
+        additional_charges=None,
+        bill_series_id=_bill_series(db).id,
+        narration=None,
+        actor_type="admin",
+        actor_id=1,
+        actor_name="Test",
+        transport_mode="self_pickup",
+    )
+    db.flush()
+
+    prod.our_product_id = "RENAMED"
+    prod.image_keys = ["new-key"]
+    db.flush()
+
+    create_received_placement(
+        db,
+        customer_id=customer.id,
+        customer_name=customer.business_name,
+        lines=[{"catalog_product_id": prod.id, "quantity": 1}],
+    )
+    db.flush()
+
+    history = shop_router.list_order_history(db=db, customer=customer)
+
+    billed_line = next(
+        ln for h in history for ln in h.lines if ln.quantity_shipped > 0
+    )
+    assert billed_line.our_product_id == old_code
+    assert billed_line.our_product_id != "RENAMED"
+    assert "new-key" not in billed_line.image_url
+    assert "old-key" in billed_line.image_url
+
+    open_line = next(
+        ln for h in history for ln in h.lines if ln.quantity_shipped == 0 and ln.quantity == 1
+    )
+    assert open_line.our_product_id == "RENAMED"
+    assert "new-key" in open_line.image_url

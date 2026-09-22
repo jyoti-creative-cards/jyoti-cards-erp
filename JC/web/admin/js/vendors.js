@@ -791,6 +791,10 @@ const Vendors = (() => {
       const id = editingId;
       closeEdit();
       App.closeDetail();
+      ctx.invalidateCache?.("/customer-orders");
+      ctx.invalidateCache?.("/stock");
+      ctx.invalidateCache?.("/catalog");
+      ctx.invalidateCache?.("/vendor-orders");
       await load();
       ctx.toast("Vendor updated", "success");
       openDetail(id);

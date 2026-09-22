@@ -22,6 +22,7 @@ from app.services.ledger import build_vendor_ledger
 from app.services.history import TRACKED_FIELDS, diff_summary, list_entity_history, record_entity_history, row_snapshot
 from app.services.soft_delete import apply_is_active
 from app.services.storage import rename_vendor_folder, update_image_keys_after_vendor_rename, vendor_folder_slug
+from app.services import response_cache
 
 router = APIRouter(prefix="/vendors", tags=["vendors"])
 
@@ -360,6 +361,9 @@ def update_vendor(vendor_id: int, body: VendorUpdate, db: Session = Depends(get_
     except IntegrityError:
         db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, detail="phone already registered") from None
+    response_cache.invalidate("catalog:")
+    response_cache.invalidate("stock:")
+    response_cache.invalidate("shop:")
     db.refresh(row)
     return _to_public(row, db)
 

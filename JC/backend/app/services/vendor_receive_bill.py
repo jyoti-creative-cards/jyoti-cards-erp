@@ -17,6 +17,7 @@ from app.services.ap_ledger import post_bill_entry
 from app.services.debit_notes import create_debit_note
 from app.services.document_present import freeze_card
 from app.services.open_lines import reduce_from_open
+from app.services import response_cache
 from app.services.stock_receipt import add_stock, get_open_order
 from app.services.vendor_billing_math import (
     amount_deviation_debit_note,
@@ -296,6 +297,10 @@ def bill_receipt(db: Session, auth: AuthContext, receipt_id: int, body: VendorBi
         entity_label=label, detail=f"billed {len(normalized)} line(s), total ₹{entered_total}",
     )
     db.commit()
+    response_cache.invalidate("stock:")
+    response_cache.invalidate("shop:")
+    response_cache.invalidate("catalog:")
+    response_cache.invalidate("ledger")
     return {
         "ok": True, "receipt_id": receipt.id, "vendor_id": receipt.vendor_id,
         "message": f"Billed {len(normalized)} product(s)", "document_url": None,

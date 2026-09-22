@@ -20,6 +20,7 @@ from app.services.catalog_addons import addon_snapshots_map, attach_addons_to_to
 from app.services.credit_limit import assert_credit_allows_bill, credit_status
 from app.services.customer_bill_math import assert_discount_xor, compute_bill_totals
 from app.services.document_present import freeze_card
+from app.services import response_cache
 from app.services.transport_mode import normalize_transport, stamp_transport_on_totals
 from app.services.customer_order_flow import (
     _get_or_create_open_line,
@@ -321,6 +322,10 @@ def process_customer_bill(
     _persist_totals_addons(db, bill)
     billed_order.updated_at = entered_at
     freeze_card(db, "customer_bill", bill)
+    response_cache.invalidate("stock:")
+    response_cache.invalidate("shop:")
+    response_cache.invalidate("catalog:")
+    response_cache.invalidate("ledger")
     return bill
 
 
@@ -1323,4 +1328,8 @@ def edit_customer_bill(
         amount=new_grand,
         description=f"Bill {bill.bill_number} (edited) — ₹{new_grand}",
     )
+    response_cache.invalidate("stock:")
+    response_cache.invalidate("shop:")
+    response_cache.invalidate("catalog:")
+    response_cache.invalidate("ledger")
     return bill

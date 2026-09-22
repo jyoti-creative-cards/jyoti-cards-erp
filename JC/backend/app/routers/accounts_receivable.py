@@ -19,6 +19,7 @@ from app.schemas.accounts_receivable import (
 )
 from app.services.activity import log_from_auth
 from app.services.biz_date import today_ist
+from app.services import response_cache
 from app.services.ar_ledger import (
     build_ar_ledger,
     customer_ar_totals,
@@ -279,6 +280,7 @@ def patch_ar_payment(
     )
     db.commit()
     db.refresh(entry)
+    response_cache.invalidate("ledger")
     return _ar_payment_out(db, entry.customer_id, entry.id)
 
 

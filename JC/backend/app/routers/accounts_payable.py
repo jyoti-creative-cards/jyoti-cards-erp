@@ -20,6 +20,7 @@ from app.schemas.accounts_payable import (
 )
 from app.services.activity import log_from_auth
 from app.services.biz_date import today_ist
+from app.services import response_cache
 from app.services.ap_ledger import (
     build_ap_ledger,
     build_ap_statement,
@@ -269,6 +270,7 @@ def patch_ap_payment(
     )
     db.commit()
     db.refresh(entry)
+    response_cache.invalidate("ledger")
     return _ap_payment_out(db, entry.vendor_id, entry.id, auth=auth)
 
 

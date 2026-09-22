@@ -1266,3 +1266,24 @@ def test_portal_order_history_uses_bill_card_and_live_open(db, monkeypatch):
     )
     assert open_line.our_product_id == "RENAMED"
     assert "new-key" in open_line.image_url
+
+
+def test_catalog_rename_invalidates_open_document_caches(db, monkeypatch):
+    from app.routers import catalog as catalog_router
+    from app.schemas.catalog import CatalogUpdate
+    from app.services import response_cache
+
+    _, prod, _ = _setup(db)
+    calls: list[str] = []
+    monkeypatch.setattr(response_cache, "invalidate", lambda prefix="": calls.append(prefix))
+
+    catalog_router.update_product(
+        prod.id,
+        CatalogUpdate(our_product_id="RENAMED-P1"),
+        db=db,
+        auth=AUTH,
+    )
+
+    assert "catalog:" in calls
+    assert "stock:" in calls
+    assert "shop:" in calls

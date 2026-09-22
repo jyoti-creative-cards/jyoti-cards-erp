@@ -12,6 +12,7 @@ from app.db.session import get_db
 from app.deps import AuthContext, require_admin, require_permission
 from app.models.expense import Expense
 from app.services.activity import log_from_auth
+from app.services import response_cache
 
 router = APIRouter(prefix="/expenses", tags=["expenses"])
 
@@ -127,6 +128,7 @@ def patch_expense(
     )
     db.commit()
     db.refresh(row)
+    response_cache.invalidate("ledger")
     return ExpensePublic.from_row(row)
 
 

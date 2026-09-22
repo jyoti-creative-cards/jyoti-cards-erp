@@ -803,6 +803,7 @@ def submit_process_bill(
     response_cache.invalidate("stock:")
     response_cache.invalidate("shop:")
     response_cache.invalidate("catalog:")
+    response_cache.invalidate("ledger")
     return {
         "ok": True,
         "bill_id": bill.id,
@@ -1251,6 +1252,7 @@ def update_bill_endpoint(
     response_cache.invalidate("stock:")
     response_cache.invalidate("shop:")
     response_cache.invalidate("catalog:")
+    response_cache.invalidate("ledger")
     return {
         "ok": True,
         "bill_id": updated.id,

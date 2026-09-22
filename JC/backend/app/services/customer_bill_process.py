@@ -325,7 +325,6 @@ def process_customer_bill(
     response_cache.invalidate("stock:")
     response_cache.invalidate("shop:")
     response_cache.invalidate("catalog:")
-    response_cache.invalidate("ledger")
     return bill
 
 
@@ -1331,5 +1330,4 @@ def edit_customer_bill(
     response_cache.invalidate("stock:")
     response_cache.invalidate("shop:")
     response_cache.invalidate("catalog:")
-    response_cache.invalidate("ledger")
     return bill

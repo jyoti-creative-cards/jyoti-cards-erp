@@ -737,6 +737,58 @@ def test_payment_edit_replaces_amount_in_place(db):
     assert rows[0].description == "Corrected payment"
 
 
+def test_ap_payment_patch_updates_same_row(db):
+    from app.models.accounts_payable import ApLedgerEntry
+    from app.routers.accounts_payable import patch_ap_payment, settle_vendor_ap
+    from app.schemas.accounts_payable import ApPaymentPatchIn, ApSettlementIn
+    from app.services.ap_ledger import post_bill_entry as post_ap_bill
+    from app.services.money import as_signed_decrease
+
+    vendor = _vendor(db)
+    post_ap_bill(
+        db,
+        vendor_id=vendor.id,
+        receipt_id=None,
+        amount=Decimal("100.00"),
+        description="seed due",
+        actor_type="admin",
+        actor_id=1,
+        actor_name="Test",
+    )
+    db.commit()
+    settle_vendor_ap(
+        vendor.id,
+        ApSettlementIn(amount=Decimal("100.00"), payment_ref="NEFT-1"),
+        db,
+        AUTH,
+    )
+    pay = (
+        db.query(ApLedgerEntry)
+        .filter(ApLedgerEntry.entry_type == "payment", ApLedgerEntry.deleted_at.is_(None))
+        .one()
+    )
+    entry_id = pay.id
+    new_day = date.today() - timedelta(days=2)
+    patch_ap_payment(
+        pay.id,
+        ApPaymentPatchIn(
+            amount=Decimal("40.00"),
+            value_date=new_day,
+            payment_mode="UPI",
+            description="Corrected payment",
+        ),
+        db,
+        AUTH,
+    )
+    rows = db.query(ApLedgerEntry).filter(ApLedgerEntry.entry_type == "payment").all()
+    assert len(rows) == 1
+    assert rows[0].id == entry_id
+    assert rows[0].amount == as_signed_decrease(Decimal("40.00"))
+    assert rows[0].value_date == new_day
+    assert rows[0].payment_mode == "UPI"
+    assert rows[0].description == "Corrected payment"
+
+
 def test_expense_edit_updates_row_in_place(db):
     from app.models.expense import Expense
     from app.routers.expenses import ExpenseIn, create_expense, patch_expense

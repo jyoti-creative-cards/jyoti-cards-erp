@@ -15,6 +15,7 @@ from app.schemas.stock import VendorBillIn, VendorReceiptCreate
 from app.services.activity import log_from_auth
 from app.services.ap_ledger import post_bill_entry
 from app.services.debit_notes import create_debit_note
+from app.services.document_present import freeze_card
 from app.services.open_lines import reduce_from_open
 from app.services.stock_receipt import add_stock, get_open_order
 from app.services.vendor_billing_math import (
@@ -287,6 +288,8 @@ def bill_receipt(db: Session, auth: AuthContext, receipt_id: int, body: VendorBi
             db, auth, vendor_id=receipt.vendor_id, receipt_id=receipt.id, body=dn_in, source="manual",
             created_at=now,
         )
+
+    freeze_card(db, "vendor_bill", receipt)
 
     log_from_auth(
         db, auth, action="bill_received", entity_type="stock_receipt", entity_id=receipt.id,

@@ -15,6 +15,8 @@ from app.models.customer_bill import CustomerBill, CustomerBillLine
 from app.models.customer_order import CustomerOrder, CustomerOrderLine, CustomerOrderPlacement
 from app.models.freight_agent import FreightAgent
 from app.models.route import Route
+from app.models.stock import StockReceipt, StockReceiptLine
+from app.models.vendor import Vendor
 from app.models.vendor_order import VendorOrder
 from app.services.catalog_addons import addon_snapshots_map
 
@@ -34,7 +36,7 @@ def is_locked(kind: str, row) -> bool:
         if getattr(row, "status", None) == "closed":
             return True
         return _vendor_order_bucket(row) == "closed"
-    if kind in {"customer_receipt", "debit_note", "expense", "payment", "freight", "customer_return"}:
+    if kind in {"vendor_receipt", "customer_receipt", "debit_note", "expense", "payment", "freight", "customer_return"}:
         return False
     raise ValueError(f"unsupported present kind: {kind}")
 
@@ -63,6 +65,12 @@ def freeze_card(db: Session, kind: str, row) -> dict:
         card = _stored_customer_order_card(db, row)
         row.card_json = card
         return card
+    if kind == "vendor_bill":
+        if not isinstance(row, StockReceipt):
+            raise TypeError("vendor_bill freeze_card expects StockReceipt")
+        card = _vendor_receipt_card(db, row, kind="vendor_bill", use_stored_line_ids=False)
+        row.card_json = card
+        return card
     raise ValueError(f"freeze_card not implemented for kind: {kind}")
 
 
@@ -87,6 +95,25 @@ def present(db: Session, kind: str, row) -> dict:
         card["display_date"] = row.placed_at
         card["status"] = _status(row)
         card["party_name"] = card.get("party_name") or _customer_name(db, row)
+        return card
+
+    if kind == "vendor_bill":
+        if locked and isinstance(getattr(row, "card_json", None), dict):
+            card = deepcopy(row.card_json)
+        else:
+            card = _vendor_receipt_card(db, row, kind="vendor_bill", use_stored_line_ids=False)
+        card["locked"] = locked
+        card["display_date"] = getattr(row, "billed_at", None) or getattr(row, "received_at", None)
+        card["status"] = _status(row)
+        card["party_name"] = card.get("party_name") or _vendor_name(db, row.vendor_id)
+        return card
+
+    if kind == "vendor_receipt":
+        card = _vendor_receipt_card(db, row, kind="vendor_receipt", use_stored_line_ids=False)
+        card["locked"] = locked
+        card["display_date"] = getattr(row, "received_at", None)
+        card["status"] = _status(row)
+        card["party_name"] = card.get("party_name") or _vendor_name(db, row.vendor_id)
         return card
 
     raise ValueError(f"present not implemented for kind: {kind}")
@@ -149,6 +176,25 @@ def _customer_order_card(db: Session, placement: CustomerOrderPlacement, *, use_
     }
 
 
+def _vendor_receipt_card(db: Session, receipt: StockReceipt, *, kind: str, use_stored_line_ids: bool) -> dict:
+    vendor = db.get(Vendor, receipt.vendor_id)
+    lines = (
+        db.query(StockReceiptLine)
+        .filter(StockReceiptLine.receipt_id == receipt.id)
+        .order_by(StockReceiptLine.id.asc())
+        .all()
+    )
+    return {
+        "kind": kind,
+        "bill_number": receipt.bill_number,
+        "order_receipt_number": receipt.order_receipt_number,
+        "party_name": vendor.business_name if vendor else f"Vendor #{receipt.vendor_id}",
+        "party": _vendor_party_card(db, vendor),
+        "received_by_name": receipt.received_by_name,
+        "lines": _vendor_line_cards(db, lines, use_stored_line_ids=use_stored_line_ids),
+    }
+
+
 def _customer_bill_lines_card(db: Session, bill: CustomerBill) -> list[dict]:
     lines = (
         db.query(CustomerBillLine)
@@ -197,6 +243,25 @@ def _line_cards_for_order(db: Session, lines: list[CustomerOrderLine], *, use_li
                 unit_price=prod.selling_price if use_live_unit_price and prod else line.unit_price,
                 addons=addons,
                 alternatives=alt_map.get(int(line.catalog_product_id)) or [],
+            )
+        )
+    return out
+
+
+def _vendor_line_cards(db: Session, lines: list[StockReceiptLine], *, use_stored_line_ids: bool) -> list[dict]:
+    product_ids = [int(line.catalog_product_id) for line in lines]
+    products = _products_by_id(db, product_ids)
+    out: list[dict] = []
+    for line in lines:
+        prod = products.get(int(line.catalog_product_id))
+        out.append(
+            _product_line_card(
+                prod if not use_stored_line_ids else None,
+                catalog_product_id=int(line.catalog_product_id),
+                fallback_our_product_id=line.our_product_id,
+                unit_price=None,
+                addons=[],
+                alternatives=[],
             )
         )
     return out
@@ -284,6 +349,22 @@ def _alternatives_map(db: Session, product_ids: list[int]) -> dict[int, list[dic
     return grouped
 
 
+def _vendor_party_card(db: Session, vendor: Vendor | None) -> dict | None:
+    if not vendor:
+        return None
+    city = db.get(City, vendor.city_id) if vendor.city_id else None
+    return {
+        "business_name": vendor.business_name,
+        "person_name": vendor.person_name,
+        "phone": vendor.phone,
+        "address": vendor.address,
+        "city_name": city.name if city else None,
+        "gst_number": vendor.gst_number,
+        "vendor_number": vendor.vendor_number,
+        "alias": vendor.alias,
+    }
+
+
 def _products_by_id(db: Session, product_ids: list[int]) -> dict[int, CatalogProduct]:
     unique_ids = sorted({int(pid) for pid in product_ids if pid})
     if not unique_ids:
@@ -328,6 +409,13 @@ def _customer_name_for_bill(db: Session, bill: CustomerBill) -> str:
     if customer:
         return customer.business_name
     return f"Customer #{bill.customer_id}"
+
+
+def _vendor_name(db: Session, vendor_id: int) -> str:
+    vendor = db.get(Vendor, vendor_id)
+    if vendor:
+        return vendor.business_name
+    return f"Vendor #{vendor_id}"
 
 
 def _customer_order_bucket(row) -> str | None:

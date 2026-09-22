@@ -8,6 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.db.session import Base
+from app.deps import AuthContext
 from app.models.addon_product import AddonProduct
 from app.models.bill_series import BillSeries
 from app.models.catalog_addon_link import CatalogAddonLink
@@ -15,11 +16,15 @@ from app.models.catalog_product import CatalogProduct
 from app.models.customer import Customer
 from app.models.customer_bill import CustomerBillLine
 from app.models.customer_order import CustomerOrder, CustomerOrderPlacement
-from app.models.stock import StockBalance
+from app.models.stock import StockBalance, StockReceipt
 from app.models.vendor import Vendor
+from app.schemas.stock import VendorBillIn, VendorReceiptLineIn, VendorReceiveCreate
 from app.services.customer_bill_process import close_bill_line, process_customer_bill
 from app.services.customer_order_flow import confirm_received_order, create_received_placement
 from app.services.document_present import is_locked, present
+from app.services.vendor_receive_bill import bill_receipt, receive_vendor_goods
+
+AUTH = AuthContext(actor_type="admin", actor_id=1, actor_name="Test Admin")
 
 
 @pytest.fixture()
@@ -58,6 +63,21 @@ def _setup(db, on_hand: int = 100) -> tuple[Customer, CatalogProduct, Vendor]:
     db.add(customer)
     db.flush()
     return customer, prod, vendor
+
+
+def _vendor_and_product(db) -> tuple[Vendor, CatalogProduct]:
+    vendor = _vendor(db)
+    prod = CatalogProduct(
+        our_product_id="VP-1",
+        vendor_id=vendor.id,
+        vendor_product_id="VV-1",
+        buying_price=Decimal("10"),
+    )
+    db.add(prod)
+    db.flush()
+    db.add(StockBalance(catalog_product_id=prod.id, quantity_on_hand=0))
+    db.flush()
+    return vendor, prod
 
 
 def _bill_series(db, name="T", prefix="T") -> BillSeries:
@@ -266,3 +286,42 @@ def test_is_locked_covers_document_kinds():
     assert is_locked("payment", SimpleNamespace()) is False
     assert is_locked("freight", SimpleNamespace()) is False
     assert is_locked("customer_return", SimpleNamespace()) is False
+
+
+def test_vendor_bill_locks_and_receipt_stays_live(db):
+    vendor, prod = _vendor_and_product(db)
+    body = VendorReceiveCreate(
+        vendor_id=vendor.id,
+        lines=[VendorReceiptLineIn(catalog_product_id=prod.id, quantity_received=5)],
+        order_receipt_number="R1",
+    )
+    receive_vendor_goods(db, AUTH, body, offline=True)
+    receipt = db.query(StockReceipt).one()
+
+    prod.our_product_id = "RENAMED"
+    db.flush()
+    live = present(db, "vendor_receipt", receipt)
+    assert live["locked"] is False
+    assert live["lines"][0]["our_product_id"] == "RENAMED"
+
+    prod.our_product_id = "AT-BILL"
+    db.flush()
+    bill_receipt(
+        db,
+        AUTH,
+        receipt.id,
+        VendorBillIn(
+            total_billed_amount=Decimal("50"),
+            lines=[{"catalog_product_id": prod.id, "quantity_billed": 5}],
+        ),
+    )
+    db.flush()
+
+    prod.our_product_id = "AFTER"
+    db.flush()
+    locked = present(db, "vendor_bill", receipt)
+    assert locked["locked"] is True
+    assert locked["lines"][0]["our_product_id"] == "AT-BILL"
+
+    again = present(db, "vendor_receipt", receipt)
+    assert again["lines"][0]["our_product_id"] == "AFTER"

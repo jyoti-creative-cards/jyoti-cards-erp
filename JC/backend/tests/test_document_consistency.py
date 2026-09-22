@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -193,6 +194,67 @@ def test_open_order_uses_live_addons_and_price(db):
     ]
     assert view["lines"][0]["unit_price"] == "25"
     assert view["lines"][0]["selling_price"] == "25"
+
+
+def test_backdated_received_order_uses_business_date_in_hub(db):
+    from app.routers.customer_orders import list_customer_orders
+
+    customer, prod, _ = _setup(db)
+    placement = create_received_placement(
+        db,
+        customer_id=customer.id,
+        customer_name=customer.business_name,
+        lines=[{"catalog_product_id": prod.id, "quantity": 1}],
+        placed_on=date.today() - timedelta(days=1),
+    )
+    db.commit()
+
+    today_rows = list_customer_orders(bucket="received", day="today", db=db, auth=AUTH)
+    assert not any(row.customer_id == customer.id for row in today_rows)
+
+    all_rows = list_customer_orders(bucket="received", day="all", db=db, auth=AUTH)
+    row = next(row for row in all_rows if row.customer_id == customer.id)
+    assert row.display_date == placement.placed_at
+    assert row.updated_at == placement.placed_at
+
+
+def test_backdated_vendor_order_uses_business_date_in_hub(db):
+    from app.models.vendor_order import VendorOrder, VendorOrderLine, VendorOrderPlacement
+    from app.routers.vendor_orders import list_vendor_orders
+
+    vendor, prod = _vendor_and_product(db)
+    placed_at = datetime.now(timezone.utc) - timedelta(days=2)
+    order = VendorOrder(vendor_id=vendor.id, bucket="placed", status="placed", is_open=True)
+    db.add(order)
+    db.flush()
+    placement = VendorOrderPlacement(
+        vendor_order_id=order.id,
+        status="placed",
+        placed_by_type="admin",
+        placed_by_name="Test",
+        placed_at=placed_at,
+    )
+    db.add(placement)
+    db.flush()
+    db.add(
+        VendorOrderLine(
+            placement_id=placement.id,
+            catalog_product_id=prod.id,
+            our_product_id=prod.our_product_id,
+            quantity=10,
+            quantity_remaining=10,
+            buying_price=Decimal("10"),
+        )
+    )
+    db.commit()
+
+    today_rows = list_vendor_orders(bucket="placed", view="default", day="today", db=db, auth=AUTH)
+    assert not any(row.vendor_id == vendor.id for row in today_rows)
+
+    all_rows = list_vendor_orders(bucket="placed", view="default", day="all", db=db, auth=AUTH)
+    row = next(row for row in all_rows if row.vendor_id == vendor.id)
+    assert row.display_date == placement.placed_at
+    assert row.updated_at == placement.placed_at
 
 
 def test_closed_customer_order_locks_by_parent_bucket(db):

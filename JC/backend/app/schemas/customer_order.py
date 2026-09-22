@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -66,7 +66,8 @@ class CustomerOrderSummary(BaseModel):
     bill_count: Optional[int] = None
     line_count: int
     total_quantity: int
-    updated_at: datetime
+    updated_at: Union[date, datetime]
+    display_date: Optional[Union[date, datetime]] = None
     sources: List[str] = []  # portal | phone — intake channels on open received placements
     party_number: Optional[int] = None
     marker_1: Optional[str] = None

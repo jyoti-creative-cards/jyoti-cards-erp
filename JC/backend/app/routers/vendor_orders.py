@@ -1,24 +1,13 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import List, Optional
-from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-
-_BIZ_TZ = ZoneInfo("Asia/Kolkata")
-
-
-def _local_day_bounds_utc(now: datetime | None = None) -> tuple[datetime, datetime]:
-    """Start/end of business 'today' in Asia/Kolkata, as UTC datetimes."""
-    local_now = (now or datetime.now(timezone.utc)).astimezone(_BIZ_TZ)
-    start_local = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
-    end_local = start_local + timedelta(days=1)
-    return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
 
 from app.db.session import get_db
 from app.deps import AuthContext, require_permission
@@ -52,6 +41,7 @@ from app.schemas.vendor_order import (
 )
 from app.services.activity import log_from_auth
 from app.services.ap_ledger import receipt_bill_amount, receipt_debit_note_total
+from app.services.biz_date import ist_day_bounds_utc, today_ist
 from app.services.cost_visibility import hide_cost
 from app.services.open_lines import add_to_open, cancel_open_qty, close_open_line, cancel_open_line, open_lines_for_vendor, reduce_from_open
 from app.services.order_summary import pending_qty_by_product, placed_qty_by_product, received_qty_by_product
@@ -60,6 +50,12 @@ from app.services.doc_gen import generate_vendor_placement_document
 from app.services.storage import presigned_url, presigned_urls, storage_configured
 
 router = APIRouter(prefix="/vendor-orders", tags=["vendor-orders"])
+
+
+def _sort_dt(value: datetime | None) -> datetime:
+    if value is None:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
 def _vendor_label(vendor: Vendor, city_name: Optional[str]) -> str:
@@ -159,10 +155,11 @@ def _to_bill_summaries(
                 line_count=int(line_count),
                 total_quantity=int(total_qty or 0),
                 updated_at=latest or datetime.now(timezone.utc),
+                display_date=latest or datetime.now(timezone.utc),
                 open_kind="to_bill",
             )
         )
-    out.sort(key=lambda x: x.updated_at or datetime.min.replace(tzinfo=timezone.utc))
+    out.sort(key=lambda x: _sort_dt(x.display_date), reverse=True)
     return out
 
 
@@ -215,9 +212,10 @@ def _billed_summaries(
                 line_count=int(line_count),
                 total_quantity=int(total_qty or 0),
                 updated_at=latest or datetime.now(timezone.utc),
+                display_date=latest or datetime.now(timezone.utc),
             )
         )
-    out.sort(key=lambda x: x.updated_at or datetime.min.replace(tzinfo=timezone.utc))
+    out.sort(key=lambda x: _sort_dt(x.display_date), reverse=True)
     return out
 
 
@@ -411,6 +409,7 @@ def _summary_from_order(db: Session, order: VendorOrder) -> VendorOrderSummary:
         line_count=len(line_stats),
         total_quantity=total_qty,
         updated_at=order.updated_at,
+        display_date=order.updated_at,
     )
 
 
@@ -467,6 +466,7 @@ def _summaries_from_orders(db: Session, orders: list[VendorOrder]) -> list[Vendo
                 line_count=len(line_stats),
                 total_quantity=total_qty,
                 updated_at=order.updated_at,
+                display_date=order.updated_at,
             )
         )
     return out
@@ -485,7 +485,7 @@ def list_vendor_orders(
 
     day_start = day_end = None
     if day == "today":
-        day_start, day_end = _local_day_bounds_utc()
+        day_start, day_end = ist_day_bounds_utc(today_ist())
 
     def _vids_with_placement_today(statuses: tuple[str, ...] | None = None) -> set[int]:
         assert day_start is not None and day_end is not None
@@ -597,9 +597,9 @@ def list_vendor_orders(
                 .first()
             )
             placement_count = 0
-            earliest = None
+            latest = None
             if placed_order:
-                pq = db.query(func.min(VendorOrderPlacement.placed_at)).filter(
+                pq = db.query(func.max(VendorOrderPlacement.placed_at)).filter(
                     VendorOrderPlacement.vendor_order_id == placed_order.id,
                     VendorOrderPlacement.status == "placed",
                 )
@@ -608,7 +608,7 @@ def list_vendor_orders(
                         VendorOrderPlacement.placed_at >= day_start,
                         VendorOrderPlacement.placed_at < day_end,
                     )
-                earliest = pq.scalar()
+                latest = pq.scalar()
                 placement_count = (
                     db.query(VendorOrderPlacement)
                     .filter(
@@ -631,14 +631,15 @@ def list_vendor_orders(
                     placement_count=placement_count,
                     line_count=int(line_count or 0),
                     total_quantity=int(total_qty or 0),
-                    updated_at=earliest or datetime.now(timezone.utc),
+                    updated_at=latest or datetime.now(timezone.utc),
+                    display_date=latest or datetime.now(timezone.utc),
                     open_kind="to_receive",
                 )
             )
 
         # Yet to bill (pending StockReceipts, one-to-one model)
         out.extend(_to_bill_summaries(db, only_vendor_ids=today_bill))
-        out.sort(key=lambda x: x.updated_at or datetime.min.replace(tzinfo=timezone.utc))
+        out.sort(key=lambda x: _sort_dt(x.display_date), reverse=True)
         return out
 
     if bucket == "closed":
@@ -673,6 +674,7 @@ def list_vendor_orders(
                     line_count=len(lines),
                     total_quantity=sum(l.quantity for l in lines),
                     updated_at=max((l.updated_at for l in lines), default=datetime.now(timezone.utc)),
+                    display_date=max((l.updated_at for l in lines), default=datetime.now(timezone.utc)),
                 )
             )
         billed_rows_q = (
@@ -699,6 +701,7 @@ def list_vendor_orders(
                         s.total_quantity += int(total_qty or 0)
                         if latest and (not s.updated_at or latest > s.updated_at):
                             s.updated_at = latest
+                            s.display_date = latest
                         break
                 continue
             ctx = billed_vctx.get(vid)
@@ -720,9 +723,10 @@ def list_vendor_orders(
                     line_count=int(receipt_count),
                     total_quantity=int(total_qty or 0),
                     updated_at=latest or datetime.now(timezone.utc),
+                    display_date=latest or datetime.now(timezone.utc),
                 )
             )
-        summaries.sort(key=lambda x: x.updated_at or datetime.min.replace(tzinfo=timezone.utc))
+        summaries.sort(key=lambda x: _sort_dt(x.display_date), reverse=True)
         return summaries
 
     if bucket == "received":
@@ -740,15 +744,37 @@ def list_vendor_orders(
     orders = (
         db.query(VendorOrder)
         .filter(VendorOrder.is_open.is_(True), VendorOrder.bucket == bucket)
-        .order_by(VendorOrder.updated_at.asc())
         .all()
     )
-    if day_start is not None:
-        orders = [
-            o for o in orders
-            if o.updated_at and day_start <= o.updated_at.astimezone(timezone.utc) < day_end
-        ]
-    summaries = _summaries_from_orders(db, orders)
+    if bucket == "placed":
+        placed_at_by_order = {
+            int(order_id): placed_at
+            for order_id, placed_at in (
+                db.query(VendorOrderPlacement.vendor_order_id, func.max(VendorOrderPlacement.placed_at))
+                .filter(VendorOrderPlacement.vendor_order_id.in_([o.id for o in orders]), VendorOrderPlacement.status == "placed")
+                .group_by(VendorOrderPlacement.vendor_order_id)
+                .all()
+            )
+        } if orders else {}
+        if day_start is not None:
+            orders = [
+                o for o in orders
+                if placed_at_by_order.get(o.id) and day_start <= placed_at_by_order[o.id].astimezone(timezone.utc) < day_end
+            ]
+        summaries = _summaries_from_orders(db, orders)
+        for summary in summaries:
+            display_date = placed_at_by_order.get(summary.id)
+            if display_date is not None:
+                summary.updated_at = display_date
+                summary.display_date = display_date
+        summaries.sort(key=lambda x: _sort_dt(x.display_date), reverse=True)
+    else:
+        if day_start is not None:
+            orders = [
+                o for o in orders
+                if o.updated_at and day_start <= o.updated_at.astimezone(timezone.utc) < day_end
+            ]
+        summaries = _summaries_from_orders(db, orders)
     if bucket == "placed" and view == "open":
         summaries = [s for s in summaries if s.total_quantity > 0]
     return summaries

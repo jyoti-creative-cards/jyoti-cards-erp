@@ -1,23 +1,12 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from typing import List, Optional
-from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
-
-_BIZ_TZ = ZoneInfo("Asia/Kolkata")
-
-
-def _local_day_bounds_utc(now: datetime | None = None) -> tuple[datetime, datetime]:
-    """Start/end of business 'today' in Asia/Kolkata, as UTC datetimes."""
-    local_now = (now or datetime.now(timezone.utc)).astimezone(_BIZ_TZ)
-    start_local = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
-    end_local = start_local + timedelta(days=1)
-    return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
 
 from app.db.session import get_db
 from app.deps import AuthContext, require_admin, require_permission
@@ -50,6 +39,7 @@ from decimal import Decimal
 
 from app.models.freight_agent import FreightAgent
 from app.services.activity import log_from_auth
+from app.services.biz_date import ist_day_bounds_utc, today_ist
 from app.services.customer_bill_math import assert_discount_xor, compute_bill_totals
 from app.services.transport_mode import normalize_transport, stamp_transport_on_totals
 from app.services.customer_bill_process import (
@@ -74,6 +64,15 @@ from app.schemas.stock import VoidIn
 from app.services.void_service import void_customer_bill, void_customer_placement
 
 router = APIRouter(prefix="/customer-orders", tags=["customer-orders"])
+
+
+def _sort_business_date(value: date | datetime | None) -> tuple[int, datetime]:
+    if isinstance(value, datetime):
+        ts = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return (1, ts.astimezone(timezone.utc))
+    if isinstance(value, date):
+        return (0, ist_day_bounds_utc(value)[0])
+    return (0, datetime.min.replace(tzinfo=timezone.utc))
 
 
 def _customer_name(db: Session, customer_id: int) -> str:
@@ -224,6 +223,7 @@ def _summary(db: Session, order: CustomerOrder) -> CustomerOrderSummary:
     sources = _sources_for_received(db, order.id) if order.bucket == "received" else []
     cust = db.get(Customer, order.customer_id)
     city = db.get(City, cust.city_id) if cust and cust.city_id else None
+    display_date = order.updated_at
     return CustomerOrderSummary(
         id=order.id,
         customer_id=order.customer_id,
@@ -232,7 +232,8 @@ def _summary(db: Session, order: CustomerOrder) -> CustomerOrderSummary:
         placement_count=placements,
         line_count=len(lines),
         total_quantity=total,
-        updated_at=order.updated_at,
+        updated_at=display_date,
+        display_date=display_date,
         sources=sources,
         party_number=getattr(cust, "party_number", None) if cust else None,
         marker_1=getattr(cust, "marker_1", None) if cust else None,
@@ -257,7 +258,7 @@ def list_customer_orders(
 
     day_start = day_end = None
     if day == "today":
-        day_start, day_end = _local_day_bounds_utc()
+        day_start, day_end = ist_day_bounds_utc(today_ist())
 
     if bucket == "open":
         rows = (
@@ -313,6 +314,7 @@ def list_customer_orders(
                     line_count=int(line_count or 0),
                     total_quantity=int(total_qty or 0),
                     updated_at=touched_by_cid.get(cid) or (received.updated_at if received else datetime.now(timezone.utc)),
+                    display_date=touched_by_cid.get(cid) or (received.updated_at if received else datetime.now(timezone.utc)),
                     sources=sources_by_order_id.get(received.id, []) if received else [],
                     party_number=getattr(cust_obj, "party_number", None) if cust_obj else None,
                     marker_1=getattr(cust_obj, "marker_1", None) if cust_obj else None,
@@ -320,43 +322,57 @@ def list_customer_orders(
                     payment_type=getattr(cust_obj, "payment_type", None) if cust_obj else None,
                 )
             )
-        out.sort(key=lambda x: x.updated_at or datetime.min.replace(tzinfo=timezone.utc))
+        out.sort(key=lambda x: _sort_business_date(x.display_date), reverse=True)
         return out
 
     if bucket == "received":
-        # "New" is day-scoped by when it was last touched (created or a placement
-        # appended) — day=today shows only today's activity so the queue doesn't get
-        # cluttered with old entries; day=all (Past) still shows full history, so an
-        # order placed yesterday and never confirmed is never actually lost — it just
-        # moves from "Today" to "Past" instead of disappearing from both.
-        q = db.query(CustomerOrder).filter(CustomerOrder.is_open.is_(True), CustomerOrder.bucket == "received")
-        if day_start is not None:
-            q = q.filter(CustomerOrder.updated_at >= day_start, CustomerOrder.updated_at < day_end)
-        orders = q.order_by(CustomerOrder.updated_at.desc()).all()
-        return [_summary(db, o) for o in orders]
-
-    if bucket == "billed":
-        # Always derive from active bills — cancelled bills/orders must not linger in Billed.
-        # Like "received"/"open" above: day=today shows only customers who got a NEW bill
-        # today (func.max(created_at), not min — a customer with an old unclosed bill who
-        # gets billed again today should surface under Today); day=all shows every
-        # customer with any unclosed bill, so nothing is ever lost — it just moves from
-        # Today to Past.
-        bill_rows = (
-            db.query(
-                CustomerBill.customer_id,
-                func.count(CustomerBill.id),
-                func.max(CustomerBill.created_at),
+        rows = (
+            db.query(CustomerOrder, func.max(CustomerOrderPlacement.placed_at))
+            .join(CustomerOrderPlacement, CustomerOrderPlacement.customer_order_id == CustomerOrder.id)
+            .filter(
+                CustomerOrder.is_open.is_(True),
+                CustomerOrder.bucket == "received",
+                CustomerOrderPlacement.deleted_at.is_(None),
             )
-            .filter(CustomerBill.cancelled_at.is_(None), CustomerBill.closed_at.is_(None))
-            .group_by(CustomerBill.customer_id)
+            .group_by(CustomerOrder.id)
             .all()
         )
         if day_start is not None:
-            bill_rows = [
-                r for r in bill_rows
-                if r[2] and day_start <= r[2].astimezone(timezone.utc) < day_end
+            rows = [
+                row for row in rows
+                if row[1] and day_start <= row[1].astimezone(timezone.utc) < day_end
             ]
+        rows.sort(key=lambda row: _sort_business_date(row[1]), reverse=True)
+        out = []
+        for order, display_date in rows:
+            summary = _summary(db, order)
+            summary.updated_at = display_date or order.updated_at
+            summary.display_date = display_date or order.updated_at
+            out.append(summary)
+        return out
+
+    if bucket == "billed":
+        bill_rows_by_customer: dict[int, dict[str, int | date]] = {}
+        for bill in (
+            db.query(CustomerBill)
+            .filter(CustomerBill.cancelled_at.is_(None), CustomerBill.closed_at.is_(None))
+            .all()
+        ):
+            if bill.bill_date is None:
+                continue
+            entry = bill_rows_by_customer.setdefault(
+                int(bill.customer_id),
+                {"count": 0, "display_date": bill.bill_date},
+            )
+            entry["count"] = int(entry["count"]) + 1
+            if bill.bill_date > entry["display_date"]:
+                entry["display_date"] = bill.bill_date
+        bill_rows = [
+            (cid, int(info["count"]), info["display_date"])
+            for cid, info in bill_rows_by_customer.items()
+            if day_start is None or info["display_date"] == today_ist()
+        ]
+        bill_rows.sort(key=lambda row: _sort_business_date(row[2]), reverse=True)
         # Batch the customer-name lookup — was one query PER customer (N+1), which
         # noticeably hung the UI once dozens of customers had unclosed bills sitting
         # here (this bucket is auto-opened right after every new bill save).
@@ -365,7 +381,7 @@ def list_customer_orders(
             c.id: c.business_name for c in db.query(Customer).filter(Customer.id.in_(bill_cids)).all()
         } if bill_cids else {}
         out = []
-        for cid, cnt, latest in bill_rows:
+        for cid, cnt, display_date in bill_rows:
             out.append(
                 CustomerOrderSummary(
                     id=0,
@@ -376,11 +392,11 @@ def list_customer_orders(
                     bill_count=int(cnt or 0),
                     line_count=0,
                     total_quantity=0,
-                    updated_at=latest or datetime.now(timezone.utc),
+                    updated_at=display_date or today_ist(),
+                    display_date=display_date or today_ist(),
                     sources=[],
                 )
             )
-        out.sort(key=lambda x: x.updated_at or datetime.min.replace(tzinfo=timezone.utc))
         return out
 
     orders = (

@@ -101,6 +101,7 @@ class VendorOrderSummary(BaseModel):
     line_count: int
     total_quantity: int
     updated_at: datetime
+    display_date: Optional[datetime] = None
     open_kind: Optional[str] = None  # to_receive | to_bill (Open tab)
 
 

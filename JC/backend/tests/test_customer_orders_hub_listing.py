@@ -10,7 +10,7 @@ day=today vs day=all scoping regression tests."""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 import pytest
@@ -97,6 +97,7 @@ def test_billed_bucket_batched_customer_names(db):
                     customer_id=cid, bill_number=f"B-{cid}-{i}",
                     subtotal_inclusive=Decimal("100"), grand_total=Decimal("100"),
                     created_by_type="admin", created_by_name="Test Admin",
+                    bill_date=date.today(),
                 )
             )
     db.commit()

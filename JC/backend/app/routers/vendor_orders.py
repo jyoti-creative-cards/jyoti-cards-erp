@@ -502,21 +502,6 @@ def list_vendor_orders(
             q = q.filter(VendorOrderPlacement.status.in_(statuses))
         return {int(r[0]) for r in q.distinct().all()}
 
-    def _vids_open_created_today() -> set[int]:
-        assert day_start is not None and day_end is not None
-        rows = (
-            db.query(VendorOpenLine.vendor_id)
-            .filter(
-                VendorOpenLine.status == "open",
-                VendorOpenLine.quantity > 0,
-                VendorOpenLine.created_at >= day_start,
-                VendorOpenLine.created_at < day_end,
-            )
-            .distinct()
-            .all()
-        )
-        return {int(r[0]) for r in rows}
-
     def _vids_closed_today() -> set[int]:
         assert day_start is not None and day_end is not None
         from_lines = {
@@ -568,7 +553,7 @@ def list_vendor_orders(
         today_receive = None
         today_bill = None
         if day_start is not None:
-            today_receive = _vids_with_placement_today(("placed",)) | _vids_open_created_today()
+            today_receive = _vids_with_placement_today(("placed",))
             today_bill = _vids_pending_bill_today()
 
         # Yet to receive (placed open lines)
@@ -599,16 +584,14 @@ def list_vendor_orders(
             placement_count = 0
             latest = None
             if placed_order:
-                pq = db.query(func.max(VendorOrderPlacement.placed_at)).filter(
-                    VendorOrderPlacement.vendor_order_id == placed_order.id,
-                    VendorOrderPlacement.status == "placed",
-                )
-                if day_start is not None:
-                    pq = pq.filter(
-                        VendorOrderPlacement.placed_at >= day_start,
-                        VendorOrderPlacement.placed_at < day_end,
+                latest = (
+                    db.query(func.max(VendorOrderPlacement.placed_at))
+                    .filter(
+                        VendorOrderPlacement.vendor_order_id == placed_order.id,
+                        VendorOrderPlacement.status == "placed",
                     )
-                latest = pq.scalar()
+                    .scalar()
+                )
                 placement_count = (
                     db.query(VendorOrderPlacement)
                     .filter(
@@ -617,6 +600,8 @@ def list_vendor_orders(
                     )
                     .count()
                 )
+            if latest is None:
+                continue
             out.append(
                 VendorOrderSummary(
                     id=placed_order.id if placed_order else 0,
@@ -631,8 +616,8 @@ def list_vendor_orders(
                     placement_count=placement_count,
                     line_count=int(line_count or 0),
                     total_quantity=int(total_qty or 0),
-                    updated_at=latest or datetime.now(timezone.utc),
-                    display_date=latest or datetime.now(timezone.utc),
+                    updated_at=latest,
+                    display_date=latest,
                     open_kind="to_receive",
                 )
             )

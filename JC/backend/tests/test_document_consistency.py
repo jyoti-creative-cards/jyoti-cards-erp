@@ -308,6 +308,57 @@ def test_backdated_vendor_order_uses_business_date_in_hub(db):
     assert row.updated_at == placement.placed_at
 
 
+def test_backdated_vendor_open_order_stays_out_of_today_bucket(db):
+    from app.models.vendor_open_line import VendorOpenLine
+    from app.models.vendor_order import VendorOrder, VendorOrderLine, VendorOrderPlacement
+    from app.routers.vendor_orders import list_vendor_orders
+
+    vendor, prod = _vendor_and_product(db)
+    placed_at = datetime.now(timezone.utc) - timedelta(days=1)
+    order = VendorOrder(vendor_id=vendor.id, bucket="placed", status="placed", is_open=True)
+    db.add(order)
+    db.flush()
+    placement = VendorOrderPlacement(
+        vendor_order_id=order.id,
+        status="placed",
+        placed_by_type="admin",
+        placed_by_name="Test",
+        placed_at=placed_at,
+    )
+    db.add(placement)
+    db.flush()
+    db.add(
+        VendorOrderLine(
+            placement_id=placement.id,
+            catalog_product_id=prod.id,
+            our_product_id=prod.our_product_id,
+            quantity=10,
+            quantity_remaining=10,
+            buying_price=Decimal("10"),
+        )
+    )
+    db.add(
+        VendorOpenLine(
+            vendor_id=vendor.id,
+            catalog_product_id=prod.id,
+            our_product_id=prod.our_product_id,
+            quantity=10,
+            buying_price=Decimal("10"),
+            status="open",
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+    db.commit()
+
+    today_rows = list_vendor_orders(bucket="open", view="default", day="today", db=db, auth=AUTH)
+    assert not any(row.vendor_id == vendor.id for row in today_rows)
+
+    all_rows = list_vendor_orders(bucket="open", view="default", day="all", db=db, auth=AUTH)
+    row = next(row for row in all_rows if row.vendor_id == vendor.id and row.open_kind == "to_receive")
+    assert row.display_date == placement.placed_at
+    assert row.updated_at == placement.placed_at
+
+
 def test_closed_customer_order_locks_by_parent_bucket(db):
     customer, prod, _ = _setup(db)
     placement = create_received_placement(

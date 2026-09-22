@@ -496,28 +496,48 @@ def build_customer_ledger(db: Session, customer_id: int, *, show_actor: bool = T
         for ln in db.query(CustomerReturnLine).filter(CustomerReturnLine.return_id.in_(return_ids)).all():
             rlines_by[ln.return_id].append(ln)
     for ret in returns:
+        view = present(db, "customer_return", ret)
+        if view.get("status") == "voided":
+            continue
         rlines = rlines_by.get(ret.id) or []
-        summary = ", ".join(f"{ln.our_product_id} × {ln.quantity_returned}" for ln in rlines[:8]) or "—"
+        card_by_cid = {
+            int(cl["catalog_product_id"]): cl
+            for cl in (view.get("lines") or [])
+            if isinstance(cl, dict) and cl.get("catalog_product_id") is not None
+        }
+        summary = (
+            ", ".join(
+                f"{(card_by_cid[ln.catalog_product_id]['our_product_id'] if ln.catalog_product_id in card_by_cid else ln.our_product_id)} × {ln.quantity_returned}"
+                for ln in rlines[:8]
+            )
+            or "—"
+        )
+        return_number = view.get("return_number") or ret.return_number
+        occurred = _occurred_at_from_display(view.get("display_date"), ret.created_at)
         entries.append(
             (
-                ret.created_at,
+                occurred,
                 EntityLedgerEntry(
                     id=f"co-return-{ret.id}",
                     event_type="customer_return",
-                    title=f"Return {ret.return_number}",
+                    title=f"Return {return_number}",
                     summary=f"Credit ₹{ret.credit_amount} · {summary}",
-                    occurred_at=ret.created_at,
+                    occurred_at=occurred,
                     **_actor_fields(ret.created_by_name, ret.created_by_type, show_actor),
                     details={
                         "return_id": ret.id,
-                        "return_number": ret.return_number,
+                        "return_number": return_number,
                         "credit_amount": format(ret.credit_amount, "f"),
                         "calculated_amount": format(ret.calculated_amount, "f"),
                         "customer_id": customer_id,
                         "notes": ret.notes,
                         "lines": [
                             {
-                                "our_product_id": ln.our_product_id,
+                                "our_product_id": (
+                                    card_by_cid[ln.catalog_product_id]["our_product_id"]
+                                    if ln.catalog_product_id in card_by_cid
+                                    else ln.our_product_id
+                                ),
                                 "quantity": ln.quantity_returned,
                                 "billed_amount": format(ln.line_calculated, "f"),
                             }

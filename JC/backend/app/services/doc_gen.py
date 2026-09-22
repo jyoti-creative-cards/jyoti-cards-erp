@@ -148,14 +148,12 @@ def generate_customer_bill_document(db: Session, bill_id: int) -> str | None:
         overall_percent=bill.discount_percent,
         line_percent_by_cid=line_pcts or None,
     )
-    from app.models.freight_agent import FreightAgent
     from app.services.transport_mode import stamp_transport_on_totals
 
+    view = present(db, "customer_bill", bill)
     mode = bill.transport_mode or ("bus" if bill.freight_agent_id else "self_pickup")
-    agent_name = None
-    if bill.freight_agent_id:
-        agent = db.get(FreightAgent, bill.freight_agent_id)
-        agent_name = agent.name if agent else None
+    # Locked bills use the frozen card agent name — never the live FreightAgent row.
+    agent_name = view.get("freight_agent_name")
     totals = stamp_transport_on_totals(
         totals,
         {
@@ -171,7 +169,6 @@ def generate_customer_bill_document(db: Session, bill_id: int) -> str | None:
     lines = totals.get("lines") or []
     if not lines:
         return None
-    view = present(db, "customer_bill", bill)
     card_by_cid = {
         int(cl["catalog_product_id"]): cl
         for cl in (view.get("lines") or [])

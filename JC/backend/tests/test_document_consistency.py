@@ -20,7 +20,7 @@ from app.models.customer_order import CustomerOrder, CustomerOrderPlacement
 from app.models.stock import StockBalance, StockReceipt, StockReceiptLine
 from app.models.vendor import Vendor
 from app.schemas.stock import VendorBillIn, VendorReceiptLineIn, VendorReceiveCreate
-from app.services.customer_bill_process import cancel_customer_bill, close_bill_line, process_customer_bill
+from app.services.customer_bill_process import cancel_customer_bill, close_bill_line, edit_customer_bill, process_customer_bill
 from app.services.customer_order_flow import confirm_received_order, create_received_placement
 from app.services.document_present import is_locked, present
 from app.services.ledger import build_customer_ledger
@@ -127,6 +127,74 @@ def test_saved_customer_bill_keeps_card_after_rename(db):
     assert after["lines"][0]["our_product_id"] == before["lines"][0]["our_product_id"]
     assert after["lines"][0]["our_product_id"] != "RENAMED"
     assert after["lines"][0].get("category") != "NEW-CAT"
+
+
+def test_edit_customer_bill_rewrites_card_from_live_product(db):
+    """Staff edit must freeze a fresh card; later renames must not touch it."""
+    customer, prod, _ = _setup(db)
+    create_received_placement(
+        db,
+        customer_id=customer.id,
+        customer_name=customer.business_name,
+        lines=[{"catalog_product_id": prod.id, "quantity": 3}],
+    )
+    confirm_received_order(db, customer.id)
+    bill = process_customer_bill(
+        db,
+        customer_id=customer.id,
+        customer_name=customer.business_name,
+        lines_in=[{"catalog_product_id": prod.id, "quantity_to_ship": 2}],
+        overall_discount_percent=None,
+        gst_enabled=False,
+        gst_rate_percent=Decimal("0"),
+        freight_agent_id=None,
+        freight_charges=None,
+        packaging_charges=None,
+        additional_charges=None,
+        bill_series_id=_bill_series(db).id,
+        narration=None,
+        actor_type="admin",
+        actor_id=1,
+        actor_name="Test",
+        transport_mode="self_pickup",
+    )
+    db.flush()
+    pre_edit = present(db, "customer_bill", bill)
+    assert pre_edit["lines"][0]["our_product_id"] == "P1"
+
+    prod.our_product_id = "EDITED-NAME"
+    db.flush()
+
+    edit_customer_bill(
+        db,
+        bill_id=bill.id,
+        lines_in=[{"catalog_product_id": prod.id, "quantity": 1}],
+        overall_discount_percent=None,
+        gst_enabled=False,
+        gst_rate_percent=Decimal("0"),
+        freight_agent_id=None,
+        freight_charges=None,
+        packaging_charges=None,
+        additional_charges=None,
+        narration="qty corrected",
+        actor_type="admin",
+        actor_id=1,
+        actor_name="Test",
+        transport_mode="self_pickup",
+    )
+    db.flush()
+    db.refresh(bill)
+
+    post_edit = present(db, "customer_bill", bill)
+    assert post_edit["locked"] is True
+    assert post_edit["lines"][0]["our_product_id"] == "EDITED-NAME"
+    assert post_edit["lines"][0]["our_product_id"] != pre_edit["lines"][0]["our_product_id"]
+
+    prod.our_product_id = "LATER-RENAME"
+    db.flush()
+    after_rename = present(db, "customer_bill", bill)
+    assert after_rename["lines"][0]["our_product_id"] == "EDITED-NAME"
+    assert after_rename["lines"][0]["our_product_id"] != "LATER-RENAME"
 
 
 def test_open_order_follows_rename(db):

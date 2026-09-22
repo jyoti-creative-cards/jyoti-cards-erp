@@ -117,7 +117,10 @@ def item_wise_purchases(db: Session, from_date: Optional[date], to_date: Optiona
     q = (
         db.query(StockReceiptLine, StockReceipt)
         .join(StockReceipt, StockReceipt.id == StockReceiptLine.receipt_id)
-        .filter(StockReceiptLine.quantity_billed > 0)
+        .filter(
+            StockReceiptLine.quantity_billed > 0,
+            StockReceipt.deleted_at.is_(None),
+        )
     )
     if start:
         q = q.filter(StockReceipt.created_at >= start)

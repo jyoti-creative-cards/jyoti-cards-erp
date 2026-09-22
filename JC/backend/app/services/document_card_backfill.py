@@ -236,8 +236,9 @@ def _product_history_at(
             try:
                 data = json.loads(row.snapshot_json)
             except (TypeError, json.JSONDecodeError):
-                return None
-            return data if isinstance(data, dict) else None
+                continue
+            if isinstance(data, dict):
+                return data
     return None
 
 

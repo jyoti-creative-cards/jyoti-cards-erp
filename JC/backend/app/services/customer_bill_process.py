@@ -1327,6 +1327,7 @@ def edit_customer_bill(
         amount=new_grand,
         description=f"Bill {bill.bill_number} (edited) — ₹{new_grand}",
     )
+    freeze_card(db, "customer_bill", bill)
     response_cache.invalidate("stock:")
     response_cache.invalidate("shop:")
     response_cache.invalidate("catalog:")

@@ -14,6 +14,7 @@ from app.models.city import City
 from app.models.customer import Customer
 from app.models.customer_bill import CustomerBill, CustomerBillLine
 from app.models.customer_order import CustomerOrder, CustomerOrderLine, CustomerOrderPlacement
+from app.models.customer_return import CustomerReturn, CustomerReturnLine
 from app.models.debit_note import DebitNote
 from app.models.expense import Expense
 from app.models.freight_agent import FreightAgent, FreightLedgerEntry
@@ -152,7 +153,58 @@ def present(db: Session, kind: str, row) -> dict:
     if kind == "payment":
         return _present_payment(db, row, locked=locked)
 
+    if kind == "customer_return":
+        return _present_customer_return(db, row, locked=locked)
+
     raise ValueError(f"present not implemented for kind: {kind}")
+
+
+def _present_customer_return(db: Session, ret: CustomerReturn, *, locked: bool) -> dict:
+    if not isinstance(ret, CustomerReturn):
+        raise TypeError("customer_return present expects CustomerReturn")
+    customer = db.get(Customer, ret.customer_id)
+    lines = (
+        db.query(CustomerReturnLine)
+        .filter(CustomerReturnLine.return_id == ret.id)
+        .order_by(CustomerReturnLine.id.asc())
+        .all()
+    )
+    product_ids = [int(ln.catalog_product_id) for ln in lines]
+    products = _products_by_id(db, product_ids)
+    out_lines: list[dict] = []
+    for ln in lines:
+        prod = products.get(int(ln.catalog_product_id))
+        card = _product_line_card(
+            prod,
+            catalog_product_id=int(ln.catalog_product_id),
+            fallback_our_product_id=ln.our_product_id,
+            unit_price=ln.sold_unit_price,
+            addons=[],
+            alternatives=[],
+        )
+        card["quantity_returned"] = int(ln.quantity_returned)
+        card["line_calculated"] = _money_str(ln.line_calculated)
+        card["bill_id"] = ln.bill_id
+        out_lines.append(card)
+    party = _customer_party_card(db, customer)
+    party_name = (party or {}).get("business_name") if party else None
+    if not party_name:
+        party_name = f"Customer #{ret.customer_id}"
+    return {
+        "kind": "customer_return",
+        "locked": locked,
+        "display_date": ret.created_at,
+        "status": _status(ret),
+        "party_name": party_name,
+        "party": party,
+        "display_name": f"Return {ret.return_number}",
+        "return_number": ret.return_number,
+        "created_by_name": ret.created_by_name,
+        "credit_amount": _money_str(ret.credit_amount),
+        "calculated_amount": _money_str(ret.calculated_amount),
+        "notes": ret.notes,
+        "lines": out_lines,
+    }
 
 
 def _present_debit_note(db: Session, note: DebitNote, *, locked: bool) -> dict:

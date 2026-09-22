@@ -8,7 +8,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.db.session import Base
+from app.models.addon_product import AddonProduct
 from app.models.bill_series import BillSeries
+from app.models.catalog_addon_link import CatalogAddonLink
 from app.models.catalog_product import CatalogProduct
 from app.models.customer import Customer
 from app.models.customer_bill import CustomerBillLine
@@ -119,6 +121,58 @@ def test_open_order_follows_rename(db):
     view = present(db, "customer_order", placement)
     assert view["locked"] is False
     assert view["lines"][0]["our_product_id"] == "RENAMED"
+
+
+def test_open_order_uses_live_addons_and_price(db):
+    customer, prod, vendor = _setup(db)
+    old_addon = AddonProduct(
+        our_product_id="A1",
+        vendor_id=vendor.id,
+        vendor_product_id="VA1",
+        name="Old Addon",
+        unit="pc",
+        buying_price=Decimal("1"),
+    )
+    new_addon = AddonProduct(
+        our_product_id="A2",
+        vendor_id=vendor.id,
+        vendor_product_id="VA2",
+        name="New Addon",
+        unit="box",
+        buying_price=Decimal("2"),
+    )
+    db.add_all([old_addon, new_addon])
+    db.flush()
+    db.add(CatalogAddonLink(catalog_product_id=prod.id, addon_product_id=old_addon.id, quantity=2))
+    db.flush()
+
+    placement = create_received_placement(
+        db,
+        customer_id=customer.id,
+        customer_name=customer.business_name,
+        lines=[{"catalog_product_id": prod.id, "quantity": 2}],
+    )
+    db.flush()
+
+    db.query(CatalogAddonLink).filter(CatalogAddonLink.catalog_product_id == prod.id).delete()
+    db.add(CatalogAddonLink(catalog_product_id=prod.id, addon_product_id=new_addon.id, quantity=5))
+    prod.selling_price = Decimal("25")
+    db.flush()
+
+    view = present(db, "customer_order", placement)
+    assert view["locked"] is False
+    assert view["lines"][0]["addons"] == [
+        {
+            "addon_product_id": new_addon.id,
+            "our_product_id": "A2",
+            "name": "New Addon",
+            "quantity": 5,
+            "unit": "box",
+            "image_url": None,
+        }
+    ]
+    assert view["lines"][0]["unit_price"] == "25"
+    assert view["lines"][0]["selling_price"] == "25"
 
 
 def test_closed_customer_order_locks_by_parent_bucket(db):

@@ -175,13 +175,13 @@ def _line_cards_for_order(db: Session, lines: list[CustomerOrderLine]) -> list[d
     out: list[dict] = []
     for line in lines:
         prod = products.get(int(line.catalog_product_id))
-        addons = line.addons_json if line.addons_json is not None else addon_map.get(int(line.catalog_product_id)) or []
+        addons = addon_map.get(int(line.catalog_product_id)) or []
         out.append(
             _product_line_card(
                 prod,
                 catalog_product_id=int(line.catalog_product_id),
                 fallback_our_product_id=line.our_product_id,
-                unit_price=line.unit_price,
+                unit_price=prod.selling_price if prod else line.unit_price,
                 addons=addons,
                 alternatives=alt_map.get(int(line.catalog_product_id)) or [],
             )

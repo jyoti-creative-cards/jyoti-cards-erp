@@ -17,7 +17,7 @@ from app.models.catalog_product import CatalogProduct
 from app.models.customer import Customer
 from app.models.customer_bill import CustomerBill, CustomerBillLine
 from app.models.customer_order import CustomerOrder, CustomerOrderPlacement
-from app.models.stock import StockBalance, StockReceipt
+from app.models.stock import StockBalance, StockReceipt, StockReceiptLine
 from app.models.vendor import Vendor
 from app.schemas.stock import VendorBillIn, VendorReceiptLineIn, VendorReceiveCreate
 from app.services.customer_bill_process import cancel_customer_bill, close_bill_line, process_customer_bill
@@ -1371,3 +1371,78 @@ def test_backfill_locked_cards_prefers_line_and_history_over_live_rename(db):
     assert view["lines"][0]["our_product_id"] != "RENAMED"
     assert view["lines"][0]["unit_price"] == format(old_price, "f")
     assert view["lines"][0]["image_keys"] == ["old-img"]
+
+
+def test_backfill_vendor_bill_keeps_stored_line_buying_price(db):
+    """Receipt line buying_price wins over catalog and EntityHistory on backfill."""
+    import json
+
+    from app.models.entity_history import EntityHistory
+    from app.services.document_card_backfill import backfill_locked_cards
+    from app.services.history import TRACKED_FIELDS, row_snapshot
+
+    vendor, prod = _vendor_and_product(db)
+    assert prod.buying_price == Decimal("10")
+
+    receive_vendor_goods(
+        db,
+        AUTH,
+        VendorReceiveCreate(
+            vendor_id=vendor.id,
+            lines=[VendorReceiptLineIn(catalog_product_id=prod.id, quantity_received=5)],
+            order_receipt_number="VB-PRICE-1",
+        ),
+        offline=True,
+    )
+    receipt = db.query(StockReceipt).one()
+    bill_receipt(
+        db,
+        AUTH,
+        receipt.id,
+        VendorBillIn(
+            total_billed_amount=Decimal("50"),
+            lines=[{"catalog_product_id": prod.id, "quantity_billed": 5}],
+        ),
+    )
+    db.flush()
+    db.refresh(receipt)
+
+    line = (
+        db.query(StockReceiptLine)
+        .filter(StockReceiptLine.receipt_id == receipt.id)
+        .order_by(StockReceiptLine.id.asc())
+        .first()
+    )
+    stored_price = Decimal("7.50")
+    line.buying_price = stored_price
+    receipt.card_json = None
+    db.flush()
+
+    # History / live catalog both disagree with the stored receipt-line price.
+    snap = row_snapshot(prod, TRACKED_FIELDS["catalog_product"])
+    snap["buying_price"] = "10"
+    biz = receipt.billed_at or receipt.received_at or receipt.created_at
+    db.add(
+        EntityHistory(
+            entity_type="catalog_product",
+            entity_id=prod.id,
+            snapshot_json=json.dumps(snap),
+            change_summary="seed catalog price for backfill",
+            valid_from=biz - timedelta(days=1) if biz else datetime.now(timezone.utc) - timedelta(days=1),
+            valid_to=None,
+        )
+    )
+    prod.buying_price = Decimal("99")
+    db.flush()
+
+    n = backfill_locked_cards(db)
+    assert n >= 1
+    db.refresh(receipt)
+    assert receipt.card_json is not None
+
+    view = present(db, "vendor_bill", receipt)
+    assert view["locked"] is True
+    assert view["lines"][0]["buying_price"] == format(stored_price, "f")
+    assert view["lines"][0]["unit_price"] == format(stored_price, "f")
+    assert view["lines"][0]["buying_price"] != "99"
+    assert view["lines"][0]["buying_price"] != "10"

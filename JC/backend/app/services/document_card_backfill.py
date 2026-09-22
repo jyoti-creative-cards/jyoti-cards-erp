@@ -122,7 +122,8 @@ def _backfill_vendor_bill(db: Session, receipt: StockReceipt) -> None:
         card.get("lines") or [],
         lines,
         business_date=biz,
-        unit_price_attr=None,
+        unit_price_attr="buying_price",
+        unit_price_card_key="unit_price",
     )
     _store_card(receipt, card)
 
@@ -177,10 +178,14 @@ def _apply_line_precedence(
     """Line columns win; EntityHistory fills images/add-ons; else keep live (from freeze)."""
     for card_line, db_line in zip(card_lines, db_lines):
         card_line["our_product_id"] = db_line.our_product_id
+        line_price = None
         if unit_price_attr:
-            price = getattr(db_line, unit_price_attr, None)
-            if price is not None:
-                card_line[unit_price_card_key] = _money_str(price)
+            line_price = getattr(db_line, unit_price_attr, None)
+            if line_price is not None:
+                card_line[unit_price_card_key] = _money_str(line_price)
+                # Keep the stored line price on its own card key too (e.g. buying_price).
+                if unit_price_attr != unit_price_card_key:
+                    card_line[unit_price_attr] = _money_str(line_price)
 
         pid = int(db_line.catalog_product_id)
         snap = _product_history_at(db, pid, business_date)
@@ -202,8 +207,12 @@ def _apply_line_precedence(
                 card_line[field] = snap.get(field)
 
         for money_field in ("buying_price", "selling_price"):
-            if money_field in snap:
-                card_line[money_field] = _money_str(snap.get(money_field))
+            if money_field not in snap:
+                continue
+            # Line already stores this price — do not replace it with history.
+            if unit_price_attr == money_field and line_price is not None:
+                continue
+            card_line[money_field] = _money_str(snap.get(money_field))
 
         # Add-on list is not on the catalog_product snapshot; leave freeze/live addons.
 

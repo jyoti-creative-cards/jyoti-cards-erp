@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
@@ -61,6 +61,7 @@ class FreightLedgerOut(BaseModel):
     has_document: bool = False
     created_by_name: str
     created_at: str
+    display_date: Optional[Union[date, datetime]] = None
 
 
 class FreightSettleIn(BaseModel):
@@ -272,6 +273,7 @@ def get_ledger(agent_id: int, db: Session = Depends(get_db), auth: AuthContext =
             has_document=bool(r.get("has_document")),
             created_by_name=r["created_by_name"],
             created_at=r["created_at"] or "",
+            display_date=r.get("display_date"),
         )
         for r in rows
     ]

@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from app.models.customer import Customer
 from app.models.customer_bill import CustomerBill
 from app.models.freight_agent import FreightAgent, FreightLedgerEntry
+from app.services.document_present import present
 from app.services.money import as_signed_decrease, as_signed_increase, mag
 from app.services.storage import presigned_url
 
@@ -181,6 +182,7 @@ def build_freight_ledger(db: Session, agent_id: int) -> list[dict]:
             party_label = cust.business_name or cust.person_name or cust.alias
         if bill:
             bill_number = bill.bill_number
+        view = present(db, "freight", e)
         out.append(
             {
                 "id": e.id,
@@ -199,6 +201,7 @@ def build_freight_ledger(db: Session, agent_id: int) -> list[dict]:
                 "has_document": bool(e.document_key),
                 "created_by_name": e.created_by_name,
                 "created_at": e.created_at.isoformat() if e.created_at else None,
+                "display_date": view.get("display_date") or e.created_at,
             }
         )
     out.reverse()

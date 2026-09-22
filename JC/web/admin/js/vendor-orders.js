@@ -344,7 +344,7 @@ const VendorOrders = (() => {
     </tr></thead><tbody>
       ${receipts.map(r => `<tr>
         <td><strong>${ctx.esc(r.order_receipt_number || `#${r.receipt_id}`)}</strong></td>
-        <td class="vo-muted">${r.received_at ? new Date(r.received_at).toLocaleDateString() : "—"}</td>
+        <td class="vo-muted">${(r.display_date || r.received_at) ? new Date(r.display_date || r.received_at).toLocaleDateString() : "—"}</td>
         <td>${r.line_count}</td>
         <td><strong>${r.total_quantity}</strong></td>
         <td>${r.expected_bill_amount != null ? fmtPrice(r.expected_bill_amount) : "—"}${r.expected_extra_cash ? ` <span class="vo-muted">+ ${fmtPrice(r.expected_extra_cash)}</span>` : ""}</td>

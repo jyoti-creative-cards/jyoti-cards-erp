@@ -591,6 +591,7 @@ def build_ap_ledger(db: Session, vendor_id: int, *, auth: Optional[AuthContext] 
                             "amount": format(dn.amount, "f"),
                             "payable_effect": format(debit_note_payable_effect(dn.amount, dn.note_type), "f"),
                             "notes": dn.notes,
+                            "display_date": dn_view.get("display_date"),
                         }
                     )
         if e.debit_note_id:
@@ -612,6 +613,7 @@ def build_ap_ledger(db: Session, vendor_id: int, *, auth: Optional[AuthContext] 
                     "amount": format(dn.amount, "f"),
                     "payable_effect": format(debit_note_payable_effect(dn.amount, dn.note_type), "f"),
                     "notes": dn.notes,
+                    "display_date": dn_view.get("display_date"),
                 }
         payment_party = None
         payment_view: dict = {}
@@ -891,6 +893,7 @@ def build_ap_statement(db: Session, vendor_id: int, *, auth: Optional[AuthContex
                             **dn,
                             "entry_id": e["id"],
                             "created_at": e["created_at"],
+                            "display_date": dn.get("display_date") or e.get("display_date"),
                             "description": e["description"],
                             "payable_effect": e["signed_amount"],
                         }
@@ -901,6 +904,7 @@ def build_ap_statement(db: Session, vendor_id: int, *, auth: Optional[AuthContex
                     **dn,
                     "entry_id": e["id"],
                     "created_at": e["created_at"],
+                    "display_date": dn.get("display_date") or e.get("display_date"),
                     "description": e["description"],
                     "payable_effect": e["signed_amount"],
                 })

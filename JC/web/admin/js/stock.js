@@ -1051,7 +1051,7 @@ const Stock = (() => {
               <span class="vo-wiz-vendor-letter">#${r.receipt_id}</span>
               <span class="vo-wiz-vendor-meta">
                 <strong>${ctx.esc(r.display_name || r.order_receipt_number || `Receipt #${r.receipt_id}`)}</strong>
-                <span>${new Date(r.received_at).toLocaleDateString()} · ${r.line_count} line${r.line_count === 1 ? "" : "s"} · ${r.total_quantity} qty</span>
+                <span>${new Date(r.display_date || r.received_at).toLocaleDateString()} · ${r.line_count} line${r.line_count === 1 ? "" : "s"} · ${r.total_quantity} qty</span>
               </span>
               <span class="vo-wiz-vendor-meta" style="text-align:right;">
                 <strong>${r.expected_bill_amount != null ? fmtPrice(r.expected_bill_amount) : "—"}</strong>
@@ -2027,7 +2027,8 @@ const Stock = (() => {
       entryType ? ctx.reviewRow("Type", entryType) : "",
       qtyDelta != null ? ctx.reviewRow("Quantity", (qtyDelta > 0 ? "+" : "") + qtyDelta) : "",
       balanceAfter != null ? ctx.reviewRow("Balance after", balanceAfter) : "",
-      ctx.reviewRow("Date", ctx.fmtDate(receipt?.display_date || when)),
+      // Movement rows keep event time; receipt screens prefer display_date.
+      ctx.reviewRow("Date", ctx.fmtDate(entryType === "receipt" ? (receipt?.display_date || when) : when)),
       notes ? ctx.reviewRow("Notes", notes) : "",
       receipt?.display_name ? ctx.reviewRow("Label", receipt.display_name) : "",
       receipt?.order_receipt_number ? ctx.reviewRow("Order receipt #", receipt.order_receipt_number) : "",

@@ -949,7 +949,7 @@ const Finance = (() => {
               const canVoidDn = ctx.isAdmin?.();
               return `<div class="fin-dn-row">
                 <div><strong>${title}</strong>${d.notes ? `<div class="fin-dn-note">${ctx.esc(d.notes)}</div>` : ""}
-                <div class="fin-muted">${d.created_at ? new Date(d.created_at).toLocaleString() : ""}</div>
+                <div class="fin-muted">${(d.display_date || d.created_at) ? new Date(d.display_date || d.created_at).toLocaleString() : ""}</div>
                 ${(canEditDn || canVoidDn) && d.id ? `<div style="margin-top:6px;">
                   ${canEditDn ? `<button type="button" class="btn btn-ghost btn-sm" onclick="Finance.editDebitNote(${b.receipt_id},${d.id})">Edit</button>` : ""}
                   ${canVoidDn ? `<button type="button" class="btn btn-ghost btn-sm" onclick="Finance.voidDebitNote(${b.receipt_id},${d.id})">Void</button>` : ""}
@@ -2267,7 +2267,7 @@ const Finance = (() => {
             if (r.has_document) links.push(`<button type="button" class="btn btn-secondary btn-sm" onclick="Finance.printFreightPayment(${r.id})">Print</button>`);
             if (r.payment_receipt_url) links.push(`<a href="${ctx.esc(r.payment_receipt_url)}" target="_blank" class="btn btn-secondary btn-sm">Receipt</a>`);
             return `<tr>
-              <td>${ctx.fmtDate?.(r.created_at) || r.created_at?.slice(0, 10) || "—"}</td>
+              <td>${ctx.fmtDate?.(r.display_date || r.created_at) || (r.display_date || r.created_at)?.slice?.(0, 10) || "—"}</td>
               <td><span class="badge ${badge}">${ctx.esc(r.entry_type)}</span></td>
               <td><strong>${ctx.esc(party)}</strong>${r.bill_number && isCharge ? `<div style="font-size:11px;color:var(--muted);">${ctx.esc(r.bill_number)}</div>` : ""}</td>
               <td>${fmtPrice(r.amount)}</td>

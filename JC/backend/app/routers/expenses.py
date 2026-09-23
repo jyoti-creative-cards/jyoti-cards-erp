@@ -6,12 +6,14 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from app.db.session import get_db
 from app.deps import AuthContext, require_admin, require_permission
 from app.models.expense import Expense
 from app.services.activity import log_from_auth
+from app.services import response_cache
+from app.services.document_present import present
 
 router = APIRouter(prefix="/expenses", tags=["expenses"])
 
@@ -34,9 +36,14 @@ class ExpensePublic(BaseModel):
     freight_agent_id: Optional[int] = None
     addon_product_id: Optional[int] = None
     created_by_name: str
+    display_date: Optional[date] = None
+    display_name: Optional[str] = None
+    status: Optional[str] = None
 
     @classmethod
     def from_row(cls, row: Expense) -> "ExpensePublic":
+        db = object_session(row)
+        view = present(db, "expense", row) if db is not None else {}
         return cls(
             id=row.id,
             expense_date=row.expense_date,
@@ -47,6 +54,9 @@ class ExpensePublic(BaseModel):
             freight_agent_id=row.freight_agent_id,
             addon_product_id=row.addon_product_id,
             created_by_name=row.created_by_name,
+            display_date=view.get("display_date") or row.expense_date,
+            display_name=view.get("display_name") or row.category,
+            status=view.get("status") or "open",
         )
 
 
@@ -98,6 +108,36 @@ def create_expense(
     )
     db.commit()
     db.refresh(row)
+    return ExpensePublic.from_row(row)
+
+
+@router.patch("/{expense_id}", response_model=ExpensePublic)
+def patch_expense(
+    expense_id: int,
+    body: ExpenseIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("finance.write")),
+):
+    row = db.get(Expense, expense_id)
+    if not row:
+        raise HTTPException(404, "expense not found")
+    row.expense_date = body.expense_date
+    row.category = body.category.lower().strip()
+    row.description = (body.description or "").strip() or None
+    row.amount = body.amount
+    row.reference = (body.reference or "").strip() or None
+    log_from_auth(
+        db,
+        auth,
+        action="edit",
+        entity_type="expense",
+        entity_id=row.id,
+        entity_label=row.category,
+        detail=f"₹{row.amount}",
+    )
+    db.commit()
+    db.refresh(row)
+    response_cache.invalidate("ledger")
     return ExpensePublic.from_row(row)
 
 

@@ -346,6 +346,7 @@ def get_return_detail(db: Session, return_id: int) -> dict:
 
 
 def generate_customer_return_document(db: Session, return_id: int) -> str | None:
+    from app.services.document_present import present
     from app.services.pdf_documents import render_customer_return_pdf
 
     ret = db.get(CustomerReturn, return_id)
@@ -354,14 +355,22 @@ def generate_customer_return_document(db: Session, return_id: int) -> str | None
     customer = db.get(Customer, ret.customer_id)
     if not customer:
         return None
-    city_name = None
-    if customer.city_id:
+
+    view = present(db, "customer_return", ret)
+    party = view.get("party") or {}
+    city_name = party.get("city_name")
+    if city_name is None and customer.city_id:
         city = db.get(City, customer.city_id)
         city_name = city.name if city else None
 
     lines = db.query(CustomerReturnLine).filter(CustomerReturnLine.return_id == return_id).all()
     bill_ids = {ln.bill_id for ln in lines}
     bills = {b.id: b for b in db.query(CustomerBill).filter(CustomerBill.id.in_(bill_ids)).all()} if bill_ids else {}
+    card_by_cid = {
+        int(cl["catalog_product_id"]): cl
+        for cl in (view.get("lines") or [])
+        if isinstance(cl, dict) and cl.get("catalog_product_id") is not None
+    }
 
     pdf_lines = []
     image_urls: dict[int, str | None] = {}
@@ -370,15 +379,16 @@ def generate_customer_return_document(db: Session, return_id: int) -> str | None
         bill = bills.get(ln.bill_id)
         if bill and bill.bill_number not in order_ids:
             order_ids.append(bill.bill_number)
-        prod = db.get(CatalogProduct, ln.catalog_product_id)
-        urls = presigned_urls(prod.image_keys or []) if prod else []
+        card = card_by_cid.get(ln.catalog_product_id) or {}
+        sku = card.get("our_product_id") or ln.our_product_id
+        urls = presigned_urls(card.get("image_keys") or [])
         image_urls[ln.catalog_product_id] = urls[0] if urls else None
         pdf_lines.append(
             {
                 "catalog_product_id": ln.catalog_product_id,
-                "our_product_id": ln.our_product_id,
+                "our_product_id": sku,
                 # Customer-facing doc — never show the vendor's own product code here.
-                "name": ln.our_product_id,
+                "name": sku,
                 "quantity": ln.quantity_returned,
                 "unit_price": format(_d(ln.sold_unit_price), "f"),
                 "line_total": format(_d(ln.line_calculated), "f"),
@@ -388,10 +398,10 @@ def generate_customer_return_document(db: Session, return_id: int) -> str | None
 
     pdf = render_customer_return_pdf(
         return_id=ret.id,
-        return_number=ret.return_number,
-        customer_name=customer.business_name,
-        customer_phone=customer.phone,
-        customer_address=customer.address,
+        return_number=view.get("return_number") or ret.return_number,
+        customer_name=view.get("party_name") or customer.business_name,
+        customer_phone=party.get("phone") if party else customer.phone,
+        customer_address=party.get("address") if party else customer.address,
         customer_city=city_name,
         lines=pdf_lines,
         image_urls=image_urls,
@@ -399,8 +409,8 @@ def generate_customer_return_document(db: Session, return_id: int) -> str | None
         credit_amount=format(_d(ret.credit_amount), "f"),
         notes=ret.notes,
         bill_numbers=order_ids,
-        created_by=ret.created_by_name,
-        created_at=ret.created_at or datetime.now(timezone.utc),
+        created_by=view.get("created_by_name") or ret.created_by_name,
+        created_at=view.get("display_date") or ret.created_at or datetime.now(timezone.utc),
     )
     if not storage_configured():
         return None

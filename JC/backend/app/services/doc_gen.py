@@ -16,9 +16,10 @@ from app.models.vendor import Vendor
 from app.models.vendor_order import VendorOrderLine, VendorOrderPlacement
 from app.deps import AuthContext
 from app.services.biz_date import bill_invoice_date
-from app.services.catalog_addons import addon_snapshots_for_product, attach_addons_to_totals
+from app.services.catalog_addons import attach_addons_to_totals
 from app.services.cost_visibility import HIDDEN as HIDDEN_COST, can_see_cost
 from app.services.customer_bill_pdf import render_customer_bill_pdf
+from app.services.document_present import present
 from app.services.pdf_documents import render_customer_order_pdf, render_vendor_placement_pdf, render_vendor_receipt_pdf
 from app.services.storage import (
     customer_bill_key,
@@ -30,6 +31,13 @@ from app.services.storage import (
     vendor_order_key,
     vendor_receipt_key,
 )
+
+
+def _card_or_live(view: dict, card_val, live_val):
+    """Locked docs stay on the card; unlocked may fall back to live master."""
+    if view.get("locked"):
+        return card_val
+    return card_val or live_val
 
 
 def _customer_ctx(db: Session, customer_id: int) -> tuple[Customer, str | None]:
@@ -47,32 +55,38 @@ def generate_customer_order_document(db: Session, placement_id: int) -> str | No
     placement = db.get(CustomerOrderPlacement, placement_id)
     if not placement:
         return None
-    lines = db.query(CustomerOrderLine).filter(CustomerOrderLine.placement_id == placement.id).all()
-    if not lines:
-        return None
     order = db.get(CustomerOrder, placement.customer_order_id)
     if not order:
         return None
+    view = present(db, "customer_order", placement)
+    view_lines = view.get("lines") or []
+    if not view_lines:
+        return None
+    qty_by_cid = {
+        int(ln.catalog_product_id): ln.quantity
+        for ln in db.query(CustomerOrderLine).filter(CustomerOrderLine.placement_id == placement.id).all()
+    }
     customer_id = order.customer_id
     customer, city_name = _customer_ctx(db, customer_id)
     slug = customer_folder_slug(customer.business_name)
     pdf_lines = []
     image_urls: dict[int, str | None] = {}
-    for ln in lines:
-        prod = db.get(CatalogProduct, ln.catalog_product_id)
-        addons = ln.addons_json or addon_snapshots_for_product(db, ln.catalog_product_id)
-        urls = presigned_urls(prod.image_keys or []) if prod else []
-        image_urls[ln.catalog_product_id] = urls[0] if urls else None
-        unit = float(ln.unit_price)
+    party = view.get("party") or {}
+    for cl in view_lines:
+        cid = int(cl["catalog_product_id"])
+        qty = qty_by_cid.get(cid, 0)
+        unit = Decimal(str(cl.get("unit_price") or "0"))
+        urls = presigned_urls(cl.get("image_keys") or [])
+        image_urls[cid] = urls[0] if urls else None
         pdf_lines.append({
-            "catalog_product_id": ln.catalog_product_id,
-            "our_product_id": ln.our_product_id,
+            "catalog_product_id": cid,
+            "our_product_id": cl.get("our_product_id"),
             # Customer-facing doc — never show the vendor's internal product code.
-            "name": ln.our_product_id,
-            "quantity": ln.quantity,
-            "unit_price": format(ln.unit_price, "f"),
-            "line_total": format(Decimal(str(unit)) * ln.quantity, "f"),
-            "addons": addons,
+            "name": cl.get("our_product_id"),
+            "quantity": qty,
+            "unit_price": format(unit, "f"),
+            "line_total": format(unit * qty, "f"),
+            "addons": cl.get("addons") or [],
         })
     from app.services.ar_ledger import customer_ar_totals
 
@@ -80,14 +94,14 @@ def generate_customer_order_document(db: Session, placement_id: int) -> str | No
     outstanding = float(ar["outstanding"])
     pdf = render_customer_order_pdf(
         placement_id=placement.id,
-        customer_name=customer.business_name,
-        customer_phone=customer.phone,
-        customer_address=customer.address,
-        customer_city=city_name,
+        customer_name=_card_or_live(view, view.get("party_name"), customer.business_name),
+        customer_phone=_card_or_live(view, party.get("phone"), customer.phone),
+        customer_address=_card_or_live(view, party.get("address"), customer.address),
+        customer_city=_card_or_live(view, party.get("city_name"), city_name),
         lines=pdf_lines,
         image_urls=image_urls,
         customer_notes=placement.customer_notes,
-        placed_at=placement.placed_at,
+        placed_at=view.get("display_date") or placement.placed_at,
         outstanding=outstanding,
     )
     key = customer_order_key(slug, placement.id)
@@ -134,14 +148,12 @@ def generate_customer_bill_document(db: Session, bill_id: int) -> str | None:
         overall_percent=bill.discount_percent,
         line_percent_by_cid=line_pcts or None,
     )
-    from app.models.freight_agent import FreightAgent
     from app.services.transport_mode import stamp_transport_on_totals
 
+    view = present(db, "customer_bill", bill)
     mode = bill.transport_mode or ("bus" if bill.freight_agent_id else "self_pickup")
-    agent_name = None
-    if bill.freight_agent_id:
-        agent = db.get(FreightAgent, bill.freight_agent_id)
-        agent_name = agent.name if agent else None
+    # Locked bills use the frozen card agent name — never the live FreightAgent row.
+    agent_name = view.get("freight_agent_name")
     totals = stamp_transport_on_totals(
         totals,
         {
@@ -157,14 +169,25 @@ def generate_customer_bill_document(db: Session, bill_id: int) -> str | None:
     lines = totals.get("lines") or []
     if not lines:
         return None
-    cids = [int(ln.get("catalog_product_id") or 0) for ln in lines if isinstance(ln, dict)]
+    card_by_cid = {
+        int(cl["catalog_product_id"]): cl
+        for cl in (view.get("lines") or [])
+        if isinstance(cl, dict) and cl.get("catalog_product_id") is not None
+    }
+    party = view.get("party") or {}
     image_urls: dict[int, str | None] = {}
-    for cid in cids:
+    for ln in lines:
+        if not isinstance(ln, dict):
+            continue
+        cid = int(ln.get("catalog_product_id") or 0)
         if not cid:
             continue
-        prod = db.get(CatalogProduct, cid)
-        urls = presigned_urls(prod.image_keys or []) if prod else []
+        card = card_by_cid.get(cid) or {}
+        urls = presigned_urls(card.get("image_keys") or [])
         image_urls[cid] = urls[0] if urls else None
+        if card.get("our_product_id"):
+            ln["our_product_id"] = card["our_product_id"]
+            ln["name"] = card["our_product_id"]
     totals = {**totals, "lines": [dict(ln) for ln in lines if isinstance(ln, dict)]}
     placement = db.get(CustomerOrderPlacement, bill.placement_id) if bill.placement_id else None
     from app.services.ar_ledger import customer_ar_totals
@@ -176,13 +199,13 @@ def generate_customer_bill_document(db: Session, bill_id: int) -> str | None:
     pdf = render_customer_bill_pdf(
         bill_id=bill.id,
         order_id=bill.placement_id or bill.id,
-        bill_number=bill.bill_number,
-        customer_name=customer.business_name,
-        customer_company=customer.person_name,
-        customer_phone=customer.phone,
-        customer_address=customer.address,
-        customer_city=city_name,
-        customer_party_number=customer.party_number,
+        bill_number=view.get("bill_number") or bill.bill_number,
+        customer_name=_card_or_live(view, view.get("party_name"), customer.business_name),
+        customer_company=_card_or_live(view, party.get("person_name"), customer.person_name),
+        customer_phone=_card_or_live(view, party.get("phone"), customer.phone),
+        customer_address=_card_or_live(view, party.get("address"), customer.address),
+        customer_city=_card_or_live(view, party.get("city_name"), city_name),
+        customer_party_number=_card_or_live(view, party.get("party_number"), customer.party_number),
         totals=totals,
         generated_at=bill.created_at or datetime.now(timezone.utc),
         invoice_date=bill_invoice_date(bill),
@@ -274,6 +297,14 @@ def generate_vendor_receipt_document(db: Session, receipt_id: int, auth: AuthCon
     vendor, city_name = _vendor_ctx(db, receipt.vendor_id)
     slug = vendor_folder_slug(vendor.business_name)
     rlines = db.query(StockReceiptLine).filter(StockReceiptLine.receipt_id == receipt.id).all()
+    kind = "vendor_bill" if receipt.bill_status == "billed" else "vendor_receipt"
+    view = present(db, kind, receipt)
+    card_by_cid = {
+        int(cl["catalog_product_id"]): cl
+        for cl in (view.get("lines") or [])
+        if isinstance(cl, dict) and cl.get("catalog_product_id") is not None
+    }
+    party = view.get("party") or {}
     # Total-only bills store line billed_amount as 0 — don't invent per-line amounts
     total_only = receipt.total_billed_amount is not None and all(
         (ln.billed_amount or Decimal("0")) == 0 for ln in rlines
@@ -284,9 +315,11 @@ def generate_vendor_receipt_document(db: Session, receipt_id: int, auth: AuthCon
     pdf_lines = []
     image_urls: dict[int, str | None] = {}
     for ln in rlines:
-        prod = db.get(CatalogProduct, ln.catalog_product_id)
-        urls = presigned_urls(prod.image_keys or []) if prod else []
+        card = card_by_cid.get(ln.catalog_product_id) or {}
+        urls = presigned_urls(card.get("image_keys") or [])
         image_urls[ln.catalog_product_id] = urls[0] if urls else None
+        our_id = card.get("our_product_id") or ln.our_product_id
+        vendor_pid = card.get("vendor_product_id") or ""
         if not show_cost:
             line_amt_str = HIDDEN_COST
         elif total_only:
@@ -297,9 +330,9 @@ def generate_vendor_receipt_document(db: Session, receipt_id: int, auth: AuthCon
             line_amt_str = format(Decimal(str(ln.buying_price)) * int(ln.quantity_billed or 0), "f")
         pdf_lines.append({
             "catalog_product_id": ln.catalog_product_id,
-            "our_product_id": ln.our_product_id,
-            "vendor_product_id": prod.vendor_product_id if prod else "",
-            "name": prod.vendor_product_id if prod else ln.our_product_id,
+            "our_product_id": our_id,
+            "vendor_product_id": vendor_pid,
+            "name": vendor_pid or our_id,
             "quantity_received": ln.quantity_received,
             "quantity_billed": ln.quantity_billed,
             "unit_price": format(ln.buying_price, "f") if show_cost else HIDDEN_COST,
@@ -358,20 +391,20 @@ def generate_vendor_receipt_document(db: Session, receipt_id: int, auth: AuthCon
             extra_cash = receipt.expected_extra_cash
     pdf = render_vendor_receipt_pdf(
         receipt_id=receipt.id,
-        vendor_name=vendor.business_name,
-        vendor_phone=vendor.phone,
-        vendor_address=vendor.address,
-        vendor_city=city_name,
-        vendor_gst=vendor.gst_number,
-        vendor_person=vendor.person_name,
-        bill_number=receipt.bill_number,
+        vendor_name=_card_or_live(view, view.get("party_name"), vendor.business_name),
+        vendor_phone=_card_or_live(view, party.get("phone"), vendor.phone),
+        vendor_address=_card_or_live(view, party.get("address"), vendor.address),
+        vendor_city=_card_or_live(view, party.get("city_name"), city_name),
+        vendor_gst=_card_or_live(view, party.get("gst_number"), vendor.gst_number),
+        vendor_person=_card_or_live(view, party.get("person_name"), vendor.person_name),
+        bill_number=view.get("bill_number") or receipt.bill_number,
         lines=pdf_lines,
         image_urls=image_urls,
         total_billed=format(total, "f") if total is not None else None,
         debit_notes=debit_notes_out,
         net_payable=format(net, "f"),
         received_by=receipt.received_by_name,
-        received_at=receipt.received_at,
+        received_at=view.get("display_date") or receipt.received_at,
         gst_included=gst_included,
         gst_rate_pct=gst_rate_pct,
         extra_cash=format(extra_cash, "f") if extra_cash is not None else None,

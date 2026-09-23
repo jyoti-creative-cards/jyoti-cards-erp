@@ -4,7 +4,7 @@ Regression test for the New+Confirmed duplicate-listing bug."""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -170,19 +170,14 @@ def test_old_untouched_new_order_moves_from_today_to_past_queue(db):
     staff can still find and confirm/bill it."""
     from datetime import timedelta
 
-    from app.models.customer_order import CustomerOrder
     from app.routers.customer_orders import list_customer_orders
 
     customer, prod = _setup(db)
     create_received_placement(
         db, customer_id=customer.id, customer_name=customer.business_name,
         lines=[{"catalog_product_id": prod.id, "quantity": 5}],
+        placed_on=date.today() - timedelta(days=2),
     )
-    db.commit()
-
-    # Simulate this order having sat untouched since two days ago.
-    order = db.query(CustomerOrder).filter(CustomerOrder.customer_id == customer.id).first()
-    order.updated_at = datetime.now(timezone.utc) - timedelta(days=2)
     db.commit()
 
     today_rows = list_customer_orders(bucket="received", day="today", db=db, auth=AUTH)
@@ -248,6 +243,7 @@ def test_fresh_bill_shows_in_today_billed_queue(db):
         customer_id=customer.id, bill_number="B-FRESH-1",
         subtotal_inclusive=Decimal("100"), grand_total=Decimal("100"),
         created_by_type="admin", created_by_name="Test Admin",
+        bill_date=date.today(),
     ))
     db.commit()
 
@@ -268,10 +264,9 @@ def test_old_bill_moves_from_today_to_past_billed_queue(db):
         customer_id=customer.id, bill_number="B-OLD-1",
         subtotal_inclusive=Decimal("100"), grand_total=Decimal("100"),
         created_by_type="admin", created_by_name="Test Admin",
+        bill_date=date.today() - timedelta(days=2),
     )
     db.add(bill)
-    db.flush()
-    bill.created_at = datetime.now(timezone.utc) - timedelta(days=2)
     db.commit()
 
     today_rows = list_customer_orders(bucket="billed", day="today", db=db, auth=AUTH)

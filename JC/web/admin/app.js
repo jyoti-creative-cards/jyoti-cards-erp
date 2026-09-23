@@ -1959,6 +1959,10 @@ const App = (() => {
       invalidateCache("/customers");
       invalidateCache("/accounts-receivable");
       invalidateCache("/stats");
+      invalidateCache("/customer-orders");
+      invalidateCache("/stock");
+      invalidateCache("/catalog");
+      invalidateCache("/vendor-orders");
       await loadCustomers();
       toast("Customer updated", "success");
       openCustomerDetail(id);

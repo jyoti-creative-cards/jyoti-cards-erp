@@ -50,6 +50,7 @@ from app.services.stock_receipt import get_open_order
 from app.services.doc_gen import generate_vendor_receipt_document
 from app.services import response_cache
 from app.services.history import list_entity_history
+from app.services.document_present import present
 from app.services.receipt_edit import update_vendor_receipt
 from app.services.vendor_receive_bill import (
     bill_receipt,
@@ -641,8 +642,14 @@ def get_pending_bill_receipts(
     receipts = []
     for r in rows:
         line_count, total_qty = line_stats.get(r.id, (0, 0))
+        view = present(db, "vendor_receipt", r)
         receipts.append(PendingBillReceipt(
-            receipt_id=r.id, order_receipt_number=r.order_receipt_number, received_at=r.received_at,
+            receipt_id=r.id,
+            order_receipt_number=r.order_receipt_number,
+            received_at=r.received_at,
+            display_date=view.get("display_date") or r.received_at,
+            display_name=view.get("display_name"),
+            status=view.get("status"),
             expected_bill_amount=format(r.expected_bill_amount, "f") if r.expected_bill_amount is not None else None,
             expected_extra_cash=format(r.expected_extra_cash, "f") if r.expected_extra_cash is not None else None,
             line_count=line_count, total_quantity=total_qty,
@@ -879,6 +886,8 @@ def get_receipt_detail(
             CatalogProduct.id.in_([ln.catalog_product_id for ln in rlines])
         ).all()
     } if rlines else {}
+    kind = "vendor_bill" if receipt.bill_status == "billed" else "vendor_receipt"
+    view = present(db, kind, receipt)
     data = {
         "id": receipt.id,
         "vendor_id": receipt.vendor_id,
@@ -888,6 +897,9 @@ def get_receipt_detail(
         "deleted_reason": receipt.deleted_reason,
         "bill_number": receipt.bill_number,
         "order_receipt_number": receipt.order_receipt_number,
+        "display_date": view.get("display_date") or receipt.received_at,
+        "display_name": view.get("display_name"),
+        "status": view.get("status"),
         "notes": receipt.notes,
         "bill_file_key": receipt.bill_file_key,
         "additional_charges": format(receipt.additional_charges, "f") if receipt.additional_charges is not None else None,

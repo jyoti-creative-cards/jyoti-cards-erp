@@ -69,6 +69,8 @@ class PlacementSummary(BaseModel):
     id: int
     status: str
     placed_at: datetime
+    display_date: Optional[datetime] = None
+    display_name: Optional[str] = None
     placed_by_name: str
     placed_by_type: str
     color_index: int
@@ -101,6 +103,7 @@ class VendorOrderSummary(BaseModel):
     line_count: int
     total_quantity: int
     updated_at: datetime
+    display_date: Optional[datetime] = None
     open_kind: Optional[str] = None  # to_receive | to_bill (Open tab)
 
 

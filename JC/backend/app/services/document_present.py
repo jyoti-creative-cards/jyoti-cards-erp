@@ -1,0 +1,690 @@
+from __future__ import annotations
+
+from copy import deepcopy
+from decimal import Decimal
+from typing import Any
+
+from sqlalchemy.orm import Session, object_session
+
+from app.models.addon_product import AddonProduct
+from app.models.bill_series import BillSeries
+from app.models.catalog_alternative import CatalogAlternative
+from app.models.catalog_product import CatalogProduct
+from app.models.city import City
+from app.models.customer import Customer
+from app.models.customer_bill import CustomerBill, CustomerBillLine
+from app.models.customer_order import CustomerOrder, CustomerOrderLine, CustomerOrderPlacement
+from app.models.customer_return import CustomerReturn, CustomerReturnLine
+from app.models.debit_note import DebitNote
+from app.models.expense import Expense
+from app.models.freight_agent import FreightAgent, FreightLedgerEntry
+from app.models.route import Route
+from app.models.stock import StockReceipt, StockReceiptLine
+from app.models.vendor import Vendor
+from app.models.vendor_order import VendorOrder, VendorOrderLine, VendorOrderPlacement
+from app.services.catalog_addons import addon_snapshots_map
+
+
+def is_locked(kind: str, row) -> bool:
+    if kind == "customer_bill":
+        return getattr(row, "id", None) is not None
+    if kind == "vendor_bill":
+        return getattr(row, "bill_status", None) == "billed"
+    if kind == "customer_order":
+        if getattr(row, "closed_at", None):
+            return True
+        if getattr(row, "status", None) == "closed":
+            return True
+        return _customer_order_bucket(row) == "closed"
+    if kind == "vendor_order":
+        if getattr(row, "status", None) == "closed":
+            return True
+        return _vendor_order_bucket(row) == "closed"
+    if kind in {"vendor_receipt", "customer_receipt", "debit_note", "expense", "payment", "freight", "customer_return"}:
+        return False
+    raise ValueError(f"unsupported present kind: {kind}")
+
+
+def freeze_card(db: Session, kind: str, row) -> dict:
+    if kind == "customer_bill":
+        if not isinstance(row, CustomerBill):
+            raise TypeError("customer_bill freeze_card expects CustomerBill")
+        customer = db.get(Customer, row.customer_id)
+        card = {
+            "kind": kind,
+            "bill_number": row.bill_number,
+            "party_name": customer.business_name if customer else f"Customer #{row.customer_id}",
+            "party": _customer_party_card(db, customer),
+            "bill_series_name": _bill_series_name(db, row.bill_series_id),
+            "bill_series_prefix": _bill_series_prefix(db, row.bill_series_id),
+            "freight_agent_name": _freight_agent_name(db, row.freight_agent_id),
+            "created_by_name": row.created_by_name,
+            "lines": _customer_bill_lines_card(db, row),
+        }
+        row.card_json = card
+        return card
+    if kind == "customer_order":
+        if not isinstance(row, CustomerOrderPlacement):
+            raise TypeError("customer_order freeze_card expects CustomerOrderPlacement")
+        card = _stored_customer_order_card(db, row)
+        row.card_json = card
+        return card
+    if kind == "vendor_bill":
+        if not isinstance(row, StockReceipt):
+            raise TypeError("vendor_bill freeze_card expects StockReceipt")
+        card = _vendor_receipt_card(db, row, kind="vendor_bill", use_stored_line_ids=False)
+        row.card_json = card
+        return card
+    raise ValueError(f"freeze_card not implemented for kind: {kind}")
+
+
+def present(db: Session, kind: str, row) -> dict:
+    locked = is_locked(kind, row)
+
+    if kind == "customer_bill":
+        card = _stored_or_live_customer_bill_card(db, row)
+        out = deepcopy(card)
+        out["locked"] = locked
+        out["display_date"] = row.bill_date
+        out["status"] = _status(row)
+        out["party_name"] = out.get("party_name") or f"Customer #{row.customer_id}"
+        bn = out.get("bill_number")
+        out["display_name"] = f"Bill {bn}" if bn else f"Bill #{row.id}"
+        return out
+
+    if kind == "customer_order":
+        if locked and isinstance(getattr(row, "card_json", None), dict):
+            card = deepcopy(row.card_json)
+        else:
+            card = _live_customer_order_card(db, row)
+        card["locked"] = locked
+        card["display_date"] = row.placed_at
+        card["status"] = _status(row)
+        card["party_name"] = card.get("party_name") or _customer_name(db, row)
+        card["display_name"] = f"Order #{row.id}"
+        return card
+
+    if kind == "vendor_bill":
+        if locked and isinstance(getattr(row, "card_json", None), dict):
+            card = deepcopy(row.card_json)
+        else:
+            card = _vendor_receipt_card(db, row, kind="vendor_bill", use_stored_line_ids=False)
+        card["locked"] = locked
+        card["display_date"] = getattr(row, "billed_at", None) or getattr(row, "received_at", None)
+        card["status"] = _status(row)
+        card["party_name"] = card.get("party_name") or _vendor_name(db, row.vendor_id)
+        bn = card.get("bill_number")
+        card["display_name"] = bn or f"Bill #{row.id}"
+        return card
+
+    if kind == "vendor_receipt":
+        card = _vendor_receipt_card(db, row, kind="vendor_receipt", use_stored_line_ids=False)
+        card["locked"] = locked
+        card["display_date"] = getattr(row, "received_at", None)
+        card["status"] = _status(row)
+        card["party_name"] = card.get("party_name") or _vendor_name(db, row.vendor_id)
+        orn = card.get("order_receipt_number")
+        card["display_name"] = f"Receipt {orn}" if orn else f"Receive #{row.id}"
+        return card
+
+    if kind == "vendor_order":
+        if not isinstance(row, VendorOrderPlacement):
+            raise TypeError("vendor_order present expects VendorOrderPlacement")
+        if locked and isinstance(getattr(row, "card_json", None), dict):
+            card = deepcopy(row.card_json)
+        else:
+            card = _live_vendor_order_card(db, row)
+        card["locked"] = locked
+        card["display_date"] = row.placed_at
+        card["status"] = _status(row)
+        card["party_name"] = card.get("party_name") or _vendor_name_for_order(db, row)
+        card["display_name"] = f"Placement #{row.id}"
+        return card
+
+    if kind == "debit_note":
+        return _present_debit_note(db, row, locked=locked)
+
+    if kind == "expense":
+        return _present_expense(db, row, locked=locked)
+
+    if kind == "freight":
+        return _present_freight(db, row, locked=locked)
+
+    if kind == "payment":
+        return _present_payment(db, row, locked=locked)
+
+    if kind == "customer_return":
+        return _present_customer_return(db, row, locked=locked)
+
+    raise ValueError(f"present not implemented for kind: {kind}")
+
+
+def _present_customer_return(db: Session, ret: CustomerReturn, *, locked: bool) -> dict:
+    if not isinstance(ret, CustomerReturn):
+        raise TypeError("customer_return present expects CustomerReturn")
+    customer = db.get(Customer, ret.customer_id)
+    lines = (
+        db.query(CustomerReturnLine)
+        .filter(CustomerReturnLine.return_id == ret.id)
+        .order_by(CustomerReturnLine.id.asc())
+        .all()
+    )
+    product_ids = [int(ln.catalog_product_id) for ln in lines]
+    products = _products_by_id(db, product_ids)
+    out_lines: list[dict] = []
+    for ln in lines:
+        prod = products.get(int(ln.catalog_product_id))
+        card = _product_line_card(
+            prod,
+            catalog_product_id=int(ln.catalog_product_id),
+            fallback_our_product_id=ln.our_product_id,
+            unit_price=ln.sold_unit_price,
+            addons=[],
+            alternatives=[],
+        )
+        card["quantity_returned"] = int(ln.quantity_returned)
+        card["line_calculated"] = _money_str(ln.line_calculated)
+        card["bill_id"] = ln.bill_id
+        out_lines.append(card)
+    party = _customer_party_card(db, customer)
+    party_name = (party or {}).get("business_name") if party else None
+    if not party_name:
+        party_name = f"Customer #{ret.customer_id}"
+    return {
+        "kind": "customer_return",
+        "locked": locked,
+        "display_date": ret.created_at,
+        "status": _status(ret),
+        "party_name": party_name,
+        "party": party,
+        "display_name": f"Return {ret.return_number}",
+        "return_number": ret.return_number,
+        "created_by_name": ret.created_by_name,
+        "credit_amount": _money_str(ret.credit_amount),
+        "calculated_amount": _money_str(ret.calculated_amount),
+        "notes": ret.notes,
+        "lines": out_lines,
+    }
+
+
+def _present_debit_note(db: Session, note: DebitNote, *, locked: bool) -> dict:
+    if not isinstance(note, DebitNote):
+        raise TypeError("debit_note present expects DebitNote")
+    receipt = db.get(StockReceipt, note.receipt_id) if note.receipt_id else None
+    if receipt is not None and getattr(receipt, "billed_at", None):
+        display_date = receipt.billed_at
+    else:
+        display_date = note.created_at
+    lines: list[dict] = []
+    if note.catalog_product_id and (note.note_type == "item" or note.our_product_id is not None):
+        prod = db.get(CatalogProduct, note.catalog_product_id)
+        lines.append(
+            _product_line_card(
+                prod,
+                catalog_product_id=int(note.catalog_product_id),
+                fallback_our_product_id=note.our_product_id or "",
+                unit_price=note.unit_price,
+                addons=[],
+                alternatives=[],
+            )
+        )
+    return {
+        "kind": "debit_note",
+        "locked": locked,
+        "display_date": display_date,
+        "status": _status(note),
+        "party_name": _vendor_name(db, note.vendor_id),
+        "display_name": f"Debit note #{note.id}",
+        "note_type": note.note_type,
+        "direction": note.direction,
+        "quantity": note.quantity,
+        "amount": _money_str(note.amount),
+        "lines": lines,
+    }
+
+
+def _present_expense(db: Session, expense: Expense, *, locked: bool) -> dict:
+    if not isinstance(expense, Expense):
+        raise TypeError("expense present expects Expense")
+    party_name = None
+    if expense.freight_agent_id:
+        party_name = _freight_agent_name(db, expense.freight_agent_id)
+    elif expense.addon_product_id:
+        addon = db.get(AddonProduct, expense.addon_product_id)
+        party_name = addon.our_product_id if addon else None
+    return {
+        "kind": "expense",
+        "locked": locked,
+        "display_date": expense.expense_date,
+        "status": _status(expense),
+        "party_name": party_name,
+        "display_name": expense.category or f"Expense #{expense.id}",
+        "category": expense.category,
+        "amount": _money_str(expense.amount),
+        "description": expense.description,
+        "reference": expense.reference,
+    }
+
+
+def _present_freight(db: Session, entry: FreightLedgerEntry, *, locked: bool) -> dict:
+    if not isinstance(entry, FreightLedgerEntry):
+        raise TypeError("freight present expects FreightLedgerEntry")
+    party_name = _freight_agent_name(db, entry.freight_agent_id)
+    display_date = None
+    if entry.customer_bill_id:
+        bill = db.get(CustomerBill, entry.customer_bill_id)
+        display_date = bill.bill_date if bill else None
+    if display_date is None:
+        display_date = getattr(entry, "business_date", None) or getattr(entry, "entry_date", None) or entry.created_at
+    party = party_name or f"Freight agent #{entry.freight_agent_id}"
+    return {
+        "kind": "freight",
+        "locked": locked,
+        "display_date": display_date,
+        "status": _status(entry),
+        "party_name": party,
+        "display_name": party,
+        "entry_type": entry.entry_type,
+        "amount": _money_str(entry.amount),
+        "customer_bill_id": entry.customer_bill_id,
+    }
+
+
+def _present_payment(db: Session, row, *, locked: bool) -> dict:
+    customer_id = getattr(row, "customer_id", None)
+    vendor_id = getattr(row, "vendor_id", None)
+    if customer_id is not None:
+        party_name = _customer_name_by_id(db, int(customer_id))
+    elif vendor_id is not None:
+        party_name = _vendor_name(db, int(vendor_id))
+    else:
+        party_name = None
+    display_date = getattr(row, "value_date", None)
+    if display_date is None:
+        display_date = getattr(row, "created_at", None)
+    payment_ref = getattr(row, "payment_ref", None)
+    return {
+        "kind": "payment",
+        "locked": locked,
+        "display_date": display_date,
+        "status": _status(row),
+        "party_name": party_name,
+        "display_name": payment_ref or party_name or f"Payment #{getattr(row, 'id', '')}",
+        "payment_ref": payment_ref,
+        "payment_mode": getattr(row, "payment_mode", None),
+        "amount": _money_str(getattr(row, "amount", None)),
+    }
+
+
+def _status(row) -> str:
+    if getattr(row, "deleted_at", None):
+        return "voided"
+    if getattr(row, "cancelled_at", None):
+        return "cancelled"
+    if getattr(row, "status", None) == "cancelled":
+        return "cancelled"
+    if (
+        getattr(row, "closed_at", None)
+        or getattr(row, "status", None) == "closed"
+        or _customer_order_bucket(row) == "closed"
+        or _vendor_order_bucket(row) == "closed"
+    ):
+        return "closed"
+    return "open"
+
+
+def _stored_or_live_customer_bill_card(db: Session, bill: CustomerBill) -> dict:
+    if isinstance(bill.card_json, dict):
+        return deepcopy(bill.card_json)
+    return {
+        "kind": "customer_bill",
+        "bill_number": bill.bill_number,
+        "party_name": _customer_name_for_bill(db, bill),
+        "party": _customer_party_card(db, db.get(Customer, bill.customer_id)),
+        "bill_series_name": _bill_series_name(db, bill.bill_series_id),
+        "bill_series_prefix": _bill_series_prefix(db, bill.bill_series_id),
+        "freight_agent_name": _freight_agent_name(db, bill.freight_agent_id),
+        "created_by_name": bill.created_by_name,
+        "lines": _customer_bill_lines_card(db, bill),
+    }
+
+
+def _live_customer_order_card(db: Session, placement: CustomerOrderPlacement) -> dict:
+    return _customer_order_card(db, placement, use_live_unit_price=True)
+
+
+def _stored_customer_order_card(db: Session, placement: CustomerOrderPlacement) -> dict:
+    return _customer_order_card(db, placement, use_live_unit_price=False)
+
+
+def _live_vendor_order_card(db: Session, placement: VendorOrderPlacement) -> dict:
+    vendor_name = _vendor_name_for_order(db, placement)
+    lines = (
+        db.query(VendorOrderLine)
+        .filter(VendorOrderLine.placement_id == placement.id)
+        .order_by(VendorOrderLine.id.asc())
+        .all()
+    )
+    product_ids = [int(ln.catalog_product_id) for ln in lines]
+    products = _products_by_id(db, product_ids)
+    out_lines: list[dict] = []
+    for ln in lines:
+        prod = products.get(int(ln.catalog_product_id))
+        out_lines.append(
+            _product_line_card(
+                prod,
+                catalog_product_id=int(ln.catalog_product_id),
+                fallback_our_product_id=ln.our_product_id,
+                unit_price=ln.buying_price,
+                addons=[],
+                alternatives=[],
+            )
+        )
+    return {
+        "kind": "vendor_order",
+        "party_name": vendor_name,
+        "lines": out_lines,
+    }
+
+
+def _vendor_name_for_order(db: Session, placement: VendorOrderPlacement) -> str:
+    order = db.get(VendorOrder, placement.vendor_order_id)
+    if order:
+        return _vendor_name(db, order.vendor_id)
+    return f"Vendor order #{placement.vendor_order_id}"
+
+
+def _customer_order_card(db: Session, placement: CustomerOrderPlacement, *, use_live_unit_price: bool) -> dict:
+    customer = _customer_for_order(db, placement)
+    lines = (
+        db.query(CustomerOrderLine)
+        .filter(CustomerOrderLine.placement_id == placement.id)
+        .order_by(CustomerOrderLine.id.asc())
+        .all()
+    )
+    return {
+        "kind": "customer_order",
+        "party_name": customer.business_name if customer else f"Customer #{placement.customer_order_id}",
+        "party": _customer_party_card(db, customer),
+        "lines": _line_cards_for_order(db, lines, use_live_unit_price=use_live_unit_price),
+    }
+
+
+def _vendor_receipt_card(db: Session, receipt: StockReceipt, *, kind: str, use_stored_line_ids: bool) -> dict:
+    vendor = db.get(Vendor, receipt.vendor_id)
+    lines = (
+        db.query(StockReceiptLine)
+        .filter(StockReceiptLine.receipt_id == receipt.id)
+        .order_by(StockReceiptLine.id.asc())
+        .all()
+    )
+    return {
+        "kind": kind,
+        "bill_number": receipt.bill_number,
+        "order_receipt_number": receipt.order_receipt_number,
+        "party_name": vendor.business_name if vendor else f"Vendor #{receipt.vendor_id}",
+        "party": _vendor_party_card(db, vendor),
+        "received_by_name": receipt.received_by_name,
+        "lines": _vendor_line_cards(db, lines, use_stored_line_ids=use_stored_line_ids),
+    }
+
+
+def _customer_bill_lines_card(db: Session, bill: CustomerBill) -> list[dict]:
+    lines = (
+        db.query(CustomerBillLine)
+        .filter(CustomerBillLine.bill_id == bill.id)
+        .order_by(CustomerBillLine.id.asc())
+        .all()
+    )
+    return _line_cards_for_bill(db, lines)
+
+
+def _line_cards_for_bill(db: Session, lines: list[CustomerBillLine]) -> list[dict]:
+    product_ids = [int(line.catalog_product_id) for line in lines]
+    products = _products_by_id(db, product_ids)
+    addon_map = addon_snapshots_map(db, product_ids, with_images=False) if product_ids else {}
+    alt_map = _alternatives_map(db, product_ids)
+    out: list[dict] = []
+    for line in lines:
+        prod = products.get(int(line.catalog_product_id))
+        out.append(
+            _product_line_card(
+                prod,
+                catalog_product_id=int(line.catalog_product_id),
+                fallback_our_product_id=line.our_product_id,
+                unit_price=line.unit_price,
+                addons=addon_map.get(int(line.catalog_product_id)) or [],
+                alternatives=alt_map.get(int(line.catalog_product_id)) or [],
+            )
+        )
+    return out
+
+
+def _line_cards_for_order(db: Session, lines: list[CustomerOrderLine], *, use_live_unit_price: bool) -> list[dict]:
+    product_ids = [int(line.catalog_product_id) for line in lines]
+    products = _products_by_id(db, product_ids)
+    addon_map = addon_snapshots_map(db, product_ids, with_images=False) if product_ids else {}
+    alt_map = _alternatives_map(db, product_ids)
+    out: list[dict] = []
+    for line in lines:
+        prod = products.get(int(line.catalog_product_id))
+        addons = addon_map.get(int(line.catalog_product_id)) or []
+        out.append(
+            _product_line_card(
+                prod,
+                catalog_product_id=int(line.catalog_product_id),
+                fallback_our_product_id=line.our_product_id,
+                unit_price=prod.selling_price if use_live_unit_price and prod else line.unit_price,
+                addons=addons,
+                alternatives=alt_map.get(int(line.catalog_product_id)) or [],
+            )
+        )
+    return out
+
+
+def _vendor_line_cards(db: Session, lines: list[StockReceiptLine], *, use_stored_line_ids: bool) -> list[dict]:
+    product_ids = [int(line.catalog_product_id) for line in lines]
+    products = _products_by_id(db, product_ids)
+    out: list[dict] = []
+    for line in lines:
+        prod = products.get(int(line.catalog_product_id))
+        out.append(
+            _product_line_card(
+                prod if not use_stored_line_ids else None,
+                catalog_product_id=int(line.catalog_product_id),
+                fallback_our_product_id=line.our_product_id,
+                unit_price=None,
+                addons=[],
+                alternatives=[],
+            )
+        )
+    return out
+
+
+def _product_line_card(
+    prod: CatalogProduct | None,
+    *,
+    catalog_product_id: int,
+    fallback_our_product_id: str,
+    unit_price: Decimal | None,
+    addons: list[dict],
+    alternatives: list[dict],
+) -> dict:
+    return {
+        "catalog_product_id": catalog_product_id,
+        "our_product_id": prod.our_product_id if prod else fallback_our_product_id,
+        "vendor_product_id": prod.vendor_product_id if prod else None,
+        "year_group": prod.year_group if prod else None,
+        "category": prod.category if prod else None,
+        "series": prod.series if prod else None,
+        "unit": prod.unit if prod else None,
+        "marking": prod.marking if prod else None,
+        "buying_price": _money_str(prod.buying_price if prod else None),
+        "selling_price": _money_str(prod.selling_price if prod else None),
+        "unit_price": _money_str(unit_price),
+        "image_keys": list(prod.image_keys or []) if prod else [],
+        "addons": deepcopy(addons),
+        "alternatives": deepcopy(alternatives),
+    }
+
+
+def _customer_party_card(db: Session, customer: Customer | None) -> dict | None:
+    if not customer:
+        return None
+    city = db.get(City, customer.city_id) if customer.city_id else None
+    route_id = customer.route_id or (city.route_id if city else None)
+    route = db.get(Route, route_id) if route_id else None
+    return {
+        "business_name": customer.business_name,
+        "person_name": customer.person_name,
+        "phone": customer.phone,
+        "address": customer.address,
+        "city_name": city.name if city else None,
+        "route_name": route.name if route else None,
+        "gst_number": customer.gst_number,
+        "party_number": customer.party_number,
+        "marker_1": customer.marker_1,
+        "marker_2": customer.marker_2,
+        "payment_type": customer.payment_type,
+    }
+
+
+def _alternatives_map(db: Session, product_ids: list[int]) -> dict[int, list[dict]]:
+    if not product_ids:
+        return {}
+    rows = (
+        db.query(CatalogAlternative)
+        .filter(CatalogAlternative.product_id.in_(product_ids))
+        .order_by(CatalogAlternative.id.asc())
+        .all()
+    )
+    alt_ids = [int(row.alternative_product_id) for row in rows]
+    alt_products = _products_by_id(db, alt_ids)
+    grouped: dict[int, list[dict]] = {pid: [] for pid in product_ids}
+    for row in rows:
+        alt = alt_products.get(int(row.alternative_product_id))
+        if not alt:
+            continue
+        grouped.setdefault(int(row.product_id), []).append(
+            {
+                "catalog_product_id": int(alt.id),
+                "our_product_id": alt.our_product_id,
+                "vendor_product_id": alt.vendor_product_id,
+                "year_group": alt.year_group,
+                "category": alt.category,
+                "series": alt.series,
+                "unit": alt.unit,
+                "marking": alt.marking,
+                "buying_price": _money_str(alt.buying_price),
+                "selling_price": _money_str(alt.selling_price),
+                "image_keys": list(alt.image_keys or []),
+            }
+        )
+    return grouped
+
+
+def _vendor_party_card(db: Session, vendor: Vendor | None) -> dict | None:
+    if not vendor:
+        return None
+    city = db.get(City, vendor.city_id) if vendor.city_id else None
+    return {
+        "business_name": vendor.business_name,
+        "person_name": vendor.person_name,
+        "phone": vendor.phone,
+        "address": vendor.address,
+        "city_name": city.name if city else None,
+        "gst_number": vendor.gst_number,
+        "vendor_number": vendor.vendor_number,
+        "alias": vendor.alias,
+    }
+
+
+def _products_by_id(db: Session, product_ids: list[int]) -> dict[int, CatalogProduct]:
+    unique_ids = sorted({int(pid) for pid in product_ids if pid})
+    if not unique_ids:
+        return {}
+    return {
+        int(prod.id): prod
+        for prod in db.query(CatalogProduct).filter(CatalogProduct.id.in_(unique_ids)).all()
+    }
+
+
+def _bill_series_name(db: Session, bill_series_id: int | None) -> str | None:
+    series = db.get(BillSeries, bill_series_id) if bill_series_id else None
+    return series.name if series else None
+
+
+def _bill_series_prefix(db: Session, bill_series_id: int | None) -> str | None:
+    series = db.get(BillSeries, bill_series_id) if bill_series_id else None
+    return series.prefix if series else None
+
+
+def _freight_agent_name(db: Session, freight_agent_id: int | None) -> str | None:
+    agent = db.get(FreightAgent, freight_agent_id) if freight_agent_id else None
+    return agent.name if agent else None
+
+
+def _customer_for_order(db: Session, placement: CustomerOrderPlacement) -> Customer | None:
+    order = db.get(CustomerOrder, placement.customer_order_id)
+    if not order:
+        return None
+    return db.get(Customer, order.customer_id)
+
+
+def _customer_name(db: Session, placement: CustomerOrderPlacement) -> str:
+    customer = _customer_for_order(db, placement)
+    if customer:
+        return customer.business_name
+    return f"Customer #{placement.customer_order_id}"
+
+
+def _customer_name_for_bill(db: Session, bill: CustomerBill) -> str:
+    return _customer_name_by_id(db, bill.customer_id)
+
+
+def _customer_name_by_id(db: Session, customer_id: int) -> str:
+    customer = db.get(Customer, customer_id)
+    if customer:
+        return customer.business_name
+    return f"Customer #{customer_id}"
+
+
+def _vendor_name(db: Session, vendor_id: int) -> str:
+    vendor = db.get(Vendor, vendor_id)
+    if vendor:
+        return vendor.business_name
+    return f"Vendor #{vendor_id}"
+
+
+def _customer_order_bucket(row) -> str | None:
+    order = getattr(row, "order", None)
+    if order is not None:
+        return getattr(order, "bucket", None)
+    customer_order_id = getattr(row, "customer_order_id", None)
+    session = object_session(row)
+    if session is not None and customer_order_id:
+        order = session.get(CustomerOrder, customer_order_id)
+        if order is not None:
+            return order.bucket
+    return getattr(row, "bucket", None)
+
+
+def _vendor_order_bucket(row) -> str | None:
+    order = getattr(row, "order", None)
+    if order is not None:
+        return getattr(order, "bucket", None)
+    vendor_order_id = getattr(row, "vendor_order_id", None)
+    session = object_session(row)
+    if session is not None and vendor_order_id:
+        order = session.get(VendorOrder, vendor_order_id)
+        if order is not None:
+            return order.bucket
+    return getattr(row, "bucket", None)
+
+
+def _money_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        return format(value, "f")
+    return format(Decimal(str(value)), "f")

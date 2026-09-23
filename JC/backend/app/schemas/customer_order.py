@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -34,6 +34,8 @@ class CustomerPlacementOut(BaseModel):
     customer_notes: Optional[str] = None
     cancel_reason: Optional[str] = None
     placed_at: datetime
+    display_date: Optional[datetime] = None
+    display_name: Optional[str] = None
     deleted_at: Optional[datetime] = None
     deleted_reason: Optional[str] = None
     lines: List[CustomerOrderLineOut] = []
@@ -66,7 +68,8 @@ class CustomerOrderSummary(BaseModel):
     bill_count: Optional[int] = None
     line_count: int
     total_quantity: int
-    updated_at: datetime
+    updated_at: Union[date, datetime]
+    display_date: Optional[Union[date, datetime]] = None
     sources: List[str] = []  # portal | phone — intake channels on open received placements
     party_number: Optional[int] = None
     marker_1: Optional[str] = None
@@ -108,6 +111,9 @@ class CustomerBillOut(BaseModel):
     bill_series_id: Optional[int] = None
     bill_date: Optional[date] = None
     created_at: datetime
+    display_date: Optional[Union[date, datetime]] = None
+    display_name: Optional[str] = None
+    status: Optional[str] = None
     transport_mode: Optional[str] = None
     transport_receipt_number: Optional[str] = None
     freight_agent_name: Optional[str] = None

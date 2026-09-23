@@ -344,7 +344,7 @@ const VendorOrders = (() => {
     </tr></thead><tbody>
       ${receipts.map(r => `<tr>
         <td><strong>${ctx.esc(r.order_receipt_number || `#${r.receipt_id}`)}</strong></td>
-        <td class="vo-muted">${r.received_at ? new Date(r.received_at).toLocaleDateString() : "—"}</td>
+        <td class="vo-muted">${ctx.fmtDate(r.display_date || r.value_date || r.created_at) || "—"}</td>
         <td>${r.line_count}</td>
         <td><strong>${r.total_quantity}</strong></td>
         <td>${r.expected_bill_amount != null ? fmtPrice(r.expected_bill_amount) : "—"}${r.expected_extra_cash ? ` <span class="vo-muted">+ ${fmtPrice(r.expected_extra_cash)}</span>` : ""}</td>
@@ -409,7 +409,7 @@ const VendorOrders = (() => {
             ${hubChevron(pOpen)}
             ${placementBadge(p.color_index)}
             <div>
-              <div class="vo-hub-title" style="font-size:14px;">Placement · ${new Date(p.placed_at).toLocaleString()}</div>
+              <div class="vo-hub-title" style="font-size:14px;">${ctx.esc(p.display_name || `Placement #${p.id}`)} · ${ctx.fmtDate(p.display_date)}</div>
               <div class="vo-hub-meta">${p.line_count} lines · ${p.total_quantity || "—"} qty${cancelled ? " · cancelled" : ""}</div>
               ${cancelled ? noteChip(p.cancel_reason, "cancel") : ""}
             </div>
@@ -480,8 +480,8 @@ const VendorOrders = (() => {
           <div class="vo-hub-main">
             ${hubChevron(pOpen)}
             <div>
-              <div class="vo-hub-title" style="font-size:14px;">${ctx.esc(p.bill_number || `Bill #${p.id}`)}${closed ? ` <span class="vo-pill-muted">Closed</span>` : ""}</div>
-              <div class="vo-hub-meta">${p.line_count} lines · ${new Date(p.placed_at).toLocaleString()}
+              <div class="vo-hub-title" style="font-size:14px;">${ctx.esc(p.display_name || p.bill_number || `Bill #${p.id}`)}${closed ? ` <span class="vo-pill-muted">Closed</span>` : ""}</div>
+              <div class="vo-hub-meta">${p.line_count} lines · ${ctx.fmtDate(p.display_date)}
                 ${p.net_payable != null ? ` · Net ${fmtPrice(p.net_payable)}` : ""}</div>
               ${closed && p.close_reason ? noteChip(p.close_reason, "close") : ""}
             </div>
@@ -561,7 +561,7 @@ const VendorOrders = (() => {
           <div class="vo-hub-main">
             ${hubChevron(pOpen)}
             <div>
-              <div class="vo-hub-title" style="font-size:14px;">${new Date(p.placed_at).toLocaleString()}</div>
+              <div class="vo-hub-title" style="font-size:14px;">${ctx.esc(p.display_name || `Placement #${p.id}`)} · ${ctx.fmtDate(p.display_date)}</div>
               <div class="vo-hub-meta">${p.line_count} lines · ${p.total_quantity || "—"} qty</div>
               ${noteChip(p.cancel_reason, "cancel")}
             </div>
@@ -894,8 +894,8 @@ const VendorOrders = (() => {
         <div class="ord-hub-list">${placements.length ? placements.map(p => {
           const lines = linesForPlacement(p.id);
           return HubUI.partyCard({
-            title: p.order_receipt_number ? `Receipt ${p.order_receipt_number}` : `Receive #${p.id}`,
-            meta: `${lines.length} products · ${p.total_quantity || 0} qty · ${new Date(p.placed_at).toLocaleString()}${p.notes ? ` · ${ctx.esc(p.notes)}` : ""}`,
+            title: p.display_name || (p.order_receipt_number ? `Receipt ${p.order_receipt_number}` : `Receive #${p.id}`),
+            meta: `${lines.length} products · ${p.total_quantity || 0} qty · ${ctx.fmtDate(p.display_date)}${p.notes ? ` · ${ctx.esc(p.notes)}` : ""}`,
             primaryLabel: canWrite && p.receipt_id ? "Edit" : null,
             primaryOnclick: `Stock.openEditReceipt(${p.receipt_id})`,
             open: !!lines.length,
@@ -926,8 +926,8 @@ const VendorOrders = (() => {
           const expanded = expandedPlacementId === p.id;
           const closed = !!p.closed_at;
           return HubUI.partyCard({
-            title: p.bill_number || `Bill #${p.id}`,
-            meta: `${placementBadge(p.color_index)} ${lines.length} products · ${totalRecv} received · ${new Date(p.placed_at).toLocaleString()}${p.net_payable != null ? ` · Net ${fmtPrice(p.net_payable)}` : ""}${closed && p.close_reason ? noteChip(p.close_reason, "close") : ""}`,
+            title: p.display_name || p.bill_number || `Bill #${p.id}`,
+            meta: `${placementBadge(p.color_index)} ${lines.length} products · ${totalRecv} received · ${ctx.fmtDate(p.display_date)}${p.net_payable != null ? ` · Net ${fmtPrice(p.net_payable)}` : ""}${closed && p.close_reason ? noteChip(p.close_reason, "close") : ""}`,
             pillHtml: closed ? HubUI.pill("Closed", "muted") : HubUI.pill("Open", "info"),
             primaryLabel: canWrite && !closed ? "Close" : null,
             primaryOnclick: `VendorOrders.closeBilledPlacement(${p.id})`,
@@ -964,7 +964,7 @@ const VendorOrders = (() => {
         const expanded = expandedPlacementId === p.id;
         const cancelled = !!p.cancel_reason || p.status === "cancelled" || isCancelled;
         return HubUI.partyCard({
-          title: `${isCancelled ? "Cancelled" : "Placement"} · ${new Date(p.placed_at).toLocaleString()}`,
+          title: `${isCancelled ? "Cancelled" : "Placement"} · ${ctx.fmtDate(p.display_date)}`,
           meta: `${placementBadge(p.color_index)} ${p.line_count} lines · ${p.total_quantity || "—"} qty${showWho ? ` · ${ctx.esc(p.placed_by_name)}` : ""}${p.cancel_reason ? noteChip(p.cancel_reason, "cancel") : ""}`,
           pillHtml: cancelled ? HubUI.pill("Cancelled", "danger") : HubUI.pill("Placed", "muted"),
           primaryLabel: canWrite && isPlaced && !cancelled ? "Receive" : null,
@@ -1332,8 +1332,8 @@ const VendorOrders = (() => {
       title: "Close billed shipment",
       message: "Marks paid / done. Moves to Closed with your note.",
       rows: [
-        ["Bill", ctx.esc(placement.bill_number || `Shipment #${placementId}`)],
-        ["Placed", new Date(placement.placed_at).toLocaleString()],
+        ["Bill", ctx.esc(placement.display_name || placement.bill_number || `Shipment #${placementId}`)],
+        ["Placed", ctx.fmtDate(placement.display_date || placement.value_date || placement.created_at)],
         ["Lines", lines.join(", ") || `${placement.line_count} items`],
       ],
       confirmLabel: "Close shipment",
@@ -1421,7 +1421,7 @@ const VendorOrders = (() => {
       message: "Clears Open for these items. Placed record stays. History goes to Cancelled.",
       rows: [
         ["Placement", placement ? `#${placement.color_index + 1}` : String(placementId)],
-        ["Placed", placement ? new Date(placement.placed_at).toLocaleString() : "—"],
+        ["Placed", placement ? ctx.fmtDate(placement.display_date || placement.value_date || placement.created_at) : "—"],
         ...lineRows.map(([prod, detail]) => ["Product", `${prod} — ${detail}`]),
       ],
       confirmLabel: "Cancel Order",

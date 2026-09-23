@@ -13,11 +13,13 @@ from app.schemas.accounts_receivable import (
     ArCustomerDetail,
     ArCustomerSummary,
     ArLedgerEntryOut,
+    ArPaymentPatchIn,
     ArSettlementIn,
     OpeningBalanceIn,
 )
 from app.services.activity import log_from_auth
 from app.services.biz_date import today_ist
+from app.services import response_cache
 from app.services.ar_ledger import (
     build_ar_ledger,
     customer_ar_totals,
@@ -27,6 +29,7 @@ from app.services.ar_ledger import (
     post_payment_entry,
     set_opening_balance,
 )
+from app.services.money import as_signed_decrease
 from app.services.payment_reverse import reverse_ar_payment
 from pydantic import BaseModel, Field
 
@@ -242,6 +245,43 @@ def _ar_payment_out(db: Session, customer_id: int, entry_id: int) -> ArLedgerEnt
     if not match:
         raise HTTPException(500, "ledger entry missing")
     return ArLedgerEntryOut(**match)
+
+
+@router.patch("/payments/{entry_id}", response_model=ArLedgerEntryOut)
+def patch_ar_payment(
+    entry_id: int,
+    body: ArPaymentPatchIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("ar.write")),
+):
+    from app.models.accounts_receivable import ArLedgerEntry
+
+    entry = db.get(ArLedgerEntry, entry_id)
+    if not entry or entry.entry_type != "payment" or entry.deleted_at is not None:
+        raise HTTPException(404, "AR payment not found")
+    lock_ar_account(db, entry.customer_id)
+    amount = body.amount.quantize(Decimal("0.01"))
+    entry.amount = as_signed_decrease(amount)
+    if body.value_date is not None:
+        entry.value_date = body.value_date
+    if body.payment_mode is not None:
+        entry.payment_mode = (body.payment_mode or "").strip() or None
+    if body.description is not None:
+        entry.description = (body.description or "").strip() or entry.description
+    customer = db.get(Customer, entry.customer_id)
+    log_from_auth(
+        db,
+        auth,
+        action="ar_payment_edit",
+        entity_type="accounts_receivable",
+        entity_id=entry.customer_id,
+        entity_label=customer.business_name if customer else str(entry.customer_id),
+        detail=f"edit #{entry_id} → ₹{amount}",
+    )
+    db.commit()
+    db.refresh(entry)
+    response_cache.invalidate("ledger")
+    return _ar_payment_out(db, entry.customer_id, entry.id)
 
 
 @router.post("/payments/{entry_id}/reverse", response_model=ArLedgerEntryOut, status_code=status.HTTP_201_CREATED)

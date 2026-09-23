@@ -27,6 +27,7 @@ from app.models.stock import StockBalance, StockReceipt, StockReceiptLine
 from app.models.vendor import Vendor
 from app.services.ap_ledger import _vendor_label, vendor_ap_totals
 from app.services.ar_ledger import _customer_label, customer_ar_totals
+from app.services.document_present import present
 from app.services.reports import _range_bounds, list_payments
 
 
@@ -45,6 +46,20 @@ def _entry_date(e) -> date:
     return date.today()
 
 
+def _present_line_label(view: dict, catalog_product_id: int, fallback: str | None) -> str:
+    for pl in view.get("lines") or []:
+        if int(pl.get("catalog_product_id") or 0) == int(catalog_product_id):
+            return str(pl.get("our_product_id") or fallback or "")
+    return str(fallback or "")
+
+
+def _live_product_label(db: Session, catalog_product_id: int, fallback: str | None = None) -> str:
+    prod = db.get(CatalogProduct, catalog_product_id)
+    if prod and prod.our_product_id:
+        return prod.our_product_id
+    return str(fallback or f"#{catalog_product_id}")
+
+
 def item_wise_sales(db: Session, from_date: Optional[date], to_date: Optional[date]) -> list[dict]:
     start, end = _range_bounds(from_date, to_date)
     q = (
@@ -57,33 +72,40 @@ def item_wise_sales(db: Session, from_date: Optional[date], to_date: Optional[da
     if end:
         q = q.filter(CustomerBill.created_at <= end)
     agg: dict[int, dict] = {}
+    bill_views: dict[int, dict] = {}
     for ln, bill in q.all():
+        view = bill_views.get(bill.id)
+        if view is None:
+            view = present(db, "customer_bill", bill)
+            bill_views[bill.id] = view
+        line_label = _present_line_label(view, ln.catalog_product_id, ln.our_product_id)
         row = agg.setdefault(
             ln.catalog_product_id,
             {
                 "catalog_product_id": ln.catalog_product_id,
-                "our_product_id": ln.our_product_id,
                 "qty": 0,
                 "value": Decimal("0"),
                 "bill_count": set(),
                 "customer_ids": set(),
+                "lines": [],
             },
         )
         row["qty"] += int(ln.quantity_shipped or 0)
         row["value"] += Decimal(str(ln.line_total or 0))
         row["bill_count"].add(bill.id)
         row["customer_ids"].add(bill.customer_id)
-        row["our_product_id"] = ln.our_product_id
+        row["lines"].append({"label": line_label, "kind": "bill", "doc_id": bill.id})
     out = []
     for r in agg.values():
         out.append(
             {
                 "catalog_product_id": r["catalog_product_id"],
-                "label": r["our_product_id"],
+                "label": _live_product_label(db, r["catalog_product_id"]),
                 "qty": r["qty"],
                 "value": _fmt(r["value"]),
                 "bill_count": len(r["bill_count"]),
                 "customer_count": len(r["customer_ids"]),
+                "lines": r["lines"],
             }
         )
     out.sort(key=lambda x: Decimal(x["value"]), reverse=True)
@@ -95,13 +117,17 @@ def item_wise_purchases(db: Session, from_date: Optional[date], to_date: Optiona
     q = (
         db.query(StockReceiptLine, StockReceipt)
         .join(StockReceipt, StockReceipt.id == StockReceiptLine.receipt_id)
-        .filter(StockReceiptLine.quantity_billed > 0)
+        .filter(
+            StockReceiptLine.quantity_billed > 0,
+            StockReceipt.deleted_at.is_(None),
+        )
     )
     if start:
         q = q.filter(StockReceipt.created_at >= start)
     if end:
         q = q.filter(StockReceipt.created_at <= end)
     agg: dict[int, dict] = {}
+    receipt_views: dict[int, dict] = {}
     for ln, receipt in q.all():
         qty = int(ln.quantity_billed or 0)
         if qty <= 0:
@@ -109,32 +135,39 @@ def item_wise_purchases(db: Session, from_date: Optional[date], to_date: Optiona
         value = Decimal(str(ln.billed_amount or 0))
         if value == 0 and ln.buying_price is not None:
             value = Decimal(str(ln.buying_price)) * qty
+        view = receipt_views.get(receipt.id)
+        if view is None:
+            # Receipt stays live even after the vendor bill card freezes.
+            view = present(db, "vendor_receipt", receipt)
+            receipt_views[receipt.id] = view
+        line_label = _present_line_label(view, ln.catalog_product_id, ln.our_product_id)
         row = agg.setdefault(
             ln.catalog_product_id,
             {
                 "catalog_product_id": ln.catalog_product_id,
-                "our_product_id": ln.our_product_id,
                 "qty": 0,
                 "value": Decimal("0"),
                 "receipt_count": set(),
                 "vendor_ids": set(),
+                "lines": [],
             },
         )
         row["qty"] += qty
         row["value"] += value
         row["receipt_count"].add(receipt.id)
         row["vendor_ids"].add(receipt.vendor_id)
-        row["our_product_id"] = ln.our_product_id
+        row["lines"].append({"label": line_label, "kind": "receipt", "doc_id": receipt.id})
     out = []
     for r in agg.values():
         out.append(
             {
                 "catalog_product_id": r["catalog_product_id"],
-                "label": r["our_product_id"],
+                "label": _live_product_label(db, r["catalog_product_id"]),
                 "qty": r["qty"],
                 "value": _fmt(r["value"]),
                 "receipt_count": len(r["receipt_count"]),
                 "vendor_count": len(r["vendor_ids"]),
+                "lines": r["lines"],
             }
         )
     out.sort(key=lambda x: Decimal(x["value"]), reverse=True)
@@ -561,12 +594,13 @@ def gst_sales_register(db: Session, from_date: Optional[date], to_date: Optional
         q = q.filter(CustomerBill.created_at <= end)
     out = []
     for b in q.limit(500).all():
+        view = present(db, "customer_bill", b)
         out.append(
             {
                 "id": b.id,
                 "date": b.created_at.date().isoformat() if b.created_at else None,
                 "doc_number": b.bill_number,
-                "party_label": _customer_label(db, b.customer_id),
+                "party_label": view.get("party_name") or _customer_label(db, b.customer_id),
                 "gst_enabled": bool(b.gst_enabled),
                 "gst_rate": _fmt(b.gst_rate_percent),
                 "taxable_value": _fmt(b.taxable_value),
@@ -596,12 +630,17 @@ def gst_purchase_register(db: Session, from_date: Optional[date], to_date: Optio
     out = []
     for e in q.limit(500).all():
         receipt = db.get(StockReceipt, e.receipt_id) if e.receipt_id else None
+        if receipt is not None:
+            kind = "vendor_bill" if getattr(receipt, "bill_status", None) == "billed" else "vendor_receipt"
+            party_label = present(db, kind, receipt).get("party_name") or _vendor_label(db, e.vendor_id)
+        else:
+            party_label = _vendor_label(db, e.vendor_id)
         out.append(
             {
                 "id": e.receipt_id or e.id,
                 "date": e.created_at.date().isoformat() if e.created_at else None,
                 "doc_number": (receipt.bill_number if receipt else None) or f"R-{e.receipt_id}",
-                "party_label": _vendor_label(db, e.vendor_id),
+                "party_label": party_label,
                 "gst_enabled": False,
                 "gst_rate": "0.00",
                 "taxable_value": _fmt(e.amount),

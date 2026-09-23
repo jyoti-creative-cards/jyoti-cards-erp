@@ -187,6 +187,9 @@ class PendingBillReceipt(BaseModel):
     receipt_id: int
     order_receipt_number: Optional[str] = None
     received_at: datetime
+    display_date: Optional[datetime] = None
+    display_name: Optional[str] = None
+    status: Optional[str] = None
     expected_bill_amount: Optional[str] = None
     expected_extra_cash: Optional[str] = None
     line_count: int

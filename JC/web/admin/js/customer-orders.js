@@ -834,8 +834,8 @@ const CustomerOrders = (() => {
           : "";
         const receiptBit = b.transport_receipt_number ? ` · Rcpt ${ctx.esc(b.transport_receipt_number)}` : "";
         return HubUI.partyCard({
-          title: `Bill ${b.bill_number}`,
-          meta: `${fmtPrice(b.grand_total)} · ${ctx.fmtDate(b.created_at)}${b.bill_date && ctx.fmtDay(b.bill_date) !== ctx.fmtDay(b.created_at) ? ` · Bill ${ctx.fmtDay(b.bill_date)}` : ""}${modeLbl ? ` · ${modeLbl}` : ""}${chargeBit}${receiptBit}${b.narration ? `<div style="margin-top:2px;">${ctx.esc(b.narration)}</div>` : ""}`,
+          title: b.display_name || `Bill ${b.bill_number}`,
+          meta: `${fmtPrice(b.grand_total)} · ${ctx.fmtDate(b.display_date)}${modeLbl ? ` · ${modeLbl}` : ""}${chargeBit}${receiptBit}${b.status && b.status !== "open" ? ` · ${ctx.esc(b.status)}` : ""}${b.narration ? `<div style="margin-top:2px;">${ctx.esc(b.narration)}</div>` : ""}`,
           pillHtml: "",
           primaryLabel: canEditBill ? "Edit" : "Print",
           primaryOnclick: canEditBill
@@ -890,8 +890,8 @@ const CustomerOrders = (() => {
         if (canCancel) more.push({ label: cancelLabel, onclick: `CustomerOrders.cancelPlacement(${p.id})`, danger: true });
         if (ctx.isAdmin?.()) more.push({ label: "Void (recycle bin)", onclick: `CustomerOrders.voidPlacement(${p.id})`, danger: true });
         return HubUI.partyCard({
-          title: `Order #${p.id}`,
-          meta: `${new Date(p.placed_at).toLocaleString()}${p.customer_notes ? ` · ${ctx.esc(p.customer_notes)}` : ""}${p.cancel_reason ? `<div style="color:var(--danger);margin-top:2px;">Cancelled: ${ctx.esc(p.cancel_reason)}</div>` : ""}`,
+          title: p.display_name || `Order #${p.id}`,
+          meta: `${ctx.fmtDate(p.display_date)}${p.customer_notes ? ` · ${ctx.esc(p.customer_notes)}` : ""}${p.cancel_reason ? `<div style="color:var(--danger);margin-top:2px;">Cancelled: ${ctx.esc(p.cancel_reason)}</div>` : ""}`,
           pillHtml: p.cancel_reason ? HubUI.pill("Cancelled", "danger") : "",
           primaryLabel: canEdit ? "Edit" : null,
           primaryOnclick: canEdit ? `CustomerOrders.openEditPlacement(${p.id})` : "",
@@ -923,11 +923,11 @@ const CustomerOrders = (() => {
         </tr>`).join("")}
       </tbody></table>`;
       return HubUI.partyCard({
-        title: `Placement #${p.id}`,
-        meta: `${new Date(p.placed_at).toLocaleString()}${p.customer_notes ? ` · ${ctx.esc(p.customer_notes)}` : ""}${p.cancel_reason ? `<div style="color:var(--danger);margin-top:2px;">Cancelled: ${ctx.esc(p.cancel_reason)}</div>` : ""}`,
-        pillHtml: currentBucket === "cancelled" || p.cancel_reason
+        title: p.display_name || `Placement #${p.id}`,
+        meta: `${ctx.fmtDate(p.display_date)}${p.customer_notes ? ` · ${ctx.esc(p.customer_notes)}` : ""}${p.cancel_reason ? `<div style="color:var(--danger);margin-top:2px;">Cancelled: ${ctx.esc(p.cancel_reason)}</div>` : ""}`,
+        pillHtml: currentBucket === "cancelled" || p.cancel_reason || p.status === "cancelled"
           ? HubUI.pill("Cancelled", "danger")
-          : HubUI.pill(currentBucket === "closed" ? "Closed" : "History", "muted"),
+          : HubUI.pill(currentBucket === "closed" || p.status === "closed" ? "Closed" : "History", "muted"),
         moreItems: ctx.isAdmin?.() ? [{ label: "Void (recycle bin)", onclick: `CustomerOrders.voidPlacement(${p.id})`, danger: true }] : [],
         open: expanded,
         rowOnclick: `CustomerOrders.toggleDetailExpand('${openKey}')`,

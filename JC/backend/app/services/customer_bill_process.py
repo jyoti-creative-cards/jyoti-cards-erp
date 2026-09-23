@@ -19,6 +19,8 @@ from app.services.bill_series_alloc import allocate_bill_number, resolve_bill_nu
 from app.services.catalog_addons import addon_snapshots_map, attach_addons_to_totals
 from app.services.credit_limit import assert_credit_allows_bill, credit_status
 from app.services.customer_bill_math import assert_discount_xor, compute_bill_totals
+from app.services.document_present import freeze_card
+from app.services import response_cache
 from app.services.transport_mode import normalize_transport, stamp_transport_on_totals
 from app.services.customer_order_flow import (
     _get_or_create_open_line,
@@ -319,6 +321,10 @@ def process_customer_bill(
     )
     _persist_totals_addons(db, bill)
     billed_order.updated_at = entered_at
+    freeze_card(db, "customer_bill", bill)
+    response_cache.invalidate("stock:")
+    response_cache.invalidate("shop:")
+    response_cache.invalidate("catalog:")
     return bill
 
 
@@ -583,15 +589,17 @@ def close_bill_line(db: Session, bill_line_id: int, reason: str) -> None:
     bill = db.get(CustomerBill, row.bill_id)
     if not bill:
         raise HTTPException(404, "bill not found")
+    now = datetime.now(timezone.utc)
     row.status = "closed"
     row.close_reason = reason
-    row.closed_at = datetime.now(timezone.utc)
+    row.closed_at = now
     closed_order = get_or_create_customer_order(db, bill.customer_id, "closed", "closed")
     placement = CustomerOrderPlacement(
         customer_order_id=closed_order.id,
         status="closed",
         cancel_reason=reason,
-        placed_at=datetime.now(timezone.utc),
+        placed_at=now,
+        closed_at=now,
     )
     db.add(placement)
     db.flush()
@@ -607,7 +615,7 @@ def close_bill_line(db: Session, bill_line_id: int, reason: str) -> None:
             cancel_reason=reason,
         )
     )
-    closed_order.updated_at = datetime.now(timezone.utc)
+    closed_order.updated_at = now
     db.flush()
 
     # Once every line on this bill is closed, the bill itself is done — drop it out of
@@ -619,7 +627,8 @@ def close_bill_line(db: Session, bill_line_id: int, reason: str) -> None:
         .count()
     )
     if remaining_open == 0 and not bill.closed_at:
-        bill.closed_at = datetime.now(timezone.utc)
+        bill.closed_at = now
+    freeze_card(db, "customer_order", placement)
 
 
 def process_offline_customer_order(
@@ -1318,4 +1327,8 @@ def edit_customer_bill(
         amount=new_grand,
         description=f"Bill {bill.bill_number} (edited) — ₹{new_grand}",
     )
+    freeze_card(db, "customer_bill", bill)
+    response_cache.invalidate("stock:")
+    response_cache.invalidate("shop:")
+    response_cache.invalidate("catalog:")
     return bill

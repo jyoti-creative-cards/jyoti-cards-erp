@@ -941,8 +941,10 @@ const Catalog = (() => {
         : editReturnTo === "alts" ? "alts"
         : "catalog";
       closeEdit();
+      ctx.invalidateCache?.("/customer-orders");
       ctx.invalidateCache?.("/stock");
       ctx.invalidateCache?.("/catalog");
+      ctx.invalidateCache?.("/vendor-orders");
       ctx.toast("Product updated", "success");
       if (typeof Products !== "undefined" && Products.openProductDetail) {
         await Products.openProductDetail(id, ret);

@@ -75,6 +75,22 @@ const Finance = (() => {
     return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
   }
 
+  let saveBusy = false; // guard expense/payment PATCH double-click
+
+  function fmtDocDate(d) {
+    if (!d) return "—";
+    if (typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d)) return ctx.fmtDay?.(d) || d;
+    return ctx.fmtDate?.(d) || new Date(d).toLocaleString();
+  }
+
+  function docDateIso(d) {
+    if (!d) return "";
+    if (typeof d === "string" && /^\d{4}-\d{2}-\d{2}/.test(d)) return d.slice(0, 10);
+    const dt = new Date(d);
+    if (Number.isNaN(dt.getTime())) return "";
+    return dt.toISOString().slice(0, 10);
+  }
+
   function matchSearch(label) {
     const q = hubSearch.trim().toLowerCase();
     if (!q) return true;
@@ -904,8 +920,8 @@ const Finance = (() => {
       return `<div class="fin-bill-card ${open ? "is-open" : ""}">
         <button type="button" class="fin-bill-head" onclick="Finance.toggleBill(${b.receipt_id})">
           <div>
-            <div class="fin-bill-title">Bill ${ctx.esc(b.bill_number || `#${b.receipt_id}`)}</div>
-            <div class="fin-bill-meta">${b.created_at ? new Date(b.created_at).toLocaleString() : ""} · ${dns.length} correction${dns.length === 1 ? "" : "s"}</div>
+            <div class="fin-bill-title">${ctx.esc(b.display_name || b.bill_number || `Bill #${b.receipt_id}`)}</div>
+            <div class="fin-bill-meta">${fmtDocDate(b.display_date || b.value_date || b.created_at)} · ${dns.length} correction${dns.length === 1 ? "" : "s"}</div>
           </div>
           <div class="fin-bill-amounts">
             <span>Bill ${fmtPrice(b.bill_amount)}</span>
@@ -933,7 +949,7 @@ const Finance = (() => {
               const canVoidDn = ctx.isAdmin?.();
               return `<div class="fin-dn-row">
                 <div><strong>${title}</strong>${d.notes ? `<div class="fin-dn-note">${ctx.esc(d.notes)}</div>` : ""}
-                <div class="fin-muted">${d.created_at ? new Date(d.created_at).toLocaleString() : ""}</div>
+                <div class="fin-muted">${fmtDocDate(d.display_date || d.value_date || d.created_at)}</div>
                 ${(canEditDn || canVoidDn) && d.id ? `<div style="margin-top:6px;">
                   ${canEditDn ? `<button type="button" class="btn btn-ghost btn-sm" onclick="Finance.editDebitNote(${b.receipt_id},${d.id})">Edit</button>` : ""}
                   ${canVoidDn ? `<button type="button" class="btn btn-ghost btn-sm" onclick="Finance.voidDebitNote(${b.receipt_id},${d.id})">Void</button>` : ""}
@@ -987,9 +1003,9 @@ const Finance = (() => {
         <th>When</th><th>Type</th><th>Description</th><th>Amount</th><th>Balance</th>
       </tr></thead><tbody>
         ${(apDetail.entries || []).map(e => `<tr class="clickable" onclick="Finance.openEntry(${e.id})">
-          <td style="font-size:12px;">${new Date(e.created_at).toLocaleString()}</td>
-          <td>${ctx.esc(e.entry_type)}</td>
-          <td>${ctx.esc(e.description)}</td>
+          <td style="font-size:12px;">${fmtDocDate(e.display_date || e.value_date || e.created_at)}</td>
+          <td>${ctx.esc(e.entry_type)}${e.status && e.status !== "open" ? ` <span class="badge badge-amber">${ctx.esc(e.status)}</span>` : ""}</td>
+          <td>${ctx.esc(e.display_name || e.description)}</td>
           <td>${fmtPrice(e.signed_amount)}</td>
           <td><strong>${fmtPrice(e.running_balance)}</strong></td>
         </tr>`).join("")}
@@ -1006,13 +1022,14 @@ const Finance = (() => {
       ${pays.map(p => {
         const undone = !!p.reversed;
         return `<tr>
-        <td style="font-size:12px;">${new Date(p.created_at).toLocaleString()}</td>
-        <td><strong>${ctx.esc(p.payment_ref || "—")}</strong>${undone ? ` <span class="badge badge-amber">Reversed</span>` : ""}</td>
+        <td style="font-size:12px;">${fmtDocDate(p.display_date || p.created_at)}</td>
+        <td><strong>${ctx.esc(p.display_name || p.payment_ref || "—")}</strong>${undone ? ` <span class="badge badge-amber">Reversed</span>` : ""}</td>
         <td>${ctx.esc(p.payment_comment || "—")}</td>
         <td>${fmtPrice(p.signed_amount)}</td>
         <td>${fmtPrice(p.running_balance_after)}</td>
         <td style="white-space:nowrap;display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
           ${p.payment_receipt_url ? `<a href="${ctx.esc(p.payment_receipt_url)}" target="_blank" class="btn btn-secondary btn-sm">Receipt</a>` : ""}
+          ${!undone && ctx.can?.("ap.write") ? `<button type="button" class="btn btn-secondary btn-sm" onclick="Finance.editApPayment(${p.id})">Edit</button>` : ""}
           ${!undone && ctx.isAdmin?.() ? `
             <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.undoApPayment(${p.id},'reverse')">Reverse</button>
             <button type="button" class="btn btn-ghost btn-sm" onclick="Finance.undoApPayment(${p.id},'void')">Void</button>
@@ -1067,10 +1084,13 @@ const Finance = (() => {
         ${ctx.reviewRow("Type", e.entry_type)}
         ${ctx.reviewRow("Amount", fmtPrice(e.signed_amount))}
         ${ctx.reviewRow("Running balance", fmtPrice(e.running_balance))}
-        ${ctx.reviewRow("When", new Date(e.created_at).toLocaleString())}
+        ${ctx.reviewRow("When", fmtDocDate(e.display_date || e.value_date || e.created_at))}
+        ${e.status ? ctx.reviewRow("Status", e.status) : ""}
         ${ctx.reviewRow("By", e.created_by_name)}
       </div>${extra}`,
-      `${undoBtns}<button class="btn btn-primary" style="flex:1;" onclick="App.closeDetail()">Close</button>`, "md");
+      `${e.entry_type === "payment" && !alreadyReversed && ctx.can?.("ap.write")
+        ? `<button class="btn btn-secondary" style="flex:1;" onclick="App.closeDetail();Finance.editApPayment(${e.id})">Edit</button>` : ""}
+       ${undoBtns}<button class="btn btn-primary" style="flex:1;" onclick="App.closeDetail()">Close</button>`, "md");
   }
 
   async function openSettle() {
@@ -1440,9 +1460,9 @@ const Finance = (() => {
         const badgeCls = e.entry_type === "credit_note" ? "badge-green" : e.entry_type === "opening_balance" ? "badge-blue" : "badge-amber";
         const typeLabel = e.entry_type === "opening_balance" ? "Opening" : e.entry_type === "credit_note" ? "Credit Note" : "Bill";
         return `<tr>
-        <td style="font-size:12px;">${e.value_date ? new Date(e.value_date).toLocaleDateString("en-IN") : new Date(e.created_at).toLocaleString()}</td>
+        <td style="font-size:12px;">${fmtDocDate(e.display_date || e.value_date || e.created_at)}</td>
         <td><span class="badge ${badgeCls}">${typeLabel}</span></td>
-        <td>${ctx.esc(e.description)}${e.return_id ? ` <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();Returns.openReturn(${e.return_id})">View</button>` : ""}</td>
+        <td>${ctx.esc(e.display_name || e.description)}${e.return_id ? ` <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();Returns.openReturn(${e.return_id})">View</button>` : ""}</td>
         <td>${fmtPrice(e.signed_amount)}</td>
         <td><strong>${fmtPrice(e.running_balance)}</strong></td>
       </tr>`;}).join("")}
@@ -1458,9 +1478,9 @@ const Finance = (() => {
           const badgeCls = e.entry_type === "credit_note" ? "badge-green" : e.entry_type === "opening_balance" ? "badge-blue" : e.entry_type === "bill" ? "badge-amber" : e.entry_type === "payment_reversal" ? "badge-red" : "badge-green";
           const typeLabel = { bill: "Bill", credit_note: "Credit Note", opening_balance: "Opening", payment: "Payment", payment_reversal: "Reversal" }[e.entry_type] || e.entry_type;
           return `<tr>
-          <td style="font-size:12px;">${e.value_date ? new Date(e.value_date).toLocaleDateString("en-IN") : new Date(e.created_at).toLocaleString()}</td>
+          <td style="font-size:12px;">${fmtDocDate(e.display_date || e.value_date || e.created_at)}</td>
           <td><span class="badge ${badgeCls}">${typeLabel}</span></td>
-          <td>${ctx.esc(e.description)}${e.return_id ? ` <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();Returns.openReturn(${e.return_id})">View</button>` : ""}</td>
+          <td>${ctx.esc(e.display_name || e.description)}${e.return_id ? ` <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();Returns.openReturn(${e.return_id})">View</button>` : ""}</td>
           <td>${fmtPrice(e.signed_amount)}</td>
           <td><strong>${fmtPrice(e.running_balance)}</strong></td>
         </tr>`;}).join("")}
@@ -1488,8 +1508,8 @@ const Finance = (() => {
         const isRev = p.entry_type === "payment_reversal";
         const undone = reversed.has(p.id);
         return `<tr>
-        <td style="font-size:12px;">${new Date(p.created_at).toLocaleString()}</td>
-        <td><strong>${ctx.esc(p.payment_ref || "—")}</strong>
+        <td style="font-size:12px;">${fmtDocDate(p.display_date || p.value_date || p.created_at)}</td>
+        <td><strong>${ctx.esc(p.display_name || p.payment_ref || "—")}</strong>
           ${isRev ? ` <span class="badge badge-amber">Reversal</span>` : ""}
           ${undone ? ` <span class="badge badge-amber">Reversed</span>` : ""}
         </td>
@@ -1497,6 +1517,7 @@ const Finance = (() => {
         <td>${fmtPrice(p.signed_amount)}</td>
         <td>${fmtPrice(p.running_balance)}</td>
         <td style="white-space:nowrap;display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
+          ${!isRev && !undone && ctx.can?.("ar.write") ? `<button type="button" class="btn btn-secondary btn-sm" onclick="Finance.editArPayment(${p.id})">Edit</button>` : ""}
           ${!isRev && !undone && ctx.isAdmin?.() ? `
             <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.undoArPayment(${p.id},'reverse')">Reverse</button>
             <button type="button" class="btn btn-ghost btn-sm" onclick="Finance.undoArPayment(${p.id},'void')">Void</button>
@@ -1716,14 +1737,17 @@ const Finance = (() => {
       <th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Ref</th><th></th>
     </tr></thead><tbody>
       ${expenses.map(e => `<tr>
-        <td>${e.expense_date}</td>
-        <td>${ctx.esc(e.category)}</td>
+        <td>${fmtDocDate(e.display_date || e.expense_date)}</td>
+        <td>${ctx.esc(e.display_name || e.category)}</td>
         <td>${ctx.esc(e.description || "—")}</td>
         <td>${fmtPrice(e.amount)}</td>
         <td>${ctx.esc(e.reference || "—")}</td>
-        <td>${e.freight_agent_id
-          ? `<span class="fin-muted">Freight</span>`
-          : `<button class="btn btn-ghost btn-sm" onclick="Finance.deleteExpense(${e.id})">Delete</button>`}</td>
+        <td style="white-space:nowrap;display:flex;gap:6px;justify-content:flex-end;">
+          ${ctx.can?.("finance.write") ? `<button class="btn btn-secondary btn-sm" onclick="Finance.editExpense(${e.id})">Edit</button>` : ""}
+          ${e.freight_agent_id
+            ? `<span class="fin-muted">Freight</span>`
+            : (ctx.isAdmin?.() ? `<button class="btn btn-ghost btn-sm" onclick="Finance.deleteExpense(${e.id})">Delete</button>` : "")}
+        </td>
       </tr>`).join("")}
     </tbody></table>`;
   }
@@ -1742,8 +1766,151 @@ const Finance = (() => {
     finally { ctx.hideLoading?.(); }
   }
 
+  function editExpense(id) {
+    const e = expenses.find(x => x.id === id);
+    if (!e) return;
+    const day = docDateIso(e.display_date || e.expense_date) || localToday();
+    document.getElementById("expense-body").innerHTML = `
+      <label class="label">Date</label>
+      <input type="date" class="input" id="exp-date" value="${ctx.esc(day)}" style="margin-bottom:12px;" />
+      <label class="label">Category</label>
+      <select class="input" id="exp-cat" style="margin-bottom:12px;width:100%;">
+        ${["rent","salary","electricity","transport","misc","other"].map(c =>
+          `<option value="${c}" ${e.category === c ? "selected" : ""}>${c}</option>`).join("")}
+      </select>
+      <label class="label">Description</label>
+      <input class="input" id="exp-desc" value="${ctx.esc(e.description || "")}" style="margin-bottom:12px;" />
+      <label class="label">Amount (₹)</label>
+      <input type="number" step="0.01" class="input" id="exp-amount" value="${ctx.esc(String(e.amount))}" style="margin-bottom:12px;" />
+      <label class="label">Reference</label>
+      <input class="input" id="exp-ref" value="${ctx.esc(e.reference || "")}" />`;
+    const modal = document.getElementById("expense-modal");
+    modal?.classList.remove("hidden");
+    const saveBtn = modal?.querySelector(".btn-primary");
+    if (saveBtn) {
+      saveBtn.textContent = "Save";
+      saveBtn.setAttribute("onclick", `Finance.saveExpenseEdit(${id})`);
+    }
+  }
+
+  async function saveExpenseEdit(id) {
+    if (saveBusy) return;
+    const expense_date = document.getElementById("exp-date")?.value;
+    const category = document.getElementById("exp-cat")?.value || "misc";
+    const description = (document.getElementById("exp-desc")?.value || "").trim() || null;
+    const amount = parseFloat(document.getElementById("exp-amount")?.value || "0");
+    const reference = (document.getElementById("exp-ref")?.value || "").trim() || null;
+    if (!expense_date || !amount || amount <= 0) return ctx.toast("Enter date and amount", "error");
+    saveBusy = true;
+    ctx.showLoading?.();
+    try {
+      await ctx.api(`/expenses/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ expense_date, category, description, amount, reference }),
+      });
+      ctx.invalidateCache?.("/expenses");
+      ctx.invalidateCache?.("/finance");
+      closeExpenseForm();
+      ctx.toast("Expense updated", "success");
+      await loadExpenses();
+      loadOverviewSilent();
+    } catch (err) { ctx.toast(err.message, "error"); }
+    finally { saveBusy = false; ctx.hideLoading?.(); }
+  }
+
+  function editApPayment(entryId) {
+    const e = (apDetail?.payments || []).find(x => x.id === entryId)
+      || (apDetail?.entries || []).find(x => x.id === entryId);
+    if (!e) return;
+    const amt = Math.abs(Number(e.amount || e.signed_amount || 0));
+    const day = docDateIso(e.display_date || e.value_date) || localToday();
+    ctx.openDetail("Edit payment", `
+      <label class="label">Amount (₹)</label>
+      <input type="number" step="0.01" min="0.01" class="input" id="pay-edit-amt" value="${ctx.esc(String(amt))}" style="margin-bottom:12px;" />
+      <label class="label">Value date</label>
+      <input type="date" class="input" id="pay-edit-date" value="${ctx.esc(day)}" style="margin-bottom:12px;" />
+      <label class="label">Payment mode</label>
+      <input class="input" id="pay-edit-mode" value="${ctx.esc(e.payment_mode || "")}" style="margin-bottom:12px;" />
+      <label class="label">Description</label>
+      <input class="input" id="pay-edit-desc" value="${ctx.esc(e.description || e.payment_comment || "")}" />
+    `, `
+      <button class="btn btn-secondary" onclick="App.closeDetail()">Cancel</button>
+      <button class="btn btn-primary" style="flex:1;" onclick="Finance.saveApPaymentEdit(${entryId})">Save</button>
+    `, "sm");
+  }
+
+  async function saveApPaymentEdit(entryId) {
+    if (saveBusy) return;
+    const amount = parseFloat(document.getElementById("pay-edit-amt")?.value || "0");
+    const value_date = document.getElementById("pay-edit-date")?.value || null;
+    const payment_mode = (document.getElementById("pay-edit-mode")?.value || "").trim() || null;
+    const description = (document.getElementById("pay-edit-desc")?.value || "").trim() || null;
+    if (!amount || amount <= 0) return ctx.toast("Enter a valid amount", "error");
+    const vid = currentVendor;
+    saveBusy = true;
+    ctx.showLoading?.();
+    try {
+      await ctx.api(`/accounts-payable/payments/${entryId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ amount, value_date, payment_mode, description }),
+      });
+      ctx.invalidateCache?.("/accounts-payable");
+      ctx.invalidateCache?.("/finance");
+      ctx.toast("Payment updated", "success");
+      App.closeDetail?.();
+      if (vid) await openVendorAp(vid);
+      loadOverviewSilent();
+    } catch (err) { ctx.toast(err.message, "error"); }
+    finally { saveBusy = false; ctx.hideLoading?.(); }
+  }
+
+  function editArPayment(entryId) {
+    const e = (arDetail?.entries || []).find(x => x.id === entryId);
+    if (!e || e.entry_type !== "payment") return;
+    const amt = Math.abs(Number(e.amount || e.signed_amount || 0));
+    const day = docDateIso(e.display_date || e.value_date) || localToday();
+    ctx.openDetail("Edit payment", `
+      <label class="label">Amount (₹)</label>
+      <input type="number" step="0.01" min="0.01" class="input" id="pay-edit-amt" value="${ctx.esc(String(amt))}" style="margin-bottom:12px;" />
+      <label class="label">Value date</label>
+      <input type="date" class="input" id="pay-edit-date" value="${ctx.esc(day)}" style="margin-bottom:12px;" />
+      <label class="label">Payment mode</label>
+      <input class="input" id="pay-edit-mode" value="${ctx.esc(e.payment_mode || "")}" style="margin-bottom:12px;" />
+      <label class="label">Description</label>
+      <input class="input" id="pay-edit-desc" value="${ctx.esc(e.description || e.payment_comment || "")}" />
+    `, `
+      <button class="btn btn-secondary" onclick="App.closeDetail()">Cancel</button>
+      <button class="btn btn-primary" style="flex:1;" onclick="Finance.saveArPaymentEdit(${entryId})">Save</button>
+    `, "sm");
+  }
+
+  async function saveArPaymentEdit(entryId) {
+    if (saveBusy) return;
+    const amount = parseFloat(document.getElementById("pay-edit-amt")?.value || "0");
+    const value_date = document.getElementById("pay-edit-date")?.value || null;
+    const payment_mode = (document.getElementById("pay-edit-mode")?.value || "").trim() || null;
+    const description = (document.getElementById("pay-edit-desc")?.value || "").trim() || null;
+    if (!amount || amount <= 0) return ctx.toast("Enter a valid amount", "error");
+    const cid = currentCustomer;
+    saveBusy = true;
+    ctx.showLoading?.();
+    try {
+      await ctx.api(`/accounts-receivable/payments/${entryId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ amount, value_date, payment_mode, description }),
+      });
+      ctx.invalidateCache?.("/accounts-receivable");
+      ctx.invalidateCache?.("/finance");
+      ctx.toast("Payment updated", "success");
+      App.closeDetail?.();
+      if (cid) await openCustomerAr(cid);
+      loadOverviewSilent();
+    } catch (err) { ctx.toast(err.message, "error"); }
+    finally { saveBusy = false; ctx.hideLoading?.(); }
+  }
+
   function openExpenseForm() {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localToday();
     document.getElementById("expense-body").innerHTML = `
       <label class="label">Date</label>
       <input type="date" class="input" id="exp-date" value="${today}" style="margin-bottom:12px;" />
@@ -1759,18 +1926,26 @@ const Finance = (() => {
       <input type="number" step="0.01" class="input" id="exp-amount" style="margin-bottom:12px;" />
       <label class="label">Reference</label>
       <input class="input" id="exp-ref" />`;
-    document.getElementById("expense-modal").classList.remove("hidden");
+    const modal = document.getElementById("expense-modal");
+    modal?.classList.remove("hidden");
+    const saveBtn = modal?.querySelector(".btn-primary");
+    if (saveBtn) {
+      saveBtn.textContent = "Save expense";
+      saveBtn.setAttribute("onclick", "Finance.submitExpense()");
+    }
   }
 
   function closeExpenseForm() { document.getElementById("expense-modal")?.classList.add("hidden"); }
 
   async function submitExpense() {
+    if (saveBusy) return;
     const expense_date = document.getElementById("exp-date")?.value;
     const category = document.getElementById("exp-cat")?.value || "misc";
     const description = (document.getElementById("exp-desc")?.value || "").trim() || null;
     const amount = parseFloat(document.getElementById("exp-amount")?.value || "0");
     const reference = (document.getElementById("exp-ref")?.value || "").trim() || null;
     if (!expense_date || !amount || amount <= 0) return ctx.toast("Enter date and amount", "error");
+    saveBusy = true;
     ctx.showLoading?.();
     try {
       await ctx.api("/expenses", {
@@ -1784,7 +1959,7 @@ const Finance = (() => {
       loadExpenses();
       loadOverviewSilent();
     } catch (e) { ctx.toast(e.message, "error"); }
-    finally { ctx.hideLoading?.(); }
+    finally { saveBusy = false; ctx.hideLoading?.(); }
   }
 
   /* —— Reports —— */
@@ -2092,7 +2267,7 @@ const Finance = (() => {
             if (r.has_document) links.push(`<button type="button" class="btn btn-secondary btn-sm" onclick="Finance.printFreightPayment(${r.id})">Print</button>`);
             if (r.payment_receipt_url) links.push(`<a href="${ctx.esc(r.payment_receipt_url)}" target="_blank" class="btn btn-secondary btn-sm">Receipt</a>`);
             return `<tr>
-              <td>${ctx.fmtDate?.(r.created_at) || r.created_at?.slice(0, 10) || "—"}</td>
+              <td>${fmtDocDate(r.display_date || r.value_date || r.created_at)}</td>
               <td><span class="badge ${badge}">${ctx.esc(r.entry_type)}</span></td>
               <td><strong>${ctx.esc(party)}</strong>${r.bill_number && isCharge ? `<div style="font-size:11px;color:var(--muted);">${ctx.esc(r.bill_number)}</div>` : ""}</td>
               <td>${fmtPrice(r.amount)}</td>
@@ -2327,7 +2502,7 @@ const Finance = (() => {
             <th>When</th><th>Type</th><th>Detail</th><th>Amount</th><th>Balance</th>
           </tr></thead><tbody>
             ${(c.ledger || []).map(e => `<tr>
-              <td style="font-size:12px;">${e.created_at ? new Date(e.created_at).toLocaleString() : "—"}</td>
+              <td style="font-size:12px;">${fmtDocDate(e.display_date || e.value_date || e.created_at)}</td>
               <td><span class="badge ${e.entry_type === "bill" ? "badge-amber" : "badge-green"}">${ctx.esc(e.entry_type)}</span></td>
               <td>${ctx.esc(e.description || "—")}</td>
               <td>${fmtPrice(e.signed_amount || e.amount)}</td>
@@ -2396,7 +2571,8 @@ const Finance = (() => {
     undoArPayment, undoApPayment,
     shareArStatement, shareApStatement,
     setArOpeningBalance, setApOpeningBalance, saveArOpeningBalance, saveApOpeningBalance,
-    openExpenseForm, closeExpenseForm, submitExpense, deleteExpense, onExpenseFilterChange, clearExpenseFilters,
+    openExpenseForm, editExpense, saveExpenseEdit, closeExpenseForm, submitExpense, deleteExpense, onExpenseFilterChange, clearExpenseFilters,
+    editApPayment, saveApPaymentEdit, editArPayment, saveArPaymentEdit,
     openLossForm, closeLossForm, submitLoss, deleteLoss,
     openFreightAgent, openFreightSettle, openFreightAdvance, closeFreightSettle, submitFreightSettle,
     setFreightSettleFile, shareFreightStatement, printFreightPayment,

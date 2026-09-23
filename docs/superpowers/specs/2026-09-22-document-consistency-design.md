@@ -1,7 +1,7 @@
 # Document consistency
 
 Date: 2026-09-22
-Status: design approved in chat; awaiting review of this file
+Status: approved by user 2026-09-22
 Scope: JC ERP only (`JC/backend/`, `JC/web/admin/`, customer portal routes in `JC/backend/app/routers/shop.py`). One system-wide rule. Not a shortcut on each screen.
 
 This spec is the single implementation-plan input.
@@ -20,55 +20,53 @@ The same split exists for customers, vendors, bill series, freight agents, citie
 
 ## Goal
 
-One document has one date, one saved card, and one status, on every screen that shows that document.
+One document has one date and one status on every screen. Names and prices follow the live master, except on a locked document, which keeps the card copied when it was locked.
 
-- Open work follows the live masters.
-- An issued document does not change when a master changes.
-- Cancel, void, close, payment, and an explicit edit of that document show up everywhere that document appears.
+- Open orders, goods receipts, debit notes, expenses, freight, payments, and returns follow the live masters. A correction of that row shows everywhere.
+- A saved customer bill, a saved vendor bill, and a closed order do not change when a master changes.
+- Cancel, void, and an edit of a row show up everywhere that row appears. Editing a receipt does not rewrite a vendor bill already locked.
 - Search, reports, PDFs, share, the recycle bin, and the customer portal use the same facts as the admin screen.
-- Nothing bypasses this. A new screen that joins the live catalog for an issued document is a bug.
+- Nothing bypasses `present()`.
 
 ## Non-goals
 
 - Rewriting stock on hand, outstanding balances, credit limit, freight balance due, or the shop catalog. Those are live on purpose.
 - Changing activity-log time or price-history time. Those record when an edit happened.
-- Recovering a photo, add-on, or party detail that was never stored and was already overwritten before this ships. Existing documents are frozen as well as the stored row and entity history allow. After that they do not move.
+- Recovering a photo, add-on, or party detail that was never stored and was already overwritten before this ships. Locked documents already saved are frozen as well as the stored row and entity history allow. After that they do not move. Unlocked documents keep reading the live master.
 - A second history product. `EntityHistory` stays the log of master edits. The document card is what that document said.
 
-## Open versus exercised
+## Locked versus everything else
 
-**Open.** Still only inside the system. Nothing has been handed over and it is not money yet.
+**Locked.** Later changes to masters do not flow into these. The card copied at lock time is what every screen shows for that document.
 
-- Customer order in New or Confirmed, not billed.
-- Vendor order placed, goods not received.
-- A bill or receipt form that has not been saved.
-- The part of a partial bill that is still unbilled.
+- A saved customer bill, including one that is not closed yet.
+- A saved vendor bill.
+- A closed customer order.
+- A closed customer bill.
+- A closed vendor order.
 
-Open work reads live masters. A rename, a new photo, a new add-on, a new alternative, a category rename, a party edit, or a price change shows here.
+The quantity on a saved bill is locked with that bill. Quantity still open on the order stays live.
 
-**Exercised.** It has left the building or become money.
+At lock, the system copies the live masters onto that document once. A later rename, price, photo, add-on, alternative, category, or party edit does not touch it.
 
-- Customer bill saved (PDF can be printed).
-- Customer order or bill closed.
-- Vendor goods received, or a vendor bill posted.
-- A debit note posted.
-- A customer return posted.
-- A payment posted.
-- An expense saved.
-- A freight charge posted.
-- Anything sitting as payment due.
+**Not locked.** These stay consistent with the current masters, and a correction typed on the row shows on every screen that shows that row.
 
-The quantity just billed on a partial bill is exercised. The quantity still open stays open.
+- Open customer orders and open vendor orders.
+- Vendor goods received (the receipt), including after a vendor bill exists.
+- Debit notes.
+- Expenses.
+- Freight charges and freight settlements.
+- Customer and vendor payments.
+- Customer returns.
+- Names, prices, photos, add-ons, and alternatives on anything in this list.
 
-At the transition, the system copies the live masters onto that document once. Later master edits do not touch it. The next open order uses the new masters.
+`present()` reads the card for a locked document and the live masters for everything else. Dates and status still come from the document row in both cases, so Today / Past and cancelled / voided do not drift.
 
-Cancel, void, and payment do not rewrite the card. They change the status of that same row. Every screen reads that status.
-
-An explicit Save on an existing bill or receipt does rewrite that document's card, and only that card. See Edit below.
+Editing a receipt does not rewrite a vendor bill already locked from it. The receipt screens show the corrected item. The vendor bill keeps the card it had when it was saved. Same for a debit note or a payment: editing that row updates every view of that row, and does not rewrite a locked bill.
 
 ## The card
 
-One JSON snapshot on the exercised document. `present()` is the only reader. Admin JS renders `present()` fields. It does not format `created_at`, `updated_at`, or a copied item code on its own.
+One JSON snapshot on each locked document. `present()` is the only reader. Admin JS renders `present()` fields. It does not format `created_at`, `updated_at`, or a copied item code on its own. Unlocked documents do not use this snapshot for display.
 
 The card holds:
 
@@ -123,28 +121,33 @@ The party ledger must not list a cancelled bill as a normal open bill.
 
 These screens always show the current record: People (customers, vendors), Products (catalog, stock, add-on stock), Setup (routes, cities, freight agents, lookups, bill series, payment modes, staff), the shop catalog, stock on hand, credit limit, outstanding, freight balance due, ageing of who owes today, and today's route collection list.
 
-Category, series, and unit live in `CatalogLookup`. A product stores the text. Renaming a lookup updates live products that still use the old text. Exercised cards keep the old word.
+Category, series, and unit live in `CatalogLookup`. A product stores the text. Renaming a lookup updates live products and every unlocked document. Locked bills and closed orders keep the old word.
 
 `EntityHistory` already tracks customer, vendor, catalog product, and add-on product. Extend it to freight agent, bill series, city, route, payment mode, and catalog lookup, so master edits stay auditable. The document card is still what an issued document displays. Do not display an issued document by looking up "whatever history says now".
 
-## Documents that freeze
+## What uses the card
 
-`present()` covers all of these. PDFs and share use the card, never a live join.
+`present()` covers every screen. PDFs and share use it too.
 
-- Customer order, customer order PDF
-- Customer bill, bill PDF, copies
-- Vendor order, vendor placement PDF
-- Vendor receipt and vendor bill, receipt PDF
-- Debit note
-- Customer return, return PDF
-- AR ledger and AR statement PDF
-- AP ledger and AP statement PDF
-- Freight ledger, freight statement PDF, freight payment PDF
-- Expense lines that name a freight agent or an add-on
-- Daybook for a past day
-- GST, revenue, cost, and P&L lines that cite a document
-- Recycle bin
-- Customer portal order history, order PDF, and bill PDF
+The card, not the live master:
+
+- Saved customer bill, bill PDF, copies
+- Saved vendor bill and its PDF
+- Closed customer order and its PDF
+- Closed vendor order and its PDF
+- Portal history and PDF for those locked documents
+- Report and daybook lines that cite a locked bill or closed order
+
+Live masters, and a correction shows everywhere:
+
+- Open orders
+- Vendor goods receipts and the receipt PDF
+- Debit notes
+- Returns
+- Payments, on both ledgers and statements
+- Expenses
+- Freight charges, settlements, and their PDFs
+- Report lines that cite those rows
 
 Portal product search and the shop catalog stay live.
 
@@ -152,19 +155,21 @@ Portal product search and the shop catalog stay live.
 
 Amounts come from the document (`grand_total`, `line_total`, ledger `amount`), not from today's catalog price.
 
-Each line shows the label on that document's card.
+A locked line shows the label on that document's card. Any other line shows the current master name.
 
-Totals group by stable id: `catalog_product_id`, `customer_id`, `vendor_id`, `freight_agent_id`. A rename must not split one product or one party into two report rows. The group title may show the current master name. The lines under it keep the saved labels.
+Totals group by stable id: `catalog_product_id`, `customer_id`, `vendor_id`, `freight_agent_id`. A rename must not split one product or one party into two report rows. Lines under a locked bill keep the saved label. Lines for receipts, debit notes, expenses, freight, and payments use the current name.
 
-Search uses the same rule. An open order matches the current name. An issued bill matches the name on its card, and still matches the current name of the same `catalog_product_id` so staff can find it after a rename.
+Search uses the same rule. An open order, a receipt, a debit note, an expense, or a payment matches the current name. A locked bill or closed order matches the name on its card, and still matches the current name of the same id so staff can find it after a rename.
 
-## Edit bill and edit receipt
+## Correcting a row
 
-Save on an existing customer bill or vendor receipt is an edit of that document, not a master change.
+Staff can fix a wrong goods receipt, debit note, return, expense, payment, or freight entry. Where the app has no edit action today (expense, payment), add one.
 
-The save rewrites that document's card from what the user saved. It does not refill blank fields from today's catalog. Every screen of that bill, and a reprinted PDF, shows the new card. Clear `document_key` so the next PDF is generated from the new card.
+The save rewrites that same row. It does not insert a second expense or a second payment beside the wrong one. Every screen, ledger, report, and PDF of that row shows the correction. A receipt edit updates stock and every receipt screen. It does not change a vendor bill that is already locked.
 
-A master edit that happens later does not touch this card.
+A wrong payment is an edit of that payment's amount, date, mode, and reference. Outstanding follows the corrected amount. Reverse and void stay for "this should not exist", not for a typo.
+
+A locked customer bill, vendor bill, or closed order is not rewritten by those corrections or by later master edits. Correcting a locked bill itself, when staff edit that bill, rewrites only that bill's card and every view of that bill.
 
 ## Cache
 
@@ -176,7 +181,7 @@ The admin frontend cache must drop those prefixes on the same mutations. A five-
 
 ## Backfill
 
-For documents already exercised:
+For locked documents already saved:
 
 1. Build the card from columns already on the row (item code, prices, quantities, bill number, charges, party id, applied billing percent, payment mode string, `created_by_name`).
 2. Where `EntityHistory` has a snapshot valid at the document's business date, use it for customer, vendor, product, and add-on fields that the row does not already store.
@@ -186,23 +191,25 @@ Step 3 stops future drift. It does not restore a value that was overwritten befo
 
 ## Enforcement
 
-- Routers, PDFs, portal, reports, and search call `present()`. They do not assemble display names, photos, or dates themselves for an exercised document.
+- Routers, PDFs, portal, reports, and search call `present()`. They do not assemble display names, photos, or dates themselves.
 - Admin JS does not format a document date from `created_at` or `updated_at`. It prints the date `present()` returns.
-- A test fails if a known issued-document endpoint returns the live catalog name after the catalog name changes.
-- New document types get a card column and a `present()` branch in the same change that adds them.
+- A test fails if a locked bill still shows the live catalog name after the catalog name changes.
+- A test fails if a goods receipt, debit note, expense, freight charge, or payment still shows the old name after the master name changes.
+- New locked document types get a card column and a `present()` branch in the same change that adds them.
 
 ## Testing
 
 - Backdated customer order: order list, Past tab, and party ledger show the typed date. It is not under Today.
 - Backdated customer bill and vendor bill: same, including a debit note created with the bill.
-- Rename product, change photo, add-on, and alternative: open order shows the new values; an issued bill and its PDF keep the old card.
-- Rename customer, vendor, freight agent, bill series, city, route, payment mode: master screen shows the new value; an issued bill keeps the old card.
-- Rename a category lookup: live products that used it update; an issued bill keeps the old category.
+- Rename product, change photo, add-on, and alternative: open orders, receipts, debit notes, expenses, and freight show the new values. A saved customer bill, a saved vendor bill, and a closed order keep the old card.
+- Rename customer, vendor, freight agent, bill series, city, route, payment mode: payments, expenses, and freight show the new value. A locked bill keeps the old card.
+- Rename a category lookup: live products and unlocked documents update. A locked bill keeps the old category.
 - Cancel a bill: order screen and party ledger both say cancelled. Void hides it everywhere except the recycle bin.
-- Edit a saved bill: all screens and a reprinted PDF show the edited card, not today's catalog.
-- Sales-by-item after a rename: one group for that `catalog_product_id`. Lines keep old labels.
-- Search: open order found by the new name; issued bill found by the old name and by the current product.
-- Portal order history uses the card, including the photo. Shop catalog stays live.
+- Edit a receipt item number: stock and every receipt screen show the new item. A vendor bill already saved from that receipt does not change.
+- Edit a debit note, expense, payment, or freight entry: every screen shows the corrected row, not a second copy. A payment edit changes that payment's outstanding effect.
+- Sales-by-item after a rename: one group for that `catalog_product_id`. Locked bill lines keep the saved label. Other lines show the current name.
+- Search: open order and receipt found by the new name. A locked bill found by the old name and by the current product.
+- Portal history of a locked bill uses the card, including the photo. An open portal order and the shop catalog stay live.
 - Master edit does not leave a stale open order in the cached list.
 
 ## Out of scope for the guarantee

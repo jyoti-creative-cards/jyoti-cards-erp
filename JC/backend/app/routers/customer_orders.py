@@ -1,23 +1,12 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from typing import List, Optional
-from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
-
-_BIZ_TZ = ZoneInfo("Asia/Kolkata")
-
-
-def _local_day_bounds_utc(now: datetime | None = None) -> tuple[datetime, datetime]:
-    """Start/end of business 'today' in Asia/Kolkata, as UTC datetimes."""
-    local_now = (now or datetime.now(timezone.utc)).astimezone(_BIZ_TZ)
-    start_local = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
-    end_local = start_local + timedelta(days=1)
-    return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
 
 from app.db.session import get_db
 from app.deps import AuthContext, require_admin, require_permission
@@ -50,6 +39,7 @@ from decimal import Decimal
 
 from app.models.freight_agent import FreightAgent
 from app.services.activity import log_from_auth
+from app.services.biz_date import ist_day_bounds_utc, today_ist
 from app.services.customer_bill_math import assert_discount_xor, compute_bill_totals
 from app.services.transport_mode import normalize_transport, stamp_transport_on_totals
 from app.services.customer_bill_process import (
@@ -68,12 +58,90 @@ from app.services.customer_order_flow import (
     replace_received_placement,
 )
 from app.services.doc_gen import generate_customer_bill_document, generate_customer_order_document
+from app.services.document_present import present
 from app.services import response_cache
 from app.services.storage import presigned_url, storage_configured
 from app.schemas.stock import VoidIn
 from app.services.void_service import void_customer_bill, void_customer_placement
 
 router = APIRouter(prefix="/customer-orders", tags=["customer-orders"])
+
+
+def _sort_business_date(value: date | datetime | None) -> tuple[int, datetime]:
+    if isinstance(value, datetime):
+        ts = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return (1, ts.astimezone(timezone.utc))
+    if isinstance(value, date):
+        return (1, ist_day_bounds_utc(value)[0])
+    return (0, datetime.min.replace(tzinfo=timezone.utc))
+
+
+def _product_ids_matching_live_name(db: Session, needle: str) -> set[int]:
+    needle_l = needle.lower()
+    return {
+        int(p.id)
+        for p in db.query(CatalogProduct).filter(CatalogProduct.deleted_at.is_(None)).all()
+        if needle_l in (p.our_product_id or "").lower()
+    }
+
+
+def _view_matches_product_search(view: dict, needle: str, live_pids: set[int]) -> bool:
+    needle_l = needle.lower()
+    for ln in view.get("lines") or []:
+        name = str(ln.get("our_product_id") or "").lower()
+        cid = int(ln.get("catalog_product_id") or 0)
+        if needle_l in name or (cid and cid in live_pids):
+            return True
+    return False
+
+
+def _customer_ids_matching_product_search(
+    db: Session, search: str | None, *, bucket: str | None = None
+) -> set[int] | None:
+    """None = no filter. Empty set = no matches. Otherwise customer ids with a matching product line
+    in the given hub bucket (placements / bills / open lines as appropriate)."""
+    if not isinstance(search, str):
+        return None
+    needle = search.strip()
+    if not needle:
+        return None
+    live_pids = _product_ids_matching_live_name(db, needle)
+    matched: set[int] = set()
+
+    if bucket is None or bucket in ("received", "cancelled", "closed"):
+        for placement in db.query(CustomerOrderPlacement).filter(CustomerOrderPlacement.deleted_at.is_(None)).all():
+            order = db.get(CustomerOrder, placement.customer_order_id)
+            if not order:
+                continue
+            if bucket is not None and order.bucket != bucket:
+                continue
+            view = present(db, "customer_order", placement)
+            if _view_matches_product_search(view, needle, live_pids):
+                matched.add(int(order.customer_id))
+
+    if bucket is None or bucket == "billed":
+        # Match the billed hub: active bills only (not cancelled / closed / deleted).
+        for bill in (
+            db.query(CustomerBill)
+            .filter(
+                CustomerBill.cancelled_at.is_(None),
+                CustomerBill.closed_at.is_(None),
+                CustomerBill.deleted_at.is_(None),
+            )
+            .all()
+        ):
+            view = present(db, "customer_bill", bill)
+            if _view_matches_product_search(view, needle, live_pids):
+                matched.add(int(bill.customer_id))
+
+    if bucket is None or bucket == "open":
+        for row in db.query(CustomerOpenLine).filter(CustomerOpenLine.status == "open", CustomerOpenLine.quantity_open > 0).all():
+            prod = db.get(CatalogProduct, row.catalog_product_id)
+            name = (prod.our_product_id if prod else row.our_product_id or "").lower()
+            if needle.lower() in name or int(row.catalog_product_id or 0) in live_pids:
+                matched.add(int(row.customer_id))
+
+    return matched
 
 
 def _customer_name(db: Session, customer_id: int) -> str:
@@ -115,6 +183,7 @@ def serialize_customer_bill(
         p.id: p.marking
         for p in (db.query(CatalogProduct).filter(CatalogProduct.id.in_(bline_cids)).all() if bline_cids else [])
     }
+    view = present(db, "customer_bill", bill)
     return CustomerBillOut(
         id=bill.id,
         bill_number=bill.bill_number,
@@ -131,9 +200,12 @@ def serialize_customer_bill(
         bill_series_id=bill.bill_series_id,
         bill_date=bill.bill_date,
         created_at=bill.created_at,
+        display_date=view.get("display_date") or bill.bill_date or bill.created_at,
+        display_name=view.get("display_name") or bill.bill_number,
+        status=view.get("status"),
         transport_mode=mode,
         transport_receipt_number=bill.transport_receipt_number,
-        freight_agent_name=agent_name,
+        freight_agent_name=view.get("freight_agent_name") or agent_name,
         cancelled_at=bill.cancelled_at,
         cancel_reason=bill.cancel_reason,
         deleted_at=bill.deleted_at,
@@ -224,6 +296,7 @@ def _summary(db: Session, order: CustomerOrder) -> CustomerOrderSummary:
     sources = _sources_for_received(db, order.id) if order.bucket == "received" else []
     cust = db.get(Customer, order.customer_id)
     city = db.get(City, cust.city_id) if cust and cust.city_id else None
+    display_date = order.updated_at
     return CustomerOrderSummary(
         id=order.id,
         customer_id=order.customer_id,
@@ -232,7 +305,8 @@ def _summary(db: Session, order: CustomerOrder) -> CustomerOrderSummary:
         placement_count=placements,
         line_count=len(lines),
         total_quantity=total,
-        updated_at=order.updated_at,
+        updated_at=display_date,
+        display_date=display_date,
         sources=sources,
         party_number=getattr(cust, "party_number", None) if cust else None,
         marker_1=getattr(cust, "marker_1", None) if cust else None,
@@ -246,6 +320,7 @@ def _summary(db: Session, order: CustomerOrder) -> CustomerOrderSummary:
 def list_customer_orders(
     bucket: str = Query("open", pattern="^(summary|received|open|billed|cancelled|closed)$"),
     day: str = Query("all", pattern="^(all|today)$"),
+    search: Optional[str] = None,
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("customer_orders.read")),
 ):
@@ -257,7 +332,14 @@ def list_customer_orders(
 
     day_start = day_end = None
     if day == "today":
-        day_start, day_end = _local_day_bounds_utc()
+        day_start, day_end = ist_day_bounds_utc(today_ist())
+
+    product_match_cids = _customer_ids_matching_product_search(db, search, bucket=bucket)
+
+    def _filter_by_product(rows: list) -> list:
+        if product_match_cids is None:
+            return rows
+        return [r for r in rows if int(getattr(r, "customer_id", 0) or 0) in product_match_cids]
 
     if bucket == "open":
         rows = (
@@ -278,6 +360,8 @@ def list_customer_orders(
         # to Past, exactly like "New" does.
         if day_start is not None:
             rows = [r for r in rows if r[3] and day_start <= r[3].astimezone(timezone.utc) < day_end]
+        if product_match_cids is not None:
+            rows = [r for r in rows if int(r[0]) in product_match_cids]
         cids = [int(r[0]) for r in rows]
         if not cids:
             return []
@@ -313,6 +397,7 @@ def list_customer_orders(
                     line_count=int(line_count or 0),
                     total_quantity=int(total_qty or 0),
                     updated_at=touched_by_cid.get(cid) or (received.updated_at if received else datetime.now(timezone.utc)),
+                    display_date=touched_by_cid.get(cid) or (received.updated_at if received else datetime.now(timezone.utc)),
                     sources=sources_by_order_id.get(received.id, []) if received else [],
                     party_number=getattr(cust_obj, "party_number", None) if cust_obj else None,
                     marker_1=getattr(cust_obj, "marker_1", None) if cust_obj else None,
@@ -320,43 +405,61 @@ def list_customer_orders(
                     payment_type=getattr(cust_obj, "payment_type", None) if cust_obj else None,
                 )
             )
-        out.sort(key=lambda x: x.updated_at or datetime.min.replace(tzinfo=timezone.utc))
+        out.sort(key=lambda x: _sort_business_date(x.display_date), reverse=True)
         return out
 
     if bucket == "received":
-        # "New" is day-scoped by when it was last touched (created or a placement
-        # appended) — day=today shows only today's activity so the queue doesn't get
-        # cluttered with old entries; day=all (Past) still shows full history, so an
-        # order placed yesterday and never confirmed is never actually lost — it just
-        # moves from "Today" to "Past" instead of disappearing from both.
-        q = db.query(CustomerOrder).filter(CustomerOrder.is_open.is_(True), CustomerOrder.bucket == "received")
-        if day_start is not None:
-            q = q.filter(CustomerOrder.updated_at >= day_start, CustomerOrder.updated_at < day_end)
-        orders = q.order_by(CustomerOrder.updated_at.desc()).all()
-        return [_summary(db, o) for o in orders]
-
-    if bucket == "billed":
-        # Always derive from active bills — cancelled bills/orders must not linger in Billed.
-        # Like "received"/"open" above: day=today shows only customers who got a NEW bill
-        # today (func.max(created_at), not min — a customer with an old unclosed bill who
-        # gets billed again today should surface under Today); day=all shows every
-        # customer with any unclosed bill, so nothing is ever lost — it just moves from
-        # Today to Past.
-        bill_rows = (
-            db.query(
-                CustomerBill.customer_id,
-                func.count(CustomerBill.id),
-                func.max(CustomerBill.created_at),
+        rows = (
+            db.query(CustomerOrder, func.max(CustomerOrderPlacement.placed_at))
+            .join(CustomerOrderPlacement, CustomerOrderPlacement.customer_order_id == CustomerOrder.id)
+            .filter(
+                CustomerOrder.is_open.is_(True),
+                CustomerOrder.bucket == "received",
+                CustomerOrderPlacement.deleted_at.is_(None),
             )
-            .filter(CustomerBill.cancelled_at.is_(None), CustomerBill.closed_at.is_(None))
-            .group_by(CustomerBill.customer_id)
+            .group_by(CustomerOrder.id)
             .all()
         )
         if day_start is not None:
-            bill_rows = [
-                r for r in bill_rows
-                if r[2] and day_start <= r[2].astimezone(timezone.utc) < day_end
+            rows = [
+                row for row in rows
+                if row[1] and day_start <= row[1].astimezone(timezone.utc) < day_end
             ]
+        rows.sort(key=lambda row: _sort_business_date(row[1]), reverse=True)
+        out = []
+        for order, display_date in rows:
+            summary = _summary(db, order)
+            summary.updated_at = display_date or order.updated_at
+            summary.display_date = display_date or order.updated_at
+            out.append(summary)
+        return _filter_by_product(out)
+
+    if bucket == "billed":
+        bill_rows_by_customer: dict[int, dict[str, int | date | datetime]] = {}
+        for bill in (
+            db.query(CustomerBill)
+            .filter(
+                CustomerBill.cancelled_at.is_(None),
+                CustomerBill.closed_at.is_(None),
+                CustomerBill.deleted_at.is_(None),
+            )
+            .all()
+        ):
+            if day_start is not None and bill.bill_date != today_ist():
+                continue
+            display_date = bill.bill_date or bill.created_at
+            entry = bill_rows_by_customer.setdefault(
+                int(bill.customer_id),
+                {"count": 0, "display_date": display_date},
+            )
+            entry["count"] = int(entry["count"]) + 1
+            if _sort_business_date(display_date) > _sort_business_date(entry["display_date"]):
+                entry["display_date"] = display_date
+        bill_rows = [
+            (cid, int(info["count"]), info["display_date"])
+            for cid, info in bill_rows_by_customer.items()
+        ]
+        bill_rows.sort(key=lambda row: _sort_business_date(row[2]), reverse=True)
         # Batch the customer-name lookup — was one query PER customer (N+1), which
         # noticeably hung the UI once dozens of customers had unclosed bills sitting
         # here (this bucket is auto-opened right after every new bill save).
@@ -365,7 +468,7 @@ def list_customer_orders(
             c.id: c.business_name for c in db.query(Customer).filter(Customer.id.in_(bill_cids)).all()
         } if bill_cids else {}
         out = []
-        for cid, cnt, latest in bill_rows:
+        for cid, cnt, display_date in bill_rows:
             out.append(
                 CustomerOrderSummary(
                     id=0,
@@ -376,12 +479,12 @@ def list_customer_orders(
                     bill_count=int(cnt or 0),
                     line_count=0,
                     total_quantity=0,
-                    updated_at=latest or datetime.now(timezone.utc),
+                    updated_at=display_date or today_ist(),
+                    display_date=display_date or today_ist(),
                     sources=[],
                 )
             )
-        out.sort(key=lambda x: x.updated_at or datetime.min.replace(tzinfo=timezone.utc))
-        return out
+        return _filter_by_product(out)
 
     orders = (
         db.query(CustomerOrder)
@@ -394,7 +497,7 @@ def list_customer_orders(
             o for o in orders
             if o.updated_at and day_start <= o.updated_at.astimezone(timezone.utc) < day_end
         ]
-    return [_summary(db, o) for o in orders]
+    return _filter_by_product([_summary(db, o) for o in orders])
 
 
 @router.get("/customer/{customer_id}", response_model=CustomerOrderDetail)
@@ -483,13 +586,16 @@ def get_customer_order_detail(
     }
     pl_out: list[CustomerPlacementOut] = []
     for p, lines in placement_lines:
+        view = present(db, "customer_order", p)
         pl_out.append(
             CustomerPlacementOut(
                 id=p.id,
-                status=p.status,
+                status=view.get("status") or p.status,
                 customer_notes=p.customer_notes,
                 cancel_reason=p.cancel_reason,
                 placed_at=p.placed_at,
+                display_date=view.get("display_date") or p.placed_at,
+                display_name=view.get("display_name") or f"Order #{p.id}",
                 deleted_at=p.deleted_at,
                 deleted_reason=p.deleted_reason,
                 lines=[
@@ -704,6 +810,7 @@ def submit_process_bill(
     response_cache.invalidate("stock:")
     response_cache.invalidate("shop:")
     response_cache.invalidate("catalog:")
+    response_cache.invalidate("ledger")
     return {
         "ok": True,
         "bill_id": bill.id,
@@ -912,12 +1019,15 @@ def get_placement_detail(
         .order_by(CustomerOrderLine.id.asc())
         .all()
     )
+    view = present(db, "customer_order", placement)
     return CustomerPlacementOut(
         id=placement.id,
-        status=placement.status,
+        status=view.get("status") or placement.status,
         customer_notes=placement.customer_notes,
         cancel_reason=placement.cancel_reason,
         placed_at=placement.placed_at,
+        display_date=view.get("display_date") or placement.placed_at,
+        display_name=view.get("display_name") or f"Order #{placement.id}",
         deleted_at=placement.deleted_at,
         deleted_reason=placement.deleted_reason,
         lines=[
@@ -1152,6 +1262,7 @@ def update_bill_endpoint(
     response_cache.invalidate("stock:")
     response_cache.invalidate("shop:")
     response_cache.invalidate("catalog:")
+    response_cache.invalidate("ledger")
     return {
         "ok": True,
         "bill_id": updated.id,

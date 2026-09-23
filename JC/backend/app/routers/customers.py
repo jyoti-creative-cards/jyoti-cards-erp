@@ -27,6 +27,7 @@ from app.services.activity import log_from_auth
 from app.services.ledger import build_customer_ledger
 from app.services.history import TRACKED_FIELDS, diff_summary, list_entity_history, record_entity_history, row_snapshot
 from app.services.passwords import generate_portal_password, hash_password
+from app.services import response_cache
 
 router = APIRouter(prefix="/customers", tags=["customers"])
 logger = logging.getLogger("jc.customers")
@@ -528,6 +529,9 @@ def update_customer(customer_id: int, body: CustomerUpdate, db: Session = Depend
     db.add(row)
     log_from_auth(db, auth, action="update", entity_type="customer", entity_id=row.id, entity_label=row.business_name, detail=summary)
     db.commit()
+    response_cache.invalidate("catalog:")
+    response_cache.invalidate("stock:")
+    response_cache.invalidate("shop:")
     db.refresh(row)
     return _to_public(row, db, auth=auth)
 

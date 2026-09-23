@@ -693,6 +693,7 @@ def update_product(
     db.commit()
     response_cache.invalidate("catalog:")
     response_cache.invalidate("stock:")
+    response_cache.invalidate("shop:")
     db.refresh(row)
     return _to_public(row, db, auth=auth)
 

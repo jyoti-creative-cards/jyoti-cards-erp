@@ -44,6 +44,7 @@ from app.services.catalog_addons import addon_snapshots_for_product, addon_snaps
 from app.services.credit_limit import credit_status
 from app.services.customer_order_flow import append_or_create_portal_placement
 from app.services.doc_gen import generate_customer_bill_document, generate_customer_order_document
+from app.services.document_present import present
 from app.services.storage import download_bytes, presigned_url, storage_configured
 from app.services.stock_levels import stock_status_label
 
@@ -86,10 +87,8 @@ def _rank_products(rows: list[CatalogProduct], raw: str) -> list[CatalogProduct]
     return sorted(rows, key=score)
 
 
-def _image_url(prod: CatalogProduct | None) -> str:
-    if not prod:
-        return ""
-    for key in prod.image_keys or []:
+def _image_url_from_keys(keys) -> str:
+    for key in keys or []:
         if not key or not isinstance(key, str):
             continue
         key = key.strip()
@@ -99,6 +98,21 @@ def _image_url(prod: CatalogProduct | None) -> str:
         if url:
             return url
     return ""
+
+
+def _image_url(prod: CatalogProduct | None) -> str:
+    if not prod:
+        return ""
+    return _image_url_from_keys(prod.image_keys)
+
+
+def _card_line_for_product(view: dict, catalog_product_id: int) -> dict:
+    for ln in view.get("lines") or []:
+        if not isinstance(ln, dict):
+            continue
+        if int(ln.get("catalog_product_id") or 0) == int(catalog_product_id):
+            return ln
+    return {}
 
 
 def _fmt_price(val) -> str:
@@ -658,20 +672,27 @@ def list_order_history(
             qty = int(ln.quantity or 0)
             ship_sum += shipped
             qty_sum += qty
-            prod = db.get(CatalogProduct, ln.catalog_product_id)
             bill = _find_bill_for_line(db, customer.id, ln.catalog_product_id, p.placed_at) if shipped > 0 else None
+            if bill:
+                view = present(db, "customer_bill", bill)
+            else:
+                view = present(db, "customer_order", p)
+            card_ln = _card_line_for_product(view, ln.catalog_product_id)
+            our_product_id = str(card_ln.get("our_product_id") or ln.our_product_id or "")
+            image_url = _image_url_from_keys(card_ln.get("image_keys") or [])
+            category = card_ln.get("category")
             line_total = (ln.unit_price * ln.quantity).quantize(Decimal("0.01"))
             total += line_total
             hist_lines.append(
                 ShopOrderHistoryLine(
                     catalog_product_id=ln.catalog_product_id,
-                    our_product_id=ln.our_product_id,
-                    image_url=_image_url(prod) if prod else "",
+                    our_product_id=our_product_id,
+                    image_url=image_url,
                     quantity=qty,
                     quantity_shipped=shipped,
                     unit_price=format(ln.unit_price, "f"),
                     line_total=format(line_total, "f"),
-                    category=prod.category if prod else None,
+                    category=category,
                     bill_id=bill.id if bill else None,
                     bill_number=bill.bill_number if bill else None,
                     has_bill_document=bool(bill and (bill.document_key or True)),

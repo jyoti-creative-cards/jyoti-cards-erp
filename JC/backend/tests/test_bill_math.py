@@ -78,16 +78,17 @@ def test_pdf_summary_transport_label():
     assert "Freight charges" not in labels
 
 
-def test_pdf_item_headers_include_rate_disc_net():
-    from app.services.customer_bill_pdf import bill_item_headers
+def test_pdf_item_headers_match_tally_invoice():
+    from app.services.customer_bill_pdf import _inr_words, bill_item_headers
 
-    # Non-GST "Order Estimate" layout: Code, Qty, Rate, Net, Amount — no Description
-    # column, no Disc. column (Net already reflects any discount), and no in-table
-    # Photo column (photos render as a tile grid after the table instead).
-    plain = bill_item_headers(False)
-    assert plain == ["Code", "Qty", "Rate", "Net", "Amount"]
-    gst = bill_item_headers(True, "18%")
-    assert gst[4:7] == ["Rate", "Disc.", "Net"]
+    headers = [
+        "Sl No.", "Description of Goods", "Sl No.", "Quantity", "Rate", "per", "Disc. %", "Amount",
+    ]
+    assert bill_item_headers(False) == headers
+    assert bill_item_headers(True, "18%") == headers
+    assert _inr_words("6.53") == "INR Six and Fifty Three paise Only"
+    assert _inr_words("30.80") == "INR Thirty and Eighty paise Only"
+    assert _inr_words("503.13") == "INR Five Hundred Three and Thirteen paise Only"
 
 
 def test_pdf_addon_qty_scales_with_line():

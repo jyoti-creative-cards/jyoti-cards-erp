@@ -1,65 +1,65 @@
-"""Professional customer tax invoice PDF — matches vendor order style."""
+"""Customer bill PDF in the Tally invoice layout.
+
+One bordered goods table (Sl, Description, Sl, Quantity, Rate, per, Disc. %, Amount).
+Transport, packing, and a bill-level cash discount sit inside that table.
+Item photos sit under the total, on the last page only. A long list continues
+onto the next page with the same header and "continued ...".
+"""
 from __future__ import annotations
 
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from decimal import Decimal, ROUND_HALF_UP
 from io import BytesIO
+from math import ceil
 from typing import Any, Dict, List, Optional
-from xml.sax.saxutils import escape
 
-from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.lib.units import cm
-from reportlab.platypus import Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.lib.utils import ImageReader
+from reportlab.pdfgen import canvas
 
+from app.services.biz_date import to_ist
+from app.services.company_info import COMPANY_NAME
 from app.services.customer_bill_math import fmt_discount_pct
-from app.services.company_info import company_lines
-from app.services.pdf_documents import (
-    _fetch_image,
-    _header,
-    _safe,
-    _totals_block,
-    add_page_number,
-)
+from app.services.pdf_documents import _safe
 
-# Tight page chrome so ~25 item rows stay on one A4 sheet. Side margins match
-# every table width below — a wider item table, a short bill-to line, a short
-# totals block, and a small photo grid.
-_BILL_MARGIN_X = 0.85 * cm
-_BILL_MARGIN_TOP = 0.45 * cm
-_BILL_MARGIN_BOTTOM = 1.15 * cm
-_BILL_CONTENT_W = A4[0] - 2 * _BILL_MARGIN_X
+PAGE_W, PAGE_H = A4  # 595 x 841
+
+# Column edges measured from the sample invoices.
+COLS = [33.0, 47.0, 250.0, 276.0, 333.0, 390.0, 415.0, 453.0, 537.0]
+LEFT = COLS[0]
+RIGHT = COLS[-1]
+
+# Closing page: table border ends just above "Amount Chargeable".
+BOX_BOTTOM = 603.0
+# Continued page: border runs down to the "continued" line.
+BOX_BOTTOM_CONT = 753.0
+
+HEAD_H = 26.0
+ROW_H = 12.0
+CHARGE_H = 13.0
+TOTAL_H = 16.0
 
 COPY_LABELS = ["ORIGINAL", "DUPLICATE", "TRIPLICATE", "QUADRUPLICATE"]
 
+DECLARATION = (
+    "We declare that this invoice shows the actual price of the goods "
+    "described and that all particulars are true and correct. "
+    "300 PCS QUANTITY TAK PACKING CHARGE NHI LAGEGA USKE UPAR CHARGES APPLICABLE HAI."
+)
 
-def _prefetch_images_parallel(
-    img_map: Dict[int, str | None],
-    max_w: float,
-    max_h: float,
-) -> Dict[int, Optional[Image]]:
-    result: Dict[int, Optional[Image]] = {}
-    entries = [(k, v) for k, v in img_map.items() if v]
-    if not entries:
-        return result
-    with ThreadPoolExecutor(max_workers=min(len(entries), 8)) as ex:
-        futs = {ex.submit(_fetch_image, url, max_w, max_h): k for k, url in entries}
-        for fut in as_completed(futs):
-            k = futs[fut]
-            try:
-                result[k] = fut.result()
-            except Exception:
-                result[k] = None
-    return result
+_BELOW_20 = [
+    "", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
+    "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen",
+    "Eighteen", "Nineteen",
+]
+_TENS = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"]
 
 
 def _money(v: object) -> str:
     """Indian grouping, 2 decimals. Fits rate cells without US-style overflow."""
     try:
-        from decimal import Decimal, ROUND_HALF_UP
-
         d = Decimal(str(v)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     except Exception:
         return _safe(v)
@@ -80,21 +80,16 @@ def _money(v: object) -> str:
     return f"-{out}" if neg else out
 
 
-def _cell(text: str, *, right: bool = False, muted: bool = False, size: int = 8) -> Paragraph:
-    styles = getSampleStyleSheet()
-    key = f"bill_cell_{'r' if right else 'l'}_{'m' if muted else 't'}_{size}"
-    return Paragraph(
-        escape(text or ""),
-        ParagraphStyle(
-            key,
-            parent=styles["Normal"],
-            fontSize=size,
-            leading=size + 1,
-            alignment=TA_RIGHT if right else TA_LEFT,
-            textColor=colors.HexColor("#64748b" if muted else "#0f172a"),
-            wordWrap="CJK",
-        ),
-    )
+def _dec(v: object) -> Decimal:
+    try:
+        return Decimal(str(v if v not in (None, "") else "0")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    except Exception:
+        return Decimal("0.00")
+
+
+def _txt(v: object, n: int = 80) -> str:
+    t = _safe(v, n)
+    return "" if t == "-" else t
 
 
 def _line_qty(ln: Dict[str, Any]) -> int:
@@ -122,8 +117,7 @@ def _addon_label(addon: Dict[str, Any]) -> str:
 
 
 def _addon_qty(addon: Dict[str, Any], line_qty: int) -> int:
-    # NB: addon snapshots (catalog_addons.py::_addon_row) only ever set "quantity"
-    # (the per-product-unit link qty) — there is no "per_unit" key anywhere upstream.
+    # Addon snapshots only set "quantity" (per parent unit). There is no "per_unit" key.
     try:
         per = int(addon.get("quantity") or 1)
     except (TypeError, ValueError):
@@ -134,332 +128,759 @@ def _addon_qty(addon: Dict[str, Any], line_qty: int) -> int:
 
 
 def bill_item_headers(gst_on: bool, gst_label: str = "") -> list[str]:
-    if gst_on:
-        return ["", "Code", "Description", "Qty", "Rate", "Disc.", "Net", "Taxable", f"GST ({gst_label})", "Total"]
-    # Non-GST "Order Estimate": no Description (our_product_id already appears in
-    # Code) and no separate Disc. column — Net already reflects any discount, showing
-    # both was redundant/confusing. No Photo column either — photos now live in their
-    # own "Photos" section after the table (see _photos_section) so this table can
-    # give Code the width it needs to stay on one line.
-    return ["Code", "Qty", "Rate", "Net", "Amount"]
+    # Same columns on a GST bill and a non-GST bill. Tax stays inside the line amount.
+    del gst_on, gst_label
+    return ["Sl No.", "Description of Goods", "Sl No.", "Quantity", "Rate", "per", "Disc. %", "Amount"]
 
 
-def _col_widths(weights: list[float], total: float) -> list[float]:
-    scale = total / (sum(weights) or 1)
-    return [w * scale for w in weights]
+def _two_digits(n: int) -> str:
+    if n < 20:
+        return _BELOW_20[n]
+    ten, one = divmod(n, 10)
+    return _TENS[ten] + (f" {_BELOW_20[one]}" if one else "")
 
 
-def _bill_items_table(
-    lines: List[Dict[str, Any]],
-    image_urls: Dict[int, str | None],
-    gst_on: bool,
-    gst_label: str,
-    overall_disc_pct: object = None,
-) -> Table:
-    if gst_on:
-        head = bill_item_headers(True, gst_label)
-        # Thumb stays smaller than the text row so 20–25 lines still fit one page.
-        img_size = 0.52 * cm
-        rest = _BILL_CONTENT_W - img_size
-        col_widths = [img_size, *_col_widths(
-            [1.7, 3.6, 0.9, 1.5, 1.15, 1.5, 1.55, 1.45, 1.55], rest,
-        )]
-        prefetched = _prefetch_images_parallel(image_urls or {}, img_size, img_size)
-    else:
-        # Non-GST estimate has no in-table Photo column — see _photos_section, which
-        # renders images after the table instead. Code takes the spare width.
-        head = bill_item_headers(False)
-        col_widths = _col_widths([6.4, 1.35, 2.5, 2.5, 2.9], _BILL_CONTENT_W)
-        prefetched = {}
+def _under_1000(n: int) -> str:
+    hundred, rest = divmod(n, 100)
+    bits: list[str] = []
+    if hundred:
+        bits.append(f"{_BELOW_20[hundred]} Hundred")
+    if rest:
+        bits.append(_two_digits(rest))
+    return " ".join(bits)
 
-    dash = _cell("—", right=True, muted=True)
-    data: list[list[Any]] = [head]
+
+def _indian_words(n: int) -> str:
+    if n == 0:
+        return "Zero"
+    if n < 0:
+        return f"Minus {_indian_words(-n)}"
+    parts: list[str] = []
+    if n >= 10000000:
+        parts.append(f"{_indian_words(n // 10000000)} Crore")
+        n %= 10000000
+    if n >= 100000:
+        parts.append(f"{_two_digits(n // 100000)} Lakh")
+        n %= 100000
+    if n >= 1000:
+        parts.append(f"{_two_digits(n // 1000)} Thousand")
+        n %= 1000
+    if n:
+        parts.append(_under_1000(n))
+    return " ".join(p for p in parts if p)
+
+
+def _inr_words(amount: object) -> str:
+    d = _dec(amount)
+    rupees = int(d)
+    paise = int((d - Decimal(rupees)) * 100)
+    words = _indian_words(rupees)
+    if paise:
+        words += f" and {_two_digits(paise)} paise"
+    return f"INR {words} Only"
+
+
+def _day_token(d: date) -> str:
+    return f"{d.day}-{d.strftime('%b')}-{d.strftime('%y')}"
+
+
+def _creation_token(dt: datetime | None) -> str:
+    ist = to_ist(dt)
+    hour = ist.strftime("%I").lstrip("0") or "12"
+    return f"{ist.day}-{ist.strftime('%b')}-{ist.strftime('%y')} {hour}:{ist.strftime('%M %p')}"
+
+
+def _printed_token(dt: datetime | None) -> str:
+    ist = to_ist(dt)
+    return f"{ist.day}-{ist.strftime('%b')}-{ist.strftime('%y')} at {ist.strftime('%H:%M')}"
+
+
+def _as_date(value: object) -> date | None:
+    if isinstance(value, datetime):
+        return to_ist(value).date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            return date.fromisoformat(value.strip()[:10])
+        except ValueError:
+            return None
+    return None
+
+
+def _qty_text(qty: int) -> str:
+    return f"{qty:.2f} pcs"
+
+
+def _disc_text(pct: object) -> str:
+    label = fmt_discount_pct(pct)
+    if not label or label in ("0", "0.00"):
+        return ""
+    try:
+        if Decimal(str(label)) <= 0:
+            return ""
+    except Exception:
+        return ""
+    if "." in label:
+        label = label.rstrip("0").rstrip(".")
+    return f"{label} %"
+
+
+def _description(ln: Dict[str, Any]) -> str:
+    code = _txt(ln.get("our_product_id"), 40)
+    name = _txt(ln.get("name"), 80)
+    if name and name != code:
+        if code and code not in name:
+            return f"{code} {name}"
+        return name
+    return code or name or "Item"
+
+
+def _line_gross(ln: Dict[str, Any]) -> Decimal | None:
+    before = ln.get("line_inclusive_before_discount")
+    if before not in (None, ""):
+        return _dec(before)
+    disc = ln.get("line_discount")
+    total = ln.get("line_total")
+    if disc not in (None, "", "0", "0.00", "0.0") and total not in (None, ""):
+        return (_dec(total) + _dec(disc)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return None
+
+
+def _fetch_reader(url: str) -> Optional[ImageReader]:
+    if not url:
+        return None
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            data = resp.read()
+        return ImageReader(BytesIO(data))
+    except Exception:
+        return None
+
+
+def _load_images(urls: Dict[int, str | None]) -> Dict[int, ImageReader]:
+    entries = [(k, v) for k, v in (urls or {}).items() if v]
+    if not entries:
+        return {}
+    out: Dict[int, ImageReader] = {}
+    with ThreadPoolExecutor(max_workers=min(len(entries), 8)) as pool:
+        futs = {pool.submit(_fetch_reader, url): key for key, url in entries}
+        for fut in as_completed(futs):
+            img = fut.result()
+            if img is not None:
+                out[futs[fut]] = img
+    return out
+
+
+def _build_rows(lines: List[Dict[str, Any]]) -> tuple[list[dict], Decimal]:
+    """Numbered item and addon rows. Returns rows and the total quantity."""
+    rows: list[dict] = []
+    total_qty = 0
+    sl = 0
     for ln in lines:
         if not isinstance(ln, dict):
             continue
-        cid = int(ln.get("catalog_product_id") or 0)
-        img = prefetched.get(cid) or ""
+        sl += 1
         qty = _line_qty(ln)
-        code = _cell(_safe(ln.get("our_product_id"), 24))
-        desc = _cell(_safe(ln.get("name") or ln.get("our_product_id"), 60))
-        rate = _cell(
-            _money(ln.get("rate_inclusive") or ln.get("unit_price") or ln.get("base_unit_price")),
-            right=True,
-        )
-        total = _cell(_money(ln.get("line_total") or ln.get("line_inclusive_after_discount")), right=True)
-        disc_pct = fmt_discount_pct(ln.get("item_discount_percent") or overall_disc_pct)
-        disc = ln.get("line_discount")
-        disc_lbl = "—"
+        total_qty += qty
+        cid = ln.get("catalog_product_id")
         try:
-            if disc and float(disc) > 0 and disc_pct:
-                disc_lbl = f"{disc_pct}%"
-            elif disc and float(disc) > 0:
-                disc_lbl = f"-{_money(disc)}"
+            cid_i = int(cid) if cid is not None else None
         except (TypeError, ValueError):
-            disc_lbl = "—"
-        net = _cell(
-            _money(ln.get("net_rate") or ln.get("effective_price") or ln.get("rate_inclusive") or ln.get("unit_price")),
-            right=True,
-        )
-        disc_cell = _cell(disc_lbl, right=True)
-
-        if gst_on:
-            data.append([
-                img,
-                code,
-                desc,
-                _cell(str(qty), right=True),
-                rate,
-                disc_cell,
-                net,
-                _cell(_money(ln.get("line_taxable_value")), right=True),
-                _cell(_money(ln.get("line_gst_amount") or "0.00"), right=True),
-                total,
-            ])
-        else:
-            data.append([
-                code,
-                _cell(str(qty), right=True),
-                rate,
-                net,
-                total,
-            ])
-
+            cid_i = None
+        rows.append({
+            "kind": "item",
+            "sl": sl,
+            "desc": _description(ln),
+            "qty": qty,
+            "rate": _money(ln.get("rate_inclusive") or ln.get("unit_price") or ln.get("base_unit_price")),
+            "disc": _disc_text(ln.get("item_discount_percent")),
+            "amount": _dec(ln.get("line_total") or ln.get("line_inclusive_after_discount")),
+            "gross": _line_gross(ln),
+            "image_id": cid_i,
+            "source": ln,
+        })
         for addon in ln.get("addons") or []:
             if not isinstance(addon, dict):
                 continue
+            sl += 1
             aq = _addon_qty(addon, qty)
-            label = _addon_label(addon)
-            unit = _safe(addon.get("unit") or "pc", 8)
-            if not unit or unit == "-":
-                unit = "pc"
-            row = [""] * len(head)
-            if gst_on:
-                row[2] = _cell(f"+ {label}", muted=True)
-                row[3] = _cell(f"{aq} {unit}", right=True, muted=True)
-                start = 4
-            else:
-                row[0] = _cell(f"+ {label}", muted=True)
-                row[1] = _cell(f"{aq} {unit}", right=True, muted=True)
-                start = 2
-            for i in range(start, len(head)):
-                row[i] = dash
-            data.append(row)
-
-    if len(data) < 2:
-        empty = [""] * len(head)
-        if gst_on:
-            empty[1] = _cell("-")
-            empty[2] = _cell("No line items")
-        else:
-            empty[0] = _cell("No line items")
-        data.append(empty)
-
-    # Numeric columns start right after Code/Photo+Code+Description — right-align
-    # from that column on, on the HEADER row too (row 0), not just the data rows.
-    # Leaving row 0 out of the ALIGN (as before) left header labels default-left
-    # while every data cell below was explicitly right-aligned, so headers and their
-    # own columns visibly didn't line up.
-    numeric_start = 3 if gst_on else 1
-    table = Table(data, colWidths=col_widths, repeatRows=1)
-    style_cmds = [
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, 0), 8),
-        ("FONTSIZE", (0, 1), (-1, -1), 8),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1e40af")),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING", (0, 0), (-1, -1), 3),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-        ("LEFTPADDING", (0, 0), (-1, -1), 2),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 2),
-        ("ALIGN", (numeric_start, 0), (-1, -1), "RIGHT"),
-        ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#cbd5e1")),
-        ("LINEBELOW", (0, 1), (-1, -2), 0.4, colors.HexColor("#e2e8f0")),
-    ]
-    for i in range(1, len(data)):
-        if i % 2 == 0:
-            style_cmds.append(("BACKGROUND", (0, i), (-1, i), colors.HexColor("#f8fafc")))
-    table.setStyle(TableStyle(style_cmds))
-    return table
+            total_qty += aq
+            rows.append({
+                "kind": "addon",
+                "sl": sl,
+                "desc": _addon_label(addon),
+                "qty": aq,
+                "rate": "",
+                "disc": "",
+                "amount": None,
+                "gross": None,
+                "image_id": None,
+                "source": addon,
+            })
+    return rows, Decimal(total_qty)
 
 
-def _photos_section(lines: List[Dict[str, Any]], image_urls: Dict[int, str | None]) -> list:
-    """Small numbered photo tiles under the totals. Ten across keeps 25 items to
-    three short rows so the item table above can stay on the same page."""
-    per_row = 10
-    tile_w = _BILL_CONTENT_W / per_row
-    img_px = 1.05 * cm
-    prefetched = _prefetch_images_parallel(image_urls or {}, img_px, img_px)
-    styles = getSampleStyleSheet()
-    cap_style = ParagraphStyle(
-        "photo_cap", parent=styles["Normal"], fontSize=5.5, alignment=TA_CENTER,
-        textColor=colors.HexColor("#334155"), leading=6.5,
-    )
-    placeholder_style = ParagraphStyle(
-        "photo_ph", parent=styles["Normal"], fontSize=5, alignment=TA_CENTER,
-        textColor=colors.HexColor("#94a3b8"), leading=6,
-    )
-    tiles: list[Any] = []
-    n = 0
-    for ln in lines:
-        if not isinstance(ln, dict):
+def _cash_discount_mode(item_rows: list[dict], totals: Dict[str, Any]) -> bool:
+    """Bill-level cash discount (gross lines + a Less row) when every priced line shares it.
+
+    A single discounted line keeps the percent in the Disc. % column, matching the
+    one-line sample. Several lines at the same percent use the Less row, matching
+    the long sample.
+    """
+    priced = [r for r in item_rows if r["kind"] == "item"]
+    if len(priced) < 2:
+        return False
+    if _dec(totals.get("discount_amount")) <= 0:
+        return False
+    if any(r["gross"] is None for r in priced):
+        return False
+    pcts = []
+    for r in priced:
+        label = (r["disc"] or "").replace("%", "").strip()
+        pcts.append(_dec(label) if label else Decimal("0"))
+    if not pcts or any(p != pcts[0] for p in pcts) or pcts[0] <= 0:
+        return False
+    return True
+
+
+def _running_and_closing(
+    item_rows: list[dict],
+    totals: Dict[str, Any],
+    cash: bool,
+) -> tuple[list[dict], list[dict], Decimal]:
+    if cash:
+        goods = sum((r["gross"] or Decimal("0") for r in item_rows if r["kind"] == "item"), Decimal("0"))
+    else:
+        goods = sum((r["amount"] or Decimal("0") for r in item_rows if r["kind"] == "item"), Decimal("0"))
+    goods = goods.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    running: list[dict] = list(item_rows)
+    charges: list[dict] = []
+
+    freight = _dec(totals.get("freight_charges"))
+    if freight > 0:
+        receipt = _txt(totals.get("transport_receipt_number"), 24)
+        label = "Transport Charges" + (f" ({receipt})" if receipt else "")
+        charges.append({"kind": "charge", "label": label, "amount": freight})
+
+    packaging = _dec(totals.get("packaging_charges"))
+    if packaging > 0:
+        charges.append({"kind": "charge", "label": "PACKING MATERIAL CHARGES", "amount": packaging})
+
+    additional = totals.get("additional_charges")
+    if isinstance(additional, list):
+        for ac in additional:
+            if isinstance(ac, dict) and ac.get("name") and _dec(ac.get("amount")) > 0:
+                charges.append({
+                    "kind": "charge",
+                    "label": _txt(ac["name"], 40) or "Charge",
+                    "amount": _dec(ac["amount"]),
+                })
+
+    closing: list[dict] = []
+    if cash:
+        pct = fmt_discount_pct(totals.get("discount_percent"))
+        if pct and "." in pct:
+            pct = pct.rstrip("0").rstrip(".")
+        closing.append({
+            "kind": "less",
+            "label": "CASH DISCOUNT",
+            "pct": pct or "",
+            "amount": _dec(totals.get("discount_amount")),
+        })
+
+    round_off = totals.get("round_off")
+    if round_off and str(round_off) not in ("0", "0.0", "0.00"):
+        ro = _dec(round_off)
+        if ro != 0:
+            closing.append({"kind": "round", "amount": ro})
+    if charges or closing:
+        running.append({"kind": "subtotal", "amount": goods})
+        running.extend(charges)
+    return running, closing, goods
+
+
+def _row_height(row: dict) -> float:
+    if row["kind"] == "item" or row["kind"] == "addon":
+        return ROW_H
+    return CHARGE_H
+
+
+def _photo_layout(n: int) -> tuple[int, float, float, float]:
+    """Columns, image width, image height, row pitch (image + caption)."""
+    if n <= 0:
+        return 1, 0.0, 0.0, 0.0
+    if n <= 2:
+        return n, 71.0, 58.0, 74.0
+    if n <= 8:
+        return n, 56.0, 56.0, 72.0
+    return 8, 52.0, 52.0, 78.0
+
+
+def _photo_height(n: int) -> float:
+    if n <= 0:
+        return 0.0
+    cols, _w, _h, pitch = _photo_layout(n)
+    return ceil(n / cols) * pitch + 6.0
+
+
+def _photos_for(rows: list[dict], images: Dict[int, ImageReader]) -> list[dict]:
+    photos = []
+    for row in rows:
+        if row["kind"] != "item":
             continue
-        n += 1
-        cid = int(ln.get("catalog_product_id") or 0)
-        img = prefetched.get(cid)
-        code = _safe(ln.get("our_product_id"), 14)
-        if img:
-            pic: Any = img
-        else:
-            pic = Table([[Paragraph("—", placeholder_style)]], colWidths=[img_px], rowHeights=[img_px])
-            pic.setStyle(TableStyle([
-                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f1f5f9")),
-                ("BOX", (0, 0), (-1, -1), 0.3, colors.HexColor("#e2e8f0")),
-                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 0),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-                ("TOPPADDING", (0, 0), (-1, -1), 0),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-            ]))
-        cap = Paragraph(f"{n}. {escape(code)}", cap_style)
-        tile = Table([[pic], [cap]], colWidths=[tile_w])
-        tile.setStyle(TableStyle([
-            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("TOPPADDING", (0, 0), (-1, -1), 0),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-        ]))
-        tiles.append(tile)
+        img = images.get(row["image_id"]) if row["image_id"] is not None else None
+        if img is None:
+            continue
+        photos.append({"image": img, "caption": row["desc"]})
+    return photos
 
-    if not tiles:
+
+def _paginate(
+    running: list[dict],
+    closing: list[dict],
+    photo_n: int,
+    table_top: float,
+) -> list[dict]:
+    """Split running rows across pages. Closing rows, total, and photos stay on the last page."""
+    body_top = table_top + HEAD_H
+    close_h = sum(_row_height(r) for r in closing)
+
+    def one_page_room(photo_h: float) -> float:
+        total_top = BOX_BOTTOM - photo_h - TOTAL_H
+        return max(0.0, total_top - body_top)
+
+    def fits_one_page(photo_h: float) -> bool:
+        need = sum(_row_height(r) for r in running) + close_h
+        return need <= one_page_room(photo_h) + 0.5
+
+    photo_h = _photo_height(photo_n)
+    if fits_one_page(photo_h):
+        return [{"running": running, "closing": closing, "last": True, "photo_h": photo_h}]
+
+    # Shrink photos until the closing rows themselves fit on the last page.
+    while photo_n and close_h > one_page_room(photo_h) + 0.5 and photo_h > 40:
+        photo_h *= 0.85
+    if close_h > one_page_room(photo_h) + 0.5:
+        photo_h = 0.0
+
+    last_room = one_page_room(photo_h) - close_h
+    cont_room = BOX_BOTTOM_CONT - body_top
+
+    pages: list[dict] = []
+    idx = 0
+    n = len(running)
+    while idx < n:
+        remain_h = sum(_row_height(running[j]) for j in range(idx, n))
+        if remain_h <= last_room + 0.5:
+            pages.append({
+                "running": running[idx:],
+                "closing": closing,
+                "last": True,
+                "photo_h": photo_h,
+            })
+            return pages
+        used = 0.0
+        take = 0
+        while idx + take < n and used + _row_height(running[idx + take]) <= cont_room + 0.5:
+            used += _row_height(running[idx + take])
+            take += 1
+        take = max(take, 1)
+        pages.append({
+            "running": running[idx:idx + take],
+            "closing": [],
+            "last": False,
+            "photo_h": 0.0,
+        })
+        idx += take
+    if not pages or not pages[-1]["last"]:
+        pages.append({"running": [], "closing": closing, "last": True, "photo_h": photo_h})
+    return pages
+
+
+def _y(top: float) -> float:
+    return PAGE_H - top
+
+
+def _wrap(c: canvas.Canvas, text: str, font: str, size: float, width: float) -> list[str]:
+    words = (text or "").split()
+    if not words:
         return []
-
-    grid_rows = [tiles[i:i + per_row] for i in range(0, len(tiles), per_row)]
-    if grid_rows and len(grid_rows[-1]) < per_row:
-        grid_rows[-1] = grid_rows[-1] + [""] * (per_row - len(grid_rows[-1]))
-    grid = Table(grid_rows, colWidths=[tile_w] * per_row)
-    grid.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 1),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 1),
-        ("TOPPADDING", (0, 0), (-1, -1), 1),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
-    ]))
-    heading = Paragraph("Photos", ParagraphStyle(
-        "photos_head", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=8,
-        textColor=colors.HexColor("#0f172a"), spaceBefore=1, spaceAfter=1, leading=9,
-    ))
-    return [Spacer(1, 0.08 * cm), heading, grid]
+    lines: list[str] = []
+    cur = ""
+    for word in words:
+        trial = f"{cur} {word}".strip()
+        if c.stringWidth(trial, font, size) <= width:
+            cur = trial
+        else:
+            if cur:
+                lines.append(cur)
+            cur = word
+    if cur:
+        lines.append(cur)
+    return lines
 
 
-def _party_chip(label: str, line_html: str, second: str | None, width: float) -> Table:
-    """One or two lines: 'BILL TO  Name · phone · CITY' then company/address."""
-    styles = getSampleStyleSheet()
-    body = ParagraphStyle(
-        "bill_party", parent=styles["Normal"], fontSize=8, leading=10,
-        textColor=colors.HexColor("#0f172a"),
-    )
-    flows: list[Any] = [Paragraph(
-        f'<font color="#64748b"><b>{escape(label)}</b></font>&nbsp;&nbsp;{line_html}',
-        body,
-    )]
-    if second:
-        flows.append(Paragraph(escape(second), ParagraphStyle(
-            "bill_party_2", parent=body, fontSize=7.5, leading=9,
-            textColor=colors.HexColor("#334155"),
-        )))
-    inner = Table([[f] for f in flows], colWidths=[max(width - 8, 20)])
-    inner.setStyle(TableStyle([
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-    ]))
-    tbl = Table([[inner]], colWidths=[width])
-    tbl.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#eff6ff")),
-        ("BOX", (0, 0), (-1, -1), 0.4, colors.HexColor("#cbd5e1")),
-        ("LEFTPADDING", (0, 0), (-1, -1), 4),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-        ("TOPPADDING", (0, 0), (-1, -1), 2),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-    ]))
-    return tbl
+def _fit(c: canvas.Canvas, text: str, font: str, size: float, width: float, minimum: float = 6.0) -> float:
+    s = size
+    while s > minimum and c.stringWidth(text, font, s) > width:
+        s -= 0.4
+    return s
 
 
-def _customer_party_html(
+def _draw_header(
+    c: canvas.Canvas,
     *,
-    customer_name: str,
-    customer_phone: str | None,
-    customer_city: str | None,
-    customer_party_number: int | str | None,
-    customer_company: str | None,
-    customer_address: str | None,
-    addr_limit: int,
-) -> tuple[str, str | None]:
-    parts = [f"<b>{escape(_safe(customer_name, 70))}</b>"]
-    if customer_party_number:
-        parts.append(escape(f"Party #{_safe(customer_party_number, 16)}"))
-    phone = _safe(customer_phone, 20) if customer_phone else ""
-    if phone and phone != "-":
-        parts.append(escape(phone))
-    city = _safe(customer_city, 36) if customer_city else ""
-    if city and city != "-":
-        parts.append(f"<b>{escape(city)}</b>")
-    second_bits: list[str] = []
-    company = _safe(customer_company, 36) if customer_company else ""
-    if company and company != "-":
-        second_bits.append(company)
-    address = _safe(customer_address, addr_limit) if customer_address else ""
-    if address and address != "-":
-        second_bits.append(address)
-    second = " · ".join(second_bits) or None
-    return " &middot; ".join(parts), second
-
-
-def _bill_to_flow(
-    *,
-    gst_on: bool,
+    page_no: int,
+    show_printed: bool,
+    copy_label: str | None,
+    invoice_no: str,
+    created: datetime | None,
+    printed: datetime | None,
+    invoice_day: date | None,
     customer_name: str,
     customer_company: str | None,
     customer_phone: str | None,
     customer_address: str | None,
     customer_city: str | None,
-    customer_party_number: int | str | None,
-) -> Table:
-    addr_limit = 42 if gst_on else 88
-    line_html, second = _customer_party_html(
-        customer_name=customer_name,
-        customer_phone=customer_phone,
-        customer_city=customer_city,
-        customer_party_number=customer_party_number,
-        customer_company=customer_company,
-        customer_address=customer_address,
-        addr_limit=addr_limit,
-    )
-    if not gst_on:
-        return _party_chip("BILL TO", line_html, second, _BILL_CONTENT_W)
-    seller_lines = [ln for ln in company_lines() if ln]
-    seller_name = seller_lines[0] if seller_lines else "Seller"
-    seller_rest = " · ".join(seller_lines[1:]) or None
-    half = _BILL_CONTENT_W / 2
-    left = _party_chip("FROM", f"<b>{escape(seller_name)}</b>", seller_rest, half)
-    right = _party_chip("BILL TO", line_html, second, half)
-    pair = Table([[left, right]], colWidths=[half, half])
-    pair.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-    ]))
-    return pair
+    customer_party_number: object,
+) -> float:
+    """Draw the Tally header. Returns the table-top y measured from the top of the page."""
+    if show_printed and printed is not None:
+        c.setFont("Helvetica-Oblique", 8)
+        c.drawRightString(RIGHT, _y(22), f"Printed on {_printed_token(printed)}")
+    c.setFont("Helvetica-BoldOblique", 7.5)
+    c.drawString(LEFT, _y(32), f"Creation Dt & Time : {_creation_token(created)}")
+
+    c.setFont("Helvetica", 9)
+    c.drawString(LEFT, _y(52), "Invoice No.")
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(LEFT + 54, _y(52), invoice_no or "")
+    if invoice_day is not None:
+        dated = _day_token(invoice_day)
+        c.setFont("Helvetica-Bold", 9)
+        c.drawRightString(RIGHT, _y(52), dated)
+        c.setFont("Helvetica", 9)
+        c.drawRightString(RIGHT - c.stringWidth(dated, "Helvetica-Bold", 9) - 8, _y(52), "Dated")
+    c.setFont("Helvetica", 9)
+    c.drawString(LEFT, _y(66), "Ref. No.")
+
+    c.setFont("Helvetica-Bold", 9)
+    c.drawCentredString(PAGE_W / 2, _y(82), COMPANY_NAME)
+    title = "INVOICE" if page_no <= 1 else f"INVOICE(Page  {page_no})"
+    c.setFont("Helvetica-Bold", 11)
+    c.drawCentredString(PAGE_W / 2, _y(98), title)
+
+    party_lines: list[tuple[str, str, bool]] = []
+    name = _txt(customer_name, 90) or "Customer"
+    party_lines.append(("Party : ", name, True))
+    phone = _txt(customer_phone, 40)
+    if phone:
+        party_lines.append(("", phone, False))
+    person = _txt(customer_company, 60)
+    if person and person != name:
+        party_lines.append(("", person, False))
+    addr_bits = [b for b in (_txt(customer_address, 80), _txt(customer_city, 40)) if b]
+    if addr_bits:
+        party_lines.append(("", ", ".join(addr_bits), False))
+    if customer_party_number not in (None, ""):
+        party_lines.append(("", f"No. ({customer_party_number})", False))
+
+    top = 116.0
+    for prefix, text, bold in party_lines:
+        font = "Helvetica-Bold" if bold else "Helvetica"
+        c.setFont("Helvetica", 9)
+        pw = c.stringWidth(prefix, "Helvetica", 9) if prefix else 0
+        c.setFont(font, 9)
+        tw = c.stringWidth(text, font, 9)
+        x = (PAGE_W - (pw + tw)) / 2
+        if prefix:
+            c.setFont("Helvetica", 9)
+            c.drawString(x, _y(top), prefix)
+        c.setFont(font, 9)
+        c.drawString(x + pw, _y(top), text)
+        top += 13
+
+    top += 6
+    if phone:
+        c.setFont("Helvetica", 9)
+        label = "Contact : "
+        c.setFont("Helvetica", 8)
+        value = phone
+        block = c.stringWidth(label, "Helvetica", 9) + c.stringWidth(value, "Helvetica", 8)
+        x = (PAGE_W - block) / 2
+        c.setFont("Helvetica", 9)
+        c.drawString(x, _y(top), label)
+        c.setFont("Helvetica", 8)
+        c.drawString(x + c.stringWidth(label, "Helvetica", 9), _y(top), value)
+        top += 12
+    c.setFont("Helvetica", 9)
+    c.drawCentredString(PAGE_W / 2, _y(top), "E-Mail :")
+    top += 16
+
+    if copy_label:
+        c.setFont("Helvetica-Bold", 8)
+        c.drawRightString(RIGHT, _y(32), copy_label)
+
+    return top
+
+
+def _draw_table_head(c: canvas.Canvas, top: float) -> None:
+    bottom = top + HEAD_H
+    c.setStrokeColorRGB(0, 0, 0)
+    c.setLineWidth(0.6)
+    c.line(LEFT, _y(top), RIGHT, _y(top))
+    c.line(LEFT, _y(bottom), RIGHT, _y(bottom))
+    labels = [
+        (0, "Sl", "No."),
+        (1, "Description of Goods", ""),
+        (2, "Sl", "No."),
+        (3, "Quantity", ""),
+        (4, "Rate", ""),
+        (5, "per", ""),
+        (6, "Disc. %", ""),
+        (7, "Amount", ""),
+    ]
+    c.setFillColorRGB(0, 0, 0)
+    c.setFont("Helvetica", 8)
+    for idx, line1, line2 in labels:
+        x0, x1 = COLS[idx], COLS[idx + 1]
+        mid = (x0 + x1) / 2
+        if line2:
+            c.drawCentredString(mid, _y(top + 11), line1)
+            c.setFont("Helvetica", 7)
+            c.drawCentredString(mid, _y(top + 21), line2)
+            c.setFont("Helvetica", 8)
+        else:
+            c.drawCentredString(mid, _y(top + 14), line1)
+
+
+def _draw_verticals(c: canvas.Canvas, y0: float, y1: float, *, outer_only: bool = False) -> None:
+    c.setStrokeColorRGB(0, 0, 0)
+    c.setLineWidth(0.6)
+    xs = (LEFT, RIGHT) if outer_only else COLS
+    for x in xs:
+        c.line(x, _y(y0), x, _y(y1))
+
+
+def _draw_amount(c: canvas.Canvas, top: float, text: str, *, bold: bool = True) -> None:
+    font = "Helvetica-Bold" if bold else "Helvetica"
+    c.setFont(font, 9)
+    c.drawRightString(RIGHT - 6, _y(top + 10), text)
+
+
+def _draw_item(c: canvas.Canvas, row: dict, top: float, *, show_disc: bool) -> None:
+    c.setFillColorRGB(0, 0, 0)
+    mid_sl = (COLS[0] + COLS[1]) / 2
+    mid_sl2 = (COLS[2] + COLS[3]) / 2
+    c.setFont("Helvetica", 9)
+    c.drawCentredString(mid_sl, _y(top + 10), str(row["sl"]))
+    c.drawCentredString(mid_sl2, _y(top + 10), str(row["sl"]))
+    desc = row["desc"]
+    size = _fit(c, desc, "Helvetica-Bold", 9, COLS[2] - COLS[1] - 8)
+    c.setFont("Helvetica-Bold", size)
+    c.drawString(COLS[1] + 3, _y(top + 10), desc)
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(COLS[3] + 8, _y(top + 10), _qty_text(row["qty"]))
+    if row["kind"] == "item":
+        c.setFont("Helvetica", 8)
+        c.drawRightString(COLS[5] - 4, _y(top + 10), row["rate"])
+        c.drawString(COLS[5] + 6, _y(top + 10), "pcs")
+        if show_disc and row["disc"]:
+            c.drawCentredString((COLS[6] + COLS[7]) / 2, _y(top + 10), row["disc"])
+        shown = row["gross"] if not show_disc and row["gross"] is not None else row["amount"]
+        _draw_amount(c, top, _money(shown))
+
+
+def _draw_charge(c: canvas.Canvas, row: dict, top: float) -> None:
+    c.setFillColorRGB(0, 0, 0)
+    if row["kind"] == "subtotal":
+        c.setStrokeColorRGB(0, 0, 0)
+        c.setLineWidth(0.6)
+        c.line(COLS[7] + 2, _y(top), RIGHT - 3, _y(top))
+        _draw_amount(c, top, _money(row["amount"]), bold=False)
+        return
+    if row["kind"] == "less":
+        c.setFont("Helvetica-Oblique", 8)
+        c.drawString(COLS[1] + 2, _y(top + 10), "Less :")
+        c.setFont("Helvetica-BoldOblique", 9)
+        c.drawRightString(COLS[2] - 6, _y(top + 10), row["label"])
+        if row.get("pct"):
+            c.setFont("Helvetica-Oblique", 9)
+            c.drawCentredString((COLS[6] + COLS[7]) / 2, _y(top + 10), f"(-){row['pct']} %")
+        _draw_amount(c, top, f"(-){_money(row['amount'])}")
+        return
+    if row["kind"] == "round":
+        c.setFont("Helvetica-BoldOblique", 9)
+        c.drawRightString(COLS[2] - 6, _y(top + 10), "Round Off")
+        _draw_amount(c, top, _money(row["amount"]))
+        return
+    c.setFont("Helvetica-BoldOblique", 9)
+    label = row["label"]
+    size = _fit(c, label, "Helvetica-BoldOblique", 9, COLS[2] - COLS[1] - 10)
+    c.setFont("Helvetica-BoldOblique", size)
+    c.drawRightString(COLS[2] - 6, _y(top + 10), label)
+    _draw_amount(c, top, _money(row["amount"]))
+
+
+def _draw_total(c: canvas.Canvas, top: float, qty: Decimal, grand: object) -> None:
+    bottom = top + TOTAL_H
+    c.setStrokeColorRGB(0, 0, 0)
+    c.setLineWidth(0.8)
+    c.line(LEFT, _y(top), RIGHT, _y(top))
+    c.line(LEFT, _y(bottom), RIGHT, _y(bottom))
+    c.setFillColorRGB(0, 0, 0)
+    c.setFont("Helvetica", 8)
+    c.drawRightString(COLS[3] - 4, _y(top + 11), "Total")
+    c.setFont("Helvetica-Bold", 8)
+    c.drawString(COLS[3] + 8, _y(top + 11), f"{qty:.2f} pcs")
+    c.setFont("Helvetica-Bold", 9)
+    c.drawRightString(RIGHT - 6, _y(top + 11), f"Rs. {_money(grand)}")
+
+
+def _draw_photos(c: canvas.Canvas, photos: list[dict], top: float, height: float) -> None:
+    n = len(photos)
+    if n <= 0 or height <= 0:
+        return
+    cols, iw, ih, pitch = _photo_layout(n)
+    # Honour a shrunk block by scaling the pitch down.
+    rows = ceil(n / cols)
+    natural = rows * pitch
+    scale = min(1.0, (height - 4) / natural) if natural else 1.0
+    iw *= scale
+    ih *= scale
+    pitch *= scale
+    gap = 10.0
+    row_w = cols * iw + (cols - 1) * gap
+    x_origin = LEFT + 1
+    if row_w < (RIGHT - LEFT):
+        # Few photos stay left, matching the samples.
+        x_origin = LEFT + 1
+    for i, photo in enumerate(photos):
+        r, col = divmod(i, cols)
+        x = x_origin + col * (iw + gap)
+        y_top = top + r * pitch
+        c.drawImage(
+            photo["image"],
+            x,
+            _y(y_top + ih),
+            width=iw,
+            height=ih,
+            preserveAspectRatio=True,
+            anchor="c",
+            mask="auto",
+        )
+        cap = photo["caption"]
+        size = _fit(c, cap, "Helvetica", 7, iw)
+        c.setFillColorRGB(0, 0, 0)
+        c.setFont("Helvetica", size)
+        c.drawString(x, _y(y_top + ih + 9 * scale + 2), cap)
+
+
+def _draw_footer(
+    c: canvas.Canvas,
+    *,
+    grand: object,
+    remarks: str,
+    printed: datetime | None,
+    continued: bool,
+) -> None:
+    c.setFillColorRGB(0, 0, 0)
+    if continued:
+        c.setFont("Helvetica", 9)
+        c.drawRightString(RIGHT, _y(778), "continued ...")
+    else:
+        c.setFont("Helvetica", 8)
+        c.drawString(LEFT, _y(618), "Amount Chargeable (in words)")
+        c.setFont("Helvetica-Oblique", 8)
+        c.drawRightString(RIGHT, _y(618), "E. & O.E")
+        c.setFont("Helvetica-Bold", 9.5)
+        words = _inr_words(grand)
+        size = _fit(c, words, "Helvetica-Bold", 9.5, RIGHT - LEFT - 8, minimum=7)
+        c.setFont("Helvetica-Bold", size)
+        c.drawString(LEFT, _y(632), words)
+
+        c.setFont("Helvetica-Oblique", 8)
+        c.drawString(LEFT, _y(652), "Remarks:")
+        if remarks:
+            c.setFont("Helvetica", 9)
+            c.drawString(LEFT, _y(666), remarks[:90])
+        c.setFont("Helvetica-Bold", 7)
+        c.drawRightString(RIGHT, _y(652), "SCAN TO PAY")
+
+        c.setStrokeColorRGB(0, 0, 0)
+        c.setLineWidth(0.4)
+        c.line(LEFT, _y(744), LEFT + 48, _y(744))
+        c.setFont("Helvetica", 8)
+        c.drawString(LEFT, _y(742), "Declaration")
+        lines = _wrap(c, DECLARATION, "Helvetica", 8, 300)
+        y = 756
+        c.setFont("Helvetica", 8)
+        for line in lines[:4]:
+            c.drawString(LEFT, _y(y), line)
+            y += 11
+
+        for_line = f"for {COMPANY_NAME}"
+        size = _fit(c, for_line, "Helvetica-Bold", 9, 180)
+        c.setFont("Helvetica-Bold", size)
+        c.drawRightString(RIGHT, _y(742), for_line)
+        c.setFont("Helvetica", 8)
+        c.drawString(288, _y(786), "Prepared by")
+        c.drawString(372, _y(786), "Verified by")
+        c.drawRightString(RIGHT, _y(786), "Authorised Signatory")
+
+    c.setFont("Helvetica", 8)
+    c.drawCentredString(PAGE_W / 2, _y(802), "This is a Computer Generated Invoice")
+    if printed is not None:
+        c.drawCentredString(PAGE_W / 2, _y(818), f"Printed on {_printed_token(printed)}")
+    c.setStrokeColorRGB(0, 0, 0)
+    c.setLineWidth(0.6)
+    c.line(208, _y(808), 357, _y(808))
+
+
+def _draw_page(
+    c: canvas.Canvas,
+    page: dict,
+    *,
+    page_no: int,
+    table_top: float,
+    show_disc: bool,
+    qty_total: Decimal,
+    grand: object,
+    photos: list[dict],
+    remarks: str,
+    printed: datetime | None,
+    header_kw: dict,
+) -> None:
+    _draw_header(c, page_no=page_no, show_printed=(page_no == 1), **header_kw)
+    _draw_table_head(c, table_top)
+    cursor = table_top + HEAD_H
+    for row in page["running"] + page["closing"]:
+        if row["kind"] in ("item", "addon"):
+            _draw_item(c, row, cursor, show_disc=show_disc)
+        else:
+            _draw_charge(c, row, cursor)
+        cursor += _row_height(row)
+
+    if page["last"]:
+        photo_h = page["photo_h"]
+        total_top = BOX_BOTTOM - photo_h - TOTAL_H
+        if cursor > total_top:
+            total_top = cursor
+        _draw_verticals(c, table_top, total_top + TOTAL_H)
+        _draw_total(c, total_top, qty_total, grand)
+        photo_top = total_top + TOTAL_H
+        _draw_verticals(c, photo_top, BOX_BOTTOM, outer_only=True)
+        _draw_photos(c, photos, photo_top + 2, max(0.0, BOX_BOTTOM - photo_top - 4))
+        _draw_footer(c, grand=grand, remarks=remarks, printed=printed, continued=False)
+    else:
+        _draw_verticals(c, table_top, BOX_BOTTOM_CONT)
+        c.setStrokeColorRGB(0, 0, 0)
+        c.setLineWidth(0.6)
+        c.line(LEFT, _y(BOX_BOTTOM_CONT), RIGHT, _y(BOX_BOTTOM_CONT))
+        _draw_footer(c, grand=grand, remarks=remarks, printed=printed, continued=True)
 
 
 def _build_summary_rows(totals: Dict[str, Any], gst_on: bool, gst_label: str) -> list[list[str]]:
@@ -486,9 +907,6 @@ def _build_summary_rows(totals: Dict[str, Any], gst_on: bool, gst_label: str) ->
         rows.append(["Taxable value", f"Rs. {_money(totals.get('taxable_value'))}"])
         rows.append([f"GST ({gst_label})", f"Rs. {_money(totals.get('gst_amount'))}"])
 
-    # Packaging is listed before freight/transport (and the freight agent name last of
-    # all the charge rows) — the agent name is a routing note, not really a charge in
-    # its own right, so it reads better trailing the actual charge lines.
     packaging = totals.get("packaging_charges")
     if packaging:
         try:
@@ -538,149 +956,6 @@ def _build_summary_rows(totals: Dict[str, Any], gst_on: bool, gst_label: str) ->
     return rows
 
 
-def _build_bill_story(
-    *,
-    bill_id: int,
-    order_id: int,
-    bill_number: str | None = None,
-    customer_name: str,
-    customer_company: str | None,
-    customer_phone: str | None = None,
-    customer_address: str | None = None,
-    customer_city: str | None = None,
-    customer_party_number: int | str | None = None,
-    totals: Dict[str, Any],
-    generated_at: datetime | None = None,
-    printed_at: datetime | None = None,
-    customer_notes: str | None = None,
-    narration: str | None = None,
-    item_image_urls: Dict[int, str | None] | None = None,
-    order_created_at: datetime | None = None,
-    invoice_date=None,
-    copy_label: str | None = None,
-    credit_limit: float | None = None,
-    outstanding: float | None = None,
-) -> list:
-    styles = getSampleStyleSheet()
-    story: list = []
-
-    if copy_label:
-        label_style = ParagraphStyle(
-            "copy_label",
-            parent=styles["Normal"],
-            fontName="Helvetica-Bold",
-            fontSize=8,
-            alignment=TA_RIGHT,
-            textColor=colors.white,
-            leading=9,
-        )
-        label_table = Table(
-            [[Paragraph(f"  {copy_label} COPY  ", label_style)]],
-            colWidths=[_BILL_CONTENT_W],
-        )
-        label_table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#1d4ed8")),
-            ("TOPPADDING", (0, 0), (-1, -1), 1),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
-            ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
-        ]))
-        story.append(label_table)
-        story.append(Spacer(1, 0.06 * cm))
-
-    from app.services.biz_date import format_ist_day
-
-    gst_on = bool(totals.get("gst_enabled"))
-    bill_lbl = _safe(bill_number, 40) if bill_number else f"#{bill_id}"
-    if gst_on:
-        # One title line. Entered/Printed stay in the page footer.
-        _header(
-            story, "TAX INVOICE", "", f"Bill {bill_lbl}  ·  {format_ist_day(invoice_date or generated_at)}",
-            compact=True, content_width=_BILL_CONTENT_W,
-        )
-    else:
-        # Non-GST estimate: one heading only (the brand bar above says "Order
-        # Estimate") — no second "ORDER ESTIMATE" title/subtitle underneath it, and no
-        # "not a tax invoice" line. Bill number + date are one short line.
-        # Entered/Printed stay in the page footer (see render_copies_pdf).
-        _header(
-            story, "", "", "", brand_override="Order Estimate",
-            compact=True, content_width=_BILL_CONTENT_W,
-        )
-        story.append(Paragraph(
-            escape(f"Bill {bill_lbl}  ·  {format_ist_day(invoice_date or generated_at)}"),
-            ParagraphStyle(
-                "bill_stamp_combined", parent=styles["Normal"], fontName="Helvetica-Bold",
-                fontSize=9, leading=11, alignment=TA_CENTER, textColor=colors.HexColor("#0f172a"),
-                spaceBefore=1, spaceAfter=2,
-            ),
-        ))
-
-    # Name, party, phone, and city on one line. Company and address share a second
-    # line only when present. City stays bold so transport can still read it.
-    story.append(_bill_to_flow(
-        gst_on=gst_on,
-        customer_name=customer_name,
-        customer_company=customer_company,
-        customer_phone=customer_phone,
-        customer_address=customer_address,
-        customer_city=customer_city,
-        customer_party_number=customer_party_number,
-    ))
-    story.append(Spacer(1, 0.12 * cm))
-
-    lines = totals.get("lines") if isinstance(totals.get("lines"), list) else []
-    gst_label = str(totals.get("gst_rate_label") or totals.get("gst_rate_percent") or "")
-    story.append(_bill_items_table(
-        lines, item_image_urls or {}, gst_on, gst_label,
-        overall_disc_pct=totals.get("discount_percent"),
-    ))
-    story.append(Spacer(1, 0.1 * cm))
-    highlight_prefixes = ("Discount", "Freight", "Transport charges", "Packaging charges") if not gst_on else ()
-    story.append(_totals_block(
-        _build_summary_rows(totals, gst_on, gst_label),
-        highlight_prefixes=highlight_prefixes,
-        compact=True,
-        content_width=_BILL_CONTENT_W,
-    ))
-    story.append(Spacer(1, 0.08 * cm))
-
-    notes_style = ParagraphStyle(
-        "cnotes", parent=styles["Normal"], fontSize=7.5,
-        textColor=colors.HexColor("#0f172a"), spaceAfter=1, leading=9,
-    )
-    if narration:
-        story.append(Paragraph(f"<b>Narration:</b> {escape(_safe(narration, 220))}", notes_style))
-    if customer_notes:
-        story.append(Paragraph(f"<b>Customer notes:</b> {escape(_safe(customer_notes, 180))}", notes_style))
-
-    if outstanding is not None:
-        # Customer-facing: only the amount outstanding (incl. this bill) — no internal
-        # credit-limit figures on the printed bill.
-        out_text = f"Outstanding (incl. this bill): Rs.{outstanding:,.2f}"
-        story.append(Paragraph(escape(out_text), ParagraphStyle(
-            "outstanding_line", parent=styles["Normal"], fontSize=7.5, leading=9,
-            fontName="Helvetica-Bold",
-            textColor=colors.HexColor("#1d4ed8"), spaceBefore=1, spaceAfter=1,
-        )))
-
-    if not gst_on:
-        # Photos live after the table + narration/notes/outstanding — small tiles,
-        # so the item table above keeps the page.
-        story.extend(_photos_section(lines, item_image_urls or {}))
-
-    foot = (
-        "Amounts in Indian Rupees (Rs.). Rates are GST-inclusive."
-        if gst_on
-        else "Amounts in Indian Rupees (Rs.). Thank you for your business!"
-    )
-    story.append(Spacer(1, 0.08 * cm))
-    story.append(Paragraph(escape(foot), ParagraphStyle(
-        "foot", parent=styles["Normal"], fontSize=6.5, leading=8, alignment=TA_CENTER,
-        textColor=colors.HexColor("#64748b"),
-    )))
-    return story
-
-
 def render_customer_bill_pdf(
     *,
     bill_id: int,
@@ -703,6 +978,7 @@ def render_customer_bill_pdf(
     outstanding: float | None = None,
     bill_number: str | None = None,
 ) -> bytes:
+    del credit_limit, outstanding
     return render_copies_pdf(
         copies=1,
         bill_id=bill_id,
@@ -723,8 +999,6 @@ def render_customer_bill_pdf(
         order_created_at=order_created_at,
         invoice_date=invoice_date,
         with_labels=False,
-        credit_limit=credit_limit,
-        outstanding=outstanding,
     )
 
 
@@ -752,67 +1026,76 @@ def render_copies_pdf(
     credit_limit: float | None = None,
     outstanding: float | None = None,
 ) -> bytes:
-    copies = max(1, min(copies, 4))
+    del credit_limit, outstanding, order_id
+    copies = max(1, min(int(copies or 1), 4))
     now = datetime.now(timezone.utc)
-    kwargs = dict(
-        bill_id=bill_id,
-        order_id=order_id,
-        bill_number=bill_number,
+    created = generated_at or order_created_at or now
+    printed = printed_at or now
+    invoice_day = _as_date(invoice_date) or to_ist(created).date()
+    lines = [ln for ln in (totals.get("lines") or []) if isinstance(ln, dict)]
+    item_rows, qty_total = _build_rows(lines)
+    cash = _cash_discount_mode(item_rows, totals)
+    running, closing, _goods = _running_and_closing(item_rows, totals, cash)
+    images = _load_images(item_image_urls or {})
+    photos = _photos_for(item_rows, images)
+    grand = totals.get("rounded_grand_total") or totals.get("grand_total") or "0.00"
+    remarks = _txt(narration, 90) or _txt(customer_notes, 90)
+    invoice_no = _txt(bill_number, 20) or str(bill_id)
+
+    # Header height depends on which party lines we have. Measure it once.
+    measure = canvas.Canvas(BytesIO(), pagesize=A4)
+    table_top = _draw_header(
+        measure,
+        page_no=1,
+        show_printed=True,
+        copy_label=None,
+        invoice_no=invoice_no,
+        created=created,
+        printed=printed,
+        invoice_day=invoice_day,
         customer_name=customer_name,
         customer_company=customer_company,
         customer_phone=customer_phone,
         customer_address=customer_address,
         customer_city=customer_city,
         customer_party_number=customer_party_number,
-        totals=totals,
-        generated_at=generated_at,
-        printed_at=printed_at or now,
-        customer_notes=customer_notes,
-        narration=narration,
-        item_image_urls=item_image_urls,
-        order_created_at=order_created_at,
-        invoice_date=invoice_date,
-        credit_limit=credit_limit,
-        outstanding=outstanding,
     )
-    combined: list = []
-    for i in range(copies):
-        label = COPY_LABELS[i] if with_labels else None
-        story = _build_bill_story(copy_label=label, **kwargs)
-        combined.extend(story)
-        if i < copies - 1:
-            combined.append(PageBreak())
+    pages = _paginate(running, closing, len(photos), table_top)
 
+    header_kw = dict(
+        copy_label=None,
+        invoice_no=invoice_no,
+        created=created,
+        printed=printed,
+        invoice_day=invoice_day,
+        customer_name=customer_name,
+        customer_company=customer_company,
+        customer_phone=customer_phone,
+        customer_address=customer_address,
+        customer_city=customer_city,
+        customer_party_number=customer_party_number,
+    )
     buf = BytesIO()
-    doc = SimpleDocTemplate(
-        buf,
-        pagesize=A4,
-        rightMargin=_BILL_MARGIN_X,
-        leftMargin=_BILL_MARGIN_X,
-        topMargin=_BILL_MARGIN_TOP,
-        bottomMargin=_BILL_MARGIN_BOTTOM,
-    )
-
-    gst_on = bool(totals.get("gst_enabled"))
-    if gst_on:
-        on_page = add_page_number
-    else:
-        from app.services.biz_date import format_ist as _fmt_ist
-
-        entered_str = _fmt_ist(kwargs["generated_at"] or now)
-        printed_str = _fmt_ist(kwargs["printed_at"])
-
-        def on_page(canvas, doc_):  # noqa: ANN001 - reportlab callback signature
-            add_page_number(canvas, doc_)
-            canvas.saveState()
-            canvas.setFont("Helvetica", 6.5)
-            canvas.setFillColor(colors.HexColor("#94a3b8"))
-            # Left side — page number stays bottom-right, so the two don't stack.
-            canvas.drawString(
-                _BILL_MARGIN_X, 0.72 * cm,
-                f"Entered {entered_str}  ·  Printed {printed_str}",
+    c = canvas.Canvas(buf, pagesize=A4)
+    c.setTitle(f"Invoice {invoice_no}")
+    for copy_i in range(copies):
+        label = COPY_LABELS[copy_i] if with_labels else None
+        kw = dict(header_kw)
+        kw["copy_label"] = label
+        for i, page in enumerate(pages, start=1):
+            _draw_page(
+                c,
+                page,
+                page_no=i,
+                table_top=table_top,
+                show_disc=not cash,
+                qty_total=qty_total,
+                grand=grand,
+                photos=photos if page["last"] else [],
+                remarks=remarks,
+                printed=printed,
+                header_kw=kw,
             )
-            canvas.restoreState()
-
-    doc.build(combined, onFirstPage=on_page, onLaterPages=on_page)
+            c.showPage()
+    c.save()
     return buf.getvalue()

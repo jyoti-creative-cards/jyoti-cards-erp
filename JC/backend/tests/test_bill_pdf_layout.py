@@ -1,4 +1,4 @@
-"""Customer bill PDF stays one A4 page for a normal 25-line bill."""
+"""Customer bill PDF follows the Tally invoice page breaks."""
 import re
 
 from app.services.customer_bill_pdf import render_customer_bill_pdf
@@ -20,8 +20,9 @@ def _lines(n: int, *, gst: bool) -> list[dict]:
             "unit_price": "25.00",
             "net_rate": "22.50",
             "line_total": "270.00",
-            "item_discount_percent": "10",
             "line_discount": "30.00",
+            "line_inclusive_before_discount": "300.00",
+            "item_discount_percent": "10",
         }
         if gst:
             row["line_taxable_value"] = "228.81"
@@ -72,13 +73,19 @@ def _render(n: int, *, gst: bool) -> bytes:
     )
 
 
-def test_estimate_with_25_items_is_one_page():
-    pdf = _render(25, gst=False)
-    assert pdf.startswith(b"%PDF")
-    assert _pages(pdf) == 1
+def test_short_bill_is_one_page():
+    for n in (1, 2, 9):
+        pdf = _render(n, gst=False)
+        assert pdf.startswith(b"%PDF")
+        assert _pages(pdf) == 1, n
 
 
-def test_gst_invoice_with_25_items_is_one_page():
-    pdf = _render(25, gst=True)
+def test_long_bill_continues_onto_second_page():
+    pdf = _render(29, gst=False)
     assert pdf.startswith(b"%PDF")
-    assert _pages(pdf) == 1
+    assert _pages(pdf) == 2
+
+
+def test_gst_bill_uses_the_same_page_breaks():
+    assert _pages(_render(9, gst=True)) == 1
+    assert _pages(_render(29, gst=True)) == 2

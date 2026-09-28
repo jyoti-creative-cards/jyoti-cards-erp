@@ -19,7 +19,7 @@ TRACKED_FIELDS = {
         "marker_1", "marker_2",
     ),
     "catalog_product": (
-        "our_product_id", "vendor_id", "vendor_product_id", "category", "series",
+        "our_product_id", "vendor_id", "vendor_product_id", "category", "second_category", "series",
         "unit", "year_group", "marking", "buying_price", "selling_price", "image_keys",
     ),
     "addon_product": (

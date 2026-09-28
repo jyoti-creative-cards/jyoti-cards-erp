@@ -134,6 +134,7 @@ def _to_public(
         vendor_city=vc,
         vendor_product_id=row.vendor_product_id,
         category=row.category,
+        second_category=row.second_category,
         series=row.series,
         unit=row.unit,
         year_group=row.year_group,
@@ -350,6 +351,23 @@ def alternatives_board(db: Session = Depends(get_db), auth: AuthContext = Depend
     return out
 
 
+@router.get("/categories", dependencies=[Depends(require_permission("catalog.read"))])
+def list_product_categories(db: Session = Depends(get_db)) -> list[str]:
+    """Category dropdown values, taken from the products themselves."""
+    rows = (
+        db.query(CatalogProduct.category, CatalogProduct.second_category)
+        .filter(CatalogProduct.is_active.is_(True), CatalogProduct.deleted_at.is_(None))
+        .all()
+    )
+    found: set[str] = set()
+    for category, second in rows:
+        for value in (category, second):
+            text = (value or "").strip()
+            if text:
+                found.add(text)
+    return sorted(found, key=str.lower)
+
+
 @router.get("/products", response_model=CatalogListResponse, dependencies=[Depends(require_permission("catalog.read"))])
 def list_products(
     db: Session = Depends(get_db),
@@ -379,7 +397,10 @@ def list_products(
     if vendor_id:
         q = q.filter(CatalogProduct.vendor_id == vendor_id)
     if category:
-        q = q.filter(CatalogProduct.category == category)
+        q = q.filter(or_(
+            CatalogProduct.category == category,
+            CatalogProduct.second_category == category,
+        ))
     if series:
         q = q.filter(CatalogProduct.series == series)
     if year_group:
@@ -406,6 +427,7 @@ def list_products(
             func.lower(CatalogProduct.our_product_id).like(s),
             func.lower(CatalogProduct.vendor_product_id).like(s),
             func.lower(func.coalesce(CatalogProduct.category, "")).like(s),
+            func.lower(func.coalesce(CatalogProduct.second_category, "")).like(s),
             func.lower(func.coalesce(CatalogProduct.series, "")).like(s),
             func.lower(func.coalesce(CatalogProduct.year_group, "")).like(s),
             func.lower(func.coalesce(Vendor.business_name, "")).like(s),

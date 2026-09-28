@@ -34,6 +34,7 @@ class StockProductSummary(BaseModel):
     vendor_city: Optional[str]
     vendor_label: str
     category: Optional[str] = None
+    second_category: Optional[str] = None
     series: Optional[str] = None
     year_group: Optional[str] = None
     marking: Optional[str] = None

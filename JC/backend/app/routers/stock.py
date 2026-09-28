@@ -171,6 +171,7 @@ def list_stock(
             lower(p.our_product_id) LIKE :search
             OR lower(COALESCE(p.vendor_product_id, '')) LIKE :search
             OR lower(COALESCE(p.category, '')) LIKE :search
+            OR lower(COALESCE(p.second_category, '')) LIKE :search
             OR lower(COALESCE(p.series, '')) LIKE :search
             OR lower(COALESCE(p.year_group, '')) LIKE :search
             OR lower(COALESCE(v.business_name, '')) LIKE :search
@@ -191,6 +192,7 @@ def list_stock(
               p.vendor_product_id,
               p.vendor_id,
               p.category,
+              p.second_category,
               p.series,
               p.year_group,
               p.marking,
@@ -247,6 +249,7 @@ def list_stock(
                 vendor_city=city_name,
                 vendor_label=label,
                 category=r["category"],
+                second_category=r["second_category"],
                 series=r["series"],
                 year_group=r["year_group"],
                 marking=r["marking"],

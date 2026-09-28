@@ -240,6 +240,7 @@ const Catalog = (() => {
           <span class="badge badge-green">Sell ${p.selling_price ? fmtPrice(p.selling_price) : "—"}</span>
           <span class="badge badge-blue">Buy ${fmtPrice(p.buying_price)}</span>
           ${p.category ? `<span class="badge badge-gray">${ctx.esc(p.category)}</span>` : ""}
+          ${p.second_category ? `<span class="badge badge-gray">${ctx.esc(p.second_category)}</span>` : ""}
         </div>
         ${images}
       </div>
@@ -269,6 +270,7 @@ const Catalog = (() => {
     catalogVendors = [];
     try {
       await ensureVendors();
+      await ensureProductCategories();
     } catch (e) {
       ctx.toast(e.message || "Could not load vendors", "error");
       return;
@@ -305,6 +307,23 @@ const Catalog = (() => {
       const cls = n < wizardStep ? "done" : n === wizardStep ? "active" : "";
       return `<div class="step ${cls}"><div class="step-num">${n < wizardStep ? "✓" : n}</div>${label}</div>`;
     }).join("");
+  }
+
+  let productCategories = [];
+
+  async function ensureProductCategories() {
+    if (productCategories.length) return productCategories;
+    try {
+      productCategories = await ctx.api("/catalog/categories") || [];
+    } catch (_) {
+      productCategories = [];
+    }
+    return productCategories;
+  }
+
+  function categoryOptions(selected) {
+    const vals = productCategories.length ? productCategories : lookups("category");
+    return vals.map(v => `<option value="${ctx.esc(v)}" ${selected === v ? "selected" : ""}>${ctx.esc(v)}</option>`).join("");
   }
 
   function lookupOptions(type, selected) {
@@ -381,7 +400,7 @@ const Catalog = (() => {
         <div class="card" style="padding:16px;background:#eff6ff;border-color:#bfdbfe;">
           <div style="font-size:12px;font-weight:700;color:var(--brand);margin-bottom:10px;">Apply to selected rows</div>
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;align-items:end;">
-            <div><label class="label">Category</label><select id="cw-bulk-category" class="input" style="font-size:13px;"><option value="">—</option>${lookupOptions("category")}</select></div>
+            <div><label class="label">Category</label><select id="cw-bulk-category" class="input" style="font-size:13px;"><option value="">—</option>${categoryOptions()}</select></div>
             <div><label class="label">Series</label><select id="cw-bulk-series" class="input" style="font-size:13px;"><option value="">—</option>${lookupOptions("series")}</select></div>
             <div><label class="label">Unit</label><select id="cw-bulk-unit" class="input" style="font-size:13px;"><option value="">—</option>${lookupOptions("unit")}</select></div>
             <div><label class="label">Year ${ctx.isAdmin?.() ? "" : "(admin)"}</label>${yearSelectHtml(DEFAULT_YEAR_GROUP, { id: "cw-bulk-year_group", allowEmpty: true })}</div>
@@ -409,7 +428,7 @@ const Catalog = (() => {
                   <td><input type="checkbox" ${row.selected ? "checked" : ""} onchange="Catalog.toggleWizardRow(${idx}, this.checked)" /></td>
                   <td><strong>${ctx.esc(row.our_product_id)}</strong></td>
                   <td><select class="input" style="font-size:12px;" onchange="Catalog.updateWizardRow(${idx}, 'category', this.value)">
-                    <option value="">—</option>${lookupOptions("category", row.category)}</select></td>
+                    <option value="">—</option>${categoryOptions(row.category)}</select></td>
                   <td><select class="input" style="font-size:12px;" onchange="Catalog.updateWizardRow(${idx}, 'series', this.value)">
                     <option value="">—</option>${lookupOptions("series", row.series)}</select></td>
                   <td><select class="input" style="font-size:12px;" onchange="Catalog.updateWizardRow(${idx}, 'unit', this.value)">${lookupOptions("unit", row.unit)}</select></td>
@@ -752,6 +771,7 @@ const Catalog = (() => {
         ctx.api(`/catalog/products/${id}`, {}, 0),
         ctx.api("/catalog/product-options", {}, 120000).catch(() => []),
         loadAddons(),
+        ensureProductCategories(),
       ]);
       if (!p || !p.id) throw new Error("Product not found");
       const altOptions = (Array.isArray(optRes) ? optRes : []).filter(x => x.id !== p.id);
@@ -782,7 +802,9 @@ const Catalog = (() => {
           <input id="ce-vendor_product_id" class="input" value="${ctx.esc(p.vendor_product_id)}" /></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
           <div><label class="label">Category</label>
-            <select id="ce-category" class="input"><option value="">—</option>${lookupOptions("category", p.category)}</select></div>
+            <select id="ce-category" class="input"><option value="">—</option>${categoryOptions(p.category)}</select></div>
+          <div><label class="label">Second category</label>
+            <select id="ce-second_category" class="input"><option value="">—</option>${categoryOptions(p.second_category)}</select></div>
           <div><label class="label">Series</label>
             <select id="ce-series" class="input"><option value="">—</option>${lookupOptions("series", p.series)}</select></div>
         </div>
@@ -917,6 +939,7 @@ const Catalog = (() => {
       our_product_id: ourId,
       vendor_product_id: document.getElementById("ce-vendor_product_id").value.trim(),
       category: document.getElementById("ce-category").value || null,
+      second_category: document.getElementById("ce-second_category").value || null,
       series: document.getElementById("ce-series").value || null,
       unit: document.getElementById("ce-unit").value || null,
       marking: document.getElementById("ce-marking")?.value.trim() || null,

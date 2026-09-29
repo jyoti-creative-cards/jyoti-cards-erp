@@ -116,7 +116,7 @@ const Catalog = (() => {
       imageFiles: [],
       category: "",
       series: "",
-      unit: lookups("unit")[0] || "pcs",
+      unit: "pcs",
       year_group: DEFAULT_YEAR_GROUP,
       buying_price: "",
       selling_price: "",
@@ -133,7 +133,7 @@ const Catalog = (() => {
         <option value="${ctx.esc(DEFAULT_YEAR_GROUP)}" selected>${ctx.esc(DEFAULT_YEAR_GROUP)}</option>
       </select><input type="hidden" ${id ? `id="${id}"` : ""} value="${ctx.esc(DEFAULT_YEAR_GROUP)}" />`;
     }
-    const vals = lookups("year_group");
+    const vals = productYearGroups;
     const opts = new Set(vals);
     // Always include default so create UI can pre-select it even if lookups lag.
     if (!opts.has(DEFAULT_YEAR_GROUP)) opts.add(DEFAULT_YEAR_GROUP);
@@ -246,8 +246,6 @@ const Catalog = (() => {
       </div>
       <div class="review-grid" style="margin-bottom:20px;">
         ${ctx.reviewRow("Vendor Product ID", p.vendor_product_id)}
-        ${ctx.reviewRow("Series", p.series)}
-        ${ctx.reviewRow("Unit", p.unit)}
         ${ctx.reviewRow("Year Group", p.year_group)}
         ${ctx.reviewRow("Created", ctx.fmtDate(p.created_at))}
         ${ctx.reviewRow("Updated", ctx.fmtDate(p.updated_at))}
@@ -271,6 +269,7 @@ const Catalog = (() => {
     try {
       await ensureVendors();
       await ensureProductCategories();
+      await ensureProductYears();
     } catch (e) {
       ctx.toast(e.message || "Could not load vendors", "error");
       return;
@@ -310,6 +309,7 @@ const Catalog = (() => {
   }
 
   let productCategories = [];
+  let productYearGroups = [];
 
   async function ensureProductCategories() {
     if (productCategories.length) return productCategories;
@@ -321,14 +321,22 @@ const Catalog = (() => {
     return productCategories;
   }
 
-  function categoryOptions(selected) {
-    const vals = productCategories.length ? productCategories : lookups("category");
-    return vals.map(v => `<option value="${ctx.esc(v)}" ${selected === v ? "selected" : ""}>${ctx.esc(v)}</option>`).join("");
+  async function ensureProductYears() {
+    if (productYearGroups.length) return productYearGroups;
+    try {
+      productYearGroups = await ctx.api("/catalog/year-groups") || [];
+    } catch (_) {
+      productYearGroups = [];
+    }
+    if (!productYearGroups.includes(DEFAULT_YEAR_GROUP)) productYearGroups = [DEFAULT_YEAR_GROUP, ...productYearGroups];
+    return productYearGroups;
   }
 
-  function lookupOptions(type, selected) {
-    const vals = lookups(type);
-    return vals.map(v => `<option value="${ctx.esc(v)}" ${selected === v ? "selected" : ""}>${ctx.esc(v)}</option>`).join("");
+  function categoryField(id, selected, onchange) {
+    const listId = `${id}-list`;
+    const opts = productCategories.map(v => `<option value="${ctx.esc(v)}"></option>`).join("");
+    return `<input id="${id}" class="input" list="${listId}" value="${ctx.esc(selected || "")}" ${onchange ? `oninput="${onchange}"` : ""} />
+      <datalist id="${listId}">${opts}</datalist>`;
   }
 
   function wizardImageThumbs(row) {
@@ -400,9 +408,7 @@ const Catalog = (() => {
         <div class="card" style="padding:16px;background:#eff6ff;border-color:#bfdbfe;">
           <div style="font-size:12px;font-weight:700;color:var(--brand);margin-bottom:10px;">Apply to selected rows</div>
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;align-items:end;">
-            <div><label class="label">Category</label><select id="cw-bulk-category" class="input" style="font-size:13px;"><option value="">—</option>${categoryOptions()}</select></div>
-            <div><label class="label">Series</label><select id="cw-bulk-series" class="input" style="font-size:13px;"><option value="">—</option>${lookupOptions("series")}</select></div>
-            <div><label class="label">Unit</label><select id="cw-bulk-unit" class="input" style="font-size:13px;"><option value="">—</option>${lookupOptions("unit")}</select></div>
+            <div><label class="label">Category</label>${categoryField("cw-bulk-category", "")}</div>
             <div><label class="label">Year ${ctx.isAdmin?.() ? "" : "(admin)"}</label>${yearSelectHtml(DEFAULT_YEAR_GROUP, { id: "cw-bulk-year_group", allowEmpty: true })}</div>
             <div><label class="label">Buy (₹)</label><input id="cw-bulk-buying_price" class="input" type="number" min="0" step="0.01" style="font-size:13px;" /></div>
             <div><label class="label">Sell (₹)</label><input id="cw-bulk-selling_price" class="input" type="number" min="0" step="0.01" style="font-size:13px;" /></div>
@@ -415,8 +421,6 @@ const Catalog = (() => {
               <th style="width:36px;"></th>
               <th>Our code</th>
               <th>Category</th>
-              <th>Series</th>
-              <th>Unit</th>
               <th>Year</th>
               <th>Buy</th>
               <th>Sell</th>
@@ -427,11 +431,7 @@ const Catalog = (() => {
                 return `<tr>
                   <td><input type="checkbox" ${row.selected ? "checked" : ""} onchange="Catalog.toggleWizardRow(${idx}, this.checked)" /></td>
                   <td><strong>${ctx.esc(row.our_product_id)}</strong></td>
-                  <td><select class="input" style="font-size:12px;" onchange="Catalog.updateWizardRow(${idx}, 'category', this.value)">
-                    <option value="">—</option>${categoryOptions(row.category)}</select></td>
-                  <td><select class="input" style="font-size:12px;" onchange="Catalog.updateWizardRow(${idx}, 'series', this.value)">
-                    <option value="">—</option>${lookupOptions("series", row.series)}</select></td>
-                  <td><select class="input" style="font-size:12px;" onchange="Catalog.updateWizardRow(${idx}, 'unit', this.value)">${lookupOptions("unit", row.unit)}</select></td>
+                  <td>${categoryField(`cw-cat-${idx}`, row.category, `Catalog.updateWizardRow(${idx}, 'category', this.value)`)}</td>
                   <td>${yearSelectHtml(row.year_group || DEFAULT_YEAR_GROUP, { onchange: `Catalog.updateWizardRow(${idx}, 'year_group', this.value)` })}</td>
                   <td><input class="input" type="number" min="0" step="0.01" style="font-size:12px;width:90px;" value="${ctx.esc(row.buying_price)}"
                     oninput="Catalog.updateWizardRow(${idx}, 'buying_price', this.value)" /></td>
@@ -469,14 +469,13 @@ const Catalog = (() => {
       <div class="table-wrap">
         <table class="data" style="font-size:13px;">
           <thead><tr>
-            <th>Our code</th><th>Vendor code</th><th>Category</th><th>Unit</th><th>Buy</th><th>Sell</th><th>Photos</th>
+            <th>Our code</th><th>Vendor code</th><th>Category</th><th>Buy</th><th>Sell</th><th>Photos</th>
           </tr></thead>
           <tbody>
             ${filled.map(r => `<tr>
               <td><strong>${ctx.esc(r.our_product_id)}</strong></td>
               <td>${ctx.esc(r.vendor_product_id)}</td>
               <td>${ctx.esc(r.category || "—")}</td>
-              <td>${ctx.esc(r.unit || "—")}</td>
               <td>${r.buying_price ? fmtPrice(r.buying_price) : "—"}</td>
               <td>${r.selling_price ? fmtPrice(r.selling_price) : "—"}</td>
               <td>${wizardImageThumbs(r) || "—"}</td>
@@ -501,7 +500,7 @@ const Catalog = (() => {
       <div class="table-wrap">
         <table class="data" style="font-size:13px;">
           <thead><tr>
-            <th></th><th>Our code</th><th>Vendor code</th><th>Category</th><th>Unit</th><th>Buy</th><th>Sell</th>
+            <th></th><th>Our code</th><th>Vendor code</th><th>Category</th><th>Buy</th><th>Sell</th>
           </tr></thead>
           <tbody>
             ${rows.map(p => {
@@ -514,7 +513,6 @@ const Catalog = (() => {
                 <td><strong>${ctx.esc(p.our_product_id)}</strong></td>
                 <td>${ctx.esc(p.vendor_product_id || "—")}</td>
                 <td>${ctx.esc(p.category || "—")}</td>
-                <td>${ctx.esc(p.unit || "—")}</td>
                 <td>${fmtPrice(p.buying_price)}</td>
                 <td>${p.selling_price ? fmtPrice(p.selling_price) : "—"}</td>
               </tr>`;
@@ -607,14 +605,10 @@ const Catalog = (() => {
   function applyBulkFields() {
     const patch = {};
     const cat = document.getElementById("cw-bulk-category")?.value;
-    const ser = document.getElementById("cw-bulk-series")?.value;
-    const unit = document.getElementById("cw-bulk-unit")?.value;
     const yg = document.getElementById("cw-bulk-year_group")?.value;
     const buy = document.getElementById("cw-bulk-buying_price")?.value;
     const sell = document.getElementById("cw-bulk-selling_price")?.value;
     if (cat) patch.category = cat;
-    if (ser) patch.series = ser;
-    if (unit) patch.unit = unit;
     if (yg && ctx.isAdmin?.()) patch.year_group = yg;
     if (buy) patch.buying_price = buy;
     if (sell) patch.selling_price = sell;
@@ -647,7 +641,6 @@ const Catalog = (() => {
     const filled = filledWizardRows();
     for (const r of filled) {
       if (!r.category) return ctx.toast(`Category required for ${r.our_product_id}`, "error"), false;
-      if (!r.unit) return ctx.toast(`Unit required for ${r.our_product_id}`, "error"), false;
       if (!r.buying_price || Number(r.buying_price) < 0) return ctx.toast(`Buying price required for ${r.our_product_id}`, "error"), false;
     }
     return true;
@@ -726,8 +719,7 @@ const Catalog = (() => {
           our_product_id: row.our_product_id.trim(),
           vendor_product_id: row.vendor_product_id.trim(),
           category: row.category || null,
-          series: row.series || null,
-          unit: row.unit || null,
+          unit: "pcs",
           year_group: ctx.isAdmin?.() ? (row.year_group || DEFAULT_YEAR_GROUP) : DEFAULT_YEAR_GROUP,
           buying_price: Number(row.buying_price),
           selling_price: row.selling_price ? Number(row.selling_price) : null,
@@ -772,6 +764,7 @@ const Catalog = (() => {
         ctx.api("/catalog/product-options", {}, 120000).catch(() => []),
         loadAddons(),
         ensureProductCategories(),
+        ensureProductYears(),
       ]);
       if (!p || !p.id) throw new Error("Product not found");
       const altOptions = (Array.isArray(optRes) ? optRes : []).filter(x => x.id !== p.id);
@@ -802,17 +795,13 @@ const Catalog = (() => {
           <input id="ce-vendor_product_id" class="input" value="${ctx.esc(p.vendor_product_id)}" /></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
           <div><label class="label">Category</label>
-            <select id="ce-category" class="input"><option value="">—</option>${categoryOptions(p.category)}</select></div>
+            ${categoryField("ce-category", p.category)}</div>
           <div><label class="label">Second category</label>
-            <select id="ce-second_category" class="input"><option value="">—</option>${categoryOptions(p.second_category)}</select></div>
-          <div><label class="label">Series</label>
-            <select id="ce-series" class="input"><option value="">—</option>${lookupOptions("series", p.series)}</select></div>
+            ${categoryField("ce-second_category", p.second_category)}</div>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-          <div><label class="label">Unit</label>
-            <select id="ce-unit" class="input">${lookupOptions("unit", p.unit)}</select></div>
-          <div><label class="label">Year Group ${ctx.isAdmin?.() ? "" : "(admin only)"}</label>
-            ${yearSelectHtml(p.year_group || DEFAULT_YEAR_GROUP, { id: "ce-year_group" })}</div>
+        <div>
+          <label class="label">Year Group ${ctx.isAdmin?.() ? "" : "(admin only)"}</label>
+          ${yearSelectHtml(p.year_group || DEFAULT_YEAR_GROUP, { id: "ce-year_group" })}
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
           <div><label class="label">Buying Price</label>
@@ -940,8 +929,6 @@ const Catalog = (() => {
       vendor_product_id: document.getElementById("ce-vendor_product_id").value.trim(),
       category: document.getElementById("ce-category").value || null,
       second_category: document.getElementById("ce-second_category").value || null,
-      series: document.getElementById("ce-series").value || null,
-      unit: document.getElementById("ce-unit").value || null,
       marking: document.getElementById("ce-marking")?.value.trim() || null,
       year_group: ctx.isAdmin?.()
         ? (document.getElementById("ce-year_group")?.value || null)

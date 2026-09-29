@@ -112,6 +112,7 @@ def clean_particulars(raw: str):
 
 
 def ensure_lookup(db, lookup_type: str, value: str) -> None:
+    return
     val = value.strip()
     exists = (
         db.query(CatalogLookup)

@@ -758,7 +758,7 @@ def list_my_orders(
                     id=p.id,
                     line_id=ln.id,
                     catalog_product_id=ln.catalog_product_id,
-                    our_product_id=ln.our_product_id,
+                    our_product_id=prod.our_product_id if prod else ln.our_product_id,
                     image_url=image_url,
                     quantity=qty,
                     quantity_shipped=shipped,

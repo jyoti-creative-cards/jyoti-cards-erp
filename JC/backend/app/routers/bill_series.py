@@ -210,6 +210,8 @@ def get_bill_detail(
         .all()
     )
     doc_url = presigned_url(bill.document_key) if bill.document_key and storage_configured() else None
+    from app.services.document_present import live_product_names
+    names = live_product_names(db, [ln.catalog_product_id for ln in lines])
     return BillDetailPublic(
         id=bill.id,
         bill_number=bill.bill_number,
@@ -234,7 +236,7 @@ def get_bill_detail(
         lines=[
             BillDetailLineOut(
                 id=ln.id,
-                our_product_id=ln.our_product_id,
+                our_product_id=names.get(int(ln.catalog_product_id)) or ln.our_product_id,
                 quantity_shipped=ln.quantity_shipped,
                 unit_price=_fmt_money(ln.unit_price),
                 line_total=_fmt_money(ln.line_total),

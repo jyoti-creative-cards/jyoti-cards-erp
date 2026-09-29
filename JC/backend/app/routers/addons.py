@@ -40,7 +40,7 @@ def _stock_status(row: AddonProduct) -> str:
 
 
 def _to_public(row: AddonProduct, db: Session, *, auth: AuthContext) -> AddonPublic:
-    v = db.get(Vendor, row.vendor_id)
+    v = db.get(Vendor, row.vendor_id) if row.vendor_id else None
     keys = row.image_keys or []
     return AddonPublic(
         id=row.id,
@@ -130,7 +130,7 @@ def get_addon(addon_id: int, db: Session = Depends(get_db), auth: AuthContext = 
 
 @router.post("", response_model=AddonPublic, status_code=201, dependencies=[Depends(require_permission("addons.write"))])
 def create_addon(body: AddonCreate, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("addons.write"))) -> AddonPublic:
-    if not db.get(Vendor, body.vendor_id):
+    if body.vendor_id is not None and not db.get(Vendor, body.vendor_id):
         raise HTTPException(400, "vendor not found")
     clash = db.query(AddonProduct).filter(
         AddonProduct.our_product_id == body.our_product_id.strip(), AddonProduct.is_active.is_(True)
@@ -140,16 +140,28 @@ def create_addon(body: AddonCreate, db: Session = Depends(get_db), auth: AuthCon
     row = AddonProduct(
         our_product_id=body.our_product_id.strip(),
         vendor_id=body.vendor_id,
-        vendor_product_id=body.vendor_product_id.strip(),
+        vendor_product_id=(body.vendor_product_id or "").strip(),
         name=body.name,
         description=body.description,
         category=body.category,
-        unit=body.unit.strip(),
-        buying_price=body.buying_price.quantize(Decimal("0.01")),
+        unit=(body.unit or "pcs").strip() or "pcs",
+        buying_price=(body.buying_price or Decimal("0")).quantize(Decimal("0.01")),
         image_keys=body.image_keys or [],
+        quantity_on_hand=0,
     )
     db.add(row)
     try:
+        db.flush()
+        if body.quantity:
+            add_addon_stock(
+                db,
+                addon_product_id=row.id,
+                quantity=int(body.quantity),
+                entry_type="received",
+                reference_type="addon_create",
+                notes="opening quantity",
+                created_by_name=auth.actor_name,
+            )
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -168,6 +180,17 @@ def update_addon(addon_id: int, body: AddonUpdate, db: Session = Depends(get_db)
         raise HTTPException(404, "addon not found")
     before = row_snapshot(row, TRACKED_FIELDS["addon_product"])
     data = body.model_dump(exclude_unset=True)
+    if "our_product_id" in data:
+        new_id = (data["our_product_id"] or "").strip()
+        if not new_id:
+            raise HTTPException(400, "name required")
+        clash = db.query(AddonProduct).filter(
+            AddonProduct.our_product_id == new_id,
+            AddonProduct.id != row.id,
+        ).first()
+        if clash:
+            raise HTTPException(409, "our_product_id already exists")
+        data["our_product_id"] = new_id
     price_changed = False
     if "buying_price" in data and data["buying_price"] is not None:
         row.buying_price = data["buying_price"].quantize(Decimal("0.01"))

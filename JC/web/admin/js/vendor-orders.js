@@ -1529,13 +1529,12 @@ const VendorOrders = (() => {
       const id = String(p.our_product_id || "").toLowerCase();
       const vid = String(p.vendor_product_id || "").toLowerCase();
       const cat = String(p.category || "").toLowerCase();
-      const series = String(p.series || "").toLowerCase();
       let score = 0;
       if (id === q || vid === q) score = 100;
       else if (id.startsWith(q) || vid.startsWith(q)) score = 80;
       else if (id.includes(q) || vid.includes(q)) score = 40;
-      else if (cat.startsWith(q) || series.startsWith(q)) score = 30;
-      else if (cat.includes(q) || series.includes(q)) score = 10;
+      else if (cat.startsWith(q)) score = 30;
+      else if (cat.includes(q)) score = 10;
       else continue;
       scored.push({ p, score, id });
     }
@@ -1675,7 +1674,7 @@ const VendorOrders = (() => {
         ${cartHtml}
         <div class="vo-wiz-search-wrap">
           <span class="vo-wiz-search-icon" aria-hidden="true">⌕</span>
-          <input id="vo-product-search" class="input vo-wiz-search" type="search" placeholder="Search product ID, category, series…" value="${ctx.esc(wizardProductSearch)}" oninput="VendorOrders.onProductSearch(this.value)" autocomplete="off" />
+          <input id="vo-product-search" class="input vo-wiz-search" type="search" placeholder="Search product ID, category…" value="${ctx.esc(wizardProductSearch)}" oninput="VendorOrders.onProductSearch(this.value)" autocomplete="off" />
           ${wizardProductSearch ? `<button type="button" class="vo-wiz-search-clear" onclick="VendorOrders.onProductSearch('')">×</button>` : ""}
         </div>
         <div class="vo-wiz-product-meta">
@@ -1697,7 +1696,7 @@ const VendorOrders = (() => {
                 ${thumb(img)}
                 <div class="vo-wiz-product-info">
                   <strong>${ctx.esc(p.our_product_id)}${p.vendor_product_id ? ` / (${ctx.esc(p.vendor_product_id)})` : ""}</strong>
-                  <span class="vo-wiz-product-sub">${p.category ? ctx.esc(p.category) : "Product"}${p.series ? ` · ${ctx.esc(p.series)}` : ""}</span>
+                  <span class="vo-wiz-product-sub">${p.category ? ctx.esc(p.category) : "Product"}</span>
                   <span class="vo-wiz-product-price">${fmtPrice(p.buying_price)}</span>
                   ${alts ? `<div class="vo-alt-row" onclick="event.stopPropagation()">${alts}</div>` : ""}
                 </div>

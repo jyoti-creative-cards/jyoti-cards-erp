@@ -113,7 +113,7 @@
               <span class="setup-tile-tag">Config</span>
               <span class="big-tile-letter">⚙</span>
               <span class="big-tile-title">Setup</span>
-              <span class="big-tile-desc">Routes, staff, bill series, options</span>
+              <span class="big-tile-desc">Routes, staff, bill series</span>
             </button>
             <button type="button" class="big-tile ui-tile setup-tile" id="more-tile-safety" onclick="App.showMoreSafety()">
               <span class="setup-tile-tag">Safety</span>
@@ -165,13 +165,6 @@
               <span class="big-tile-title">Freight Agents</span>
               <span class="big-tile-desc">Agents for shipping · settle in Money</span>
               <span class="big-tile-count" id="hub-freight-count">0 agents</span>
-            </button>
-            <button type="button" class="big-tile ui-tile setup-tile setup-tile-catalog" onclick="App.showSetupTab('products')">
-              <span class="setup-tile-tag">Catalog</span>
-              <span class="big-tile-letter">P</span>
-              <span class="big-tile-title">Product Options</span>
-              <span class="big-tile-desc">Category, series, unit, year group</span>
-              <span class="big-tile-count" id="hub-lookups-count">0 options</span>
             </button>
             <button type="button" class="big-tile ui-tile setup-tile setup-tile-billing" id="setup-tile-billseries" onclick="App.showSetupTab('billseries')">
               <span class="setup-tile-tag">Billing</span>
@@ -351,18 +344,6 @@
             <div id="staff-table"></div>
           </div>
         </div>
-        <div id="setup-products" class="hidden">
-          <div class="setup-page">
-            <button type="button" class="btn btn-secondary setup-page-back" onclick="App.showSetupHub()">← Back to Setup</button>
-            <div class="ui-hero setup-page-hero">
-              <div>
-                <h2 class="setup-page-title">Product Options</h2>
-                <p class="setup-page-sub">These names appear when you create products. Keep them short and clear.</p>
-              </div>
-            </div>
-            <div class="lookup-grid" id="lookup-sections"></div>
-          </div>
-        </div>
         <div id="setup-routes-cities" class="hidden">
           <div class="setup-page">
             <button type="button" class="btn btn-secondary setup-page-back" onclick="App.showSetupHub()">← Back to Setup</button>
@@ -402,6 +383,7 @@
                 <p id="products-panel-sub" class="setup-page-sub prod-hero-sub">Find SKUs fast · fix stock &amp; prices · add when needed</p>
               </div>
               <div class="ui-hero-actions">
+                <button class="btn btn-secondary btn-lg" id="products-addons-btn" onclick="Products.showAddons()">Add-ons</button>
                 <button class="btn btn-secondary btn-lg" id="products-action-btn" onclick="Stock.openAddWizard()">+ Receive stock</button>
               </div>
             </div>
@@ -415,11 +397,6 @@
             <div class="prod-toolbar ui-toolbar">
               <div id="products-search-slot" class="prod-search-slot"></div>
               <div class="prod-toolbar-right">
-                <div class="prod-seg" role="group" aria-label="Item type">
-                  <button type="button" class="prod-seg-btn active" id="ptype-all" onclick="Products.setTypeFilter('all')">All</button>
-                  <button type="button" class="prod-seg-btn" id="ptype-products" onclick="Products.setTypeFilter('products')">Products</button>
-                  <button type="button" class="prod-seg-btn" id="ptype-addons" onclick="Products.setTypeFilter('addons')">Add-ons</button>
-                </div>
                 <button type="button" class="btn btn-ghost btn-sm" id="products-filters-toggle" onclick="Products.toggleFilters()">Filters</button>
                 <div class="prod-view-toggle" role="group" aria-label="View mode">
                   <button type="button" class="prod-view-btn active" id="products-view-grid" onclick="Products.setViewMode('grid')" title="Grid view">▦</button>
@@ -1113,16 +1090,16 @@
   <script src="js/cache.js?v=ui62"></script>
   <script src="js/table-utils.js?v=ui66"></script>
   <script src="js/vendors.js?v=ui71"></script>
-  <script src="js/catalog.js?v=ui75"></script>
-  <script src="js/addon-products.js?v=ui70"></script>
-  <script src="js/products.js?v=ui75"></script>
-  <script src="js/staff.js?v=ui66"></script>
-  <script src="js/vendor-orders.js?v=ui74"></script>
+  <script src="js/catalog.js?v=ui77"></script>
+  <script src="js/addon-products.js?v=ui77"></script>
+  <script src="js/products.js?v=ui78"></script>
+  <script src="js/staff.js?v=ui77"></script>
+  <script src="js/vendor-orders.js?v=ui75"></script>
   <script src="js/share.js?v=ui62"></script>
-  <script src="js/customer-orders.js?v=ui74"></script>
+  <script src="js/customer-orders.js?v=ui75"></script>
   <script src="js/returns.js?v=ui73"></script>
   <script src="js/debit-notes.js?v=ui73"></script>
-  <script src="js/stock.js?v=ui74"></script>
+  <script src="js/stock.js?v=ui75"></script>
   <script src="js/finance.js?v=ui74"></script>
   <script src="js/reports.js?v=ui66"></script>
   <script src="js/dashboard.js?v=ui65"></script>
@@ -1131,6 +1108,6 @@
   <script src="js/payment-modes.js?v=ui62"></script>
   <script src="js/freight-agents.js?v=ui66"></script>
   <script src="js/calculator.js?v=ui1"></script>
-  <script src="app.js?v=ui70"></script>
+  <script src="app.js?v=ui77"></script>
 </body>
 </html>

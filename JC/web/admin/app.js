@@ -691,7 +691,6 @@ const App = (() => {
   function showSetupHub() {
     setupTab = null;
     document.getElementById("setup-hub").classList.remove("hidden");
-    document.getElementById("setup-products").classList.add("hidden");
     document.getElementById("setup-routes-cities").classList.add("hidden");
     document.getElementById("setup-staff").classList.add("hidden");
     document.getElementById("setup-activity")?.classList.add("hidden");
@@ -706,7 +705,6 @@ const App = (() => {
   function showSetupTab(tab) {
     setupTab = tab;
     document.getElementById("setup-hub").classList.add("hidden");
-    document.getElementById("setup-products").classList.toggle("hidden", tab !== "products");
     document.getElementById("setup-routes-cities").classList.toggle("hidden", tab !== "routes");
     document.getElementById("setup-staff").classList.toggle("hidden", tab !== "staff");
     document.getElementById("setup-activity")?.classList.toggle("hidden", tab !== "activity");
@@ -715,7 +713,6 @@ const App = (() => {
     document.getElementById("setup-paymodes")?.classList.toggle("hidden", tab !== "paymodes");
     document.getElementById("setup-freight")?.classList.toggle("hidden", tab !== "freight");
     document.getElementById("setup-export")?.classList.toggle("hidden", tab !== "export");
-    if (tab === "products") renderLookupSections();
     if (tab === "routes") { renderRoutesTable(); renderCitiesTable(); }
     if (tab === "staff") StaffMgmt.load();
     if (tab === "activity") loadActivity({ tableId: "setup-activity-table", personId: "setup-activity-person-filter", actionId: "setup-activity-action-filter", whatId: "setup-activity-what-filter", whereId: "setup-activity-where-filter", dateId: "setup-activity-date-filter", initPerson: true });
@@ -744,9 +741,7 @@ const App = (() => {
   }
 
   function updateSetupHubCounts() {
-    const hubLookups = document.getElementById("hub-lookups-count");
     const hubRoutesCities = document.getElementById("hub-routes-cities-count");
-    if (hubLookups) hubLookups.textContent = `${lookups.length} options`;
     if (hubRoutesCities) hubRoutesCities.textContent = `${routes.length} routes · ${cities.length} cities`;
 
     const slot = document.getElementById("setup-stats-slot");
@@ -754,7 +749,6 @@ const App = (() => {
       slot.innerHTML = `
         <div class="setup-stat"><span class="setup-stat-num">${routes.length}</span><span class="setup-stat-label">Routes</span></div>
         <div class="setup-stat"><span class="setup-stat-num">${cities.length}</span><span class="setup-stat-label">Cities</span></div>
-        <div class="setup-stat"><span class="setup-stat-num">${lookups.length}</span><span class="setup-stat-label">Options</span></div>
         <div class="setup-stat" id="setup-stat-staff"><span class="setup-stat-num">—</span><span class="setup-stat-label">Staff</span></div>`;
     }
 
@@ -1011,15 +1005,14 @@ const App = (() => {
     showLoading();
     try {
       // Boot path: skip full /customers (1.4k rows / ~700KB) — load when People opens.
-      ["/routes", "/cities", "/vendors", "/lookups", "/stats"].forEach(p => invalidateCache(p));
-      const [r, c, vend, lu, stats] = await Promise.all([
+      ["/routes", "/cities", "/vendors", "/stats"].forEach(p => invalidateCache(p));
+      const [r, c, vend, stats] = await Promise.all([
         api("/routes", {}, 120000).catch(() => []),
         api("/cities", {}, 120000).catch(() => []),
         api("/vendors", {}, 120000).catch(() => []),
-        api("/lookups", {}, 300000).catch(() => []),
         api("/stats", {}, 30000).catch(() => null),
       ]);
-      routes = r; cities = c; vendors = vend; lookups = lu;
+      routes = r; cities = c; vendors = vend;
       if (typeof Catalog !== "undefined" && Catalog.setVendors) Catalog.setVendors(vend);
       // Keep any cached customers; otherwise prefetch in background after paint.
       const cachedCust = peekCache("/customers");
@@ -1044,7 +1037,6 @@ const App = (() => {
       }
       renderRoutesTable();
       renderCitiesTable();
-      renderLookupSections();
     } catch (e) {
       toast(e.message, "error");
     } finally {
@@ -2192,8 +2184,7 @@ const App = (() => {
     } else if (type === "addon") {
       const a = await api(`/recycle-bin/addons/${id}`);
       body = `<div class="review-grid">
-        ${reviewRow("Add-on ID", a.our_product_id)}${reviewRow("Vendor", a.vendor_name)}
-        ${reviewRow("Unit", a.unit)}${reviewRow("Buy Price", fmtPersonMoney(a.buying_price))}
+        ${reviewRow("Add-on ID", a.our_product_id)}
         ${reviewRow("Deleted", fmtDate(a.deleted_at))}
       </div>`;
     } else if (type === "receipt") {

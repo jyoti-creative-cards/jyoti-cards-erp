@@ -714,7 +714,7 @@ def get_receipt_for_bill(
         prod = db.get(CatalogProduct, ln.catalog_product_id)
         lines.append(ReceiptLineForBill(
             catalog_product_id=ln.catalog_product_id,
-            our_product_id=ln.our_product_id,
+            our_product_id=prod.our_product_id if prod else ln.our_product_id,
             vendor_product_id=prod.vendor_product_id if prod else None,
             year_group=prod.year_group if prod else None,
             quantity_received=ln.quantity_received,

@@ -16,8 +16,8 @@ class AddonProduct(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     our_product_id: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
-    vendor_id: Mapped[int] = mapped_column(Integer, ForeignKey("jc_vendors.id", ondelete="RESTRICT"), nullable=False, index=True)
-    vendor_product_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    vendor_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("jc_vendors.id", ondelete="RESTRICT"), nullable=True, index=True)
+    vendor_product_id: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
     name: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     category: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)

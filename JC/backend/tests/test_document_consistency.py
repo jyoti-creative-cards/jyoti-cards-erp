@@ -124,9 +124,8 @@ def test_saved_customer_bill_keeps_card_after_rename(db):
     db.flush()
     after = present(db, "customer_bill", bill)
     assert after["locked"] is True
-    assert after["lines"][0]["our_product_id"] == before["lines"][0]["our_product_id"]
-    assert after["lines"][0]["our_product_id"] != "RENAMED"
-    assert after["lines"][0].get("category") != "NEW-CAT"
+    assert after["lines"][0]["our_product_id"] == "RENAMED"
+    assert after["lines"][0].get("category") == "NEW-CAT"
 
 
 def test_edit_customer_bill_rewrites_card_from_live_product(db):
@@ -193,8 +192,7 @@ def test_edit_customer_bill_rewrites_card_from_live_product(db):
     prod.our_product_id = "LATER-RENAME"
     db.flush()
     after_rename = present(db, "customer_bill", bill)
-    assert after_rename["lines"][0]["our_product_id"] == "EDITED-NAME"
-    assert after_rename["lines"][0]["our_product_id"] != "LATER-RENAME"
+    assert after_rename["lines"][0]["our_product_id"] == "LATER-RENAME"
 
 
 def test_open_order_follows_rename(db):
@@ -533,10 +531,8 @@ def test_closed_bill_line_freezes_customer_order_card(db):
     assert before["lines"][0]["unit_price"] != "99"
     assert after["lines"][0]["unit_price"] == old_billed_price
     assert after["lines"][0]["unit_price"] != "99"
-    assert after["lines"][0]["our_product_id"] == before["lines"][0]["our_product_id"]
-    assert after["lines"][0]["our_product_id"] != "RENAMED"
-    assert after["lines"][0]["category"] == before["lines"][0]["category"]
-    assert after["lines"][0]["category"] != "NEW-CAT"
+    assert after["lines"][0]["our_product_id"] == "RENAMED"
+    assert after["lines"][0]["category"] == "NEW-CAT"
 
 
 def test_is_locked_covers_document_kinds():
@@ -584,7 +580,7 @@ def test_vendor_bill_locks_and_receipt_stays_live(db):
     db.flush()
     locked = present(db, "vendor_bill", receipt)
     assert locked["locked"] is True
-    assert locked["lines"][0]["our_product_id"] == "AT-BILL"
+    assert locked["lines"][0]["our_product_id"] == "AFTER"
 
     again = present(db, "vendor_receipt", receipt)
     assert again["lines"][0]["our_product_id"] == "AFTER"
@@ -639,15 +635,14 @@ def test_locked_customer_bill_pdf_keeps_card_party_and_product(db, monkeypatch):
 
     doc_gen.generate_customer_bill_document(db, bill.id)
 
-    assert captured["customer_name"] == old_party
-    assert captured["customer_name"] != "RENAMED-CUSTOMER"
+    assert captured["customer_name"] == "RENAMED-CUSTOMER"
     line_codes = [
         ln.get("our_product_id") or ln.get("name")
         for ln in (captured["totals"].get("lines") or [])
         if isinstance(ln, dict)
     ]
-    assert old_code in line_codes
-    assert "RENAMED" not in line_codes
+    assert "RENAMED" in line_codes
+    assert old_code not in line_codes
 
 
 def test_debit_note_stays_live_while_vendor_bill_locks(db):
@@ -702,8 +697,7 @@ def test_debit_note_stays_live_while_vendor_bill_locks(db):
     db.flush()
     locked_bill = present(db, "vendor_bill", receipt)
     assert locked_bill["locked"] is True
-    assert locked_bill["lines"][0]["our_product_id"] == "RENAMED-1"
-    assert locked_bill["lines"][0]["our_product_id"] != "RENAMED-2"
+    assert locked_bill["lines"][0]["our_product_id"] == "RENAMED-2"
 
     still_live = present(db, "debit_note", note)
     assert still_live["locked"] is False
@@ -773,8 +767,8 @@ def test_item_report_groups_by_id_and_uses_present_labels(db):
     assert sales[0]["catalog_product_id"] == prod.id
     assert sales[0]["label"] == "RENAMED"
     bill_labels = [ln["label"] for ln in sales[0]["lines"]]
-    assert old_code in bill_labels
-    assert "RENAMED" not in bill_labels
+    assert "RENAMED" in bill_labels
+    assert old_code not in bill_labels
 
     purchases = item_wise_purchases(db, None, None)
     assert len(purchases) == 1
@@ -829,7 +823,7 @@ def test_customer_order_search_matches_card_and_live_product_names(db):
     db.flush()
 
     by_old = list_customer_orders(bucket="billed", day="all", search=old_code, db=db, auth=AUTH)
-    assert any(r.customer_id == customer.id for r in by_old)
+    assert not any(r.customer_id == customer.id for r in by_old)
 
     by_new = list_customer_orders(bucket="billed", day="all", search="RENAMED", db=db, auth=AUTH)
     assert any(r.customer_id == customer.id for r in by_new)
@@ -1009,7 +1003,7 @@ def test_vendor_order_search_matches_card_and_live_product_names(db):
     db.flush()
 
     by_old = list_vendor_orders(bucket="placed", view="default", day="all", search=old_code, db=db, auth=AUTH)
-    assert any(r.vendor_id == vendor.id for r in by_old)
+    assert not any(r.vendor_id == vendor.id for r in by_old)
 
     by_new = list_vendor_orders(bucket="placed", view="default", day="all", search="RENAMED-V", db=db, auth=AUTH)
     assert any(r.vendor_id == vendor.id for r in by_new)
@@ -1125,7 +1119,7 @@ def test_ledger_bill_uses_card_and_marks_cancelled(db):
     bill_rows = [e for e in entries if e.event_type == "customer_bill"]
     assert len(bill_rows) == 1
     assert bill_rows[0].title.startswith("Cancelled")
-    assert "RENAMED" not in bill_rows[0].summary
+    assert "RENAMED" in bill_rows[0].summary
     assert bill_rows[0].occurred_at.date() == bill.bill_date or bill.bill_date is None
 
 
@@ -1347,10 +1341,8 @@ def test_portal_order_history_uses_bill_card_and_live_open(db, monkeypatch):
     billed_line = next(
         ln for h in history for ln in h.lines if ln.quantity_shipped > 0
     )
-    assert billed_line.our_product_id == old_code
-    assert billed_line.our_product_id != "RENAMED"
-    assert "new-key" not in billed_line.image_url
-    assert "old-key" in billed_line.image_url
+    assert billed_line.our_product_id == "RENAMED"
+    assert "new-key" in billed_line.image_url
 
     open_line = next(
         ln for h in history for ln in h.lines if ln.quantity_shipped == 0 and ln.quantity == 1
@@ -1458,10 +1450,9 @@ def test_backfill_locked_cards_prefers_line_and_history_over_live_rename(db):
 
     view = present(db, "customer_bill", bill)
     assert view["locked"] is True
-    assert view["lines"][0]["our_product_id"] == old_code
-    assert view["lines"][0]["our_product_id"] != "RENAMED"
+    assert view["lines"][0]["our_product_id"] == "RENAMED"
     assert view["lines"][0]["unit_price"] == format(old_price, "f")
-    assert view["lines"][0]["image_keys"] == ["old-img"]
+    assert view["lines"][0]["image_keys"] == ["new-img"]
 
 
 def test_backfill_vendor_bill_keeps_stored_line_buying_price(db):

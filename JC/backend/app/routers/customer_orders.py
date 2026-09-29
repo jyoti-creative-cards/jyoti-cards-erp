@@ -184,6 +184,11 @@ def serialize_customer_bill(
         for p in (db.query(CatalogProduct).filter(CatalogProduct.id.in_(bline_cids)).all() if bline_cids else [])
     }
     view = present(db, "customer_bill", bill)
+    card_names = {
+        int(cl["catalog_product_id"]): cl.get("our_product_id")
+        for cl in (view.get("lines") or [])
+        if isinstance(cl, dict) and cl.get("catalog_product_id")
+    }
     return CustomerBillOut(
         id=bill.id,
         bill_number=bill.bill_number,
@@ -216,7 +221,7 @@ def serialize_customer_bill(
                 bill_id=bill.id,
                 bill_number=bill.bill_number,
                 catalog_product_id=ln.catalog_product_id,
-                our_product_id=ln.our_product_id,
+                our_product_id=card_names.get(int(ln.catalog_product_id)) or ln.our_product_id,
                 quantity_shipped=ln.quantity_shipped,
                 unit_price=format(ln.unit_price, "f"),
                 line_total=format(ln.line_total, "f"),
@@ -530,7 +535,7 @@ def get_customer_order_detail(
                 CustomerOpenLineOut(
                     id=row.id,
                     catalog_product_id=row.catalog_product_id,
-                    our_product_id=row.our_product_id,
+                    our_product_id=prod.our_product_id if prod else row.our_product_id,
                     quantity_received=row.quantity_received,
                     quantity_open=row.quantity_open,
                     quantity_billed=row.quantity_billed,
@@ -587,6 +592,11 @@ def get_customer_order_detail(
     pl_out: list[CustomerPlacementOut] = []
     for p, lines in placement_lines:
         view = present(db, "customer_order", p)
+        card_names = {
+            int(cl["catalog_product_id"]): cl.get("our_product_id")
+            for cl in (view.get("lines") or [])
+            if isinstance(cl, dict) and cl.get("catalog_product_id")
+        }
         pl_out.append(
             CustomerPlacementOut(
                 id=p.id,
@@ -602,7 +612,7 @@ def get_customer_order_detail(
                     CustomerOrderLineOut(
                         id=ln.id,
                         catalog_product_id=ln.catalog_product_id,
-                        our_product_id=ln.our_product_id,
+                        our_product_id=card_names.get(int(ln.catalog_product_id)) or ln.our_product_id,
                         quantity=ln.quantity,
                         quantity_billed=ln.quantity_billed,
                         unit_price=format(ln.unit_price, "f"),
@@ -1020,6 +1030,11 @@ def get_placement_detail(
         .all()
     )
     view = present(db, "customer_order", placement)
+    card_names = {
+        int(cl["catalog_product_id"]): cl.get("our_product_id")
+        for cl in (view.get("lines") or [])
+        if isinstance(cl, dict) and cl.get("catalog_product_id")
+    }
     return CustomerPlacementOut(
         id=placement.id,
         status=view.get("status") or placement.status,
@@ -1034,7 +1049,7 @@ def get_placement_detail(
             CustomerOrderLineOut(
                 id=ln.id,
                 catalog_product_id=ln.catalog_product_id,
-                our_product_id=ln.our_product_id,
+                our_product_id=card_names.get(int(ln.catalog_product_id)) or ln.our_product_id,
                 quantity=ln.quantity,
                 quantity_billed=ln.quantity_billed,
                 unit_price=format(ln.unit_price, "f"),

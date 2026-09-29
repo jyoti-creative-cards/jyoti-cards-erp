@@ -175,6 +175,16 @@ def generate_customer_bill_document(db: Session, bill_id: int) -> str | None:
         if isinstance(cl, dict) and cl.get("catalog_product_id") is not None
     }
     party = view.get("party") or {}
+    from app.models.addon_product import AddonProduct
+    addon_ids = [
+        int(addon["addon_product_id"])
+        for ln in lines if isinstance(ln, dict)
+        for addon in (ln.get("addons") or [])
+        if isinstance(addon, dict) and addon.get("addon_product_id")
+    ]
+    addon_rows = {
+        a.id: a for a in db.query(AddonProduct).filter(AddonProduct.id.in_(set(addon_ids))).all()
+    } if addon_ids else {}
     image_urls: dict[int, str | None] = {}
     for ln in lines:
         if not isinstance(ln, dict):
@@ -188,6 +198,13 @@ def generate_customer_bill_document(db: Session, bill_id: int) -> str | None:
         if card.get("our_product_id"):
             ln["our_product_id"] = card["our_product_id"]
             ln["name"] = card["our_product_id"]
+        for addon in ln.get("addons") or []:
+            if not isinstance(addon, dict) or not addon.get("addon_product_id"):
+                continue
+            live_addon = addon_rows.get(int(addon["addon_product_id"]))
+            if live_addon:
+                addon["our_product_id"] = live_addon.our_product_id
+                addon["name"] = live_addon.name or live_addon.our_product_id
     totals = {**totals, "lines": [dict(ln) for ln in lines if isinstance(ln, dict)]}
     placement = db.get(CustomerOrderPlacement, bill.placement_id) if bill.placement_id else None
     from app.services.ar_ledger import customer_ar_totals

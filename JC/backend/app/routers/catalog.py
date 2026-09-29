@@ -368,6 +368,19 @@ def list_product_categories(db: Session = Depends(get_db)) -> list[str]:
     return sorted(found, key=str.lower)
 
 
+@router.get("/year-groups", dependencies=[Depends(require_permission("catalog.read"))])
+def list_product_year_groups(db: Session = Depends(get_db)) -> list[str]:
+    """Year dropdown values, taken from the products themselves."""
+    rows = (
+        db.query(CatalogProduct.year_group)
+        .filter(CatalogProduct.is_active.is_(True), CatalogProduct.deleted_at.is_(None))
+        .all()
+    )
+    found = {(value or "").strip() for (value,) in rows if (value or "").strip()}
+    found.add("2026-27")
+    return sorted(found)
+
+
 @router.get("/products", response_model=CatalogListResponse, dependencies=[Depends(require_permission("catalog.read"))])
 def list_products(
     db: Session = Depends(get_db),

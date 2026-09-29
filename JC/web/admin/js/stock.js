@@ -158,8 +158,6 @@ const Stock = (() => {
         <div class="review-grid" style="margin:16px 0 20px;">
           ${ctx.reviewRow("Vendor product ID", p.vendor_product_id || "—")}
           ${ctx.reviewRow("Year group", p.year_group || "—")}
-          ${ctx.reviewRow("Series", p.series || "—")}
-          ${ctx.reviewRow("Unit", p.unit || "—")}
           ${ctx.reviewRow("Category", p.category || "—")}
         </div>
         <div style="margin-bottom:16px;"><strong style="font-size:13px;">Alternatives</strong><div style="margin-top:8px;">${altRows}</div></div>
@@ -296,13 +294,12 @@ const Stock = (() => {
       const id = String(p.our_product_id || "").toLowerCase();
       const vid = String(p.vendor_product_id || "").toLowerCase();
       const cat = String(p.category || "").toLowerCase();
-      const series = String(p.series || "").toLowerCase();
       let score = 0;
       if (id === q || vid === q) score = 100;
       else if (id.startsWith(q) || vid.startsWith(q)) score = 80;
       else if (id.includes(q) || vid.includes(q)) score = 40;
-      else if (cat.startsWith(q) || series.startsWith(q)) score = 30;
-      else if (cat.includes(q) || series.includes(q)) score = 10;
+      else if (cat.startsWith(q)) score = 30;
+      else if (cat.includes(q)) score = 10;
       else continue;
       scored.push({ p, score, id });
     }
@@ -872,7 +869,7 @@ const Stock = (() => {
                   ${thumb(img)}
                   <div class="vo-wiz-product-info">
                     <strong>${ctx.esc(productIdLabel(p))}</strong>
-                    <span class="vo-wiz-product-sub">${p.category ? ctx.esc(p.category) : "Product"}${p.series ? ` · ${ctx.esc(p.series)}` : ""}</span>
+                    <span class="vo-wiz-product-sub">${p.category ? ctx.esc(p.category) : "Product"}</span>
                     <span class="vo-wiz-product-price">${fmtPrice(p.buying_price)}</span>
                   </div>
                 </div>

@@ -65,17 +65,18 @@ def build_vendor_ledger(
     if placement_ids:
         for ln in db.query(VendorOrderLine).filter(VendorOrderLine.placement_id.in_(placement_ids)).all():
             plines_by[ln.placement_id].append(ln)
-    vendor_products = {
-        p.id: p.vendor_product_id
-        for p in db.query(CatalogProduct.id, CatalogProduct.vendor_product_id)
+    vendor_rows = (
+        db.query(CatalogProduct.id, CatalogProduct.our_product_id, CatalogProduct.vendor_product_id)
         .filter(CatalogProduct.vendor_id == vendor_id)
         .all()
-    }
+    )
+    vendor_products = {p.id: p.vendor_product_id for p in vendor_rows}
+    vendor_names = {p.id: p.our_product_id for p in vendor_rows}
     for placement, order in placements:
         lines = plines_by.get(placement.id) or []
         line_details = [
             LedgerLineDetail(
-                our_product_id=ln.our_product_id,
+                our_product_id=vendor_names.get(ln.catalog_product_id) or ln.our_product_id,
                 vendor_product_id=vendor_products.get(ln.catalog_product_id),
                 quantity=ln.quantity,
                 quantity_remaining=ln.quantity if order.bucket == "placed" else None,
@@ -91,7 +92,9 @@ def build_vendor_ledger(
         else:
             title = "Cancelled placement"
             event_type = "order_cancelled"
-        summary = ", ".join(f"{ln.our_product_id} × {ln.quantity}" for ln in lines[:8])
+        summary = ", ".join(
+            f"{vendor_names.get(ln.catalog_product_id) or ln.our_product_id} × {ln.quantity}" for ln in lines[:8]
+        )
         entries.append(
             (
                 placement.placed_at,
@@ -155,14 +158,16 @@ def build_vendor_ledger(
         rlines = rlines_by.get(receipt.id) or []
         line_details = [
             LedgerLineDetail(
-                our_product_id=ln.our_product_id, vendor_product_id=vendor_products.get(ln.catalog_product_id),
+                our_product_id=vendor_names.get(ln.catalog_product_id) or ln.our_product_id, vendor_product_id=vendor_products.get(ln.catalog_product_id),
                 quantity_received=ln.quantity_received,
                 quantity_billed=ln.quantity_billed, billed_amount=_fmt_amount(ln.billed_amount),
                 buying_price=hide_cost(format(ln.buying_price, "f"), auth),
             )
             for ln in rlines
         ]
-        summary = ", ".join(f"{ln.our_product_id} +{ln.quantity_received}" for ln in rlines[:8]) or "—"
+        summary = ", ".join(
+            f"{vendor_names.get(ln.catalog_product_id) or ln.our_product_id} +{ln.quantity_received}" for ln in rlines[:8]
+        ) or "—"
         entries.append((
             receipt.received_at,
             EntityLedgerEntry(
@@ -369,9 +374,11 @@ def build_customer_ledger(db: Session, customer_id: int, *, show_actor: bool = T
             olines_by[ln.placement_id].append(ln)
     for placement, order in placements:
         lines = olines_by.get(placement.id) or []
+        from app.services.document_present import live_product_names
+        order_names = live_product_names(db, [ln.catalog_product_id for ln in lines])
         line_details = [
             LedgerLineDetail(
-                our_product_id=ln.our_product_id,
+                our_product_id=order_names.get(int(ln.catalog_product_id)) or ln.our_product_id,
                 quantity=ln.quantity,
                 quantity_billed=ln.quantity_billed,
                 # NB: no buying_price here — this is the customer-side ledger, so
@@ -387,7 +394,10 @@ def build_customer_ledger(db: Session, customer_id: int, *, show_actor: bool = T
         cancelled = placement.status == "cancelled" or order.bucket == "cancelled"
         event_type = "order_cancelled" if cancelled else "order_placed"
         title = "Cancelled order" if cancelled else "Order placed"
-        summary = ", ".join(f"{ln.our_product_id} × {ln.quantity}" for ln in lines[:8]) or "—"
+        summary = ", ".join(
+            f"{order_names.get(int(ln.catalog_product_id)) or ln.our_product_id} × {ln.quantity}"
+            for ln in lines[:8]
+        ) or "—"
         entries.append(
             (
                 placement.placed_at,

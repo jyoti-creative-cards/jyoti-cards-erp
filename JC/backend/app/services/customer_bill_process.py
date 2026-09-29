@@ -94,6 +94,8 @@ def get_process_lines(db: Session, customer_id: int) -> dict:
         for bal in db.query(StockBalance).filter(StockBalance.catalog_product_id.in_(product_ids)).all():
             bal_map[int(bal.catalog_product_id)] = int(bal.quantity_on_hand or 0)
     addon_map = addon_snapshots_map(db, product_ids, with_images=False) if product_ids else {}
+    from app.services.document_present import live_product_names
+    names = live_product_names(db, product_ids)
 
     out = []
     for row in rows:
@@ -101,7 +103,7 @@ def get_process_lines(db: Session, customer_id: int) -> dict:
             {
                 "open_line_id": row.id,
                 "catalog_product_id": row.catalog_product_id,
-                "our_product_id": row.our_product_id,
+                "our_product_id": names.get(int(row.catalog_product_id)) or row.our_product_id,
                 "unit_price": format(row.unit_price, "f"),
                 "quantity_placed": row.quantity_received,
                 "quantity_open": row.quantity_open,

@@ -145,7 +145,7 @@ const StaffMgmt = (() => {
     {
       id: "setup",
       label: "Setup",
-      hint: "Routes, cities, lookups",
+      hint: "Routes and cities",
       // Deliberately no recycle.* here — recycle bin is unrelated to setup data
       // and least-privilege says don't bundle it in by default.
       keys: ["setup.read", "setup.write"],

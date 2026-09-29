@@ -80,7 +80,11 @@ def freeze_card(db: Session, kind: str, row) -> dict:
 
 def present(db: Session, kind: str, row) -> dict:
     locked = is_locked(kind, row)
+    card = _present_card(db, kind, row, locked)
+    return _overlay_live_master(db, kind, row, card)
 
+
+def _present_card(db: Session, kind: str, row, locked: bool) -> dict:
     if kind == "customer_bill":
         card = _stored_or_live_customer_bill_card(db, row)
         out = deepcopy(card)
@@ -597,6 +601,90 @@ def _vendor_party_card(db: Session, vendor: Vendor | None) -> dict | None:
         "vendor_number": vendor.vendor_number,
         "alias": vendor.alias,
     }
+
+
+def _overlay_live_master(db: Session, kind: str, row, card: dict) -> dict:
+    """Names, party, and product fields always come from the master row.
+
+    Quantity, rate, and totals on the document stay as they were saved.
+    """
+    if not isinstance(card, dict):
+        return card
+    if kind == "customer_order":
+        customer = _customer_for_order(db, row)
+        if customer:
+            card["party"] = _customer_party_card(db, customer)
+            card["party_name"] = customer.business_name
+    elif kind in ("customer_bill", "customer_return") or getattr(row, "customer_id", None):
+        if kind not in ("vendor_bill", "vendor_receipt", "vendor_order", "debit_note"):
+            customer_id = getattr(row, "customer_id", None)
+            if customer_id:
+                customer = db.get(Customer, int(customer_id))
+                if customer:
+                    card["party"] = _customer_party_card(db, customer)
+                    card["party_name"] = customer.business_name
+    if kind == "vendor_order":
+        card["party_name"] = _vendor_name_for_order(db, row)
+    elif kind in ("vendor_bill", "vendor_receipt", "debit_note") or (
+        getattr(row, "vendor_id", None) and not getattr(row, "customer_id", None)
+    ):
+        vendor_id = getattr(row, "vendor_id", None)
+        if vendor_id:
+            vendor = db.get(Vendor, int(vendor_id))
+            if vendor:
+                card["party"] = _vendor_party_card(db, vendor)
+                card["party_name"] = vendor.business_name
+    agent_id = getattr(row, "freight_agent_id", None)
+    if agent_id:
+        card["freight_agent_name"] = _freight_agent_name(db, agent_id)
+    lines = card.get("lines")
+    if isinstance(lines, list):
+        _refresh_line_masters(db, lines)
+    return card
+
+
+def _refresh_line_masters(db: Session, lines: list) -> None:
+    product_ids: list[int] = []
+    addon_ids: list[int] = []
+    for ln in lines:
+        if not isinstance(ln, dict):
+            continue
+        if ln.get("catalog_product_id"):
+            product_ids.append(int(ln["catalog_product_id"]))
+        for addon in ln.get("addons") or []:
+            if isinstance(addon, dict) and addon.get("addon_product_id"):
+                addon_ids.append(int(addon["addon_product_id"]))
+    products = _products_by_id(db, product_ids)
+    addons = {}
+    if addon_ids:
+        addons = {
+            a.id: a
+            for a in db.query(AddonProduct).filter(AddonProduct.id.in_(set(addon_ids))).all()
+        }
+    identity = (
+        "our_product_id", "vendor_product_id", "category", "second_category",
+        "year_group", "marking", "series", "unit",
+    )
+    for ln in lines:
+        if not isinstance(ln, dict):
+            continue
+        prod = products.get(int(ln.get("catalog_product_id") or 0))
+        if prod:
+            for key in identity:
+                ln[key] = getattr(prod, key)
+            ln["image_keys"] = list(prod.image_keys or [])
+        for addon in ln.get("addons") or []:
+            if not isinstance(addon, dict):
+                continue
+            row = addons.get(int(addon.get("addon_product_id") or 0))
+            if not row:
+                continue
+            addon["our_product_id"] = row.our_product_id
+            addon["name"] = row.name or row.our_product_id
+
+
+def live_product_names(db: Session, product_ids: list[int]) -> dict[int, str]:
+    return {pid: prod.our_product_id for pid, prod in _products_by_id(db, product_ids).items()}
 
 
 def _products_by_id(db: Session, product_ids: list[int]) -> dict[int, CatalogProduct]:

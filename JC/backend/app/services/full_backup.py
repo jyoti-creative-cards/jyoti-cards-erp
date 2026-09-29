@@ -21,7 +21,6 @@ from app.models import (
     BillSeries,
     CatalogAddonLink,
     CatalogAlternative,
-    CatalogLookup,
     CatalogProduct,
     City,
     Customer,
@@ -62,7 +61,6 @@ BACKUP_MODELS: list[tuple[str, type]] = [
     ("customers", Customer),
     ("vendors", Vendor),
     ("staff", Staff),
-    ("catalog_lookups", CatalogLookup),
     ("catalog_products", CatalogProduct),
     ("addon_products", AddonProduct),
     ("catalog_addon_links", CatalogAddonLink),
@@ -102,7 +100,7 @@ BACKUP_MODELS: list[tuple[str, type]] = [
 WORKBOOK_GROUPS: list[tuple[str, list[str]]] = [
     ("01_masters", [
         "routes", "cities", "customers", "vendors", "staff",
-        "catalog_lookups", "catalog_products", "addon_products",
+        "catalog_products", "addon_products",
         "catalog_addon_links", "catalog_alternatives", "price_history", "bill_series",
     ]),
     ("02_buying", [

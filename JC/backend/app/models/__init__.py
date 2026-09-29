@@ -3,7 +3,6 @@ from app.models.addon_stock_ledger import AddonStockLedger
 from app.models.activity_log import ActivityLog
 from app.models.catalog_addon_link import CatalogAddonLink
 from app.models.catalog_alternative import CatalogAlternative
-from app.models.catalog_lookup import CatalogLookup
 from app.models.catalog_product import CatalogProduct
 from app.models.city import City
 from app.models.customer import Customer
@@ -28,7 +27,7 @@ from app.models.manual_loss import ManualLoss
 from app.models.payment_mode import PaymentMode
 
 __all__ = [
-    "ActivityLog", "AddonProduct", "AddonStockLedger", "CatalogAddonLink", "CatalogAlternative", "CatalogLookup",
+    "ActivityLog", "AddonProduct", "AddonStockLedger", "CatalogAddonLink", "CatalogAlternative",
     "CatalogProduct", "City", "Customer", "CustomerOrder", "CustomerOrderLine", "CustomerOrderPlacement", "CustomerOpenLine",
     "CustomerBill", "CustomerBillLine", "BillSeries", "FreightAgent", "FreightLedgerEntry", "Expense",
     "CustomerArAccount", "ArLedgerEntry", "PaymentMode", "CustomerReturn", "CustomerReturnLine", "ManualLoss",

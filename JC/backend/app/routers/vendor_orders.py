@@ -409,7 +409,7 @@ def _build_detail(db: Session, order: VendorOrder, *, auth: AuthContext, open_on
                 ln.catalog_product_id,
                 {
                     "catalog_product_id": ln.catalog_product_id,
-                    "our_product_id": ln.our_product_id,
+                    "our_product_id": prod.our_product_id if prod else ln.our_product_id,
                     "vendor_product_id": prod.vendor_product_id if prod else None,
                     "total_quantity": 0,
                     "total_placed": 0,
@@ -429,7 +429,7 @@ def _build_detail(db: Session, order: VendorOrder, *, auth: AuthContext, open_on
                     line_id=ln.id,
                     placement_id=p.id,
                     catalog_product_id=ln.catalog_product_id,
-                    our_product_id=ln.our_product_id,
+                    our_product_id=prod.our_product_id if prod else ln.our_product_id,
                     vendor_product_id=prod.vendor_product_id if prod else None,
                     quantity=qty,
                     quantity_remaining=ln.quantity_remaining,
@@ -1275,7 +1275,7 @@ def _open_line_out(db: Session, row: VendorOpenLine, *, auth: AuthContext) -> Op
     return OpenLineOut(
         id=row.id,
         catalog_product_id=row.catalog_product_id,
-        our_product_id=row.our_product_id,
+        our_product_id=prod.our_product_id if prod else row.our_product_id,
         vendor_product_id=prod.vendor_product_id if prod else None,
         quantity=row.quantity,
         buying_price=hide_cost(str(row.buying_price), auth),
@@ -1355,11 +1355,12 @@ def get_vendor_closed_lines(
     pids = {r.catalog_product_id for r in open_rows}
     out: list[ClosedLineOut] = []
     for row in open_rows:
+        prod = db.get(CatalogProduct, row.catalog_product_id)
         out.append(
             ClosedLineOut(
                 id=row.id,
                 catalog_product_id=row.catalog_product_id,
-                our_product_id=row.our_product_id,
+                our_product_id=prod.our_product_id if prod else row.our_product_id,
                 quantity=row.quantity,
                 buying_price=hide_cost(str(row.buying_price), auth),
                 source="open",
@@ -1385,11 +1386,12 @@ def get_vendor_closed_lines(
             plines = db.query(VendorOrderLine).filter(VendorOrderLine.placement_id == p.id).all()
             pids.update(ln.catalog_product_id for ln in plines)
             for ln in plines:
+                prod = db.get(CatalogProduct, ln.catalog_product_id)
                 out.append(
                     ClosedLineOut(
                         id=ln.id,
                         catalog_product_id=ln.catalog_product_id,
-                        our_product_id=ln.our_product_id,
+                        our_product_id=prod.our_product_id if prod else ln.our_product_id,
                         quantity=ln.quantity,
                         buying_price=hide_cost(str(ln.buying_price), auth),
                         source="billed",

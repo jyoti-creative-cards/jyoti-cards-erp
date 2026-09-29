@@ -40,7 +40,6 @@ const AddonProducts = (() => {
       await Products.refreshHub();
       return;
     }
-    await Promise.all([ensureLookups(), ensureVendors()]);
     addons = await ctx.api("/addons");
     if (ctx.onCountChange) ctx.onCountChange(addons.length);
   }
@@ -105,12 +104,6 @@ const AddonProducts = (() => {
       ? `<img src="${ctx.esc(a.image_urls[0])}" alt="" style="width:72px;height:72px;object-fit:cover;border-radius:12px;border:1px solid var(--border);" />`
       : `<div style="width:72px;height:72px;border-radius:12px;background:#e2e8f0;display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--muted);">${ctx.esc((a.our_product_id || "").slice(0, 3))}</div>`;
 
-    const priceRows = (a.price_history || []).length
-      ? `<table class="data"><thead><tr><th>Price</th><th>Recorded</th></tr></thead><tbody>
-          ${a.price_history.map(p => `<tr><td><strong>${fmtPrice(p.buying_price)}</strong></td><td style="font-size:13px;color:var(--muted);">${ctx.fmtDate(p.recorded_at)}</td></tr>`).join("")}
-        </tbody></table>`
-      : '<p style="color:var(--muted);font-size:14px;margin:0;">No price changes recorded yet.</p>';
-
     const changeHist = ctx.changeHistoryTable
       ? ctx.changeHistoryTable(a.change_history)
       : '<p style="color:var(--muted);font-size:14px;margin:0;">No field changes recorded yet.</p>';
@@ -133,32 +126,20 @@ const AddonProducts = (() => {
           ${heroImg}
           <div>
             <h2 style="margin:0 0 4px;">${ctx.esc(a.our_product_id)}</h2>
-            <p style="margin:0;">${ctx.esc(a.name || a.vendor_product_id || "No display name")}</p>
+            <p style="margin:0;">${ctx.esc(a.description || "")}</p>
             <div class="profile-meta">
-              <span class="badge badge-blue">${ctx.esc(a.vendor_name || "—")}</span>
-              <span class="badge badge-gray">${ctx.esc(a.unit)}</span>
-              ${a.category ? `<span class="badge badge-green">${ctx.esc(a.category)}</span>` : ""}
-              <span class="badge badge-amber">${fmtPrice(a.buying_price)}</span>
               ${stockBadge(a)}
             </div>
           </div>
         </div>
       </div>
       <div class="review-grid" style="margin-bottom:24px;">
-        ${ctx.reviewRow("Vendor Product ID", a.vendor_product_id)}
-        ${ctx.reviewRow("Description", a.description)}
-        ${ctx.reviewRow("Category", a.category)}
-        ${ctx.reviewRow("Low Stock Threshold", a.low_stock_threshold)}
         ${ctx.reviewRow("Created", ctx.fmtDate(a.created_at))}
         ${ctx.reviewRow("Last Updated", ctx.fmtDate(a.updated_at))}
       </div>
       <div class="detail-section">
         <h4>Stock Movements</h4>
         ${moveRows}
-      </div>
-      <div class="detail-section">
-        <h4>Price History</h4>
-        ${priceRows}
       </div>
       ${changeHist}`,
       `${ctx.canWrite?.("addons") ? `<button class="btn btn-danger btn-sm" onclick="AddonProducts.deleteAddon(${a.id})">Delete</button>
@@ -176,8 +157,6 @@ const AddonProducts = (() => {
     document.getElementById("modal-body").innerHTML = `
       <label class="label">Quantity received</label>
       <input class="input" id="addon-rs-qty" type="number" step="1" min="1" style="width:100%;margin-bottom:10px;" />
-      <label class="label">Total cost paid (optional — logs as an Expense)</label>
-      <input class="input" id="addon-rs-cost" type="number" step="0.01" min="0" style="width:100%;margin-bottom:10px;" />
       <label class="label">Note (optional)</label>
       <textarea class="input" id="addon-rs-note" rows="2" style="width:100%;"></textarea>`;
     document.getElementById("modal-footer").innerHTML = `
@@ -186,15 +165,12 @@ const AddonProducts = (() => {
     document.getElementById("addon-rs-ok").onclick = async () => {
       const q = parseInt(document.getElementById("addon-rs-qty").value, 10);
       if (!Number.isFinite(q) || q <= 0) return ctx.toast("Enter a valid quantity", "error");
-      const costRaw = document.getElementById("addon-rs-cost").value;
-      const total_cost = costRaw && costRaw.trim() !== "" ? parseFloat(costRaw) : null;
-      if (total_cost != null && (Number.isNaN(total_cost) || total_cost < 0)) return ctx.toast("Enter a valid amount", "error");
       const note = (document.getElementById("addon-rs-note").value || "").trim() || null;
       try {
         // Close only after a successful save — this used to close first, so a
         // failure (e.g. no finance.write when a cost is entered) silently dropped
         // every typed field with nothing left on screen to retry from.
-        await ctx.api(`/addons/${id}/receive-stock`, { method: "POST", body: JSON.stringify({ quantity: q, total_cost, note }) });
+        await ctx.api(`/addons/${id}/receive-stock`, { method: "POST", body: JSON.stringify({ quantity: q, note }) });
         App.closeModal();
         App.closeDetail();
         await refreshAfterMutation();
@@ -238,21 +214,8 @@ const AddonProducts = (() => {
   }
 
   async function openWizard() {
-    ctx.showLoading?.();
-    try {
-      await Promise.all([ensureLookups(), ensureVendors()]);
-    } catch (e) {
-      ctx.toast(e.message || "Could not load vendors/lookups", "error");
-      return;
-    } finally {
-      ctx.hideLoading?.();
-    }
-    if (!vendors.length) {
-      ctx.toast("Add vendors in People first", "error");
-      return;
-    }
     wizardStep = 1;
-    wizardForm = { image_keys: [] };
+    wizardForm = { image_keys: [], quantity: "" };
     document.getElementById("addon-wizard").classList.remove("hidden");
     renderWizard();
   }
@@ -269,7 +232,7 @@ const AddonProducts = (() => {
     const footer = document.getElementById("addon-wizard-footer");
     if (!stepsEl || !body || !footer) return;
 
-    const labels = ["Product Info", "Pricing & Unit", "Review & Create"];
+    const labels = ["Add-on"];
     stepsEl.innerHTML = labels.map((label, i) => {
       const n = i + 1;
       const cls = n < wizardStep ? "done" : n === wizardStep ? "active" : "";
@@ -278,76 +241,15 @@ const AddonProducts = (() => {
     }).join("");
 
     if (wizardStep === 1) {
-      const vendorOpts = vendors.map(v =>
-        `<option value="${v.id}" ${wizardForm.vendor_id == v.id ? "selected" : ""}>${ctx.esc(v.business_name)}</option>`
-      ).join("");
-      const preview = wizardForm._imagePreview
-        ? `<img src="${ctx.esc(wizardForm._imagePreview)}" alt="" style="width:80px;height:80px;object-fit:cover;border-radius:8px;border:1px solid var(--border);" />`
-        : wizardForm._pendingFile
-          ? `<div style="width:80px;height:80px;border-radius:8px;background:#eff6ff;border:1px solid #bfdbfe;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--brand);text-align:center;padding:4px;">Pending upload</div>`
-          : `<div style="width:80px;height:80px;border-radius:8px;background:#f1f5f9;border:1px dashed var(--border);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--muted);">No image</div>`;
-
       body.innerHTML = `<div style="display:grid;gap:16px;">
-        <div><label class="label">Vendor *</label>
-          <select id="aw-vendor_id" class="input" onchange="AddonProducts.syncField('vendor_id', this.value)"><option value="">Select vendor</option>${vendorOpts}</select></div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-          <div><label class="label">Our Product ID *</label><input id="aw-our_product_id" class="input" value="${ctx.esc(wizardForm.our_product_id)}" placeholder="e.g. ADD-001" oninput="AddonProducts.syncField('our_product_id', this.value)" /></div>
-          <div><label class="label">Vendor Product ID *</label><input id="aw-vendor_product_id" class="input" value="${ctx.esc(wizardForm.vendor_product_id)}" placeholder="Vendor SKU" oninput="AddonProducts.syncField('vendor_product_id', this.value)" /></div>
-        </div>
-        <div><label class="label">Display Name</label><input id="aw-name" class="input" value="${ctx.esc(wizardForm.name)}" placeholder="Optional" oninput="AddonProducts.syncField('name', this.value)" /></div>
-        <div><label class="label">Description</label><textarea id="aw-description" class="input" rows="2" placeholder="Optional" oninput="AddonProducts.syncField('description', this.value)">${ctx.esc(wizardForm.description)}</textarea></div>
-        <div><label class="label">Product Image</label>
-          <div style="display:flex;align-items:center;gap:16px;">
-            ${preview}
-            <div style="flex:1;">
-              <input id="aw-image" type="file" accept="image/*" class="input" onchange="AddonProducts.onWizardImagePick(this)" />
-              <p style="margin:6px 0 0;font-size:12px;color:var(--muted);">Optional. Uploaded to vendor folder on save.</p>
-            </div>
-          </div>
-        </div>
+        <div><label class="label">Add-on name *</label>
+          <input id="aw-our_product_id" class="input" value="${ctx.esc(wizardForm.our_product_id)}" placeholder="e.g. FLOWER" oninput="AddonProducts.syncField('our_product_id', this.value)" /></div>
+        <div><label class="label">Quantity in stock</label>
+          <input id="aw-quantity" class="input" type="number" min="0" step="1" value="${ctx.esc(wizardForm.quantity)}" placeholder="0" oninput="AddonProducts.syncField('quantity', this.value)" /></div>
       </div>`;
       footer.innerHTML = `<button class="btn btn-secondary" onclick="AddonProducts.closeWizard()">Cancel</button>
-        <button class="btn btn-primary" style="flex:1;" onclick="AddonProducts.wizardNext()">Continue</button>`;
-    } else if (wizardStep === 2) {
-      const catOpts = ['<option value="">No category</option>'].concat(
-        categories.map(c => `<option value="${ctx.esc(c)}" ${wizardForm.category === c ? "selected" : ""}>${ctx.esc(c)}</option>`)
-      ).join("");
-      const unitOpts = ['<option value="">Select unit</option>'].concat(
-        units.map(u => `<option value="${ctx.esc(u)}" ${wizardForm.unit === u ? "selected" : ""}>${ctx.esc(u)}</option>`)
-      ).join("");
-      const customUnit = wizardForm.unit && !units.includes(wizardForm.unit)
-        ? `<option value="${ctx.esc(wizardForm.unit)}" selected>${ctx.esc(wizardForm.unit)}</option>` : "";
-
-      body.innerHTML = `<div style="display:grid;gap:16px;">
-        <div><label class="label">Category</label>
-          <select id="aw-category" class="input" onchange="AddonProducts.syncField('category', this.value)">${catOpts}</select></div>
-        <div><label class="label">Unit *</label>
-          <select id="aw-unit" class="input" onchange="AddonProducts.syncField('unit', this.value)">${unitOpts}${customUnit}</select>
-          <p style="margin:6px 0 0;font-size:12px;color:var(--muted);">Manage units in catalog lookups.</p></div>
-        <div><label class="label">Buying Price (INR) *</label>
-          <input id="aw-buying_price" class="input" type="number" min="0" step="0.01" value="${ctx.esc(wizardForm.buying_price)}" placeholder="0.00" oninput="AddonProducts.syncField('buying_price', this.value)" /></div>
-      </div>`;
-      footer.innerHTML = `<button class="btn btn-secondary" onclick="AddonProducts.wizardBack()">Back</button>
-        <button class="btn btn-primary" style="flex:1;" onclick="AddonProducts.wizardNext()">Review</button>`;
-    } else if (wizardStep === 3) {
-      const vendor = vendors.find(v => v.id == wizardForm.vendor_id);
-      const imgReview = wizardForm._imagePreview
-        ? `<img src="${ctx.esc(wizardForm._imagePreview)}" alt="" style="width:48px;height:48px;object-fit:cover;border-radius:6px;" />`
-        : "None";
-      body.innerHTML = `<div class="review-grid">
-        ${ctx.reviewRow("Vendor", vendor?.business_name)}
-        ${ctx.reviewRow("Our Product ID", wizardForm.our_product_id)}
-        ${ctx.reviewRow("Vendor Product ID", wizardForm.vendor_product_id)}
-        ${ctx.reviewRow("Name", wizardForm.name)}
-        ${ctx.reviewRow("Description", wizardForm.description)}
-        ${ctx.reviewRow("Category", wizardForm.category)}
-        ${ctx.reviewRow("Unit", wizardForm.unit)}
-        ${ctx.reviewRow("Buying Price", fmtPrice(wizardForm.buying_price))}
-        ${ctx.reviewRow("Image", imgReview, true)}
-      </div>`;
-      footer.innerHTML = `<button class="btn btn-secondary" onclick="AddonProducts.wizardBack()">Back</button>
-        <button class="btn btn-primary" style="flex:1;" id="addon-create-btn" onclick="AddonProducts.create()">Create Addon</button>`;
-    } else if (wizardStep === 4) {
+        <button class="btn btn-primary" style="flex:1;" id="addon-create-btn" onclick="AddonProducts.create()">Create add-on</button>`;
+    } else {
       body.innerHTML = `<div style="text-align:center;padding:24px 0;">
         <div class="success-icon" style="font-size:28px;font-weight:700;">OK</div>
         <h3 style="margin:0 0 8px;">Addon Created</h3>
@@ -437,21 +339,25 @@ const AddonProducts = (() => {
   async function create() {
     const btn = document.getElementById("addon-create-btn");
     if (btn) btn.disabled = true;
+    const name = (document.getElementById("aw-our_product_id")?.value || wizardForm.our_product_id || "").trim();
+    const qtyRaw = document.getElementById("aw-quantity")?.value ?? wizardForm.quantity ?? "0";
+    const quantity = parseInt(qtyRaw, 10) || 0;
+    if (!name) {
+      if (btn) btn.disabled = false;
+      return ctx.toast("Add-on name required", "error");
+    }
+    if (quantity < 0) {
+      if (btn) btn.disabled = false;
+      return ctx.toast("Quantity cannot be negative", "error");
+    }
     try {
-      if (wizardForm._pendingFile) await maybeUploadWizardImage();
       const result = await ctx.api("/addons", { method: "POST", body: JSON.stringify({
-        our_product_id: wizardForm.our_product_id,
-        vendor_id: wizardForm.vendor_id,
-        vendor_product_id: wizardForm.vendor_product_id,
-        name: wizardForm.name || null,
-        description: wizardForm.description || null,
-        category: wizardForm.category || null,
-        unit: wizardForm.unit,
-        buying_price: wizardForm.buying_price,
-        image_keys: wizardForm.image_keys || [],
+        our_product_id: name,
+        quantity,
       })});
       wizardForm._result = result;
-      wizardStep = 4;
+      wizardForm.our_product_id = name;
+      wizardStep = 2;
       renderWizard();
       await refreshAfterMutation();
       ctx.invalidateCache?.("/stats");
@@ -464,49 +370,12 @@ const AddonProducts = (() => {
   }
 
   async function openEdit(id) {
-    await Promise.all([ensureLookups(), ensureVendors()]);
     const a = await ctx.api(`/addons/${id}`);
     editingId = id;
-    const catOpts = ['<option value="">No category</option>'].concat(
-      categories.map(c => `<option value="${ctx.esc(c)}" ${a.category === c ? "selected" : ""}>${ctx.esc(c)}</option>`)
-    ).join("");
-    const unitOpts = units.map(u =>
-      `<option value="${ctx.esc(u)}" ${a.unit === u ? "selected" : ""}>${ctx.esc(u)}</option>`
-    ).join("");
-    const customUnit = a.unit && !units.includes(a.unit)
-      ? `<option value="${ctx.esc(a.unit)}" selected>${ctx.esc(a.unit)}</option>` : "";
-    const imgPreview = a.image_urls && a.image_urls[0]
-      ? `<img id="ae-preview" src="${ctx.esc(a.image_urls[0])}" alt="" style="width:80px;height:80px;object-fit:cover;border-radius:8px;border:1px solid var(--border);" />`
-      : `<div id="ae-preview" style="width:80px;height:80px;border-radius:8px;background:#f1f5f9;border:1px dashed var(--border);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--muted);">No image</div>`;
-
     document.getElementById("addon-edit-body").innerHTML = `
       <div style="display:grid;gap:16px;">
-        <div class="card" style="padding:12px 16px;background:#f8fafc;">
-          <div style="font-size:12px;color:var(--muted);margin-bottom:4px;">Our Product ID</div>
-          <div style="font-weight:700;">${ctx.esc(a.our_product_id)}</div>
-          <div style="font-size:12px;color:var(--muted);margin-top:8px;">Vendor: ${ctx.esc(a.vendor_name || "—")}</div>
-        </div>
-        <div><label class="label">Vendor Product ID</label><input id="ae-vendor_product_id" class="input" value="${ctx.esc(a.vendor_product_id)}" /></div>
-        <div><label class="label">Display Name</label><input id="ae-name" class="input" value="${ctx.esc(a.name || "")}" /></div>
+        <div><label class="label">Name</label><input id="ae-our_product_id" class="input" value="${ctx.esc(a.our_product_id)}" /></div>
         <div><label class="label">Description</label><textarea id="ae-description" class="input" rows="2">${ctx.esc(a.description || "")}</textarea></div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-          <div><label class="label">Category</label><select id="ae-category" class="input">${catOpts}</select></div>
-          <div><label class="label">Unit *</label><select id="ae-unit" class="input"><option value="">Select unit</option>${unitOpts}${customUnit}</select></div>
-        </div>
-        <div><label class="label">Buying Price (INR) *</label>
-          ${a.buying_price === "—"
-            ? `<input id="ae-buying_price" class="input" type="text" value="Hidden — no cost access" disabled title="You don't have costs.read, so this can't be viewed or changed here." />`
-            : `<input id="ae-buying_price" class="input" type="number" min="0" step="0.01" value="${ctx.esc(a.buying_price)}" />`}</div>
-        <div><label class="label">Product Image</label>
-          <div style="display:flex;align-items:center;gap:16px;">
-            ${imgPreview}
-            <div style="flex:1;">
-              <input id="ae-image" type="file" accept="image/*" class="input" />
-              <input type="hidden" id="ae-image_keys" value="${ctx.esc((a.image_keys || []).join(","))}" />
-              <p style="margin:6px 0 0;font-size:12px;color:var(--muted);">Replace image (optional).</p>
-            </div>
-          </div>
-        </div>
       </div>`;
     document.getElementById("addon-edit-footer").innerHTML = `
       <button class="btn btn-secondary" onclick="AddonProducts.closeEdit()">Cancel</button>
@@ -521,41 +390,12 @@ const AddonProducts = (() => {
 
   async function save() {
     if (!editingId) return;
-    const unit = document.getElementById("ae-unit").value.trim();
-    if (!unit) return ctx.toast("Unit required", "error");
-    // Masked ("—") for staff without costs.read — see openEdit. Previously this
-    // NaN-guard hard-blocked saving *any* field (name/unit/image) for such staff,
-    // since they have no way to re-type a price they aren't allowed to see.
-    const bpEl = document.getElementById("ae-buying_price");
-    let price = null;
-    if (!bpEl.disabled) {
-      price = parseFloat(bpEl.value);
-      if (Number.isNaN(price) || price < 0) return ctx.toast("Enter a valid buying price", "error");
-    }
-
-    let imageKeys = (document.getElementById("ae-image_keys").value || "")
-      .split(",").map(s => s.trim()).filter(Boolean);
-    const fileEl = document.getElementById("ae-image");
-    const file = fileEl && fileEl.files && fileEl.files[0];
-    if (file) {
-      try {
-        const detail = await ctx.api(`/addons/${editingId}`);
-        const result = await uploadImage(detail.vendor_id, detail.our_product_id, file);
-        imageKeys = result.key ? [result.key] : imageKeys;
-      } catch (e) {
-        return ctx.toast("Image upload failed: " + e.message, "error");
-      }
-    }
-
+    const name = document.getElementById("ae-our_product_id").value.trim();
+    if (!name) return ctx.toast("Name required", "error");
     const body = {
-      vendor_product_id: document.getElementById("ae-vendor_product_id").value.trim(),
-      name: document.getElementById("ae-name").value.trim() || null,
+      our_product_id: name,
       description: document.getElementById("ae-description").value.trim() || null,
-      category: document.getElementById("ae-category").value.trim() || null,
-      unit,
-      image_keys: imageKeys,
     };
-    if (!bpEl.disabled) body.buying_price = price;
     try {
       await ctx.api(`/addons/${editingId}`, { method: "PATCH", body: JSON.stringify(body) });
       const id = editingId;

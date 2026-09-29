@@ -2,7 +2,8 @@
 const Products = (() => {
   let ctx = {};
   let mainTab = "stock";
-  let typeFilter = "all";
+  let typeFilter = "products";
+  let addonMode = false;
   let searchQuery = "";
   let filters = { vendor_id: "", category: "", series: "", year_group: "", price_min: "", price_max: "", stock_status: "", no_sell_price: false, no_addons: false };
   let catalogProducts = [];
@@ -45,12 +46,7 @@ const Products = (() => {
   }
 
   function priceFootHtml(it, { stockMode = false } = {}) {
-    if (it.kind === "addon") {
-      return `<div class="prod-card-foot">
-        <div class="prod-price-stack"><span class="prod-price-label">Buy</span><strong class="prod-card-price">${fmtPrice(it.price)}</strong></div>
-        <span class="badge badge-amber">Add-on</span>
-      </div>`;
-    }
+    if (it.kind === "addon") return "";
     if (stockMode) {
       // Stock cards already show qty — keep foot to prices only (no clipped Product badge)
       const sell = hasRealSell(it)
@@ -79,10 +75,40 @@ const Products = (() => {
     return num.toLocaleString("en-IN");
   }
 
+  function showAddons() {
+    addonMode = true;
+    const title = document.getElementById("products-panel-title");
+    const sub = document.getElementById("products-panel-sub");
+    if (title) title.textContent = "Add-ons";
+    if (sub) sub.textContent = "Names and stock · not part of the product catalog";
+    document.getElementById("products-mode")?.classList.add("hidden");
+    document.getElementById("products-filters-toggle")?.classList.add("hidden");
+    document.getElementById("products-filters-wrap")?.classList.add("hidden");
+    const back = document.getElementById("products-addons-btn");
+    if (back) {
+      back.textContent = "← Products";
+      back.onclick = () => Products.showProducts();
+    }
+    updatePrimaryAction();
+    load();
+  }
+
+  function showProducts() {
+    addonMode = false;
+    document.getElementById("products-mode")?.classList.remove("hidden");
+    document.getElementById("products-filters-toggle")?.classList.remove("hidden");
+    const back = document.getElementById("products-addons-btn");
+    if (back) {
+      back.textContent = "Add-ons";
+      back.onclick = () => Products.showAddons();
+    }
+    setMainTab(mainTab || "stock");
+  }
+
   function updatePrimaryAction() {
     const action = document.getElementById("products-action-btn");
     if (!action) return;
-    if (typeFilter === "addons") {
+    if (addonMode) {
       action.textContent = "+ New Add-on";
       action.onclick = () => AddonProducts.openWizard();
       action.classList.toggle("hidden", !ctx.canWrite?.("addons"));
@@ -194,7 +220,7 @@ const Products = (() => {
   function syncActionChips(items) {
     const host = document.getElementById("products-action-chips");
     if (!host || typeof OrdersUI === "undefined") return;
-    if (typeFilter === "addons") {
+    if (addonMode) {
       const addonItems = (items || []).filter(it => it.kind === "addon");
       const ac = {
         all: addonItems.length,
@@ -300,13 +326,12 @@ const Products = (() => {
   })();
 
   function hasActiveFilters() {
-    return !!(filters.vendor_id || filters.category || filters.series || filters.year_group || filters.price_min || filters.price_max || filters.stock_status || filters.no_sell_price || filters.no_addons);
+    return !!(filters.vendor_id || filters.category || filters.year_group || filters.price_min || filters.price_max || filters.stock_status || filters.no_sell_price || filters.no_addons);
   }
 
   function onFilterChange() {
     filters.vendor_id = document.getElementById("pf-vendor")?.value || "";
     filters.category = document.getElementById("pf-category")?.value || "";
-    filters.series = document.getElementById("pf-series")?.value || "";
     filters.year_group = document.getElementById("pf-year")?.value || "";
     filters.price_min = document.getElementById("pf-price-min")?.value || "";
     filters.price_max = document.getElementById("pf-price-max")?.value || "";
@@ -342,7 +367,6 @@ const Products = (() => {
     if (q) params.set("search", q);
     if (filters.vendor_id) params.set("vendor_id", filters.vendor_id);
     if (filters.category) params.set("category", filters.category);
-    if (filters.series) params.set("series", filters.series);
     if (filters.year_group) params.set("year_group", filters.year_group);
     if (filters.price_min) params.set("price_min", filters.price_min);
     if (filters.price_max) params.set("price_max", filters.price_max);
@@ -361,14 +385,14 @@ const Products = (() => {
   async function ensureLookups() {
     if (lookups.categories.length && lookups.year_groups.length) return;
     try {
-      const rows = await ctx.api("/lookups", {}, 120000);
-      lookups.series = rows.filter(r => r.lookup_type === "series").map(r => r.value);
-      lookups.year_groups = rows.filter(r => r.lookup_type === "year_group").map(r => r.value);
-    } catch (_) {}
-    try {
       lookups.categories = await ctx.api("/catalog/categories") || [];
     } catch (_) {
       lookups.categories = lookups.categories || [];
+    }
+    try {
+      lookups.year_groups = await ctx.api("/catalog/year-groups") || [];
+    } catch (_) {
+      lookups.year_groups = lookups.year_groups || [];
     }
   }
 
@@ -389,13 +413,6 @@ const Products = (() => {
         <select id="pf-category" class="input filter-input" onchange="Products.onFilterChange()">
           <option value="">All</option>
           ${lookups.categories.map(c => `<option value="${ctx.esc(c)}" ${filters.category === c ? "selected" : ""}>${ctx.esc(c)}</option>`).join("")}
-        </select>
-      </label>
-      <label class="prod-filter-field">
-        <span class="prod-filter-label">Series</span>
-        <select id="pf-series" class="input filter-input" onchange="Products.onFilterChange()">
-          <option value="">All</option>
-          ${lookups.series.map(s => `<option value="${ctx.esc(s)}" ${filters.series === s ? "selected" : ""}>${ctx.esc(s)}</option>`).join("")}
         </select>
       </label>
       <label class="prod-filter-field">
@@ -535,7 +552,20 @@ const Products = (() => {
 
   function buildItems() {
     const items = [];
-    if (mainTab === "stock") {
+    if (addonMode) {
+      if (ctx.canRead?.("addons")) {
+        addons.forEach(a => items.push({
+          kind: "addon",
+          id: a.id,
+          our_product_id: a.our_product_id,
+          vendor_name: a.vendor_name,
+          qty: a.quantity_on_hand,
+          stock_status: a.stock_status,
+          image_urls: a.image_urls,
+          open: () => AddonProducts.openDetail(a.id),
+        }));
+      }
+    } else if (mainTab === "stock") {
       if (typeFilter !== "addons") {
         stockProducts.forEach(p => items.push({
           kind: "product",
@@ -558,26 +588,6 @@ const Products = (() => {
           stock_status: p.stock_status,
           image_urls: p.image_urls,
           open: () => openProductDetail(p.catalog_product_id, "stock"),
-        }));
-      }
-      if (typeFilter !== "products" && ctx.canRead?.("addons")) {
-        addons.forEach(a => items.push({
-          kind: "addon",
-          id: a.id,
-          our_product_id: a.our_product_id,
-          vendor_name: a.vendor_name,
-          vendor_city: a.vendor_city,
-          category: a.category,
-          series: null,
-          year_group: null,
-          vendor_id: a.vendor_id,
-          price: a.buying_price,
-          buying_price: a.buying_price,
-          selling_price: null,
-          qty: a.quantity_on_hand,
-          stock_status: a.stock_status,
-          image_urls: a.image_urls,
-          open: () => AddonProducts.openDetail(a.id),
         }));
       }
     } else {
@@ -605,26 +615,6 @@ const Products = (() => {
           open: () => openProductDetail(p.id, "catalog"),
         }));
       }
-      if (typeFilter !== "products" && ctx.canRead?.("addons")) {
-        addons.forEach(a => items.push({
-          kind: "addon",
-          id: a.id,
-          our_product_id: a.our_product_id,
-          vendor_name: a.vendor_name,
-          vendor_city: a.vendor_city,
-          category: a.category,
-          series: null,
-          year_group: null,
-          vendor_id: a.vendor_id,
-          price: a.buying_price,
-          buying_price: a.buying_price,
-          selling_price: null,
-          qty: a.quantity_on_hand,
-          stock_status: a.stock_status,
-          image_urls: a.image_urls,
-          open: () => AddonProducts.openDetail(a.id),
-        }));
-      }
     }
     items.sort((a, b) => {
       const idCmp = String(a.our_product_id || "").localeCompare(String(b.our_product_id || ""), undefined, { sensitivity: "base" });
@@ -635,13 +625,15 @@ const Products = (() => {
   }
 
   function applyFilters(items, { ignoreStockStatus = false } = {}) {
+    if (addonMode) {
+      return items.filter(it => !filters.stock_status || it.stock_status === filters.stock_status);
+    }
     const catalogServer = mainTab === "catalog";
     return items.filter(it => {
       // Catalog products already filtered on server
       if (catalogServer && it.kind === "product") return true;
       if (filters.vendor_id && String(it.vendor_id) !== String(filters.vendor_id)) return false;
       if (filters.category && (it.category || "") !== filters.category && (it.second_category || "") !== filters.category) return false;
-      if (filters.series && (it.series || "") !== filters.series) return false;
       if (filters.year_group && (it.year_group || "") !== filters.year_group) return false;
       const sellOrBuy = it.kind === "product"
         ? Number(it.selling_price != null && it.selling_price !== "" ? it.selling_price : it.buying_price)
@@ -817,10 +809,10 @@ const Products = (() => {
           </div>
           <div class="prod-card-body">
             ${itemIdHtml(it)}
-            <div class="prod-card-vendor">${ctx.esc(vendorLine(it))}</div>
-            ${it.category
-              ? `<div class="prod-card-cat"><span class="prod-cat-badge">${ctx.esc(it.category)}</span>${it.second_category ? `<span class="prod-cat-badge">${ctx.esc(it.second_category)}</span>` : ""}${it.series ? `<span class="prod-card-series">${ctx.esc(it.series)}</span>` : ""}</div>`
-              : `<div class="prod-card-cat"><span class="prod-cat-badge is-empty">No category</span></div>`}
+            ${it.kind === "addon" ? "" : `<div class="prod-card-vendor">${ctx.esc(vendorLine(it))}</div>`}
+            ${it.kind === "addon" ? "" : (it.category
+              ? `<div class="prod-card-cat"><span class="prod-cat-badge">${ctx.esc(it.category)}</span>${it.second_category ? `<span class="prod-cat-badge">${ctx.esc(it.second_category)}</span>` : ""}</div>`
+              : `<div class="prod-card-cat"><span class="prod-cat-badge is-empty">No category</span></div>`)}
             ${it.marking ? `<div class="prod-card-cat"><span class="badge badge-blue" style="font-size:10px;">${ctx.esc(it.marking)}</span></div>` : ""}
             ${(isStockProduct || showsAddonStock) ? `<div class="prod-card-qty-block">
               <span class="prod-card-qty-num">${fmtQty(it.qty ?? 0)}</span>
@@ -850,7 +842,6 @@ const Products = (() => {
             <strong class="prod-list-id">${ctx.esc(it.our_product_id)}</strong>
             ${it.year_group ? `<span class="prod-year-pill">${ctx.esc(it.year_group)}</span>` : ""}
             ${it.vendor_product_id ? `<div class="prod-list-sub">Vendor # ${ctx.esc(it.vendor_product_id)}</div>` : ""}
-            ${it.series ? `<div class="prod-list-sub">${ctx.esc(it.series)}</div>` : ""}
             ${it.marking ? `<div class="prod-list-sub"><span class="badge badge-blue" style="font-size:10px;">${ctx.esc(it.marking)}</span></div>` : ""}
           </td>
           <td><span class="badge ${it.kind === "addon" ? "badge-amber" : "badge-blue"}">${it.kind === "addon" ? "Add-on" : "Product"}</span></td>
@@ -994,8 +985,6 @@ const Products = (() => {
       const catalogPane = cat ? `
         <div class="review-grid" style="margin-bottom:20px;">
           ${ctx.reviewRow("Vendor Product ID", cat.vendor_product_id)}
-          ${ctx.reviewRow("Series", cat.series)}
-          ${ctx.reviewRow("Unit", cat.unit)}
           ${ctx.reviewRow("Year Group", cat.year_group)}
           ${ctx.reviewRow("Category", cat.category)}
           ${ctx.reviewRow("Marking", cat.marking)}
@@ -1367,7 +1356,7 @@ const Products = (() => {
   }
 
   return {
-    init, showHub, setMainTab, setTypeFilter, setViewMode, onSearch, clearSearch,
+    init, showHub, setMainTab, showAddons, showProducts, setTypeFilter, setViewMode, onSearch, clearSearch,
     onFilterChange, clearFilters, setAttentionFilter, toggleFilters,
     load, loadMoreCatalog, refreshHub,
     openItem, openProductDetail, saveBulkSellPrices,

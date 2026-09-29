@@ -92,7 +92,7 @@ def init_db() -> None:
     """
     global _DB_READY
     from app.models import (  # noqa: F401
-        ActivityLog, AddonProduct, AddonStockLedger, CatalogAddonLink, CatalogAlternative, CatalogLookup,
+        ActivityLog, AddonProduct, AddonStockLedger, CatalogAddonLink, CatalogAlternative,
         CatalogProduct, City, Customer, EntityHistory, PriceHistory, Route, Staff, Vendor,
         VendorOrder, VendorOrderLine, VendorOrderPlacement, VendorOpenLine,
         CustomerOrder, CustomerOrderLine, CustomerOrderPlacement, CustomerOpenLine,

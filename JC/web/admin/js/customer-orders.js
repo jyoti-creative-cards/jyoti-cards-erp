@@ -2307,14 +2307,13 @@ const CustomerOrders = (() => {
     for (const p of all) {
       const id = String(p.our_product_id || "").toLowerCase();
       const cat = String(p.category || "").toLowerCase();
-      const series = String(p.series || "").toLowerCase();
       const vendor = String(p.vendor_name || "").toLowerCase();
       let score = 0;
       if (id === q) score = 100;
       else if (id.startsWith(q)) score = 80;
       else if (id.includes(q)) score = 40;
-      else if (cat.startsWith(q) || series.startsWith(q)) score = 30;
-      else if (cat.includes(q) || series.includes(q) || vendor.includes(q)) score = 10;
+      else if (cat.startsWith(q)) score = 30;
+      else if (cat.includes(q) || vendor.includes(q)) score = 10;
       else continue;
       scored.push({ p, score, id });
     }
@@ -2445,7 +2444,7 @@ const CustomerOrders = (() => {
         ${cartHtml}
         <div class="vo-wiz-search-wrap">
           <span class="vo-wiz-search-icon" aria-hidden="true">⌕</span>
-          <input id="co-offline-search" class="input vo-wiz-search" type="search" placeholder="Search product ID, category, series…" value="${ctx.esc(offlineSearchQuery)}" oninput="CustomerOrders.onOfflineSearchInput(this.value)" onkeydown="CustomerOrders.onOfflineSearchKey(event)" autocomplete="off" />
+          <input id="co-offline-search" class="input vo-wiz-search" type="search" placeholder="Search product ID, category…" value="${ctx.esc(offlineSearchQuery)}" oninput="CustomerOrders.onOfflineSearchInput(this.value)" onkeydown="CustomerOrders.onOfflineSearchKey(event)" autocomplete="off" />
           ${offlineSearchQuery ? `<button type="button" class="vo-wiz-search-clear" onclick="CustomerOrders.onOfflineSearchInput('')">×</button>` : ""}
         </div>
         <div class="vo-wiz-product-meta">
@@ -2464,7 +2463,7 @@ const CustomerOrders = (() => {
                   ${thumb(img)}
                   <div class="vo-wiz-product-info">
                     <strong>${ctx.esc(p.our_product_id)}${p.year_group ? ` <span class="prod-year-pill">${ctx.esc(p.year_group)}</span>` : ""}</strong>
-                    <span class="vo-wiz-product-sub">${p.category ? ctx.esc(p.category) : "Product"}${p.series ? ` · ${ctx.esc(p.series)}` : ""}${p.year_group ? ` · ${ctx.esc(p.year_group)}` : ""}${p.vendor_name ? ` · ${ctx.esc(p.vendor_name)}` : ""}</span>
+                    <span class="vo-wiz-product-sub">${p.category ? ctx.esc(p.category) : "Product"}${p.year_group ? ` · ${ctx.esc(p.year_group)}` : ""}${p.vendor_name ? ` · ${ctx.esc(p.vendor_name)}` : ""}</span>
                     <span class="vo-wiz-product-price">${fmtPrice(p.selling_price)} · Stock ${p.quantity_on_hand ?? 0}</span>
                   </div>
                 </div>

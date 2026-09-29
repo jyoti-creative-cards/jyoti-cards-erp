@@ -10,9 +10,9 @@ from pydantic import BaseModel, Field
 class AddonPublic(BaseModel):
     id: int
     our_product_id: str
-    vendor_id: int
+    vendor_id: Optional[int] = None
     vendor_name: Optional[str] = None
-    vendor_product_id: str
+    vendor_product_id: str = ""
     name: Optional[str]
     description: Optional[str]
     category: Optional[str]
@@ -49,17 +49,19 @@ class AddonAdjustStockIn(BaseModel):
 
 class AddonCreate(BaseModel):
     our_product_id: str = Field(..., min_length=1, max_length=120)
-    vendor_id: int
-    vendor_product_id: str = Field(..., min_length=1, max_length=255)
+    vendor_id: Optional[int] = None
+    vendor_product_id: str = Field("", max_length=255)
     name: Optional[str] = None
     description: Optional[str] = None
     category: Optional[str] = None
-    unit: str = Field(..., min_length=1, max_length=50)
-    buying_price: Decimal = Field(..., ge=0)
+    unit: str = Field("pcs", min_length=1, max_length=50)
+    buying_price: Decimal = Field(Decimal("0"), ge=0)
+    quantity: int = Field(0, ge=0)
     image_keys: List[str] = []
 
 
 class AddonUpdate(BaseModel):
+    our_product_id: Optional[str] = Field(None, min_length=1, max_length=120)
     vendor_product_id: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None

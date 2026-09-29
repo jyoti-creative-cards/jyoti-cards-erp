@@ -35,6 +35,17 @@ def _actor_fields(actor_name: str, actor_type: str, show_actor: bool) -> dict:
     return {"actor_name": actor_name, "actor_type": actor_type}
 
 
+def _sortable_ts(ts: datetime) -> datetime:
+    """Sort key. Postgres timestamps are timezone-aware; bill dates become naive UTC."""
+    if ts.tzinfo is None:
+        return ts
+    return ts.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _line_name(live: Optional[str], stored: Optional[str]) -> str:
+    return live or stored or "—"
+
+
 def _occurred_at_from_display(display_date, fallback: datetime) -> datetime:
     """Ledger sort key from present() display_date; plain dates → IST noon as naive UTC."""
     if display_date is None:
@@ -76,13 +87,13 @@ def build_vendor_ledger(
         lines = plines_by.get(placement.id) or []
         line_details = [
             LedgerLineDetail(
-                our_product_id=vendor_names.get(ln.catalog_product_id) or ln.our_product_id,
+                our_product_id=_line_name(vendor_names.get(ln.catalog_product_id), ln.our_product_id),
                 vendor_product_id=vendor_products.get(ln.catalog_product_id),
                 quantity=ln.quantity,
                 quantity_remaining=ln.quantity if order.bucket == "placed" else None,
                 quantity_billed=ln.quantity_billed,
                 billed_amount=_fmt_amount(ln.billed_amount),
-                buying_price=hide_cost(format(ln.buying_price, "f"), auth),
+                buying_price=hide_cost(format(ln.buying_price, "f") if ln.buying_price is not None else None, auth),
             )
             for ln in lines
         ]
@@ -93,7 +104,7 @@ def build_vendor_ledger(
             title = "Cancelled placement"
             event_type = "order_cancelled"
         summary = ", ".join(
-            f"{vendor_names.get(ln.catalog_product_id) or ln.our_product_id} × {ln.quantity}" for ln in lines[:8]
+            f"{_line_name(vendor_names.get(ln.catalog_product_id), ln.our_product_id)} × {ln.quantity}" for ln in lines[:8]
         )
         entries.append(
             (
@@ -158,15 +169,15 @@ def build_vendor_ledger(
         rlines = rlines_by.get(receipt.id) or []
         line_details = [
             LedgerLineDetail(
-                our_product_id=vendor_names.get(ln.catalog_product_id) or ln.our_product_id, vendor_product_id=vendor_products.get(ln.catalog_product_id),
+                our_product_id=_line_name(vendor_names.get(ln.catalog_product_id), ln.our_product_id), vendor_product_id=vendor_products.get(ln.catalog_product_id),
                 quantity_received=ln.quantity_received,
                 quantity_billed=ln.quantity_billed, billed_amount=_fmt_amount(ln.billed_amount),
-                buying_price=hide_cost(format(ln.buying_price, "f"), auth),
+                buying_price=hide_cost(format(ln.buying_price, "f") if ln.buying_price is not None else None, auth),
             )
             for ln in rlines
         ]
         summary = ", ".join(
-            f"{vendor_names.get(ln.catalog_product_id) or ln.our_product_id} +{ln.quantity_received}" for ln in rlines[:8]
+            f"{_line_name(vendor_names.get(ln.catalog_product_id), ln.our_product_id)} +{ln.quantity_received}" for ln in rlines[:8]
         ) or "—"
         entries.append((
             receipt.received_at,
@@ -206,7 +217,7 @@ def build_vendor_ledger(
                     quantity_received=ln.quantity_received,
                     quantity_billed=ln.quantity_billed,
                     billed_amount=_fmt_amount(ln.billed_amount),
-                    buying_price=hide_cost(format(ln.buying_price, "f"), auth),
+                    buying_price=hide_cost(format(ln.buying_price, "f") if ln.buying_price is not None else None, auth),
                 )
                 for ln in rlines
             ]
@@ -328,7 +339,7 @@ def build_vendor_ledger(
             )
         )
 
-    entries.sort(key=lambda x: x[0], reverse=True)
+    entries.sort(key=lambda x: _sortable_ts(x[0]), reverse=True)
     return [e[1] for e in entries]
 
 
@@ -375,10 +386,16 @@ def build_customer_ledger(db: Session, customer_id: int, *, show_actor: bool = T
     for placement, order in placements:
         lines = olines_by.get(placement.id) or []
         from app.services.document_present import live_product_names
-        order_names = live_product_names(db, [ln.catalog_product_id for ln in lines])
+        order_names = live_product_names(db, [ln.catalog_product_id for ln in lines if ln.catalog_product_id])
+
+        def _order_line_name(ln) -> str:
+            cid = ln.catalog_product_id
+            live = order_names.get(int(cid)) if cid else None
+            return _line_name(live, ln.our_product_id)
+
         line_details = [
             LedgerLineDetail(
-                our_product_id=order_names.get(int(ln.catalog_product_id)) or ln.our_product_id,
+                our_product_id=_order_line_name(ln),
                 quantity=ln.quantity,
                 quantity_billed=ln.quantity_billed,
                 # NB: no buying_price here — this is the customer-side ledger, so
@@ -395,7 +412,7 @@ def build_customer_ledger(db: Session, customer_id: int, *, show_actor: bool = T
         event_type = "order_cancelled" if cancelled else "order_placed"
         title = "Cancelled order" if cancelled else "Order placed"
         summary = ", ".join(
-            f"{order_names.get(int(ln.catalog_product_id)) or ln.our_product_id} × {ln.quantity}"
+            f"{_order_line_name(ln)} × {ln.quantity}"
             for ln in lines[:8]
         ) or "—"
         entries.append(
@@ -627,5 +644,5 @@ def build_customer_ledger(db: Session, customer_id: int, *, show_actor: bool = T
                 )
             )
 
-    entries.sort(key=lambda x: x[0], reverse=True)
+    entries.sort(key=lambda x: _sortable_ts(x[0]), reverse=True)
     return [e[1] for e in entries]

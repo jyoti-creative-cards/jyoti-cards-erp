@@ -358,7 +358,10 @@ def generate_vendor_receipt_document(db: Session, receipt_id: int, auth: AuthCon
     from app.services.ap_ledger import receipt_bill_amount, receipt_debit_note_total, debit_note_payable_effect
     bill_amt = receipt_bill_amount(db, receipt.id)
     dn_total = receipt_debit_note_total(db, receipt.id)
-    net = (bill_amt + dn_total).quantize(Decimal("0.01"))
+    # actual_ap_amount already includes extra cash. The PDF adds cash once more
+    # below the paper bill, so the paper total must stay the vendor invoice amount.
+    paper_bill = receipt.total_billed_amount if receipt.total_billed_amount is not None else bill_amt
+    net = (paper_bill + dn_total).quantize(Decimal("0.01"))
     from app.services.debit_notes import infer_direction
     dn_rows = db.query(DebitNote).filter(
         DebitNote.receipt_id == receipt.id, DebitNote.deleted_at.is_(None)
@@ -384,7 +387,7 @@ def generate_vendor_receipt_document(db: Session, receipt_id: int, auth: AuthCon
             "amount": format(effect, "f"),
             "direction": direction,
         })
-    total = receipt.total_billed_amount or bill_amt
+    total = paper_bill
     extra_cash = None
     billed_pct = receipt.billing_pct_applied if receipt.billing_pct_applied is not None else vendor.billing_pct
     # GST (like billing %) can be one-off overridden per bill and is snapshotted onto the

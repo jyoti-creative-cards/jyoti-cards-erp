@@ -119,3 +119,20 @@ def test_legacy_receipt_without_snapshot_falls_back_to_vendor_profile(db, captur
 
     assert captured["gst_included"] is True
     assert captured["gst_rate_pct"] == Decimal("18")
+
+
+def test_vendor_bill_pdf_adds_extra_cash_once(db, captured):
+    """Paper bill 51991 + cash 44060 = 96051. The PDF must not add the cash again."""
+    _vendor, receipt = _setup(
+        db, vendor_gst_included=False, vendor_gst_rate=Decimal("0"), receipt_gst_applied=None
+    )
+    receipt.billing_pct_applied = Decimal("50")
+    receipt.total_billed_amount = Decimal("51991")
+    receipt.actual_ap_amount = Decimal("96051")
+    db.commit()
+
+    doc_gen.generate_vendor_receipt_document(db, receipt.id, AUTH)
+
+    assert captured["total_billed"] == "51991.00"
+    assert captured["extra_cash"] == "44060.00"
+    assert captured["net_payable"] == "51991.00"

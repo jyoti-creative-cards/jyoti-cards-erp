@@ -239,6 +239,10 @@ def _vendor_receipt_table(
         ])
     if len(data) < 2:
         data.append(["", "-", "No line items", "", "", "", ""])
+    else:
+        recv_sum = sum(int(ln.get("quantity_received") or 0) for ln in lines)
+        billed_sum = sum(int(ln.get("quantity_billed") or 0) for ln in lines)
+        data.append(["", "", "Total quantity", str(recv_sum), str(billed_sum), "", ""])
     table = Table(data, colWidths=col_widths, repeatRows=1)
     style_cmds = [
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
@@ -255,9 +259,13 @@ def _vendor_receipt_table(
         ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#cbd5e1")),
         ("LINEBELOW", (0, 1), (-1, -2), 0.4, colors.HexColor("#e2e8f0")),
     ]
-    for i in range(1, len(data)):
+    last = len(data) - 1
+    for i in range(1, last if lines else len(data)):
         if i % 2 == 0:
             style_cmds.append(("BACKGROUND", (0, i), (-1, i), colors.HexColor("#f8fafc")))
+    if lines:
+        style_cmds.append(("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"))
+        style_cmds.append(("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#e2e8f0")))
     table.setStyle(TableStyle(style_cmds))
     return table
 

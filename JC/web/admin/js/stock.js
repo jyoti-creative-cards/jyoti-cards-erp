@@ -387,6 +387,9 @@ const Stock = (() => {
   function wizardQtySum(field) {
     return wizardLines.reduce((s, l) => s + (Number(l[field]) || 0), 0);
   }
+  function lineQtySum(lines, field) {
+    return (lines || []).reduce((s, l) => s + (Number(l[field]) || 0), 0);
+  }
   function refreshQtyFooter() {
     const billed = document.getElementById("stock-tfoot-billed");
     if (billed) billed.textContent = String(wizardQtySum("quantity_billed"));
@@ -910,7 +913,7 @@ const Stock = (() => {
               const p = wizardProducts.find(x => x.id === l.catalog_product_id);
               return `<tr><td>${ctx.esc(p ? productIdLabel(p) : l.our_product_id)}</td><td>${l.quantity_received || 0}</td></tr>`;
             }).join("")}
-          </tbody></table>
+          </tbody><tfoot><tr class="stock-qty-tfoot"><td>Total quantity</td><td>${lineQtySum(wizardLines, "quantity_received")}</td></tr></tfoot></table>
         </div>
         <div class="stock-bill-card">
           <h4>Order receipt</h4>
@@ -1155,7 +1158,7 @@ const Stock = (() => {
             const id = p ? productIdLabel(p) : (l.our_product_id || l.catalog_product_id);
             return `<tr><td>${ctx.esc(id)}</td><td>${l.quantity_received || 0}</td></tr>`;
           }).join("")}
-        </tbody></table>
+        </tbody><tfoot><tr class="stock-qty-tfoot"><td>Total quantity</td><td>${lineQtySum(active, "quantity_received")}</td></tr></tfoot></table>
         ${billFile ? `<p class="vo-muted">Receipt file: ${ctx.esc(billFile.name)}</p>` : ""}`;
       footerEl.innerHTML = `
         <button class="btn btn-secondary" onclick="Stock.wizardBack()">← Back</button>
@@ -1308,7 +1311,12 @@ const Stock = (() => {
               <td style="text-align:right;">${diffCell}</td>
             </tr>`;
           }).join("")}
-        </tbody></table>
+        </tbody><tfoot><tr class="stock-qty-tfoot">
+          <td>Total quantity</td>
+          <td style="text-align:right;">${lineQtySum(active, "quantity_received")}</td>
+          <td style="text-align:right;">${lineQtySum(active, "quantity_billed")}</td>
+          <td></td>
+        </tr></tfoot></table>
       </div>
       ${apSection}
       ${pendingDebitNotes.length
@@ -1816,7 +1824,7 @@ const Stock = (() => {
       if (isReceive) {
         const lineHtml = `<table class="data" style="font-size:13px;margin-top:12px;"><thead><tr><th>Product</th><th>Received</th></tr></thead><tbody>
           ${active.map(l => `<tr><td>${ctx.esc(productIdLabel(l))}</td><td>${l.quantity_received || 0}</td></tr>`).join("")}
-        </tbody></table>`;
+        </tbody><tfoot><tr class="stock-qty-tfoot"><td>Total quantity</td><td>${lineQtySum(active, "quantity_received")}</td></tr></tfoot></table>`;
         const nextHint = savedMode === "offline_vendor"
           ? "In <strong>Received</strong> (unbilled). Next: Bill when vendor invoice arrives."
           : "Stock updated. Next: Bill when vendor invoice arrives.";
@@ -1859,7 +1867,7 @@ const Stock = (() => {
           </tbody></table>` : "";
       const lineHtml = `<table class="data" style="font-size:13px;margin-top:12px;"><thead><tr><th>Product</th><th>Received</th><th>Billed</th></tr></thead><tbody>
         ${active.map(l => `<tr><td>${ctx.esc(productIdLabel(l))}</td><td>${l.quantity_received || 0}</td><td>${l.quantity_billed || 0}</td></tr>`).join("")}
-      </tbody></table>`;
+      </tbody><tfoot><tr class="stock-qty-tfoot"><td>Total quantity</td><td>${lineQtySum(active, "quantity_received")}</td><td>${lineQtySum(active, "quantity_billed")}</td></tr></tfoot></table>`;
       const pdfBtns = docUrl
         ? `<div class="doc-actions">
             <button class="btn btn-primary" onclick="Stock.openReceiptPdf('${docUrl}', true)">Print</button>

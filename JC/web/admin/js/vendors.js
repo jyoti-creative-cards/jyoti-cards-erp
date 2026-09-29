@@ -102,6 +102,23 @@ const Vendors = (() => {
     return /cash/i.test(mode) ? "cash" : "bank";
   }
 
+  function billChannels(details) {
+    const d = details || {};
+    const bank = Number(d.bank_amount);
+    const cash = Number(d.cash_amount);
+    return {
+      bank: Number.isFinite(bank) ? bank : null,
+      cash: Number.isFinite(cash) && cash > 0 ? cash : null,
+    };
+  }
+
+  function channelTags(channels) {
+    const tags = [];
+    if (channels.bank != null) tags.push(`<span class="badge badge-blue" style="font-size:10px;">Bank ${fmtMoney(channels.bank)}</span>`);
+    if (channels.cash != null) tags.push(`<span class="badge badge-amber" style="font-size:10px;">Cash ${fmtMoney(channels.cash)}</span>`);
+    return tags.join(" ");
+  }
+
   function fmtMoney(val) {
     if (val == null || val === "") return "—";
     const n = Number(val);
@@ -238,8 +255,14 @@ const Vendors = (() => {
     }
 
     const sections = [];
+    const channel = vendorPayModeFilter;
+    const ordersShown = channel === "all" ? orders : [];
+    const billsShown = channel === "all" ? bills : bills.filter(e => {
+      const ch = billChannels(billInfoByReceipt[e.details?.receipt_id]);
+      return channel === "cash" ? ch.cash != null : ch.bank != null;
+    });
 
-    sections.push(renderLedgerGroup("Orders placed", orders, "order", (e) => {
+    sections.push(renderLedgerGroup("Orders placed", ordersShown, "order", (e) => {
       const d = e.details || {};
       const open = vendorLedgerExpanded === e.id;
       const lines = d.lines || [];
@@ -262,22 +285,23 @@ const Vendors = (() => {
       </div>`;
     }));
 
-    sections.push(renderLedgerGroup("Bills / received", bills, "bill", (e) => {
+    sections.push(renderLedgerGroup("Bills / received", billsShown, "bill", (e) => {
       const d = e.details || {};
       const open = vendorLedgerExpanded === e.id;
       const rid = d.receipt_id;
       const bi = rid ? (billInfoByReceipt[rid] || {}) : {};
       const dns = rid ? (dnsByReceipt[rid] || []) : [];
       const lines = d.lines || [];
+      const channels = billChannels(bi);
+      const tags = channelTags(channels);
       // Always lead with the receipt note number entered at receive time — the
       // vendor's bill number (once billed) is shown alongside, not instead of it.
       const title = d.order_receipt_number ? `Receipt ${ctx.esc(d.order_receipt_number)}` : `Receipt #${rid || d.placement_id || ""}`;
       return `<div class="vled-card ${open ? "is-open" : ""}">
         <button type="button" class="vled-head" onclick="Vendors.toggleLedgerRow('${e.id}')">
           <div>
-            <div class="vled-title">${title}${bi.bill_number ? ` · Bill ${ctx.esc(bi.bill_number)}` : ""}</div>
+            <div class="vled-title">${title}${bi.bill_number ? ` · Bill ${ctx.esc(bi.bill_number)}` : ""} ${tags}</div>
             <div class="vled-meta">${ctx.fmtDate(e.occurred_at)} · ${lines.length} lines
-              ${bi.bill_amount != null ? ` · Bill ${fmtMoney(bi.bill_amount)}` : ""}
               ${dns.length ? ` · ${dns.length} debit note${dns.length === 1 ? "" : "s"}` : ""}
               ${bi.net_payable != null ? ` · Net ${fmtMoney(bi.net_payable)}` : ""}</div>
           </div>
@@ -308,28 +332,16 @@ const Vendors = (() => {
       </div>`;
     }));
 
-    const paymentsFiltered = vendorPayModeFilter === "all"
+    const paymentsFiltered = channel === "all"
       ? payments
-      : payments.filter(e => payModeBucket(e.details?.payment_mode) === vendorPayModeFilter);
-    const payFilterChips = payments.length ? `<div class="vled-group">
-      <div class="vled-group-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-        <span>Payments</span>
-        <span class="ord-mode-toggle" style="margin:0;">
-          <button type="button" class="ord-mode-btn${vendorPayModeFilter === "all" ? " active" : ""}" onclick="Vendors.setVendorPayModeFilter('all')">All</button>
-          <button type="button" class="ord-mode-btn${vendorPayModeFilter === "cash" ? " active" : ""}" onclick="Vendors.setVendorPayModeFilter('cash')">Cash</button>
-          <button type="button" class="ord-mode-btn${vendorPayModeFilter === "bank" ? " active" : ""}" onclick="Vendors.setVendorPayModeFilter('bank')">Bank</button>
-        </span>
-      </div>
-    </div>` : "";
-    const payEmptyHtml = payments.length && !paymentsFiltered.length
-      ? `<p class="vo-muted" style="margin:0 0 12px;">No ${vendorPayModeFilter} payments.</p>` : "";
-    sections.push(payFilterChips + payEmptyHtml + renderLedgerGroup("", paymentsFiltered, "pay", (e) => {
+      : payments.filter(e => payModeBucket(e.details?.payment_mode) === channel);
+    sections.push(renderLedgerGroup("Payments", paymentsFiltered, "pay", (e) => {
       const d = e.details || {};
       const open = vendorLedgerExpanded === e.id;
       return `<div class="vled-card ${open ? "is-open" : ""}">
         <button type="button" class="vled-head" onclick="Vendors.toggleLedgerRow('${e.id}')">
           <div>
-            <div class="vled-title">Payment ${ctx.esc(d.payment_ref || "")}${d.payment_mode ? ` <span class="badge badge-blue" style="font-size:10px;">${ctx.esc(d.payment_mode)}</span>` : ""}</div>
+            <div class="vled-title">Payment ${ctx.esc(d.payment_ref || "")}${payModeBucket(d.payment_mode) === "cash" ? ` <span class="badge badge-amber" style="font-size:10px;">Cash</span>` : ""}${payModeBucket(d.payment_mode) === "bank" ? ` <span class="badge badge-blue" style="font-size:10px;">Bank</span>` : ""}${d.payment_mode ? ` <span class="badge" style="font-size:10px;">${ctx.esc(d.payment_mode)}</span>` : ""}</div>
             <div class="vled-meta">${ctx.fmtDate(e.occurred_at)} · ${fmtMoney(d.amount)}${d.comment ? ` · ${ctx.esc(d.comment)}` : ""}</div>
           </div>
           <span class="vled-chevron">${open ? "▾" : "▸"}</span>
@@ -355,10 +367,23 @@ const Vendors = (() => {
       </div>`;
     }));
 
+    const filterBar = `<div class="vled-group" style="margin-bottom:8px;">
+      <div class="vled-group-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <span>Show</span>
+        <span class="ord-mode-toggle" style="margin:0;">
+          <button type="button" class="ord-mode-btn${channel === "all" ? " active" : ""}" onclick="Vendors.setVendorPayModeFilter('all')">All</button>
+          <button type="button" class="ord-mode-btn${channel === "bank" ? " active" : ""}" onclick="Vendors.setVendorPayModeFilter('bank')">Bank</button>
+          <button type="button" class="ord-mode-btn${channel === "cash" ? " active" : ""}" onclick="Vendors.setVendorPayModeFilter('cash')">Cash</button>
+        </span>
+      </div>
+    </div>`;
     if (!orders.length && !bills.length && !payments.length) {
       return `<div class="detail-section"><h4>Activity</h4><p style="color:var(--muted);font-size:13px;">Nothing yet. Place an order or receive goods.</p></div>`;
     }
-    return `<div class="detail-section"><h4>Activity</h4>${sections.join("")}</div>`;
+    const nothingInFilter = channel !== "all" && !ordersShown.length && !billsShown.length && !paymentsFiltered.length;
+    const emptyFilter = nothingInFilter
+      ? `<p class="vo-muted" style="margin:0 0 12px;">No ${channel} entries.</p>` : "";
+    return `<div class="detail-section"><h4>Activity</h4>${filterBar}${emptyFilter}${sections.join("")}</div>`;
   }
 
   function renderLedgerGroup(title, items, _key, rowFn) {

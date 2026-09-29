@@ -30,6 +30,8 @@ from app.services.storage import (
 
 router = APIRouter(prefix="/freight-agents", tags=["freight-agents"])
 
+DEFAULT_FREIGHT_AGENT = "Vishnu Parcel"
+
 
 class FreightAgentIn(BaseModel):
     name: str
@@ -134,11 +136,21 @@ def _store_payment_pdf(db: Session, agent: FreightAgent, entry: FreightLedgerEnt
     return key
 
 
+def _ensure_default_freight_agent(db: Session) -> None:
+    wanted = DEFAULT_FREIGHT_AGENT.lower()
+    rows = db.query(FreightAgent).all()
+    if any((r.name or "").strip().lower() == wanted for r in rows):
+        return
+    db.add(FreightAgent(name=DEFAULT_FREIGHT_AGENT))
+    db.commit()
+
+
 @router.get("", response_model=List[FreightAgentPublic])
 def list_freight_agents(
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_any_permission("vendor_orders.read", "customer_orders.read")),
 ):
+    _ensure_default_freight_agent(db)
     rows = db.query(FreightAgent).order_by(FreightAgent.name.asc()).all()
     dirty = False
     out = []

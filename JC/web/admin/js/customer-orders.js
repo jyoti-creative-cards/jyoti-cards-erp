@@ -1469,9 +1469,9 @@ const CustomerOrders = (() => {
       overallDiscount = "";
       gstEnabled = false;
       gstRate = "18";
-      freightAgentId = "";
+      freightAgentId = defaultFreightAgentId();
       freightCharges = "";
-      transportMode = "";
+      transportMode = freightAgentId ? "bus" : "";
       transportReceiptNumber = "";
       packagingCharges = "";
       additionalCharges = [{ name: "", amount: "" }];
@@ -1568,6 +1568,9 @@ const CustomerOrders = (() => {
       gstEnabled = !!bill.gst_enabled;
       gstRate = bill.gst_rate_percent != null ? String(bill.gst_rate_percent) : "18";
       freightAgentId = bill.freight_agent_id != null ? String(bill.freight_agent_id) : "";
+      if ((bill.transport_mode || (bill.freight_agent_id ? "bus" : "")) === "bus" && !freightAgentId) {
+        freightAgentId = defaultFreightAgentId();
+      }
       freightCharges = bill.freight_charges != null ? String(bill.freight_charges) : "";
       transportMode = bill.transport_mode || (bill.freight_agent_id ? "bus" : (Number(bill.freight_charges) > 0 ? "transport" : "self_pickup"));
       transportReceiptNumber = bill.transport_receipt_number || "";
@@ -2005,6 +2008,10 @@ const CustomerOrders = (() => {
   }
   function setOverallDisc(v) { overallDiscount = v; renderWizardTotalsBar(); }
   function setBillEditSearch(v) { billEditSearch = v || ""; renderProcessWizard(); }
+  function defaultFreightAgentId() {
+    const hit = freightAgents.find(a => String(a.name || "").trim().toLowerCase() === "vishnu parcel");
+    return hit ? String(hit.id) : "";
+  }
   function setFreightAgent(v) { freightAgentId = v; }
   function setFreightCharges(v) { freightCharges = v; }
   function setTransportMode(v) {
@@ -2017,6 +2024,7 @@ const CustomerOrders = (() => {
       freightAgentId = "";
     } else if (v === "bus") {
       transportReceiptNumber = "";
+      if (!freightAgentId) freightAgentId = defaultFreightAgentId();
     }
     renderProcessWizard();
   }

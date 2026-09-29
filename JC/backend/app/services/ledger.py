@@ -46,6 +46,25 @@ def _line_name(live: Optional[str], stored: Optional[str]) -> str:
     return live or stored or "—"
 
 
+def vendor_bill_channels(receipt: StockReceipt) -> tuple[Decimal, Decimal]:
+    """Paper invoice is bank. The untaxed 50% remainder is cash."""
+    paper = receipt.total_billed_amount
+    cash = Decimal("0.00")
+    if paper is not None and receipt.actual_ap_amount is not None:
+        diff = (receipt.actual_ap_amount - paper).quantize(Decimal("0.01"))
+        if diff > 0:
+            cash = diff
+    elif receipt.expected_extra_cash is not None and receipt.expected_extra_cash > 0:
+        cash = receipt.expected_extra_cash.quantize(Decimal("0.01"))
+    if paper is not None:
+        bank = paper.quantize(Decimal("0.01"))
+    elif receipt.actual_ap_amount is not None:
+        bank = receipt.actual_ap_amount.quantize(Decimal("0.01"))
+    else:
+        bank = Decimal("0.00")
+    return bank, cash
+
+
 def _occurred_at_from_display(display_date, fallback: datetime) -> datetime:
     """Ledger sort key from present() display_date; plain dates → IST noon as naive UTC."""
     if display_date is None:
@@ -197,6 +216,7 @@ def build_vendor_ledger(
                 continue
             bill_amt = _receipt_bill_amount(receipt, rlines)
             dn_total = _receipt_debit_note_total(receipt.id)
+            bank_amt, cash_amt = vendor_bill_channels(receipt)
             card_by_cid = {
                 int(cl["catalog_product_id"]): cl
                 for cl in (view.get("lines") or [])
@@ -233,7 +253,10 @@ def build_vendor_ledger(
                     **_actor_fields(receipt.received_by_name, receipt.received_by_type, show_actor),
                     details={
                         "receipt_id": receipt.id, "bill_number": bill_number,
-                        "bill_amount": format(bill_amt, "f"), "debit_note_total": format(dn_total, "f"),
+                        "bill_amount": format(bill_amt, "f"),
+                        "bank_amount": format(bank_amt, "f"),
+                        "cash_amount": format(cash_amt, "f") if cash_amt > 0 else None,
+                        "debit_note_total": format(dn_total, "f"),
                         "net_payable": format(bill_amt + dn_total, "f"),
                         "additional_charges": _fmt_amount(receipt.additional_charges),
                         "bill_file_url": presigned_url(receipt.bill_file_key) if receipt.bill_file_key else None,

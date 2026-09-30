@@ -109,6 +109,7 @@ const CustomerOrders = (() => {
   let offlineCustomerSearch = "";
   let offlineLines = [];
   let offlineSearchQuery = "";
+  let focusQtyProductId = null;
   let offlineSearchResults = [];
   let offlineNotes = "";
   let offlinePlacedOn = "";
@@ -2423,10 +2424,7 @@ const CustomerOrders = (() => {
 
     if (offlineStep === 2) {
       const shown = filterOfflineProducts();
-      const selectedNotShown = offlineLines
-        .map(l => offlineSearchResults.find(p => p.catalog_product_id === l.catalog_product_id))
-        .filter(p => p && !shown.some(s => s.catalog_product_id === p.catalog_product_id));
-      const list = [...selectedNotShown, ...shown];
+      const list = shown;
       const cartHtml = offlineLines.length ? `
         <div class="vo-wiz-cart">
           <div class="vo-wiz-cart-head">
@@ -2452,7 +2450,7 @@ const CustomerOrders = (() => {
         ${cartHtml}
         <div class="vo-wiz-search-wrap">
           <span class="vo-wiz-search-icon" aria-hidden="true">⌕</span>
-          <input id="co-offline-search" class="input vo-wiz-search" type="search" placeholder="Search product ID, category…" value="${ctx.esc(offlineSearchQuery)}" oninput="CustomerOrders.onOfflineSearchInput(this.value)" onkeydown="CustomerOrders.onOfflineSearchKey(event)" autocomplete="off" />
+          <input id="co-offline-search" class="input vo-wiz-search" type="search" placeholder="Search product ID, category…" value="${ctx.esc(offlineSearchQuery)}" oninput="CustomerOrders.onOfflineSearchInput(this.value)" onkeydown="CustomerOrders.onOfflineSearchKey(event)" onfocus="this.select()" autocomplete="off" />
           ${offlineSearchQuery ? `<button type="button" class="vo-wiz-search-clear" onclick="CustomerOrders.onOfflineSearchInput('')">×</button>` : ""}
         </div>
         <div class="vo-wiz-product-meta">
@@ -2465,7 +2463,7 @@ const CustomerOrders = (() => {
               const qty = line ? line.quantity : 1;
               const checked = !!line;
               const img = (p.image_urls && p.image_urls[0]) || "";
-              return `<div class="vo-wiz-product ${checked ? "selected" : ""}" onclick="CustomerOrders.toggleOfflineProduct(${p.catalog_product_id}, ${checked ? "false" : "true"})">
+              return `<div class="vo-wiz-product ${checked ? "selected" : ""}" onclick="CustomerOrders.pickOfflineProduct(${p.catalog_product_id})">
                 <div class="vo-wiz-product-main">
                   <input type="checkbox" ${checked ? "checked" : ""} onclick="event.stopPropagation();CustomerOrders.toggleOfflineProduct(${p.catalog_product_id}, this.checked)" />
                   ${thumb(img)}
@@ -2479,7 +2477,7 @@ const CustomerOrders = (() => {
                   <label>Qty</label>
                   <div class="vo-wiz-qty-controls">
                     <button type="button" class="vo-wiz-qty-btn" ${checked ? "" : "disabled"} onclick="CustomerOrders.bumpOfflineQty(${p.catalog_product_id}, -1)">−</button>
-                    <input type="number" min="1" class="input vo-wiz-qty-input" value="${qty}" ${checked ? "" : "disabled"} onchange="CustomerOrders.setOfflineQty(${p.catalog_product_id}, this.value)" onclick="event.stopPropagation()" />
+                    <input type="number" min="1" class="input vo-wiz-qty-input" data-qty-for="${p.catalog_product_id}" value="${qty}" ${checked ? "" : "disabled"} onchange="CustomerOrders.setOfflineQty(${p.catalog_product_id}, this.value)" onkeydown="CustomerOrders.onOfflineQtyKey(event)" onclick="event.stopPropagation()" />
                     <button type="button" class="vo-wiz-qty-btn" ${checked ? "" : "disabled"} onclick="CustomerOrders.bumpOfflineQty(${p.catalog_product_id}, 1)">+</button>
                   </div>
                 </div>
@@ -2494,12 +2492,7 @@ const CustomerOrders = (() => {
         <button class="btn btn-secondary" onclick="${editing ? "CustomerOrders.closeOfflineWizard()" : "CustomerOrders.offlineBack()"}">${editing ? "Cancel" : "← Back"}</button>
         <div class="vo-wiz-footer-mid">${offlineLines.length ? `${offlineLines.length} item(s) · est. ${fmtPrice(offlineCartTotal())}` : "Select at least one product"}</div>
         <button class="btn btn-primary" ${offlineLines.length ? "" : "disabled"} onclick="CustomerOrders.offlineNext()">Review →</button>`;
-      setTimeout(() => {
-        const inp = document.getElementById("co-offline-search");
-        if (!inp) return;
-        inp.focus();
-        try { const n = (offlineSearchQuery || "").length; inp.setSelectionRange(n, n); } catch (_) {}
-      }, 30);
+      setTimeout(() => focusPendingQty("co-offline-search"), 30);
       return;
     }
 
@@ -2566,9 +2559,25 @@ const CustomerOrders = (() => {
     offlineSearchQuery = val || "";
     renderOfflineWizard();
     const inp = document.getElementById("co-offline-search");
-    if (inp && typeof start === "number") {
-      try { inp.setSelectionRange(start, start); } catch (_) {}
+    if (inp) {
+      inp.focus();
+      if (typeof start === "number") {
+        try { inp.setSelectionRange(start, start); } catch (_) {}
+      }
     }
+  }
+
+  function focusPendingQty(searchId) {
+    if (focusQtyProductId != null) {
+      const id = focusQtyProductId;
+      focusQtyProductId = null;
+      const el = document.querySelector(`[data-qty-for="${id}"]`);
+      if (el) { el.disabled = false; el.focus(); el.select(); return; }
+    }
+    const inp = document.getElementById(searchId);
+    if (!inp || document.activeElement === inp) return;
+    inp.focus();
+    try { const n = (offlineSearchQuery || "").length; inp.setSelectionRange(n, n); } catch (_) {}
   }
 
   function onOfflineSearchKey(e) {
@@ -2579,9 +2588,24 @@ const CustomerOrders = (() => {
     const exact = offlineSearchResults.find(p => String(p.our_product_id || "").toLowerCase() === q);
     const best = exact || filterOfflineProducts()[0];
     if (!best) return ctx.toast("No product match", "error");
-    toggleOfflineProduct(best.catalog_product_id, true);
+    pickOfflineProduct(best.catalog_product_id);
+  }
+
+  function onOfflineQtyKey(e) {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
     offlineSearchQuery = "";
+    focusQtyProductId = null;
     renderOfflineWizard();
+  }
+
+  function pickOfflineProduct(catalogProductId) {
+    if (offlineLines.some(l => l.catalog_product_id === catalogProductId)) {
+      const el = document.querySelector(`[data-qty-for="${catalogProductId}"]`);
+      if (el) { el.disabled = false; el.focus(); el.select(); }
+      return;
+    }
+    toggleOfflineProduct(catalogProductId, true);
   }
 
   async function ensureOfflineProductsLoaded() {
@@ -2616,6 +2640,7 @@ const CustomerOrders = (() => {
       }
       offlineLines = offlineLines.filter(l => l.catalog_product_id !== catalogProductId);
     }
+    if (checked) focusQtyProductId = catalogProductId;
     renderOfflineWizard();
   }
 
@@ -2769,7 +2794,7 @@ const CustomerOrders = (() => {
     confirmOrder, _doConfirm, cancelOpenLine, cancelPlacement, cancelCustomerOpen, cancelAllOpen, editOpenLine, editReceivedLine, deleteReceivedLine, openEditPlacement, closeBillLine, cancelBill, voidBill, voidPlacement, openBillDoc, shareBillWhatsApp,
     openOfflineWizard, closeOfflineWizard, renderOfflineWizard,
     pickOfflineCustomer, onOfflineCustomerSearch, setOfflineNotes,
-    onOfflineSearchInput, onOfflineSearchKey, toggleOfflineProduct, removeOfflineLine,
+    onOfflineSearchInput, onOfflineSearchKey, onOfflineQtyKey, toggleOfflineProduct, pickOfflineProduct, removeOfflineLine,
     setOfflineQty, bumpOfflineQty, offlineNext, offlineBack, submitOffline,
   };
 })();

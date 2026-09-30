@@ -335,41 +335,85 @@ const Finance = (() => {
     finally { ctx.hideLoading?.(); }
   }
 
+  let quickPayCustomer = null;
+  let quickPayModes = [];
+
   async function quickCustomerPayment() {
     const customer = await _pickQuickParty("customers", "customer");
     if (!customer) return;
-    if (!confirm(`Record a payment for "${customer.business_name}"?`)) return;
-    const amtRaw = prompt("Amount collected (₹):");
-    if (amtRaw == null) return;
-    const amount = Number(amtRaw);
-    if (!Number.isFinite(amount) || amount <= 0) return ctx.toast("Enter a valid amount", "error");
-
-    let paymentModeId;
+    quickPayCustomer = customer;
+    let paymentModesLoadFailed = false;
     try {
-      const modes = await ctx.api("/payment-modes?active_only=true", {}, 0);
-      if (modes && modes.length) {
-        const listing = modes.map((m, i) => `${i + 1}. ${m.name}`).join("\n");
-        const pick = prompt(`Payment mode — enter the number:\n${listing}`);
-        const idx = parseInt(String(pick || "").trim(), 10) - 1;
-        if (!Number.isFinite(idx) || idx < 0 || idx >= modes.length) return ctx.toast("Payment mode required", "error");
-        paymentModeId = modes[idx].id;
-      }
-    } catch (e) { ctx.toast(e.message, "error"); return; }
+      quickPayModes = await ctx.api("/payment-modes?active_only=true", {}, 0) || [];
+    } catch (e) {
+      quickPayModes = [];
+      paymentModesLoadFailed = true;
+      ctx.toast(e.message, "error");
+    }
+    const modeOpts = paymentModesLoadFailed
+      ? `<p style="font-size:13px;color:var(--danger);margin:0 0 12px;">Couldn't load payment modes. You can still collect; you'll be asked for a mode if one is required.</p>`
+      : quickPayModes.length
+      ? `<label class="label">Payment mode</label>
+        <select class="input" id="quick-pay-mode" style="margin-bottom:12px;width:100%;">
+          <option value="">— Select mode —</option>
+          ${quickPayModes.map(m => `<option value="${m.id}">${ctx.esc(m.name)}</option>`).join("")}
+        </select>`
+      : "";
+    document.getElementById("quick-pay-body").innerHTML = `
+      <div class="review-block" style="margin-bottom:16px;">
+        ${ctx.reviewRow("Party", customer.business_name)}
+      </div>
+      ${modeOpts}
+      <label class="label">Collection date</label>
+      <input type="date" class="input" id="quick-pay-date" value="${ctx.esc(localToday())}" required style="margin-bottom:12px;" />
+      <label class="label">Amount (₹)</label>
+      <input type="number" step="0.01" class="input" id="quick-pay-amount" placeholder="Enter amount" style="margin-bottom:12px;" />
+      <label class="label">Payment reference (optional)</label>
+      <input class="input" id="quick-pay-ref" style="margin-bottom:12px;" placeholder="UTR, cheque #…" />
+      <label class="label">Comment (optional)</label>
+      <input class="input" id="quick-pay-comment" />`;
+    document.getElementById("quick-pay-modal")?.classList.remove("hidden");
+  }
 
-    const ref = prompt("Payment reference (optional):") || "";
-    const comment = prompt("Note (optional):") || "";
+  function closeQuickPay() {
+    document.getElementById("quick-pay-modal")?.classList.add("hidden");
+    quickPayCustomer = null;
+  }
+
+  async function submitQuickPay() {
+    const customer = quickPayCustomer;
+    if (!customer) return;
+    const amount = parseFloat(document.getElementById("quick-pay-amount")?.value || "0");
+    const valueDate = (document.getElementById("quick-pay-date")?.value || "").trim();
+    const ref = (document.getElementById("quick-pay-ref")?.value || "").trim();
+    const comment = (document.getElementById("quick-pay-comment")?.value || "").trim();
+    const modeRaw = document.getElementById("quick-pay-mode")?.value || "";
+    const paymentModeId = modeRaw ? parseInt(modeRaw, 10) : null;
+    if (quickPayModes.length && !paymentModeId) return ctx.toast("Select payment mode", "error");
+    if (!amount || amount <= 0) return ctx.toast("Enter a valid amount", "error");
+    if (!valueDate) return ctx.toast("Enter collection date", "error");
     ctx.showLoading?.();
     try {
       const res = await ctx.api(`/accounts-receivable/customer/${customer.id}/record-payment`, {
         method: "POST",
         body: JSON.stringify({
-          payment_ref: ref.trim() || undefined,
-          payment_mode_id: paymentModeId,
+          payment_ref: ref || undefined,
+          payment_mode_id: paymentModeId || undefined,
           amount,
-          comment: comment.trim() || undefined,
+          comment: comment || undefined,
+          value_date: valueDate,
         }),
       });
+      closeQuickPay();
       ctx.toast(res.message || "Payment recorded", "success");
+      ctx.openDetail?.("Collected", `
+        <div class="review-block">
+          ${ctx.reviewRow("Party", customer.business_name)}
+          ${ctx.reviewRow("Amount", fmtPrice(amount))}
+          ${ctx.reviewRow("Date", fmtDocDate(valueDate))}
+        </div>`,
+        `<button class="btn btn-primary" style="flex:1;" onclick="App.closeDetail()">Done</button>`,
+        "sm");
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
   }
@@ -759,7 +803,7 @@ const Finance = (() => {
     }).join("")}</div>`;
   }
 
-  function settleSuccess({ title, party, amount, balanceAfter, reopenFn }) {
+  function settleSuccess({ title, party, amount, balanceAfter, valueDate, reopenFn }) {
     ctx.openDetail?.(title, `
       <div class="doc-success-banner">
         <strong>Payment settled</strong>
@@ -768,6 +812,7 @@ const Finance = (() => {
       <div class="review-block">
         ${ctx.reviewRow("Party", party)}
         ${ctx.reviewRow("Amount", fmtPrice(amount))}
+        ${valueDate ? ctx.reviewRow("Date", fmtDocDate(valueDate)) : ""}
         ${ctx.reviewRow("Balance after", fmtPrice(balanceAfter))}
       </div>`,
       `<button class="btn btn-primary" style="flex:1;" onclick="App.closeDetail();${reopenFn}">Open party</button>
@@ -1666,6 +1711,7 @@ const Finance = (() => {
         party,
         amount,
         balanceAfter: Number(arDetail?.outstanding) || 0,
+        valueDate,
         reopenFn: `Finance.openCustomerAr(${cid})`,
       });
       loadArList();
@@ -2561,7 +2607,7 @@ const Finance = (() => {
   }
 
   return {
-    init, showHub, showQuickEntry, showArApHub, quickVendorPayment, quickCustomerPayment, quickAddExpense, loadNeedsAction,
+    init, showHub, showQuickEntry, showArApHub, quickVendorPayment, quickCustomerPayment, closeQuickPay, submitQuickPay, quickAddExpense, loadNeedsAction,
     setHubMode, setChip, setHubSearch, setBrowseSection, setShowSettled, setReportTab,
     showAp, showAr, showExpenses, showRevenue, showCost, showPnl, showFreight,
     showRouteCollections, openRouteCollection, openRouteCustomer, backRouteCustomers, printRouteCollection,

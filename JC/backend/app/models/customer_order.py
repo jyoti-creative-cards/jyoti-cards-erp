@@ -36,6 +36,8 @@ class CustomerOrderPlacement(Base):
     )
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="received", server_default="received")
     customer_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    order_source: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    placed_by_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     card_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     document_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     cancel_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

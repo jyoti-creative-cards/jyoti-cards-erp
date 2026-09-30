@@ -473,6 +473,7 @@ def render_customer_order_pdf(
     customer_notes: str | None = None,
     placed_at: datetime | None = None,
     outstanding: float | None = None,
+    source_line: str | None = None,
 ) -> bytes:
     buf = BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=1.5 * cm, rightMargin=1.5 * cm, topMargin=1.5 * cm, bottomMargin=1.5 * cm)
@@ -487,6 +488,8 @@ def render_customer_order_pdf(
         info.append(f"<b>Address:</b> {escape(_safe(customer_address, 120))}")
     if customer_city:
         info.append(f"<b>City:</b> {escape(_safe(customer_city, 60))}")
+    if source_line:
+        info.append(f"<b>Order from:</b> {escape(_safe(source_line, 80))}")
     story.append(Paragraph("<br/>".join(info), ParagraphStyle("info", parent=styles["Normal"], fontSize=9, spaceAfter=12, leading=13)))
     story.append(_items_table(lines, image_urls, show_amounts=True))
     story.append(Spacer(1, 0.4 * cm))

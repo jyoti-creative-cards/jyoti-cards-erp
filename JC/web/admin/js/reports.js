@@ -30,11 +30,15 @@ const Reports = (() => {
   const CHIPS = {
     today: [
       { id: "daybook", label: "Daybook" },
-      { id: "sales", label: "Sales bills" },
+      { id: "sales-book", label: "Sales book" },
+      { id: "receipt-book", label: "Receipt book" },
       { id: "purchases", label: "Purchase bills" },
       { id: "payments", label: "Payments" },
     ],
     books: [
+      { id: "sales-book", label: "Sales book" },
+      { id: "receipt-book", label: "Receipt book" },
+      { id: "daybook", label: "Daybook" },
       { id: "ledgers", label: "Ledgers" },
       { id: "ageing", label: "Due age" },
       { id: "customer-sales", label: "Customer sales" },
@@ -43,6 +47,7 @@ const Reports = (() => {
       { id: "item-purchases", label: "Item purchase" },
     ],
     stock: [
+      { id: "stock-wise", label: "Stock wise" },
       { id: "valuation", label: "Valuation" },
       { id: "movers", label: "Fast / slow" },
       { id: "low", label: "Low stock" },
@@ -133,7 +138,7 @@ const Reports = (() => {
     body.innerHTML = HubUI.tileGrid([
       { letter: "T", tag: "Today", title: "What moved today?", desc: "Daybook · sales · purchases · payments", onclick: "Reports.pickQuestion('today','daybook')", className: "setup-tile-records" },
       { letter: "B", tag: "Books", title: "Who owes us / we owe?", desc: "Due age · ledgers", onclick: "Reports.pickQuestion('books','ageing')", className: "setup-tile-billing" },
-      { letter: "S", tag: "Stock", title: "What’s in stock?", desc: "Valuation · low stock · movers", onclick: "Reports.pickQuestion('stock','valuation')", className: "setup-tile-catalog" },
+      { letter: "S", tag: "Stock", title: "What’s in stock?", desc: "Stock wise · valuation · low stock", onclick: "Reports.pickQuestion('stock','stock-wise')", className: "setup-tile-catalog" },
       { letter: "P", tag: "Tax", title: "Profit & tax?", desc: "P&L · GST · cash book", onclick: "Reports.pickQuestion('tax','pnl')", className: "setup-tile-delivery" },
     ], { style: "margin-top:8px;" })
       + `<p class="fin-muted" style="margin-top:16px;">Or pick a mode above (Today / Books / Stock / Tax).</p>`;
@@ -235,7 +240,7 @@ const Reports = (() => {
       const copy = {
         today: "What moved today — daybook, bills, payments",
         books: "Ledgers, who owes whom, sales & purchase by party or item",
-        stock: "Value on hand, movers, returns and debit notes",
+        stock: "Stock wise, value on hand, movers, returns",
         tax: "GST registers, cash book, expenses, profit",
       };
       heroSub.textContent = copy[mode] || "Look up books, bills, and who did what";
@@ -253,7 +258,7 @@ const Reports = (() => {
   function renderDateBar() {
     const el = document.getElementById("reports-date-bar");
     if (!el) return;
-    if (mode === "today" && chip === "daybook") {
+    if (chip === "daybook") {
       el.innerHTML = `<div class="rep-filters">
         <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.shiftDay(-1)">←</button>
         <label class="label">Day<input type="date" class="input" id="rep-day" value="${ctx.esc(daybookDate)}" onchange="Reports.onDayChange(this.value)" /></label>
@@ -301,11 +306,11 @@ const Reports = (() => {
     if (!slot) return;
     const caret = (typeof OrdersUI !== "undefined" && OrdersUI.captureSearchCaret)
       ? OrdersUI.captureSearchCaret("reports-hub-search") : null;
-    const searchable = ["sales", "purchases", "payments", "ledgers", "ageing", "customer-sales", "vendor-purchases", "item-sales", "item-purchases", "valuation", "movers", "low", "returns", "debit-notes", "gst-sales", "gst-purchases", "cashbook", "expense-cat"].includes(chip);
+    const searchable = ["sales", "sales-book", "receipt-book", "daybook", "purchases", "payments", "ledgers", "ageing", "customer-sales", "vendor-purchases", "item-sales", "item-purchases", "stock-wise", "valuation", "movers", "low", "returns", "debit-notes", "gst-sales", "gst-purchases", "cashbook", "expense-cat"].includes(chip);
     if (!searchable) { slot.innerHTML = ""; return; }
     const ph = chip === "ledgers"
       ? (ledgerKind === "staff" ? "Search staff…" : ledgerKind === "products" ? "Search products…" : ledgerKind === "customers" || ledgerKind === "vendors" ? "Search name, person, city…" : "Search…")
-      : chip.includes("item") || chip === "valuation" || chip === "movers" || chip === "low" ? "Search product…"
+      : chip.includes("item") || chip === "stock-wise" || chip === "valuation" || chip === "movers" || chip === "low" ? "Search product…"
         : chip === "ageing" ? "Search name, person, city…"
         : "Search…";
     slot.innerHTML = OrdersUI.searchBar({
@@ -371,7 +376,8 @@ const Reports = (() => {
     ctx.showLoading?.();
     try {
       if (chip === "daybook") await renderDaybook(body);
-      else if (chip === "sales") await renderDocList(body, "sales", "Sales bills");
+      else if (chip === "sales" || chip === "sales-book") await renderDocList(body, "sales", "Sales book");
+      else if (chip === "receipt-book") await renderReceiptBook(body);
       else if (chip === "purchases") await renderDocList(body, "purchases", "Purchase bills");
       else if (chip === "payments") await renderPayments(body);
       else if (chip === "ledgers") await renderLedgers(body);
@@ -380,6 +386,7 @@ const Reports = (() => {
       else if (chip === "vendor-purchases") await renderPartyAgg(body, "vendor-purchases", "vendors");
       else if (chip === "item-sales") await renderItemAgg(body, "item-sales");
       else if (chip === "item-purchases") await renderItemAgg(body, "item-purchases");
+      else if (chip === "stock-wise") await renderStockWise(body);
       else if (chip === "valuation") await renderValuation(body);
       else if (chip === "movers") await renderMovers(body);
       else if (chip === "low") await renderLow(body);
@@ -419,14 +426,20 @@ const Reports = (() => {
         <div class="fin-stat"><span class="fin-stat-label">Cash out</span><strong>${fmtPrice(t.cash_out)}</strong></div>
         <div class="fin-stat"><span class="fin-stat-label">Sales</span><strong>${t.sales_count || 0}</strong></div>
         <div class="fin-stat"><span class="fin-stat-label">Purchases</span><strong>${t.purchase_count || 0}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">Amount total</span><strong>${fmtPrice(rows.reduce((s, r) => s + (Number(r.amount) || 0), 0))}</strong></div>
       </div>
-      ${simpleTable(["Time", "Type", "Party", "Particulars", "Amount"], rows.map(r => [
-        r.at ? new Date(r.at).toLocaleString() : "—",
-        `<span class="badge badge-blue">${ctx.esc(r.kind)}</span>`,
-        ctx.esc(r.party || "—"),
-        ctx.esc(r.label || "—"),
-        fmtPrice(r.amount),
-      ]), "Quiet day", "No entries for this date. Try another day.")}`;
+      ${simpleTable(["Time", "Type", "Party", "Particulars", "Amount"], rows.map(r => {
+        const cells = [
+          r.at ? new Date(r.at).toLocaleString() : "—",
+          `<span class="badge badge-blue">${ctx.esc(r.kind)}</span>`,
+          ctx.esc(r.party || "—"),
+          ctx.esc(r.label || "—"),
+          fmtPrice(r.amount),
+        ];
+        if (r.kind === "sales" && r.ref_id) cells._onclick = `BillSeries.openBill(${Number(r.ref_id)})`;
+        else if (r.kind === "purchase" && r.ref_id) cells._onclick = `Stock.openReceiptDetail(${Number(r.ref_id)})`;
+        return cells;
+      }), "Quiet day", "No entries for this date. Try another day.")}`;
   }
 
   async function shareDaybook(print) {
@@ -462,13 +475,18 @@ const Reports = (() => {
     finally { ctx.hideLoading?.(); }
   }
 
+  function amountTotal(items) {
+    return items.reduce((s, it) => s + (Number(it.amount) || 0), 0);
+  }
+
   async function renderDocList(body, path, title) {
     const data = await ctx.api(`/reports/${path}${rangeQs()}`, {}, 0);
     let items = (data.items || []).filter(it => matchSearch(it.doc_number, it.party_label));
+    const total = amountTotal(items);
     body.innerHTML = `
-      <div class="fin-panel-head" style="margin-bottom:12px;">
-        <div><h3 class="fin-panel-title">${title}</h3>
-        <p class="fin-panel-sub">${items.length} document${items.length === 1 ? "" : "s"}</p></div>
+      <div class="fin-hub-strip" style="margin-bottom:16px;">
+        <div class="fin-stat"><span class="fin-stat-label">Bills</span><strong>${items.length}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">Amount total</span><strong>${fmtPrice(total)}</strong></div>
       </div>
       ${items.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
         <th>Date</th><th>Number</th><th>Party</th><th>Amount</th>
@@ -479,7 +497,31 @@ const Reports = (() => {
           <td>${ctx.esc(it.party_label || "—")}</td>
           <td>${fmtPrice(it.amount)}</td>
         </tr>`).join("")}
+        <tr><td colspan="3"><strong>Total</strong></td><td><strong>${fmtPrice(total)}</strong></td></tr>
       </tbody></table></div>` : empty("No documents", "Widen the date range or clear search.")}`;
+  }
+
+  async function renderReceiptBook(body) {
+    const data = await ctx.api(`/reports/payments${rangeQs()}`, {}, 0);
+    const items = (data.items || []).filter(it => it.direction === "in" && matchSearch(it.doc_number, it.party_label, it.description));
+    const total = amountTotal(items);
+    body.innerHTML = `
+      <div class="fin-hub-strip" style="margin-bottom:16px;">
+        <div class="fin-stat"><span class="fin-stat-label">Receipts</span><strong>${items.length}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">Amount total</span><strong>${fmtPrice(total)}</strong></div>
+      </div>
+      ${items.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
+        <th>Date</th><th>Receipt</th><th>Party</th><th>Amount</th><th>Note</th>
+      </tr></thead><tbody>
+        ${items.map(it => `<tr class="clickable" onclick="Finance.openCustomerAr(${it.party_id})">
+          <td>${ctx.esc(it.date || "—")}</td>
+          <td><strong>${ctx.esc(it.doc_number || "—")}</strong></td>
+          <td>${ctx.esc(it.party_label || "—")}</td>
+          <td>${fmtPrice(it.amount)}</td>
+          <td style="color:var(--muted);font-size:13px;">${ctx.esc(it.description || "—")}</td>
+        </tr>`).join("")}
+        <tr><td colspan="3"><strong>Total</strong></td><td><strong>${fmtPrice(total)}</strong></td><td></td></tr>
+      </tbody></table></div>` : empty("No receipts", "Widen the dates to see money received.")}`;
   }
 
   async function renderPayments(body) {
@@ -562,7 +604,37 @@ const Reports = (() => {
           <td>${fmtPrice(it.b61_90)}</td>
           <td>${fmtPrice(it.b90_plus)}</td>
         </tr>`).join("")}
-      </tbody></table></div>` : empty("All clear", "Nothing due.");}
+      </tbody></table></div>` : empty("All clear", "Nothing due.")}`;
+  }
+
+  async function renderStockWise(body) {
+    const data = await ctx.api(`/reports/stock/summary${rangeQs()}`, {}, 0);
+    const items = (data.items || []).filter(it => matchSearch(it.label, it.category));
+    const sum = (key) => items.reduce((s, it) => s + (Number(it[key]) || 0), 0);
+    const opening = sum("opening");
+    const inward = sum("inward");
+    const outward = sum("outward");
+    const closing = sum("closing");
+    body.innerHTML = `
+      <div class="fin-hub-strip" style="margin-bottom:16px;">
+        <div class="fin-stat"><span class="fin-stat-label">Products</span><strong>${items.length}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">Opening</span><strong>${opening}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">In</span><strong>${inward}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">Out</span><strong>${outward}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">Closing</span><strong>${closing}</strong></div>
+      </div>
+      ${items.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
+        <th>Product</th><th>Opening</th><th>In</th><th>Out</th><th>Closing</th>
+      </tr></thead><tbody>
+        ${items.map(it => `<tr class="clickable" onclick="Reports.openLedger('products', ${it.id})">
+          <td><strong>${ctx.esc(it.label)}</strong>${it.category ? `<div style="color:var(--muted);font-size:12px;">${ctx.esc(it.category)}</div>` : ""}</td>
+          <td>${it.opening}</td>
+          <td>${it.inward}</td>
+          <td>${it.outward}</td>
+          <td><strong>${it.closing}</strong></td>
+        </tr>`).join("")}
+        <tr><td><strong>Total</strong></td><td><strong>${opening}</strong></td><td><strong>${inward}</strong></td><td><strong>${outward}</strong></td><td><strong>${closing}</strong></td></tr>
+      </tbody></table></div>` : empty("No stock movement", "Widen the dates to see products.")}`;
   }
 
   async function renderValuation(body) {
@@ -901,19 +973,9 @@ const Reports = (() => {
       return;
     }
     if (d.party_type === "product") {
-      const entries = d.entries || [];
-      body.innerHTML = entries.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
-        <th>When</th><th>Type</th><th>Δ</th><th>Balance</th><th>Party</th><th>Notes</th>
-      </tr></thead><tbody>
-        ${entries.map(e => `<tr>
-          <td style="font-size:12px;">${e.created_at ? new Date(e.created_at).toLocaleString() : "—"}</td>
-          <td>${ctx.esc(e.entry_type)}</td>
-          <td>${e.quantity_delta > 0 ? "+" : ""}${e.quantity_delta}</td>
-          <td>${e.balance_after}</td>
-          <td>${ctx.esc(e.party || "—")}</td>
-          <td style="color:var(--muted);">${ctx.esc(e.notes || "—")}</td>
-        </tr>`).join("")}
-      </tbody></table></div>` : empty("No stock moves", "No ledger lines for this product.");
+      body.innerHTML = Stock.ledgerTableHtml
+        ? `<p style="font-size:12px;color:var(--muted);margin:0 0 8px;">Click a row to open that bill.</p>${Stock.ledgerTableHtml(d.entries)}`
+        : empty("No stock moves", "No ledger lines for this product.");
       return;
     }
     const entries = d.entries || [];
@@ -940,7 +1002,7 @@ const Reports = (() => {
   }
 
   function openDoc(docType, id) {
-    if (docType === "sales_bill") { CustomerOrders?.openBillDoc?.(id); return; }
+    if (docType === "sales_bill") { BillSeries?.openBill?.(id); return; }
     if (docType === "purchase_bill") { Stock?.openReceiptDetail?.(id); return; }
   }
 

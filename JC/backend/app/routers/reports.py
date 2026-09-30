@@ -127,6 +127,16 @@ def ageing_ap(
     return data
 
 
+@router.get("/stock/summary")
+def stock_summary(
+    from_date: Optional[date] = Query(None),
+    to_date: Optional[date] = Query(None),
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    return ext.stock_wise(db, from_date, to_date)
+
+
 @router.get("/stock/valuation")
 def stock_valuation(db: Session = Depends(get_db), auth: AuthContext = Depends(require_admin)):
     return ext.stock_valuation(db)

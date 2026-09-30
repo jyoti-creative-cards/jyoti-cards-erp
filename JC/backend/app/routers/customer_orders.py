@@ -1509,6 +1509,8 @@ def create_offline_customer_order(
             customer_notes=(body.narration or "").strip() or "Order placed by admin (phone)",
             placed_on=body.placed_on,
             allow_negative_stock=True,  # offline admin may oversell; portal stays strict
+            order_source="offline",
+            placed_by_name="Admin" if auth.actor_type == "admin" else (auth.actor_name or "Staff"),
         )
     except ValueError as e:
         db.rollback()

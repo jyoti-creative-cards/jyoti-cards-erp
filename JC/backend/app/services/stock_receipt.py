@@ -280,3 +280,57 @@ def build_vendor_billed_detail(db: Session, vendor_id: int, auth: AuthContext) -
         "placements": placements,
         "aggregated_lines": list(agg_by_pid.values()),
     }
+
+
+def annotate_stock_ledger(db: Session, entries: list) -> list[dict]:
+    """Party, bill number, and which voucher a stock line opens."""
+    bill_ids = {e.reference_id for e in entries if e.reference_type == "customer_bill" and e.reference_id}
+    receipt_ids = {e.reference_id for e in entries if e.reference_type == "stock_receipt" and e.reference_id}
+    return_ids = {e.reference_id for e in entries if e.reference_type == "customer_return" and e.reference_id}
+    bills = {}
+    receipts = {}
+    returns = {}
+    if bill_ids:
+        from app.models.customer_bill import CustomerBill
+        bills = {b.id: b for b in db.query(CustomerBill).filter(CustomerBill.id.in_(bill_ids)).all()}
+    if receipt_ids:
+        receipts = {r.id: r for r in db.query(StockReceipt).filter(StockReceipt.id.in_(receipt_ids)).all()}
+    if return_ids:
+        from app.models.customer_return import CustomerReturn
+        returns = {r.id: r for r in db.query(CustomerReturn).filter(CustomerReturn.id.in_(return_ids)).all()}
+    out = []
+    for e in entries:
+        bill_number = None
+        voucher_kind = None
+        voucher_id = None
+        if e.reference_type == "customer_bill" and e.reference_id:
+            bill = bills.get(e.reference_id)
+            bill_number = bill.bill_number if bill else None
+            voucher_kind = "customer_bill"
+            voucher_id = e.reference_id
+        elif e.reference_type == "stock_receipt" and e.reference_id:
+            receipt = receipts.get(e.reference_id)
+            if receipt:
+                bill_number = receipt.bill_number or receipt.order_receipt_number
+            voucher_kind = "stock_receipt"
+            voucher_id = e.reference_id
+        elif e.reference_type == "customer_return" and e.reference_id:
+            ret = returns.get(e.reference_id)
+            bill_number = ret.return_number if ret else None
+            voucher_kind = "customer_return"
+            voucher_id = e.reference_id
+        out.append({
+            "id": e.id,
+            "entry_type": e.entry_type,
+            "quantity_delta": e.quantity_delta,
+            "balance_after": e.balance_after,
+            "party": e.party,
+            "notes": e.notes,
+            "created_at": e.created_at,
+            "reference_type": e.reference_type,
+            "reference_id": e.reference_id,
+            "bill_number": bill_number,
+            "voucher_kind": voucher_kind,
+            "voucher_id": voucher_id,
+        })
+    return out

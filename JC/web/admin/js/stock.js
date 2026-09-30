@@ -28,6 +28,7 @@ const Stock = (() => {
   let offlineVendorsCache = [];
   let wizardProducts = [];
   let offlineQtyPopupId = null; // legacy; product pick now uses inline qty
+  let focusQtyProductId = null;
   let editReceiptId = null;
   let editReceiptType = null; // vendor_receive | vendor_bill | offline_vendor | vendor_order
   let editAddPickerOpen = false;
@@ -105,13 +106,7 @@ const Stock = (() => {
             </button>`;
           }).join("")}</div>`
         : `<p style="color:var(--muted);font-size:13px;margin:0;">No alternatives</p>`;
-      const ledgerRows = (p.ledger || []).length ? (p.ledger || []).map(e => `<tr class="clickable ledger-row" data-handler="stock" data-entry-id="${e.id}">
-        <td style="font-size:12px;">${new Date(e.created_at).toLocaleString()}</td>
-        <td><span class="badge badge-blue">${ctx.esc(e.entry_type)}</span></td>
-        <td>${e.quantity_delta > 0 ? "+" : ""}${e.quantity_delta}</td>
-        <td>${e.balance_after}</td>
-        <td style="font-size:12px;color:var(--muted);">${ctx.esc(e.notes || "—")}</td>
-      </tr>`).join("") : `<tr><td colspan="5" style="color:var(--muted);">No movements yet</td></tr>`;
+      const ledgerRows = ledgerTableHtml(p.ledger);
       const img = (p.image_urls && p.image_urls[0]) || "";
       const realSell = p.selling_price != null && p.selling_price !== ""
         && Number(p.selling_price) !== Number(p.buying_price);
@@ -164,21 +159,14 @@ const Stock = (() => {
         ${reservedByPartyTable(p.reserved_by_party)}
         <div class="detail-section">
           <h4>Stock Ledger</h4>
-          <table class="data history-table"><thead><tr>
-            <th>Date</th><th>Type</th><th>Qty</th><th>Balance</th><th>Notes</th>
-          </tr></thead><tbody>${ledgerRows}
-          <tr style="opacity:0.5;"><td colspan="5" style="font-size:12px;font-style:italic;">Sales entries will appear here later</td></tr>
-          </tbody></table>
+          <p style="font-size:12px;color:var(--muted);margin:0 0 8px;">Click a row to open that bill.</p>
+          ${ledgerRows}
         </div>`,
         `${(ctx.canWrite?.("catalog") || ctx.isAdmin?.()) ? `<button type="button" class="btn btn-secondary btn-sm" onclick="event.stopPropagation();Catalog.openEdit(${p.catalog_product_id}, 'stock')">Edit</button>` : ""}
          <button class="btn btn-secondary btn-sm" onclick="Catalog.openDetail(${p.catalog_product_id})">Catalog view</button>
          <button class="btn btn-primary" style="flex:1;" onclick="App.closeDetail()">Close</button>`,
         "lg"
       );
-      ctx.bindLedgerRowClicks?.();
-      document.getElementById("detail-body")?.querySelectorAll(".ledger-row[data-handler='stock']").forEach(row => {
-        row.onclick = () => Stock.openLedgerDetail(parseInt(row.getAttribute("data-entry-id"), 10));
-      });
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
   }
@@ -820,10 +808,7 @@ const Stock = (() => {
       document.querySelector("#stock-wizard .stock-wiz-modal")?.classList.remove("stock-wiz-wide");
       offlineQtyPopupId = null;
       const shown = filterOfflineProducts();
-      const selectedNotShown = wizardLines
-        .map(l => wizardProducts.find(p => p.id === l.catalog_product_id))
-        .filter(p => p && !shown.some(s => s.id === p.id));
-      const list = [...selectedNotShown, ...shown];
+      const list = shown;
       const cartHtml = wizardLines.length ? `
         <div class="vo-wiz-cart">
           <div class="vo-wiz-cart-head">
@@ -853,7 +838,7 @@ const Stock = (() => {
         ${cartHtml}
         <div class="vo-wiz-search-wrap">
           <span class="vo-wiz-search-icon" aria-hidden="true">⌕</span>
-          <input id="stock-offline-product-search" class="input vo-wiz-search" type="search" placeholder="Search product ID, vendor ID, category…" value="${ctx.esc(offlineProductSearch)}" oninput="Stock.onOfflineProductSearch(this.value)" autocomplete="off" />
+          <input id="stock-offline-product-search" class="input vo-wiz-search" type="search" placeholder="Search product ID, vendor ID, category…" value="${ctx.esc(offlineProductSearch)}" oninput="Stock.onOfflineProductSearch(this.value)" onkeydown="Stock.onOfflineSearchKey(event)" onfocus="this.select()" autocomplete="off" />
           ${offlineProductSearch ? `<button type="button" class="vo-wiz-search-clear" onclick="Stock.onOfflineProductSearch('')">×</button>` : ""}
         </div>
         <div class="vo-wiz-product-meta">
@@ -866,7 +851,7 @@ const Stock = (() => {
               const qty = line ? (line.quantity_received || 1) : 1;
               const checked = !!line;
               const img = (p.image_urls && p.image_urls[0]) || "";
-              return `<div class="vo-wiz-product ${checked ? "selected" : ""}" onclick="Stock.toggleOfflineProduct(${p.id}, ${checked ? "false" : "true"})">
+              return `<div class="vo-wiz-product ${checked ? "selected" : ""}" onclick="Stock.pickOfflineProduct(${p.id})">
                 <div class="vo-wiz-product-main">
                   <input type="checkbox" ${checked ? "checked" : ""} onclick="event.stopPropagation();Stock.toggleOfflineProduct(${p.id}, this.checked)" />
                   ${thumb(img)}
@@ -880,7 +865,7 @@ const Stock = (() => {
                   <label>Qty</label>
                   <div class="vo-wiz-qty-controls">
                     <button type="button" class="vo-wiz-qty-btn" ${checked ? "" : "disabled"} onclick="Stock.bumpOfflineQty(${p.id}, -1)">−</button>
-                    <input type="number" min="1" class="input vo-wiz-qty-input" value="${qty}" ${checked ? "" : "disabled"} onchange="Stock.setOfflineLine(${p.id},'quantity_received',this.value)" onclick="event.stopPropagation()" />
+                    <input type="number" min="1" class="input vo-wiz-qty-input" data-qty-for="${p.id}" value="${qty}" ${checked ? "" : "disabled"} onchange="Stock.setOfflineLine(${p.id},'quantity_received',this.value)" onkeydown="Stock.onOfflineQtyKey(event)" onclick="event.stopPropagation()" />
                     <button type="button" class="vo-wiz-qty-btn" ${checked ? "" : "disabled"} onclick="Stock.bumpOfflineQty(${p.id}, 1)">+</button>
                   </div>
                 </div>
@@ -895,7 +880,7 @@ const Stock = (() => {
         <button class="btn btn-secondary" onclick="Stock.wizardBack()">← Back</button>
         <div class="vo-wiz-footer-mid">${wizardLines.length ? `${wizardLines.length} item${wizardLines.length === 1 ? "" : "s"} selected` : "Select at least one product"}</div>
         <button class="btn btn-primary" ${wizardLines.some(l => (l.quantity_received || 0) > 0) ? "" : "disabled"} onclick="Stock.wizardNext()">Next: Receipt →</button>`;
-      setTimeout(() => document.getElementById("stock-offline-product-search")?.focus(), 30);
+      setTimeout(() => focusPendingQty("stock-offline-product-search"), 30);
       return;
     }
     if (wizardStep === 3 && wizardMode === "offline_vendor") {
@@ -1462,7 +1447,40 @@ const Stock = (() => {
         quantity_billed: 0,
       });
     }
+    focusQtyProductId = productId;
     renderWizard();
+  }
+  function pickOfflineProduct(productId) {
+    if (wizardLines.some(l => l.catalog_product_id === productId)) {
+      const el = document.querySelector(`#stock-wizard [data-qty-for="${productId}"]`);
+      if (el) { el.disabled = false; el.focus(); el.select(); }
+      return;
+    }
+    toggleOfflineProduct(productId, true);
+  }
+  function onOfflineSearchKey(e) {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const list = filterOfflineProducts();
+    if (!list.length) return;
+    pickOfflineProduct(list[0].id);
+  }
+  function onOfflineQtyKey(e) {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    offlineProductSearch = "";
+    focusQtyProductId = null;
+    renderWizard();
+  }
+  function focusPendingQty(searchId) {
+    if (focusQtyProductId != null) {
+      const id = focusQtyProductId;
+      focusQtyProductId = null;
+      const el = document.querySelector(`[data-qty-for="${id}"]`);
+      if (el) { el.disabled = false; el.focus(); el.select(); return; }
+    }
+    const inp = document.getElementById(searchId);
+    if (inp && document.activeElement !== inp) inp.focus();
   }
   function onOfflineVendorSearch(val) {
     const prev = document.getElementById("stock-offline-vendor-search")
@@ -1921,6 +1939,35 @@ const Stock = (() => {
     } catch (e) { ctx.toast(e.message || "PDF not available", "error"); }
     finally { ctx.hideLoading?.(); }
   }
+  function ledgerTableHtml(rows) {
+    const body = (rows || []).length ? rows.map(e => {
+      const when = e.created_at ? new Date(e.created_at).toLocaleString() : "—";
+      const qty = `${e.quantity_delta > 0 ? "+" : ""}${e.quantity_delta}`;
+      const kind = e.voucher_kind || "";
+      const vid = Number(e.voucher_id) || 0;
+      const click = kind && vid
+        ? `Stock.openVoucher('${kind}', ${vid})`
+        : `Stock.openLedgerDetail(${e.id})`;
+      return `<tr class="clickable" onclick="${click}">
+        <td style="font-size:12px;">${when}</td>
+        <td>${ctx.esc(e.party || "—")}</td>
+        <td>${qty}</td>
+        <td><strong>${ctx.esc(e.bill_number || "—")}</strong></td>
+        <td>${e.balance_after}</td>
+        <td><span class="badge badge-blue">${ctx.esc(e.entry_type || "")}</span></td>
+      </tr>`;
+    }).join("") : `<tr><td colspan="6" style="color:var(--muted);">No movements yet</td></tr>`;
+    return `<div class="table-wrap"><table class="data history-table"><thead><tr>
+      <th>Date</th><th>Party</th><th>Qty</th><th>Bill</th><th>Balance</th><th>Type</th>
+    </tr></thead><tbody>${body}</tbody></table></div>`;
+  }
+  function openVoucher(kind, id) {
+    if (!id) return;
+    if (kind === "customer_bill") { BillSeries?.openBill?.(id); return; }
+    if (kind === "stock_receipt") { openReceiptDetail(id); return; }
+    if (kind === "customer_return") { Returns?.openReturn?.(id); return; }
+    openLedgerDetail(id);
+  }
   async function openLedgerDetail(ledgerId) {
     ctx.showLoading?.();
     try {
@@ -2198,9 +2245,9 @@ const Stock = (() => {
     finally { ctx.hideLoading?.(); }
   }
   return {
-    init, load, setViewMode, render, openDetail, openLedgerDetail, openReceiptDetail,
+    init, load, setViewMode, render, openDetail, openLedgerDetail, openReceiptDetail, openVoucher, ledgerTableHtml,
     openAddWizard, openReceiveForVendor, openBillForVendor, openOfflineWizard, openOfflineForVendor, closeWizard, pickMode, pickVendor, setLine, setLineAmount, setLineRate, setBillFile,
-    toggleOfflineProduct, setOfflineLine, onOfflineProductSearch, onOfflineVendorSearch,
+    toggleOfflineProduct, pickOfflineProduct, onOfflineSearchKey, onOfflineQtyKey, setOfflineLine, onOfflineProductSearch, onOfflineVendorSearch,
     openOfflineQtyPopup, closeOfflineQtyPopup, confirmOfflineQty, removeOfflineLine, bumpOfflineQty,
     wizardBack, wizardNext, submitReceipt, openDebitNote, removeDebitNote, editThreshold, setSellingPrice, adjustStock,
     openReceiptPdf, fetchReceiptPdf, openEditReceipt, selectPendingReceipt, changePendingReceipt,

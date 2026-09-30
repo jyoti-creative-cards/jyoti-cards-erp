@@ -315,20 +315,9 @@ def get_stock_detail(
         .limit(100)
         .all()
     )
-    ledger = [
-        StockLedgerEntry(
-            id=e.id,
-            entry_type=e.entry_type,
-            quantity_delta=e.quantity_delta,
-            balance_after=e.balance_after,
-            party=e.party,
-            notes=e.notes,
-            created_at=e.created_at,
-            reference_type=e.reference_type,
-            reference_id=e.reference_id,
-        )
-        for e in ledger_rows
-    ]
+    from app.services.stock_receipt import annotate_stock_ledger
+
+    ledger = [StockLedgerEntry(**row) for row in annotate_stock_ledger(db, ledger_rows)]
 
     from app.models.addon_product import AddonProduct
     from app.models.catalog_addon_link import CatalogAddonLink

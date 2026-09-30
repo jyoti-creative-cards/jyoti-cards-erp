@@ -616,6 +616,7 @@ def append_or_create_portal_placement(
                 "addons_json": addons_json,
             }],
             customer_notes=customer_notes,
+            order_source="app",
         )
         return p, False
 
@@ -704,6 +705,8 @@ def create_received_placement(
     customer_notes: str | None = None,
     placed_on: date | None = None,
     allow_negative_stock: bool = False,
+    order_source: str | None = None,
+    placed_by_name: str | None = None,
 ) -> CustomerOrderPlacement:
     """Create a received placement (portal or admin offline) — same path to bill later.
 
@@ -767,6 +770,8 @@ def create_received_placement(
         customer_order_id=received.id,
         status="received",
         customer_notes=customer_notes,
+        order_source=order_source,
+        placed_by_name=(placed_by_name or "").strip() or None,
         placed_at=when,
     )
     db.add(placement)

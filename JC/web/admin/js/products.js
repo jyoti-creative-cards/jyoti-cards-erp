@@ -924,15 +924,7 @@ const Products = (() => {
         : `<div class="stock-price-row"><span class="prod-price-missing">Not set</span>
             ${ctx.isAdmin?.() ? `<button class="btn btn-primary btn-sm" onclick="Stock.setSellingPrice(${id}, '')">Set sell price</button>` : ""}</div>`;
 
-      const ledgerRows = stock?.ledger?.length
-        ? stock.ledger.map(e => `<tr class="clickable ledger-row" data-handler="stock" data-entry-id="${e.id}">
-            <td style="font-size:12px;">${new Date(e.created_at).toLocaleString()}</td>
-            <td><span class="badge badge-blue">${ctx.esc(e.entry_type)}</span></td>
-            <td>${e.quantity_delta > 0 ? "+" : ""}${e.quantity_delta}</td>
-            <td>${e.balance_after}</td>
-            <td style="font-size:12px;color:var(--muted);">${ctx.esc(e.notes || "—")}</td>
-          </tr>`).join("")
-        : `<tr><td colspan="5" style="color:var(--muted);">No movements yet</td></tr>`;
+      const ledgerRows = Stock.ledgerTableHtml ? Stock.ledgerTableHtml(stock?.ledger) : "";
       const reservedByPartyHtml = Stock.reservedByPartyTable ? Stock.reservedByPartyTable(stock?.reserved_by_party) : "";
 
       const stockPane = stock ? `
@@ -963,9 +955,8 @@ const Products = (() => {
         ${reservedByPartyHtml}
         <div class="detail-section">
           <h4>Stock Ledger</h4>
-          <table class="data history-table"><thead><tr>
-            <th>Date</th><th>Type</th><th>Qty</th><th>Balance</th><th>Notes</th>
-          </tr></thead><tbody>${ledgerRows}</tbody></table>
+          <p style="font-size:12px;color:var(--muted);margin:0 0 8px;">Click a row to open that bill.</p>
+          ${ledgerRows}
         </div>`
         : `<div class="detail-section">
           <p style="color:var(--muted);font-size:14px;margin:0 0 12px;">No stock balance yet — receive goods to create it.</p>
@@ -1070,10 +1061,6 @@ const Products = (() => {
         "lg"
       );
 
-      ctx.bindLedgerRowClicks?.();
-      document.getElementById("detail-body")?.querySelectorAll(".ledger-row[data-handler='stock']").forEach(row => {
-        row.onclick = () => Stock.openLedgerDetail(parseInt(row.getAttribute("data-entry-id"), 10));
-      });
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
   }

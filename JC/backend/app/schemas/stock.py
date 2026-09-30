@@ -59,6 +59,9 @@ class StockLedgerEntry(BaseModel):
     created_at: datetime
     reference_type: Optional[str] = None
     reference_id: Optional[int] = None
+    bill_number: Optional[str] = None
+    voucher_kind: Optional[str] = None
+    voucher_id: Optional[int] = None
 
 
 class ReservedByPartyRow(BaseModel):

@@ -21,6 +21,37 @@ from app.services.cost_visibility import HIDDEN as HIDDEN_COST, can_see_cost
 from app.services.customer_bill_pdf import render_customer_bill_pdf
 from app.services.document_present import present
 from app.services.pdf_documents import render_customer_order_pdf, render_vendor_placement_pdf, render_vendor_receipt_pdf
+
+
+def customer_order_source_line(db: Session, placement: CustomerOrderPlacement) -> str:
+    """App order vs offline, and who typed the offline order."""
+    source = (getattr(placement, "order_source", None) or "").strip()
+    who = (getattr(placement, "placed_by_name", None) or "").strip()
+    if source == "app":
+        return "From party (our app)"
+    if source == "offline":
+        label = "Admin" if who.lower() == "admin" or not who else who
+        return f"Offline order by {label}"
+
+    from app.models.activity_log import ActivityLog
+
+    log = (
+        db.query(ActivityLog)
+        .filter(
+            ActivityLog.action == "offline_order",
+            ActivityLog.entity_type == "customer_order",
+            ActivityLog.entity_id == placement.id,
+        )
+        .order_by(ActivityLog.id.asc())
+        .first()
+    )
+    if log:
+        label = "Admin" if log.actor_type == "admin" else (log.actor_name or "Staff")
+        return f"Offline order by {label}"
+    notes = (placement.customer_notes or "").lower()
+    if "placed by admin" in notes:
+        return "Offline order by Admin"
+    return "From party (our app)"
 from app.services.storage import (
     customer_bill_key,
     customer_folder_slug,
@@ -103,6 +134,7 @@ def generate_customer_order_document(db: Session, placement_id: int) -> str | No
         customer_notes=placement.customer_notes,
         placed_at=view.get("display_date") or placement.placed_at,
         outstanding=outstanding,
+        source_line=customer_order_source_line(db, placement),
     )
     key = customer_order_key(slug, placement.id)
     upload_bytes(key, pdf, "application/pdf")

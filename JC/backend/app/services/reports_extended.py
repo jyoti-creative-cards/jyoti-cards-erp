@@ -6,7 +6,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import func
+from sqlalchemy import and_, case, func
 from sqlalchemy.orm import Session
 
 from app.models.accounts_payable import ApLedgerEntry
@@ -23,7 +23,7 @@ from app.models.freight_agent import FreightAgent, FreightLedgerEntry
 from app.models.manual_loss import ManualLoss
 from app.models.route import Route
 from app.models.staff import Staff
-from app.models.stock import StockBalance, StockReceipt, StockReceiptLine
+from app.models.stock import StockBalance, StockLedger, StockReceipt, StockReceiptLine
 from app.models.vendor import Vendor
 from app.services.ap_ledger import _vendor_label, vendor_ap_totals
 from app.services.ar_ledger import _customer_label, customer_ar_totals
@@ -412,6 +412,75 @@ def ageing_ap(db: Session, as_of: Optional[date] = None) -> dict:
         "totals": {k: _fmt(v) for k, v in buckets.items()},
         "items": items,
     }
+
+
+def stock_wise(db: Session, from_date: Optional[date], to_date: Optional[date]) -> dict:
+    """Item-wise stock: opening, inward, outward, closing for an IST date range."""
+    start, end = _range_bounds(from_date, to_date)
+    range_parts = []
+    if start is not None:
+        range_parts.append(StockLedger.created_at >= start)
+    if end is not None:
+        range_parts.append(StockLedger.created_at <= end)
+    def _in_period(pred):
+        return and_(*range_parts, pred) if range_parts else pred
+
+    if start is not None:
+        opening_expr = func.coalesce(
+            func.sum(case((StockLedger.created_at < start, StockLedger.quantity_delta), else_=0)),
+            0,
+        )
+    else:
+        opening_expr = func.coalesce(func.sum(0), 0)
+    inward_expr = func.coalesce(
+        func.sum(case((_in_period(StockLedger.quantity_delta > 0), StockLedger.quantity_delta), else_=0)),
+        0,
+    )
+    outward_expr = func.coalesce(
+        func.sum(case((_in_period(StockLedger.quantity_delta < 0), -StockLedger.quantity_delta), else_=0)),
+        0,
+    )
+    rows = (
+        db.query(
+            CatalogProduct.id,
+            CatalogProduct.our_product_id,
+            CatalogProduct.category,
+            opening_expr,
+            inward_expr,
+            outward_expr,
+        )
+        .join(StockLedger, StockLedger.catalog_product_id == CatalogProduct.id)
+        .filter(CatalogProduct.deleted_at.is_(None), CatalogProduct.is_active.is_(True))
+        .group_by(CatalogProduct.id, CatalogProduct.our_product_id, CatalogProduct.category)
+        .all()
+    )
+    items = []
+    totals = {"opening": 0, "inward": 0, "outward": 0, "closing": 0}
+    for pid, label, category, opening, inward, outward in rows:
+        opening_n = int(opening or 0)
+        inward_n = int(inward or 0)
+        outward_n = int(outward or 0)
+        closing_n = opening_n + inward_n - outward_n
+        if opening_n == 0 and inward_n == 0 and outward_n == 0:
+            continue
+        items.append(
+            {
+                "id": pid,
+                "label": label,
+                "category": category or "",
+                "opening": opening_n,
+                "inward": inward_n,
+                "outward": outward_n,
+                "closing": closing_n,
+            }
+        )
+        totals["opening"] += opening_n
+        totals["inward"] += inward_n
+        totals["outward"] += outward_n
+        totals["closing"] += closing_n
+    items.sort(key=lambda x: (x["label"] or "", x["id"]))
+    totals["sku_count"] = len(items)
+    return {"items": items, "totals": totals}
 
 
 def stock_valuation(db: Session) -> dict:

@@ -497,17 +497,18 @@ def get_order_document(
     order = db.get(CustomerOrder, placement.customer_order_id)
     if not order or order.customer_id != customer.id:
         raise HTTPException(404, "order not found")
-    if not placement.document_key:
-        if storage_configured():
-            try:
-                generate_customer_order_document(db, placement.id)
-                db.commit()
-            except Exception:
-                db.rollback()
-                logger.exception("order PDF regen failed placement=%s", placement_id)
+    if storage_configured():
+        try:
+            generate_customer_order_document(db, placement.id)
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception("order PDF regen failed placement=%s", placement_id)
+            placement = db.get(CustomerOrderPlacement, placement_id)
+            if not placement or not placement.document_key:
                 raise HTTPException(500, "document generation failed")
-        if not placement.document_key:
-            raise HTTPException(404, "document not available")
+    if not placement.document_key:
+        raise HTTPException(404, "document not available")
     url = presigned_url(placement.document_key)
     if not url:
         raise HTTPException(503, "storage not available")

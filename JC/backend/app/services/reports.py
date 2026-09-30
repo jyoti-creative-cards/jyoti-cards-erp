@@ -491,20 +491,17 @@ def product_stock_ledger(db: Session, catalog_product_id: int) -> dict:
         .limit(200)
         .all()
     )
+    from app.services.stock_receipt import annotate_stock_ledger
+
+    rows = []
+    for row in annotate_stock_ledger(db, entries):
+        created = row["created_at"]
+        row = dict(row)
+        row["created_at"] = created.isoformat() if created else None
+        rows.append(row)
     return {
         "id": prod.id,
         "label": prod.our_product_id,
         "quantity_on_hand": int(bal.quantity_on_hand) if bal else 0,
-        "entries": [
-            {
-                "id": e.id,
-                "entry_type": e.entry_type,
-                "quantity_delta": e.quantity_delta,
-                "balance_after": e.balance_after,
-                "party": e.party,
-                "notes": e.notes,
-                "created_at": e.created_at.isoformat() if e.created_at else None,
-            }
-            for e in entries
-        ],
+        "entries": rows,
     }

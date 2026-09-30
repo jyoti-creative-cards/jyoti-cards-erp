@@ -282,8 +282,85 @@ def build_vendor_billed_detail(db: Session, vendor_id: int, auth: AuthContext) -
     }
 
 
+def _bills_for_reservations(db: Session, entries: list) -> dict[int, object]:
+    """Map a customer-order stock line to the bill that sold this item to that party."""
+    from datetime import datetime, timezone
+
+    from app.models.customer_bill import CustomerBill, CustomerBillLine
+    from app.models.customer_order import CustomerOrder, CustomerOrderPlacement
+
+    placement_ids = {
+        e.reference_id for e in entries if e.reference_type == "customer_placement" and e.reference_id
+    }
+    if not placement_ids:
+        return {}
+    placements = {
+        p.id: p
+        for p in db.query(CustomerOrderPlacement).filter(CustomerOrderPlacement.id.in_(placement_ids)).all()
+    }
+    order_ids = {p.customer_order_id for p in placements.values()}
+    orders = {
+        o.id: o for o in db.query(CustomerOrder).filter(CustomerOrder.id.in_(order_ids)).all()
+    } if order_ids else {}
+    keys = []
+    customer_ids: set[int] = set()
+    product_ids: set[int] = set()
+    for e in entries:
+        if e.reference_type != "customer_placement" or not e.reference_id:
+            continue
+        placement = placements.get(e.reference_id)
+        if not placement:
+            continue
+        order = orders.get(placement.customer_order_id)
+        if not order:
+            continue
+        customer_ids.add(order.customer_id)
+        product_ids.add(e.catalog_product_id)
+        keys.append((e.id, order.customer_id, e.catalog_product_id, e.created_at))
+    if not keys:
+        return {}
+    rows = (
+        db.query(CustomerBill, CustomerBillLine.catalog_product_id)
+        .join(CustomerBillLine, CustomerBillLine.bill_id == CustomerBill.id)
+        .filter(
+            CustomerBill.customer_id.in_(customer_ids),
+            CustomerBillLine.catalog_product_id.in_(product_ids),
+            CustomerBill.deleted_at.is_(None),
+            CustomerBill.cancelled_at.is_(None),
+        )
+        .all()
+    )
+    by_pair: dict[tuple[int, int], list] = {}
+    for bill, pid in rows:
+        by_pair.setdefault((bill.customer_id, pid), []).append(bill)
+
+    def _ts(value):
+        if value is None:
+            return None
+        if isinstance(value, datetime) and value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
+
+    out: dict[int, object] = {}
+    for eid, cid, pid, created in keys:
+        bills = by_pair.get((cid, pid)) or []
+        if not bills:
+            continue
+        created_ts = _ts(created)
+        after = []
+        for bill in bills:
+            bill_ts = _ts(bill.created_at)
+            if created_ts is not None and bill_ts is not None and bill_ts >= created_ts:
+                after.append(bill)
+        pool = after or bills
+        pool.sort(key=lambda b: _ts(b.created_at) or datetime.min.replace(tzinfo=timezone.utc))
+        out[eid] = pool[0] if after else pool[-1]
+    return out
+
+
 def annotate_stock_ledger(db: Session, entries: list) -> list[dict]:
     """Party, bill number, and which voucher a stock line opens."""
+    reservation_bills = _bills_for_reservations(db, entries)
     bill_ids = {e.reference_id for e in entries if e.reference_type == "customer_bill" and e.reference_id}
     receipt_ids = {e.reference_id for e in entries if e.reference_type == "stock_receipt" and e.reference_id}
     return_ids = {e.reference_id for e in entries if e.reference_type == "customer_return" and e.reference_id}
@@ -319,6 +396,12 @@ def annotate_stock_ledger(db: Session, entries: list) -> list[dict]:
             bill_number = ret.return_number if ret else None
             voucher_kind = "customer_return"
             voucher_id = e.reference_id
+        elif e.reference_type == "customer_placement":
+            matched = reservation_bills.get(e.id)
+            if matched is not None:
+                bill_number = matched.bill_number
+                voucher_kind = "customer_bill"
+                voucher_id = matched.id
         out.append({
             "id": e.id,
             "entry_type": e.entry_type,

@@ -71,6 +71,7 @@ class ReservedByPartyRow(BaseModel):
     to_bill: int = 0  # confirmed, awaiting billing
     billed_not_dispatched: int = 0  # billed, not yet closed/dispatched
     total_held: int = 0
+    bill_id: Optional[int] = None
 
 
 class StockProductDetail(StockProductSummary):

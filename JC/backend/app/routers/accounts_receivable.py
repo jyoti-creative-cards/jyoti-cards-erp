@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.deps import AuthContext, require_admin, require_permission
+from app.models.city import City
 from app.models.customer import Customer
 from app.schemas.accounts_receivable import (
     ArCustomerDetail,
@@ -38,7 +39,13 @@ router = APIRouter(prefix="/accounts-receivable", tags=["accounts-receivable"])
 
 def _customer_label(db: Session, customer_id: int) -> str:
     c = db.get(Customer, customer_id)
-    return c.business_name if c else f"Customer #{customer_id}"
+    if not c:
+        return f"Customer #{customer_id}"
+    city_name = None
+    if c.city_id:
+        city = db.get(City, c.city_id)
+        city_name = city.name if city else None
+    return f"{c.business_name} — {city_name}" if city_name else c.business_name
 
 
 @router.get("", response_model=List[ArCustomerSummary])

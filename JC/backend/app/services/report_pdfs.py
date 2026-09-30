@@ -114,12 +114,26 @@ def render_ap_statement_pdf(db: Session, vendor_id: int) -> bytes:
     return buf.getvalue()
 
 
-def render_daybook_pdf(db: Session, day: date) -> bytes:
-    data = daybook(db, day)
+def render_daybook_pdf(
+    db: Session,
+    day: date | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+) -> bytes:
+    if from_date is None and to_date is None:
+        data = daybook(db, day)
+    else:
+        data = daybook(db, from_date=from_date, to_date=to_date)
     doc, buf, styles = _doc()
     t = data.get("totals") or {}
+    if data.get("from_date") and data.get("to_date") and data["from_date"] != data["to_date"]:
+        title = f"Daybook — {data['from_date']} to {data['to_date']}"
+    elif data.get("from_date") or data.get("to_date") or data.get("date"):
+        title = f"Daybook — {data.get('from_date') or data.get('to_date') or data.get('date')}"
+    else:
+        title = "Daybook — all dates"
     story = [
-        Paragraph(f"Daybook — {day.isoformat()}", styles["Heading1"]),
+        Paragraph(title, styles["Heading1"]),
         Paragraph(
             f"Entries {t.get('count', 0)} · Cash in {_money(t.get('cash_in'))} · Cash out {_money(t.get('cash_out'))} · "
             f"Sales {t.get('sales_count', 0)} · Purchases {t.get('purchase_count', 0)}",

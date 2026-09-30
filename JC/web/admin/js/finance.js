@@ -279,6 +279,26 @@ const Finance = (() => {
     App.updateGlobalBack?.();
   }
 
+  function partyWithCity(row) {
+    if (!row) return "—";
+    const name = row.business_name || "";
+    const city = row.city_name || "";
+    if (name && city && !String(name).includes(city)) return `${name} — ${city}`;
+    return name || "—";
+  }
+
+  function openQuickEntry() {
+    ctx.openDetail?.("Quick entry", `
+      <div style="display:grid;gap:10px;">
+        <p style="margin:0 0 4px;font-size:13px;color:var(--muted);">Record a payment or an expense without opening the party first.</p>
+        <button class="btn btn-primary" onclick="App.closeDetail();Finance.quickVendorPayment()">Record vendor payment</button>
+        <button class="btn btn-primary" onclick="App.closeDetail();Finance.quickCustomerPayment()">Record customer payment</button>
+        <button class="btn btn-primary" onclick="App.closeDetail();Finance.quickAddExpense()">+ Add expense</button>
+      </div>`,
+      `<button class="btn btn-secondary" style="flex:1;" onclick="App.closeDetail()">Close</button>`,
+      "sm");
+  }
+
   async function _pickQuickParty(resource, noun) {
     const q = prompt(`Search ${noun} by name or phone:`);
     if (q == null || !q.trim()) return null;
@@ -303,7 +323,7 @@ const Finance = (() => {
   async function quickVendorPayment() {
     const vendor = await _pickQuickParty("vendors", "vendor");
     if (!vendor) return;
-    if (!confirm(`Record a payment for "${vendor.business_name}"?`)) return;
+    if (!confirm(`Record a payment for "${partyWithCity(vendor)}"?`)) return;
     const amtRaw = prompt("Amount paid (₹):");
     if (amtRaw == null) return;
     const amount = Number(amtRaw);
@@ -361,7 +381,7 @@ const Finance = (() => {
       : "";
     document.getElementById("quick-pay-body").innerHTML = `
       <div class="review-block" style="margin-bottom:16px;">
-        ${ctx.reviewRow("Party", customer.business_name)}
+        ${ctx.reviewRow("Party", partyWithCity(customer))}
       </div>
       ${modeOpts}
       <label class="label">Collection date</label>
@@ -408,7 +428,7 @@ const Finance = (() => {
       ctx.toast(res.message || "Payment recorded", "success");
       ctx.openDetail?.("Collected", `
         <div class="review-block">
-          ${ctx.reviewRow("Party", customer.business_name)}
+          ${ctx.reviewRow("Party", partyWithCity(customer))}
           ${ctx.reviewRow("Amount", fmtPrice(amount))}
           ${ctx.reviewRow("Date", fmtDocDate(valueDate))}
         </div>`,
@@ -2607,7 +2627,7 @@ const Finance = (() => {
   }
 
   return {
-    init, showHub, showQuickEntry, showArApHub, quickVendorPayment, quickCustomerPayment, closeQuickPay, submitQuickPay, quickAddExpense, loadNeedsAction,
+    init, showHub, showQuickEntry, openQuickEntry, showArApHub, quickVendorPayment, quickCustomerPayment, closeQuickPay, submitQuickPay, quickAddExpense, loadNeedsAction,
     setHubMode, setChip, setHubSearch, setBrowseSection, setShowSettled, setReportTab,
     showAp, showAr, showExpenses, showRevenue, showCost, showPnl, showFreight,
     showRouteCollections, openRouteCollection, openRouteCustomer, backRouteCustomers, printRouteCollection,

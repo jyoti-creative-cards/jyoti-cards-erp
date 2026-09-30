@@ -28,15 +28,25 @@ def _range_bounds(from_date: Optional[date], to_date: Optional[date]) -> tuple[O
 
 
 def _payment_on_ist_day(model, day: date):
-    start, end = _day_bounds(day)
-    return or_(
-        model.value_date == day,
-        and_(
-            model.value_date.is_(None),
-            model.created_at >= start,
-            model.created_at <= end,
-        ),
-    )
+    return _payment_in_range(model, day, day)
+
+
+def _payment_in_range(model, from_date: Optional[date], to_date: Optional[date]):
+    """Value date wins. Rows with no value date fall back to created_at in the IST range."""
+    if from_date is None and to_date is None:
+        return True
+    start, end = _range_bounds(from_date, to_date)
+    value_parts = []
+    if from_date is not None:
+        value_parts.append(model.value_date >= from_date)
+    if to_date is not None:
+        value_parts.append(model.value_date <= to_date)
+    created_parts = [model.value_date.is_(None)]
+    if start is not None:
+        created_parts.append(model.created_at >= start)
+    if end is not None:
+        created_parts.append(model.created_at <= end)
+    return or_(and_(*value_parts), and_(*created_parts))
 
 
 def _payment_in_ist_range(model, from_date: Optional[date], to_date: Optional[date]):
@@ -243,13 +253,26 @@ def list_payments(db: Session, from_date: Optional[date] = None, to_date: Option
     return out[:500]
 
 
-def daybook(db: Session, day: date) -> dict:
-    start, end = _day_bounds(day)
+def daybook(
+    db: Session,
+    day: date | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+) -> dict:
+    """One day (`day`) or a custom range (`from_date` / `to_date`). Omit both for all time."""
+    if from_date is None and to_date is None and day is not None:
+        from_date = to_date = day
+    if from_date is not None and to_date is not None and from_date > to_date:
+        from_date, to_date = to_date, from_date
+    start, end = _range_bounds(from_date, to_date)
     rows: list[dict] = []
 
-    bills = db.query(CustomerBill).filter(
-        CustomerBill.created_at >= start, CustomerBill.created_at <= end, CustomerBill.deleted_at.is_(None)
-    ).all()
+    bill_q = db.query(CustomerBill).filter(CustomerBill.deleted_at.is_(None))
+    if start is not None:
+        bill_q = bill_q.filter(CustomerBill.created_at >= start)
+    if end is not None:
+        bill_q = bill_q.filter(CustomerBill.created_at <= end)
+    bills = bill_q.all()
     bill_parties = _customer_labels(db, {b.customer_id for b in bills})
     for b in bills:
         rows.append(
@@ -264,12 +287,15 @@ def daybook(db: Session, day: date) -> dict:
             }
         )
 
-    purchase_rows = db.query(ApLedgerEntry).filter(
+    purchase_q = db.query(ApLedgerEntry).filter(
         ApLedgerEntry.entry_type == "bill",
         ApLedgerEntry.deleted_at.is_(None),
-        ApLedgerEntry.created_at >= start,
-        ApLedgerEntry.created_at <= end,
-    ).all()
+    )
+    if start is not None:
+        purchase_q = purchase_q.filter(ApLedgerEntry.created_at >= start)
+    if end is not None:
+        purchase_q = purchase_q.filter(ApLedgerEntry.created_at <= end)
+    purchase_rows = purchase_q.all()
     purchase_parties = _vendor_labels(db, {e.vendor_id for e in purchase_rows})
     for e in purchase_rows:
         party = purchase_parties.get(e.vendor_id) or f"Vendor #{e.vendor_id}"
@@ -288,7 +314,7 @@ def daybook(db: Session, day: date) -> dict:
     ar_pays = db.query(ArLedgerEntry).filter(
         ArLedgerEntry.entry_type == "payment",
         ArLedgerEntry.deleted_at.is_(None),
-        _payment_on_ist_day(ArLedgerEntry, day),
+        _payment_in_range(ArLedgerEntry, from_date, to_date),
     ).all()
     ar_pay_labels = _customer_labels(db, {e.customer_id for e in ar_pays})
     for e in ar_pays:
@@ -307,7 +333,7 @@ def daybook(db: Session, day: date) -> dict:
     ap_pays = db.query(ApLedgerEntry).filter(
         ApLedgerEntry.entry_type == "payment",
         ApLedgerEntry.deleted_at.is_(None),
-        _payment_on_ist_day(ApLedgerEntry, day),
+        _payment_in_range(ApLedgerEntry, from_date, to_date),
     ).all()
     ap_pay_labels = _vendor_labels(db, {e.vendor_id for e in ap_pays})
     for e in ap_pays:
@@ -323,12 +349,15 @@ def daybook(db: Session, day: date) -> dict:
             }
         )
 
-    ar_other = db.query(ArLedgerEntry).filter(
+    ar_other_q = db.query(ArLedgerEntry).filter(
         ArLedgerEntry.entry_type.in_(("opening_balance", "credit_note")),
         ArLedgerEntry.deleted_at.is_(None),
-        ArLedgerEntry.created_at >= start,
-        ArLedgerEntry.created_at <= end,
-    ).all()
+    )
+    if start is not None:
+        ar_other_q = ar_other_q.filter(ArLedgerEntry.created_at >= start)
+    if end is not None:
+        ar_other_q = ar_other_q.filter(ArLedgerEntry.created_at <= end)
+    ar_other = ar_other_q.all()
     ar_other_labels = _customer_labels(db, {e.customer_id for e in ar_other})
     for e in ar_other:
         rows.append(
@@ -343,12 +372,15 @@ def daybook(db: Session, day: date) -> dict:
             }
         )
 
-    ap_other = db.query(ApLedgerEntry).filter(
+    ap_other_q = db.query(ApLedgerEntry).filter(
         ApLedgerEntry.entry_type.in_(("opening_balance", "debit_note")),
         ApLedgerEntry.deleted_at.is_(None),
-        ApLedgerEntry.created_at >= start,
-        ApLedgerEntry.created_at <= end,
-    ).all()
+    )
+    if start is not None:
+        ap_other_q = ap_other_q.filter(ApLedgerEntry.created_at >= start)
+    if end is not None:
+        ap_other_q = ap_other_q.filter(ApLedgerEntry.created_at <= end)
+    ap_other = ap_other_q.all()
     ap_other_labels = _vendor_labels(db, {e.vendor_id for e in ap_other})
     for e in ap_other:
         rows.append(
@@ -363,7 +395,12 @@ def daybook(db: Session, day: date) -> dict:
             }
         )
 
-    for ex in db.query(Expense).filter(Expense.expense_date == day).all():
+    expense_q = db.query(Expense)
+    if from_date is not None:
+        expense_q = expense_q.filter(Expense.expense_date >= from_date)
+    if to_date is not None:
+        expense_q = expense_q.filter(Expense.expense_date <= to_date)
+    for ex in expense_q.all():
         rows.append(
             {
                 "kind": "expense",
@@ -372,15 +409,16 @@ def daybook(db: Session, day: date) -> dict:
                 "amount": format(ex.amount, "f"),
                 "signed": format(-ex.amount, "f"),
                 "ref_id": ex.id,
-                "at": day.isoformat(),
+                "at": ex.expense_date.isoformat() if ex.expense_date else None,
             }
         )
 
-    for e in db.query(FreightLedgerEntry).filter(
-        FreightLedgerEntry.entry_type == "settlement",
-        FreightLedgerEntry.created_at >= start,
-        FreightLedgerEntry.created_at <= end,
-    ).all():
+    freight_q = db.query(FreightLedgerEntry).filter(FreightLedgerEntry.entry_type == "settlement")
+    if start is not None:
+        freight_q = freight_q.filter(FreightLedgerEntry.created_at >= start)
+    if end is not None:
+        freight_q = freight_q.filter(FreightLedgerEntry.created_at <= end)
+    for e in freight_q.all():
         rows.append(
             {
                 "kind": "freight_payment",
@@ -400,8 +438,17 @@ def daybook(db: Session, day: date) -> dict:
         (Decimal(r["amount"]) for r in rows if r["kind"] in ("payment_out", "expense")),
         Decimal("0"),
     )
+    span = None
+    if from_date and to_date and from_date != to_date:
+        span = f"{from_date.isoformat()} to {to_date.isoformat()}"
+    elif from_date:
+        span = from_date.isoformat()
+    elif to_date:
+        span = to_date.isoformat()
     return {
-        "date": day.isoformat(),
+        "date": (from_date or to_date).isoformat() if (from_date or to_date) and from_date == to_date else span,
+        "from_date": from_date.isoformat() if from_date else None,
+        "to_date": to_date.isoformat() if to_date else None,
         "entries": rows,
         "totals": {
             "count": len(rows),

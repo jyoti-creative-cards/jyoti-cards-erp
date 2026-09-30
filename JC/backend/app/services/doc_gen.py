@@ -339,6 +339,16 @@ def generate_vendor_placement_document(db: Session, placement_id: int, auth: Aut
     return key
 
 
+def _receipt_charge_lines(receipt: StockReceipt, vendor: Vendor) -> list[dict]:
+    """Vendor charges folded into this receipt, so the PDF can name each one."""
+    lines: list[dict] = []
+    extra = receipt.additional_charges
+    if extra is not None and extra > 0:
+        label = (vendor.additional_charge_label or "Additional charge").strip() or "Additional charge"
+        lines.append({"label": label, "amount": format(extra, "f")})
+    return lines
+
+
 def generate_vendor_receipt_document(db: Session, receipt_id: int, auth: AuthContext | None = None) -> str | None:
     receipt = db.get(StockReceipt, receipt_id)
     if not receipt:
@@ -450,6 +460,8 @@ def generate_vendor_receipt_document(db: Session, receipt_id: int, auth: AuthCon
         vendor_gst=_card_or_live(view, party.get("gst_number"), vendor.gst_number),
         vendor_person=_card_or_live(view, party.get("person_name"), vendor.person_name),
         bill_number=view.get("bill_number") or receipt.bill_number,
+        order_receipt_number=receipt.order_receipt_number,
+        charge_lines=_receipt_charge_lines(receipt, vendor),
         lines=pdf_lines,
         image_urls=image_urls,
         total_billed=format(total, "f") if total is not None else None,

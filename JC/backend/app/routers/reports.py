@@ -48,11 +48,15 @@ def payments_report(
 
 @router.get("/daybook")
 def daybook_report(
-    day: date = Query(..., description="YYYY-MM-DD"),
+    day: Optional[date] = Query(None, description="YYYY-MM-DD, one day. Ignored when from_date or to_date is set."),
+    from_date: Optional[date] = Query(None),
+    to_date: Optional[date] = Query(None),
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_admin),
 ):
-    return svc.daybook(db, day)
+    if from_date is None and to_date is None:
+        return svc.daybook(db, day)
+    return svc.daybook(db, from_date=from_date, to_date=to_date)
 
 
 @router.get("/item-sales")

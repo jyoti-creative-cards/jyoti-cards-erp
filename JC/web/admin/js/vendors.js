@@ -93,8 +93,58 @@ const Vendors = (() => {
 
   function setVendorPayModeFilter(mode) {
     vendorPayModeFilter = mode;
+    paintVendorSummary();
     const wrap = document.getElementById("vendor-ledger-wrap");
     if (wrap && currentVendorId) wrap.innerHTML = renderVendorStatement(currentVendorId);
+  }
+
+  function paintVendorSummary() {
+    const sumWrap = document.getElementById("vendor-summary-wrap");
+    if (!sumWrap) return;
+    if (!vendorAp) {
+      sumWrap.innerHTML = "";
+      return;
+    }
+    const channel = vendorPayModeFilter;
+    if (channel === "all") {
+      sumWrap.innerHTML = `<div class="person-summary-grid">
+        <div><span class="person-summary-label">Due</span><strong>${fmtMoney(vendorAp.outstanding)}</strong></div>
+        <div><span class="person-summary-label">Bills</span><strong>${fmtMoney(vendorAp.bill_total)}</strong></div>
+        <div><span class="person-summary-label">Paid</span><strong>${fmtMoney(vendorAp.payment_total)}</strong></div>
+        <div><span class="person-summary-label">Opening</span><strong>${fmtMoney(vendorAp.opening_total || "0")}</strong></div>
+      </div>`;
+      return;
+    }
+    const totals = vendorChannelTotals(channel);
+    const word = channel === "bank" ? "Bank" : "Cash";
+    sumWrap.innerHTML = `<div class="person-summary-grid">
+      <div><span class="person-summary-label">${word} due</span><strong>${fmtMoney(totals.due)}</strong></div>
+      <div><span class="person-summary-label">${word} bills</span><strong>${fmtMoney(totals.bills)}</strong></div>
+      <div><span class="person-summary-label">${word} paid</span><strong>${fmtMoney(totals.paid)}</strong></div>
+      <div><span class="person-summary-label">Opening</span><strong>—</strong></div>
+    </div>`;
+  }
+
+  function vendorChannelTotals(channel) {
+    const billInfoByReceipt = {};
+    for (const e of vendorLedger.filter(x => x.event_type === "vendor_bill")) {
+      const rid = e.details?.receipt_id;
+      if (rid) billInfoByReceipt[rid] = e.details || {};
+    }
+    let bills = 0;
+    for (const e of vendorLedger.filter(x => x.event_type === "stock_received")) {
+      const ch = billChannels(billInfoByReceipt[e.details?.receipt_id]);
+      const part = channel === "cash" ? ch.cash : ch.bank;
+      if (part != null) bills += part;
+    }
+    let paid = 0;
+    for (const e of vendorLedger.filter(x => x.event_type === "ap_payment")) {
+      const d = e.details || {};
+      if (d.reversed) continue;
+      if (payModeBucket(d.payment_mode) !== channel) continue;
+      paid += Number(d.amount) || 0;
+    }
+    return { bills, paid, due: bills - paid };
   }
 
   function payModeBucket(mode) {
@@ -107,7 +157,7 @@ const Vendors = (() => {
     const bank = Number(d.bank_amount);
     const cash = Number(d.cash_amount);
     return {
-      bank: Number.isFinite(bank) ? bank : null,
+      bank: Number.isFinite(bank) && bank > 0 ? bank : null,
       cash: Number.isFinite(cash) && cash > 0 ? cash : null,
     };
   }
@@ -131,6 +181,7 @@ const Vendors = (() => {
     currentVendorId = id;
     vendorLedgerExpanded = null;
     vendorAp = null;
+    vendorPayModeFilter = "all";
     // legacy tab names → activity
     let tab = opts.tab || "activity";
     if (tab === "orders" || tab === "money") tab = "activity";
@@ -207,7 +258,6 @@ const Vendors = (() => {
 
   async function refreshVendorLedger(id) {
     const wrap = document.getElementById("vendor-ledger-wrap");
-    const sumWrap = document.getElementById("vendor-summary-wrap");
     try {
       const [ledgerRes, ap] = await Promise.all([
         ctx.api(`/vendors/${id}/ledger`, {}, 0),
@@ -215,18 +265,7 @@ const Vendors = (() => {
       ]);
       vendorLedger = ledgerRes.items || [];
       vendorAp = ap;
-      if (sumWrap) {
-        if (ap) {
-          sumWrap.innerHTML = `<div class="person-summary-grid">
-            <div><span class="person-summary-label">Due</span><strong>${fmtMoney(ap.outstanding)}</strong></div>
-            <div><span class="person-summary-label">Bills</span><strong>${fmtMoney(ap.bill_total)}</strong></div>
-            <div><span class="person-summary-label">Paid</span><strong>${fmtMoney(ap.payment_total)}</strong></div>
-            <div><span class="person-summary-label">Opening</span><strong>${fmtMoney(ap.opening_total || "0")}</strong></div>
-          </div>`;
-        } else {
-          sumWrap.innerHTML = "";
-        }
-      }
+      paintVendorSummary();
       renderVendorActions(id);
       if (wrap) wrap.innerHTML = renderVendorStatement(id);
     } catch (e) {
@@ -293,7 +332,14 @@ const Vendors = (() => {
       const dns = rid ? (dnsByReceipt[rid] || []) : [];
       const lines = d.lines || [];
       const channels = billChannels(bi);
-      const tags = channelTags(channels);
+      const tags = channel === "all"
+        ? channelTags(channels)
+        : (channel === "bank" && channels.bank != null
+          ? `<span class="badge badge-blue" style="font-size:10px;">Bank ${fmtMoney(channels.bank)}</span>`
+          : (channel === "cash" && channels.cash != null
+            ? `<span class="badge badge-amber" style="font-size:10px;">Cash ${fmtMoney(channels.cash)}</span>`
+            : ""));
+      const channelAmt = channel === "bank" ? channels.bank : channel === "cash" ? channels.cash : null;
       // Always lead with the receipt note number entered at receive time — the
       // vendor's bill number (once billed) is shown alongside, not instead of it.
       const title = d.order_receipt_number ? `Receipt ${ctx.esc(d.order_receipt_number)}` : `Receipt #${rid || d.placement_id || ""}`;
@@ -303,7 +349,7 @@ const Vendors = (() => {
             <div class="vled-title">${title}${bi.bill_number ? ` · Bill ${ctx.esc(bi.bill_number)}` : ""} ${tags}</div>
             <div class="vled-meta">${ctx.fmtDate(e.occurred_at)} · ${lines.length} lines
               ${dns.length ? ` · ${dns.length} debit note${dns.length === 1 ? "" : "s"}` : ""}
-              ${bi.net_payable != null ? ` · Net ${fmtMoney(bi.net_payable)}` : ""}</div>
+              ${channelAmt != null ? ` · ${fmtMoney(channelAmt)}` : (bi.net_payable != null ? ` · Net ${fmtMoney(bi.net_payable)}` : "")}</div>
           </div>
           <span class="vled-chevron">${open ? "▾" : "▸"}</span>
         </button>

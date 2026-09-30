@@ -543,7 +543,7 @@ const CustomerOrders = (() => {
     </tbody></table>
     ${canWrite ? `<div class="vo-hub-expand-actions">
       <button class="btn btn-primary" onclick="CustomerOrders.processFromHub(${customerId}, 'open')">Create Bill</button>
-      <button class="btn btn-danger" onclick="CustomerOrders.cancelCustomerOpen(${customerId})">Cancel order</button>
+      <button class="btn btn-danger" onclick="CustomerOrders.cancelCustomerOpen(${customerId})">Cancel entire order</button>
     </div>` : ""}`;
   }
 
@@ -586,8 +586,11 @@ const CustomerOrders = (() => {
       if (canWrite) more.push({ label: "Edit bill", onclick: `CustomerOrders.editLatestBill(${o.customer_id})` });
       if (canWrite) more.push({ label: "Close order", onclick: `CustomerOrders.openCloseBatch(${o.customer_id})` });
     }
-    if (canWrite && openQty > 0 && (currentBucket === "open" || currentBucket === "received")) {
-      more.push({ label: "Cancel order", onclick: `CustomerOrders.cancelCustomerOpen(${o.customer_id})`, danger: true });
+    if (canWrite && openQty > 0 && currentBucket === "open") {
+      more.push({ label: "Cancel entire order", onclick: `CustomerOrders.cancelCustomerOpen(${o.customer_id})`, danger: true });
+    }
+    if (canWrite && currentBucket === "received") {
+      more.push({ label: "Cancel entire order", onclick: `CustomerOrders.cancelEntireReceived(${o.customer_id})`, danger: true });
     }
 
     // Party name HTML
@@ -762,7 +765,7 @@ const CustomerOrders = (() => {
         ${canWrite && lines.length ? `<div class="ui-toolbar" style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">
           <button class="btn btn-primary btn-sm" onclick="CustomerOrders.processOrder()">Create Bill</button>
           <button class="btn btn-secondary btn-sm" onclick="CustomerOrders.openEditFromOpen()">Edit order</button>
-          <button class="btn btn-danger btn-sm" onclick="CustomerOrders.cancelCustomerOpen(${detailCustomerId})">Cancel order</button>
+          <button class="btn btn-danger btn-sm" onclick="CustomerOrders.cancelCustomerOpen(${detailCustomerId})">Cancel entire order</button>
         </div>` : ""}
         <div class="ord-hub-list">${lines.length ? lines.map(line => HubUI.partyCard({
           title: ctx.esc(line.our_product_id) + (line.marking ? ` <span class="badge badge-amber" style="font-size:9px;padding:1px 4px;">${ctx.esc(line.marking)}</span>` : ""),
@@ -859,7 +862,7 @@ const CustomerOrders = (() => {
         ${canWrite && placements.length ? `<div class="ui-toolbar" style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">
           <button class="btn btn-primary btn-sm" onclick="CustomerOrders.confirmOrder(${detailCustomerId})">✓ Confirm order</button>
           <button class="btn btn-secondary btn-sm" onclick="CustomerOrders.openOfflineWizard(${detailCustomerId})">Edit / add items</button>
-          <button class="btn btn-danger btn-sm" onclick="CustomerOrders.cancelCustomerOpen(${detailCustomerId})">Cancel order</button>
+          <button class="btn btn-danger btn-sm" onclick="CustomerOrders.cancelEntireReceived(${detailCustomerId})">Cancel entire order</button>
         </div>` : ""}
         <div class="ord-hub-list">${placements.length ? placements.map(p => {
         const active = (p.lines || []).filter(ln => ln.status === "active");
@@ -1206,7 +1209,7 @@ const CustomerOrders = (() => {
       const lines = (detail.open_lines || []).filter(l => Number(l.quantity_open) > 0);
       if (!lines.length) return ctx.toast("No open lines", "error");
       const hasBilled = lines.some(l => Number(l.quantity_billed) > 0);
-      promptReason(hasBilled ? "Cancel remaining" : "Cancel Order", async (reason) => {
+      promptReason(hasBilled ? "Cancel remaining" : "Cancel entire order", async (reason) => {
         ctx.showLoading?.();
         let ok = 0;
         let failed = 0;
@@ -1237,6 +1240,46 @@ const CustomerOrders = (() => {
 
   function cancelAllOpen() {
     return cancelCustomerOpen(detailCustomerId);
+  }
+
+  /** New (received) orders: one click cancels every unbilled placement, not line by line. */
+  async function cancelEntireReceived(customerId) {
+    const cid = customerId || detailCustomerId;
+    if (!cid) return ctx.toast("No customer", "error");
+    ctx.showLoading?.();
+    try {
+      const detail = await ctx.api(`/customer-orders/customer/${cid}?bucket=received`, {}, 0);
+      const placements = (detail.placements || []).filter(p =>
+        (p.lines || []).some(ln => ln.status === "active" && Number(ln.quantity) > Number(ln.quantity_billed || 0))
+      );
+      if (!placements.length) return ctx.toast("Nothing open to cancel", "error");
+      const hasBilled = placements.some(p => (p.lines || []).some(ln => Number(ln.quantity_billed) > 0));
+      promptReason(hasBilled ? "Cancel remaining on this order" : "Cancel entire order", async (reason) => {
+        ctx.showLoading?.();
+        let ok = 0;
+        let failed = 0;
+        try {
+          for (const p of placements) {
+            try {
+              await ctx.api(`/customer-orders/placements/${p.id}/cancel`, {
+                method: "POST",
+                body: JSON.stringify({ reason }),
+              });
+              ok += 1;
+            } catch (_) { failed += 1; }
+          }
+          if (failed) ctx.toast(`Cancelled ${ok}, failed ${failed}`, "error");
+          else ctx.toast(hasBilled ? "Remaining cancelled — billed kept" : "Order cancelled", "success");
+          ctx.invalidateCache?.("/customer-orders");
+          ctx.invalidateCache?.("/stock");
+          detailCustomerId = cid;
+          await openDetail(cid, hasBilled ? "received" : "cancelled");
+          loadList();
+        } catch (e) { ctx.toast(e.message, "error"); }
+        finally { ctx.hideLoading?.(); }
+      });
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
   }
 
   function closeBillLine(lineId) {
@@ -2791,7 +2834,7 @@ const CustomerOrders = (() => {
     setOfflinePlacedOn,
     setForceCredit,
     processNext, processBack, submitProcess,
-    confirmOrder, _doConfirm, cancelOpenLine, cancelPlacement, cancelCustomerOpen, cancelAllOpen, editOpenLine, editReceivedLine, deleteReceivedLine, openEditPlacement, closeBillLine, cancelBill, voidBill, voidPlacement, openBillDoc, shareBillWhatsApp,
+    confirmOrder, _doConfirm, cancelOpenLine, cancelPlacement, cancelCustomerOpen, cancelEntireReceived, cancelAllOpen, editOpenLine, editReceivedLine, deleteReceivedLine, openEditPlacement, closeBillLine, cancelBill, voidBill, voidPlacement, openBillDoc, shareBillWhatsApp,
     openOfflineWizard, closeOfflineWizard, renderOfflineWizard,
     pickOfflineCustomer, onOfflineCustomerSearch, setOfflineNotes,
     onOfflineSearchInput, onOfflineSearchKey, onOfflineQtyKey, toggleOfflineProduct, pickOfflineProduct, removeOfflineLine,

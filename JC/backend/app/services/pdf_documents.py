@@ -578,6 +578,8 @@ def render_vendor_receipt_pdf(
     vendor_gst: str | None = None,
     vendor_person: str | None = None,
     bill_number: str | None,
+    order_receipt_number: str | None = None,
+    charge_lines: List[Dict[str, Any]] | None = None,
     lines: List[Dict[str, Any]],
     image_urls: Dict[int, str | None],
     total_billed: str | None,
@@ -592,7 +594,12 @@ def render_vendor_receipt_pdf(
     buf = BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=1.5 * cm, rightMargin=1.5 * cm, topMargin=1.5 * cm, bottomMargin=1.5 * cm)
     story: list = []
-    bill_lbl = f"Bill No. {_safe(bill_number, 40)}" if bill_number else f"Receipt #{receipt_id}"
+    bits = []
+    if order_receipt_number:
+        bits.append(f"Receipt No. {_safe(order_receipt_number, 40)}")
+    if bill_number:
+        bits.append(f"Bill No. {_safe(bill_number, 40)}")
+    bill_lbl = " · ".join(bits) if bits else f"Receipt #{receipt_id}"
     _header(story, "GOODS RECEIPT", bill_lbl, f"{_ist_fmt(received_at)} · Received by {escape(_safe(received_by, 40))}")
     our = ["Received by"] + company_lines()
     vendor = ["Vendor", _safe(vendor_name, 80)]
@@ -620,6 +627,12 @@ def render_vendor_receipt_pdf(
             totals.append([f"GST ({rate}%)", f"Rs. {gst_amt:,.2f}"])
         except Exception:
             pass
+    for charge in charge_lines or []:
+        label = _safe(charge.get("label") or "Charge", 48)
+        amount = charge.get("amount")
+        if amount is None or str(amount).strip() == "":
+            continue
+        totals.append([label, f"Rs. {_safe(amount)}"])
     if total_billed:
         totals.append(["Total Bill", f"Rs. {_safe(total_billed)}"])
     dn_rows = debit_notes or []

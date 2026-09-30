@@ -10,7 +10,6 @@ const Reports = (() => {
   // that whole window (the exact class of bug app/services/biz_date.py exists to
   // prevent on the backend).
   const today = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
-  let daybookDate = today();
   let fromDate = "";
   let toDate = "";
   let datePreset = "month"; // today | week | month | all | custom
@@ -121,7 +120,6 @@ const Reports = (() => {
     chip = chipId;
     hubSearch = "";
     if (modeId === "today") {
-      daybookDate = today();
       applyDatePreset("today", false);
     }
     renderChrome();
@@ -150,7 +148,6 @@ const Reports = (() => {
     chip = (CHIPS[m] || [])[0]?.id || "";
     hubSearch = "";
     if (m === "today") {
-      daybookDate = today();
       applyDatePreset("today", false);
     } else if (datePreset === "today" && chip !== "daybook") {
       applyDatePreset("month", false);
@@ -258,15 +255,6 @@ const Reports = (() => {
   function renderDateBar() {
     const el = document.getElementById("reports-date-bar");
     if (!el) return;
-    if (chip === "daybook") {
-      el.innerHTML = `<div class="rep-filters">
-        <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.shiftDay(-1)">←</button>
-        <label class="label">Day<input type="date" class="input" id="rep-day" value="${ctx.esc(daybookDate)}" onchange="Reports.onDayChange(this.value)" /></label>
-        <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.shiftDay(1)">→</button>
-        <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.setDayToday()">Today</button>
-      </div>`;
-      return;
-    }
     // Low stock is a point-in-time on-hand-vs-threshold snapshot (GET /reports/
     // stock/low takes no date param at all) and can't be date-ranged; customers/
     // vendors/expenses ledger *lists* are lifetime aggregates with no date filter
@@ -322,9 +310,6 @@ const Reports = (() => {
     if (caret) OrdersUI.restoreSearchCaret("reports-hub-search", caret);
   }
 
-  function onDayChange(v) { daybookDate = v || today(); loadChip(); }
-  function shiftDay(delta) { daybookDate = shiftDate(daybookDate, delta); renderDateBar(); loadChip(); }
-  function setDayToday() { daybookDate = today(); renderDateBar(); loadChip(); }
   function setDatePreset(p) {
     if (p === "custom") { datePreset = "custom"; renderDateBar(); return; }
     applyDatePreset(p, true);
@@ -405,7 +390,7 @@ const Reports = (() => {
   }
 
   async function renderDaybook(body) {
-    const data = await ctx.api(`/reports/daybook?day=${encodeURIComponent(daybookDate)}`, {}, 0);
+    const data = await ctx.api(`/reports/daybook${rangeQs()}`, {}, 0);
     const t = data.totals || {};
     let rows = data.entries || [];
     rows = rows.filter(r => matchSearch(r.kind, r.party, r.label));
@@ -439,14 +424,27 @@ const Reports = (() => {
         if (r.kind === "sales" && r.ref_id) cells._onclick = `BillSeries.openBill(${Number(r.ref_id)})`;
         else if (r.kind === "purchase" && r.ref_id) cells._onclick = `Stock.openReceiptDetail(${Number(r.ref_id)})`;
         return cells;
-      }), "Quiet day", "No entries for this date. Try another day.")}`;
+      }), "Quiet day", "No entries in this range. Try another range.")}`;
+  }
+
+  function daybookShareQs() {
+    return rangeQs();
+  }
+
+  function daybookCaption() {
+    if (fromDate && toDate && fromDate !== toDate) return `Daybook ${fromDate} to ${toDate}`;
+    if (fromDate || toDate) return `Daybook ${fromDate || toDate}`;
+    return "Daybook";
   }
 
   async function shareDaybook(print) {
     try {
-      await DocShare.openPdf(`/share/daybook/pdf?day=${encodeURIComponent(daybookDate)}`, {
+      const name = fromDate && toDate && fromDate !== toDate
+        ? `daybook_${fromDate}_${toDate}.pdf`
+        : `daybook_${fromDate || toDate || "all"}.pdf`;
+      await DocShare.openPdf(`/share/daybook/pdf${daybookShareQs()}`, {
         print: !!print,
-        filename: `daybook_${daybookDate}.pdf`,
+        filename: name,
       });
     } catch (e) { ctx.toast(e.message, "error"); }
   }
@@ -456,7 +454,13 @@ const Reports = (() => {
     if (!phone) return;
     ctx.showLoading?.();
     try {
-      const res = await DocShare.whatsapp({ kind: "daybook", day: daybookDate, phone, caption: `Daybook ${daybookDate}` });
+      const res = await DocShare.whatsapp({
+        kind: "daybook",
+        from_date: fromDate || undefined,
+        to_date: toDate || undefined,
+        phone,
+        caption: daybookCaption(),
+      });
       if (res.ok) ctx.toast("Sent on WhatsApp", "success");
       else {
         ctx.toast(res.hint || "WA failed", "error");
@@ -1034,7 +1038,7 @@ const Reports = (() => {
 
   return {
     init, showHub, setMode, setChip, setLedgerKind, setAgeingSide, setHubSearch, pickQuestion,
-    setDatePreset, onDayChange, shiftDay, setDayToday, onRangeChange, onThresholdChange,
+    setDatePreset, onRangeChange, onThresholdChange,
     openLedger, openStaffLedger, openExpenseLedger, openCashLedger, backFromLedger, openDoc,
     shareDaybook, waDaybook, shareAgeing, waAgeing, exportExcel,
   };

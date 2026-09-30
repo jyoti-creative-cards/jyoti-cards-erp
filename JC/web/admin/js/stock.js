@@ -59,16 +59,22 @@ const Stock = (() => {
   }
   function reservedByPartyTable(rows) {
     if (!rows || !rows.length) return "";
-    const body = rows.map(r => `<tr>
+    const body = rows.map(r => {
+      const billId = Number(r.bill_id) || 0;
+      const click = billId
+        ? `Stock.openVoucher('customer_bill', ${billId})`
+        : `Stock.toastNoBill()`;
+      return `<tr class="clickable" onclick="${click}">
         <td>${ctx.esc(r.customer_name)}</td>
         <td>${r.unconfirmed || 0}</td>
         <td>${r.to_bill || 0}</td>
         <td>${r.billed_not_dispatched || 0}</td>
         <td><strong>${r.total_held || 0}</strong></td>
-      </tr>`).join("");
+      </tr>`;
+    }).join("");
     return `<div class="detail-section">
         <h4>Reserved by party</h4>
-        <p style="color:var(--muted);font-size:12px;margin:0 0 8px;">Who is holding this stock right now — New (not yet confirmed), To bill (confirmed, unbilled), Billed (invoiced, not yet dispatched).</p>
+        <p style="color:var(--muted);font-size:12px;margin:0 0 8px;">Who is holding this stock right now — New (not yet confirmed), To bill (confirmed, unbilled), Billed (invoiced, not yet dispatched). Click a party to open that bill.</p>
         <table class="data history-table"><thead><tr>
           <th>Party</th><th>New</th><th>To bill</th><th>Billed (not dispatched)</th><th>Total held</th>
         </tr></thead><tbody>${body}</tbody></table>
@@ -1947,7 +1953,9 @@ const Stock = (() => {
       const vid = Number(e.voucher_id) || 0;
       const click = kind && vid
         ? `Stock.openVoucher('${kind}', ${vid})`
-        : `Stock.openLedgerDetail(${e.id})`;
+        : (e.reference_type === "customer_placement"
+          ? `Stock.toastNoBill()`
+          : `Stock.openLedgerDetail(${e.id})`);
       return `<tr class="clickable" onclick="${click}">
         <td style="font-size:12px;">${when}</td>
         <td>${ctx.esc(e.party || "—")}</td>
@@ -1960,6 +1968,9 @@ const Stock = (() => {
     return `<div class="table-wrap"><table class="data history-table"><thead><tr>
       <th>Date</th><th>Party</th><th>Qty</th><th>Bill</th><th>Balance</th><th>Type</th>
     </tr></thead><tbody>${body}</tbody></table></div>`;
+  }
+  function toastNoBill() {
+    ctx.toast("No bill yet for this item and party", "error");
   }
   function openVoucher(kind, id) {
     if (!id) return;
@@ -2245,7 +2256,7 @@ const Stock = (() => {
     finally { ctx.hideLoading?.(); }
   }
   return {
-    init, load, setViewMode, render, openDetail, openLedgerDetail, openReceiptDetail, openVoucher, ledgerTableHtml,
+    init, load, setViewMode, render, openDetail, openLedgerDetail, openReceiptDetail, openVoucher, toastNoBill, ledgerTableHtml,
     openAddWizard, openReceiveForVendor, openBillForVendor, openOfflineWizard, openOfflineForVendor, closeWizard, pickMode, pickVendor, setLine, setLineAmount, setLineRate, setBillFile,
     toggleOfflineProduct, pickOfflineProduct, onOfflineSearchKey, onOfflineQtyKey, setOfflineLine, onOfflineProductSearch, onOfflineVendorSearch,
     openOfflineQtyPopup, closeOfflineQtyPopup, confirmOfflineQty, removeOfflineLine, bumpOfflineQty,

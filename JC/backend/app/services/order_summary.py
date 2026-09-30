@@ -134,6 +134,23 @@ def reserved_by_party(db: Session, catalog_product_id: int) -> list[dict]:
         c.id: c.business_name
         for c in db.query(Customer.id, Customer.business_name).filter(Customer.id.in_(result.keys())).all()
     }
+    from app.models.customer_bill import CustomerBill, CustomerBillLine
+
+    latest_bill: dict[int, int] = {}
+    bill_rows = (
+        db.query(CustomerBill.customer_id, CustomerBill.id)
+        .join(CustomerBillLine, CustomerBillLine.bill_id == CustomerBill.id)
+        .filter(
+            CustomerBill.customer_id.in_(result.keys()),
+            CustomerBillLine.catalog_product_id == catalog_product_id,
+            CustomerBill.deleted_at.is_(None),
+            CustomerBill.cancelled_at.is_(None),
+        )
+        .order_by(CustomerBill.id.asc())
+        .all()
+    )
+    for customer_id, bill_id in bill_rows:
+        latest_bill[customer_id] = bill_id
     out = []
     for customer_id, row in result.items():
         total = row["unconfirmed"] + row["to_bill"] + row["billed_not_dispatched"]
@@ -141,6 +158,7 @@ def reserved_by_party(db: Session, catalog_product_id: int) -> list[dict]:
             continue
         row["customer_name"] = names.get(customer_id, f"Customer #{customer_id}")
         row["total_held"] = total
+        row["bill_id"] = latest_bill.get(customer_id)
         out.append(row)
     out.sort(key=lambda r: -r["total_held"])
     return out

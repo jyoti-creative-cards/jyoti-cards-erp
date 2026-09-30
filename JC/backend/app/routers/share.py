@@ -93,11 +93,22 @@ def ap_statement_pdf(
 
 @router.get("/daybook/pdf")
 def daybook_pdf(
-    day: date = Query(...),
+    day: Optional[date] = Query(None),
+    from_date: Optional[date] = Query(None),
+    to_date: Optional[date] = Query(None),
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_admin),
 ):
-    return _pdf_response(render_daybook_pdf(db, day), f"daybook_{day.isoformat()}.pdf")
+    if from_date is None and to_date is None and day is not None:
+        from_date = to_date = day
+    pdf = render_daybook_pdf(db, from_date=from_date, to_date=to_date)
+    if from_date and to_date and from_date != to_date:
+        name = f"daybook_{from_date.isoformat()}_{to_date.isoformat()}.pdf"
+    elif from_date or to_date:
+        name = f"daybook_{(from_date or to_date).isoformat()}.pdf"
+    else:
+        name = "daybook.pdf"
+    return _pdf_response(pdf, name)
 
 
 @router.get("/ageing/pdf")
@@ -152,6 +163,8 @@ class WhatsAppShareIn(BaseModel):
     )
     id: Optional[int] = None
     day: Optional[date] = None
+    from_date: Optional[date] = None
+    to_date: Optional[date] = None
     side: Optional[str] = "ar"
 
 
@@ -214,11 +227,21 @@ def whatsapp_share(
         filename = f"ap_{vend.id}.pdf"
         caption = body.caption or f"Statement — {vend.business_name}"
     elif body.kind == "daybook":
-        if not body.day:
-            raise HTTPException(400, "day required")
-        pdf = render_daybook_pdf(db, body.day)
-        filename = f"daybook_{body.day.isoformat()}.pdf"
-        caption = body.caption or f"Daybook {body.day.isoformat()}"
+        from_date = body.from_date
+        to_date = body.to_date
+        if from_date is None and to_date is None and body.day is not None:
+            from_date = to_date = body.day
+        pdf = render_daybook_pdf(db, from_date=from_date, to_date=to_date)
+        if from_date and to_date and from_date != to_date:
+            filename = f"daybook_{from_date.isoformat()}_{to_date.isoformat()}.pdf"
+            caption = body.caption or f"Daybook {from_date.isoformat()} to {to_date.isoformat()}"
+        elif from_date or to_date:
+            one = from_date or to_date
+            filename = f"daybook_{one.isoformat()}.pdf"
+            caption = body.caption or f"Daybook {one.isoformat()}"
+        else:
+            filename = "daybook.pdf"
+            caption = body.caption or "Daybook"
     elif body.kind == "ageing":
         side = body.side if body.side in ("ar", "ap") else "ar"
         pdf = render_ageing_pdf(db, side)

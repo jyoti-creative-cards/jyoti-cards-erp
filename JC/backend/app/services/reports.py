@@ -20,9 +20,6 @@ from app.models.city import City
 from app.services.ap_ledger import _vendor_label, vendor_ap_totals
 from app.services.ar_ledger import _customer_label, customer_ar_totals
 from app.services.biz_date import ist_day_bounds_utc, ist_range_bounds_utc
-from app.services.document_present import present
-
-
 def _day_bounds(d: date) -> tuple[datetime, datetime]:
     """IST calendar day → UTC bounds (aligns with plain-Date columns like expense_date)."""
     return ist_day_bounds_utc(d)
@@ -116,16 +113,16 @@ def list_sales(db: Session, from_date: Optional[date] = None, to_date: Optional[
     if end:
         q = q.filter(CustomerBill.created_at <= end)
     bills = q.limit(500).all()
+    labels = _customer_labels(db, {b.customer_id for b in bills})
     out = []
     for b in bills:
-        view = present(db, "customer_bill", b)
         out.append(
             {
                 "id": b.id,
                 "doc_type": "sales_bill",
                 "doc_number": b.bill_number,
                 "party_id": b.customer_id,
-                "party_label": view.get("party_name") or f"Customer #{b.customer_id}",
+                "party_label": labels.get(b.customer_id) or f"Customer #{b.customer_id}",
                 "amount": format(b.grand_total or Decimal("0"), "f"),
                 "date": b.created_at.date().isoformat() if b.created_at else None,
                 "created_at": b.created_at.isoformat() if b.created_at else None,
@@ -156,11 +153,7 @@ def list_purchases(db: Session, from_date: Optional[date] = None, to_date: Optio
     out = []
     for e in rows:
         receipt = receipts.get(e.receipt_id) if e.receipt_id else None
-        if receipt is not None:
-            kind = "vendor_bill" if getattr(receipt, "bill_status", None) == "billed" else "vendor_receipt"
-            party_label = present(db, kind, receipt).get("party_name") or vendor_labels.get(e.vendor_id)
-        else:
-            party_label = vendor_labels.get(e.vendor_id)
+        party_label = vendor_labels.get(e.vendor_id)
         out.append(
             {
                 "id": e.receipt_id or e.id,
@@ -256,15 +249,16 @@ def daybook(db: Session, day: date) -> dict:
     start, end = _day_bounds(day)
     rows: list[dict] = []
 
-    for b in db.query(CustomerBill).filter(
+    bills = db.query(CustomerBill).filter(
         CustomerBill.created_at >= start, CustomerBill.created_at <= end, CustomerBill.deleted_at.is_(None)
-    ).all():
-        view = present(db, "customer_bill", b)
+    ).all()
+    bill_parties = _customer_labels(db, {b.customer_id for b in bills})
+    for b in bills:
         rows.append(
             {
                 "kind": "sales",
                 "label": f"Sales bill {b.bill_number}",
-                "party": view.get("party_name") or f"#{b.customer_id}",
+                "party": bill_parties.get(b.customer_id) or f"#{b.customer_id}",
                 "amount": format(b.grand_total or Decimal("0"), "f"),
                 "signed": format(b.grand_total or Decimal("0"), "f"),
                 "ref_id": b.id,
@@ -272,18 +266,15 @@ def daybook(db: Session, day: date) -> dict:
             }
         )
 
-    for e in db.query(ApLedgerEntry).filter(
+    purchase_rows = db.query(ApLedgerEntry).filter(
         ApLedgerEntry.entry_type == "bill",
         ApLedgerEntry.deleted_at.is_(None),
         ApLedgerEntry.created_at >= start,
         ApLedgerEntry.created_at <= end,
-    ).all():
-        party = _vendor_label(db, e.vendor_id)
-        if e.receipt_id:
-            receipt = db.get(StockReceipt, e.receipt_id)
-            if receipt is not None:
-                kind = "vendor_bill" if getattr(receipt, "bill_status", None) == "billed" else "vendor_receipt"
-                party = present(db, kind, receipt).get("party_name") or party
+    ).all()
+    purchase_parties = _vendor_labels(db, {e.vendor_id for e in purchase_rows})
+    for e in purchase_rows:
+        party = purchase_parties.get(e.vendor_id) or f"Vendor #{e.vendor_id}"
         rows.append(
             {
                 "kind": "purchase",

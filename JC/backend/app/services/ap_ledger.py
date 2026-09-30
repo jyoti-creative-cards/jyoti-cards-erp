@@ -10,11 +10,11 @@ from sqlalchemy.orm import Session
 from app.models.accounts_payable import ApLedgerEntry, VendorApAccount
 from app.models.debit_note import DebitNote
 from app.models.stock import StockReceipt, StockReceiptLine
+from app.models.catalog_product import CatalogProduct
 from app.models.vendor import Vendor
 from app.models.city import City
 from app.deps import AuthContext
 from app.services.cost_visibility import hide_cost
-from app.services.document_present import present
 from app.services.money import as_signed_decrease, as_signed_increase, mag
 from app.services.storage import presigned_url
 
@@ -520,6 +520,43 @@ def build_ap_ledger(db: Session, vendor_id: int, *, auth: Optional[AuthContext] 
             for dn in db.query(DebitNote).filter(DebitNote.id.in_(missing)).all():
                 notes_by_id[dn.id] = dn
 
+    product_ids = {
+        ln.catalog_product_id
+        for lines in rlines_by_receipt.values()
+        for ln in lines
+        if ln.catalog_product_id
+    }
+    product_ids.update(dn.catalog_product_id for dn in notes_by_id.values() if dn.catalog_product_id)
+    product_ids.update(
+        dn.catalog_product_id
+        for notes in notes_by_receipt.values()
+        for dn in notes
+        if dn.catalog_product_id
+    )
+    product_names = {
+        pid: name
+        for pid, name in db.query(CatalogProduct.id, CatalogProduct.our_product_id)
+        .filter(CatalogProduct.id.in_(product_ids))
+        .all()
+    } if product_ids else {}
+    vendor = db.get(Vendor, vendor_id)
+    vendor_party = vendor.business_name if vendor else f"Vendor #{vendor_id}"
+
+    def _doc_status(row) -> str:
+        if row is None:
+            return "open"
+        if getattr(row, "deleted_at", None):
+            return "voided"
+        if getattr(row, "cancelled_at", None) or getattr(row, "status", None) == "cancelled":
+            return "cancelled"
+        return "open"
+
+    def _note_display_date(dn: DebitNote):
+        receipt = receipts_by_id.get(dn.receipt_id) if dn.receipt_id else None
+        if receipt is not None and receipt.billed_at:
+            return receipt.billed_at
+        return dn.created_at
+
     def _bill_amount(receipt: StockReceipt, rlines: list) -> Decimal:
         if receipt.actual_ap_amount is not None:
             return receipt.actual_ap_amount.quantize(Decimal("0.01"))
@@ -550,21 +587,9 @@ def build_ap_ledger(db: Session, vendor_id: int, *, auth: Optional[AuthContext] 
             receipt_debit_total = debit_note_total
         details: dict = {}
         if e.receipt_id and receipt:
-            card_by_cid: dict[int, dict] = {}
-            if receipt.bill_status == "billed":
-                bill_view = present(db, "vendor_bill", receipt)
-                card_by_cid = {
-                    int(cl["catalog_product_id"]): cl
-                    for cl in (bill_view.get("lines") or [])
-                    if isinstance(cl, dict) and cl.get("catalog_product_id") is not None
-                }
             details["lines"] = [
                 {
-                    "our_product_id": (
-                        card_by_cid[ln.catalog_product_id]["our_product_id"]
-                        if ln.catalog_product_id in card_by_cid
-                        else ln.our_product_id
-                    ),
+                    "our_product_id": product_names.get(ln.catalog_product_id) or ln.our_product_id,
                     "quantity_received": ln.quantity_received,
                     "quantity_billed": ln.quantity_billed,
                     "billed_amount": format(ln.billed_amount, "f"),
@@ -577,35 +602,27 @@ def build_ap_ledger(db: Session, vendor_id: int, *, auth: Optional[AuthContext] 
             if dns:
                 details["debit_notes"] = []
                 for dn in dns:
-                    dn_view = present(db, "debit_note", dn)
-                    dn_line = (dn_view.get("lines") or [None])[0] if dn_view.get("lines") else None
                     details["debit_notes"].append(
                         {
                             "id": dn.id,
                             "note_type": dn.note_type,
                             "direction": dn.direction or infer_direction(dn.note_type, dn.quantity, dn.amount),
-                            "our_product_id": (
-                                dn_line.get("our_product_id") if isinstance(dn_line, dict) else dn.our_product_id
-                            ),
+                            "our_product_id": product_names.get(dn.catalog_product_id) or dn.our_product_id,
                             "quantity": dn.quantity,
                             "amount": format(dn.amount, "f"),
                             "payable_effect": format(debit_note_payable_effect(dn.amount, dn.note_type), "f"),
                             "notes": dn.notes,
-                            "display_date": dn_view.get("display_date"),
+                            "display_date": _note_display_date(dn),
                         }
                     )
         if e.debit_note_id:
             dn = notes_by_id.get(e.debit_note_id)
             if dn:
-                dn_view = present(db, "debit_note", dn)
-                dn_line = (dn_view.get("lines") or [None])[0] if dn_view.get("lines") else None
                 details["debit_note"] = {
                     "id": dn.id,
                     "note_type": dn.note_type,
                     "direction": dn.direction or infer_direction(dn.note_type, dn.quantity, dn.amount),
-                    "our_product_id": (
-                        dn_line.get("our_product_id") if isinstance(dn_line, dict) else dn.our_product_id
-                    ),
+                    "our_product_id": product_names.get(dn.catalog_product_id) or dn.our_product_id,
                     "quantity": dn.quantity,
                     # unit_price is the catalog buying_price at receive time — a cost hint,
                     # not the bill amount owed. Redact for AP-visibility-only staff.
@@ -613,19 +630,25 @@ def build_ap_ledger(db: Session, vendor_id: int, *, auth: Optional[AuthContext] 
                     "amount": format(dn.amount, "f"),
                     "payable_effect": format(debit_note_payable_effect(dn.amount, dn.note_type), "f"),
                     "notes": dn.notes,
-                    "display_date": dn_view.get("display_date"),
+                    "display_date": _note_display_date(dn),
                 }
         payment_party = None
-        payment_view: dict = {}
+        display_date = e.value_date or e.created_at
+        display_name = e.payment_ref or e.description
+        status = "open"
         if e.entry_type == "payment":
-            payment_view = present(db, "payment", e)
-            payment_party = payment_view.get("party_name")
+            payment_party = vendor_party
+            display_name = e.payment_ref or vendor_party or e.description
         elif e.entry_type == "bill" and receipt and receipt.bill_status == "billed":
-            payment_view = present(db, "vendor_bill", receipt)
+            display_date = receipt.billed_at or receipt.received_at or display_date
+            display_name = receipt.bill_number or f"Bill #{receipt.id}"
+            status = _doc_status(receipt)
         elif e.entry_type == "debit_note" and e.debit_note_id:
             dn = notes_by_id.get(e.debit_note_id)
             if dn:
-                payment_view = present(db, "debit_note", dn)
+                display_date = _note_display_date(dn)
+                display_name = f"Debit note #{dn.id}"
+                status = _doc_status(dn)
         out.append(
             {
                 "id": e.id,
@@ -641,9 +664,9 @@ def build_ap_ledger(db: Session, vendor_id: int, *, auth: Optional[AuthContext] 
                 "payment_comment": e.payment_comment,
                 "payment_mode": e.payment_mode,
                 "party_name": payment_party,
-                "display_date": payment_view.get("display_date") or e.value_date or e.created_at,
-                "display_name": payment_view.get("display_name") or e.payment_ref or e.description,
-                "status": payment_view.get("status") or "open",
+                "display_date": display_date,
+                "display_name": display_name,
+                "status": status,
                 "bill_number": receipt.bill_number if receipt else None,
                 "bill_amount": format(bill_amount, "f") if bill_amount is not None else None,
                 "debit_note_total": format(receipt_debit_total, "f") if receipt_debit_total is not None else None,

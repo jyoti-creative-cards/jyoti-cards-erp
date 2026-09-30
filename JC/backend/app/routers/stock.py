@@ -155,7 +155,7 @@ def list_stock(
     auth: AuthContext = Depends(require_permission("stock.read")),
 ):
     yg = (year_group or "").replace("\x00", "").strip()
-    cache_key = f"stock:products:v2:{(search or '').replace(chr(0), '')}:{yg}:{int(lite)}:cost={int(can_see_cost(auth))}"
+    cache_key = f"stock:products:v3:{(search or '').replace(chr(0), '')}:{yg}:{int(lite)}:cost={int(can_see_cost(auth))}"
     cached = response_cache.get(cache_key)
     if cached is not None:
         return cached
@@ -182,6 +182,20 @@ def list_stock(
     if yg:
         year_sql = " AND p.year_group = :year_group "
         params["year_group"] = yg
+    if lite:
+        image_select = "NULL AS image_key"
+        addon_select = "0 AS addon_count"
+        addon_join = ""
+    else:
+        image_select = "p.image_keys->>0 AS image_key"
+        addon_select = "COALESCE(ac.cnt, 0) AS addon_count"
+        addon_join = """
+            LEFT JOIN (
+              SELECT catalog_product_id, COUNT(*)::int AS cnt
+              FROM jc_catalog_addon_links
+              GROUP BY catalog_product_id
+            ) ac ON ac.catalog_product_id = p.id
+        """
 
     rows = db.execute(
         text(
@@ -199,22 +213,18 @@ def list_stock(
               p.selling_price,
               p.buying_price,
               p.unit,
-              p.image_keys,
+              {image_select},
               COALESCE(sb.quantity_on_hand, 0) AS quantity_on_hand,
               COALESCE(sb.low_stock_threshold, 5) AS low_stock_threshold,
               v.business_name AS vendor_name,
               c.name AS vendor_city,
-              COALESCE(ac.cnt, 0) AS addon_count,
+              {addon_select},
               COALESCE(alt.cnt, 0) AS alt_count
             FROM jc_catalog_products p
             LEFT JOIN jc_stock_balances sb ON sb.catalog_product_id = p.id
             LEFT JOIN jc_vendors v ON v.id = p.vendor_id
             LEFT JOIN jc_cities c ON c.id = v.city_id
-            LEFT JOIN (
-              SELECT catalog_product_id, COUNT(*)::int AS cnt
-              FROM jc_catalog_addon_links
-              GROUP BY catalog_product_id
-            ) ac ON ac.catalog_product_id = p.id
+            {addon_join}
             LEFT JOIN (
               SELECT product_id, COUNT(*)::int AS cnt
               FROM jc_catalog_alternatives
@@ -237,8 +247,8 @@ def list_stock(
         vn = r["vendor_name"]
         city_name = r["vendor_city"]
         label = f"{vn} — {city_name}" if vn and city_name else (vn or "")
-        keys = list(r["image_keys"] or [])
-        keys = [] if lite else keys[:1]
+        image_key = r["image_key"]
+        image_urls = [url] if image_key and (url := presigned_url(image_key)) else []
         out.append(
             StockProductSummary(
                 catalog_product_id=int(r["catalog_product_id"]),
@@ -263,7 +273,7 @@ def list_stock(
                 ),
                 buying_price=hide_cost(format(r["buying_price"], "f") if r["buying_price"] is not None else None, auth),
                 unit=r["unit"],
-                image_urls=presigned_urls(keys),
+                image_urls=image_urls,
                 addon_count=int(r["addon_count"] or 0),
                 alt_count=int(r["alt_count"] or 0),
             )

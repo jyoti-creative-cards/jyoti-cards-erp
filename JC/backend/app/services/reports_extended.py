@@ -25,16 +25,62 @@ from app.models.route import Route
 from app.models.staff import Staff
 from app.models.stock import StockBalance, StockLedger, StockReceipt, StockReceiptLine
 from app.models.vendor import Vendor
-from app.services.ap_ledger import _vendor_label, vendor_ap_totals
-from app.services.ar_ledger import _customer_label, customer_ar_totals
-from app.services.document_present import present
-from app.services.reports import _range_bounds, list_payments
+from app.services.ar_ledger import batch_customer_outstanding
+from app.services.reports import _customer_labels, _range_bounds, _vendor_labels, list_payments
 
 
 def _fmt(v: Decimal | int | float | None) -> str:
     if v is None:
         return "0.00"
     return format(Decimal(str(v)).quantize(Decimal("0.01")), "f")
+
+
+class _AgeEntry:
+    __slots__ = ("entry_type", "amount", "value_date", "created_at")
+
+    def __init__(self, entry_type, amount, value_date, created_at):
+        self.entry_type = entry_type
+        self.amount = amount
+        self.value_date = value_date
+        self.created_at = created_at
+
+
+class _Party:
+    __slots__ = ("id", "business_name", "person_name", "alias", "phone", "city_id")
+
+    def __init__(self, pid, business_name, person_name, alias, phone, city_id):
+        self.id = pid
+        self.business_name = business_name
+        self.person_name = person_name
+        self.alias = alias
+        self.phone = phone
+        self.city_id = city_id
+
+
+def _grouped_age_entries(db: Session, model, party_col, party_model) -> dict[int, list]:
+    """Ledger columns for active parties only. FIFO still needs each party's history."""
+    rows = (
+        db.query(party_col, model.entry_type, model.amount, model.value_date, model.created_at)
+        .join(party_model, party_model.id == party_col)
+        .filter(party_model.deleted_at.is_(None), party_model.is_active.is_(True), model.deleted_at.is_(None))
+        .order_by(party_col.asc(), model.created_at.asc(), model.id.asc())
+        .all()
+    )
+    grouped: dict[int, list] = {}
+    for pid, entry_type, amount, value_date, created_at in rows:
+        grouped.setdefault(int(pid), []).append(_AgeEntry(entry_type, amount, value_date, created_at))
+    return grouped
+
+
+def _parties(db: Session, model, party_ids: set[int]) -> dict[int, _Party]:
+    if not party_ids:
+        return {}
+    rows = (
+        db.query(model.id, model.business_name, model.person_name, model.alias, model.phone, model.city_id)
+        .filter(model.id.in_(party_ids))
+        .all()
+    )
+    return {int(r.id): _Party(r.id, r.business_name, r.person_name, r.alias, r.phone, r.city_id) for r in rows}
 
 
 def _entry_date(e) -> date:
@@ -46,18 +92,15 @@ def _entry_date(e) -> date:
     return date.today()
 
 
-def _present_line_label(view: dict, catalog_product_id: int, fallback: str | None) -> str:
-    for pl in view.get("lines") or []:
-        if int(pl.get("catalog_product_id") or 0) == int(catalog_product_id):
-            return str(pl.get("our_product_id") or fallback or "")
-    return str(fallback or "")
-
-
-def _live_product_label(db: Session, catalog_product_id: int, fallback: str | None = None) -> str:
-    prod = db.get(CatalogProduct, catalog_product_id)
-    if prod and prod.our_product_id:
-        return prod.our_product_id
-    return str(fallback or f"#{catalog_product_id}")
+def _product_labels(db: Session, product_ids: set[int]) -> dict[int, str]:
+    if not product_ids:
+        return {}
+    return {
+        pid: name
+        for pid, name in db.query(CatalogProduct.id, CatalogProduct.our_product_id)
+        .filter(CatalogProduct.id.in_(product_ids))
+        .all()
+    }
 
 
 def item_wise_sales(db: Session, from_date: Optional[date], to_date: Optional[date]) -> list[dict]:
@@ -72,13 +115,7 @@ def item_wise_sales(db: Session, from_date: Optional[date], to_date: Optional[da
     if end:
         q = q.filter(CustomerBill.created_at <= end)
     agg: dict[int, dict] = {}
-    bill_views: dict[int, dict] = {}
     for ln, bill in q.all():
-        view = bill_views.get(bill.id)
-        if view is None:
-            view = present(db, "customer_bill", bill)
-            bill_views[bill.id] = view
-        line_label = _present_line_label(view, ln.catalog_product_id, ln.our_product_id)
         row = agg.setdefault(
             ln.catalog_product_id,
             {
@@ -94,13 +131,18 @@ def item_wise_sales(db: Session, from_date: Optional[date], to_date: Optional[da
         row["value"] += Decimal(str(ln.line_total or 0))
         row["bill_count"].add(bill.id)
         row["customer_ids"].add(bill.customer_id)
-        row["lines"].append({"label": line_label, "kind": "bill", "doc_id": bill.id})
+        row["lines"].append({"label": ln.our_product_id, "kind": "bill", "doc_id": bill.id})
+    labels = _product_labels(db, set(agg))
     out = []
     for r in agg.values():
+        live = labels.get(r["catalog_product_id"]) or ""
+        for ln in r["lines"]:
+            if live:
+                ln["label"] = live
         out.append(
             {
                 "catalog_product_id": r["catalog_product_id"],
-                "label": _live_product_label(db, r["catalog_product_id"]),
+                "label": live or f"#{r['catalog_product_id']}",
                 "qty": r["qty"],
                 "value": _fmt(r["value"]),
                 "bill_count": len(r["bill_count"]),
@@ -127,7 +169,6 @@ def item_wise_purchases(db: Session, from_date: Optional[date], to_date: Optiona
     if end:
         q = q.filter(StockReceipt.created_at <= end)
     agg: dict[int, dict] = {}
-    receipt_views: dict[int, dict] = {}
     for ln, receipt in q.all():
         qty = int(ln.quantity_billed or 0)
         if qty <= 0:
@@ -135,12 +176,6 @@ def item_wise_purchases(db: Session, from_date: Optional[date], to_date: Optiona
         value = Decimal(str(ln.billed_amount or 0))
         if value == 0 and ln.buying_price is not None:
             value = Decimal(str(ln.buying_price)) * qty
-        view = receipt_views.get(receipt.id)
-        if view is None:
-            # Receipt stays live even after the vendor bill card freezes.
-            view = present(db, "vendor_receipt", receipt)
-            receipt_views[receipt.id] = view
-        line_label = _present_line_label(view, ln.catalog_product_id, ln.our_product_id)
         row = agg.setdefault(
             ln.catalog_product_id,
             {
@@ -156,13 +191,18 @@ def item_wise_purchases(db: Session, from_date: Optional[date], to_date: Optiona
         row["value"] += value
         row["receipt_count"].add(receipt.id)
         row["vendor_ids"].add(receipt.vendor_id)
-        row["lines"].append({"label": line_label, "kind": "receipt", "doc_id": receipt.id})
+        row["lines"].append({"label": ln.our_product_id, "kind": "receipt", "doc_id": receipt.id})
+    labels = _product_labels(db, set(agg))
     out = []
     for r in agg.values():
+        live = labels.get(r["catalog_product_id"]) or ""
+        for ln in r["lines"]:
+            if live:
+                ln["label"] = live
         out.append(
             {
                 "catalog_product_id": r["catalog_product_id"],
-                "label": _live_product_label(db, r["catalog_product_id"]),
+                "label": live or f"#{r['catalog_product_id']}",
                 "qty": r["qty"],
                 "value": _fmt(r["value"]),
                 "receipt_count": len(r["receipt_count"]),
@@ -189,16 +229,17 @@ def customer_wise_sales(db: Session, from_date: Optional[date], to_date: Optiona
         )
         row["bill_count"] += 1
         row["value"] += Decimal(str(b.grand_total or 0))
+    labels = _customer_labels(db, set(agg))
+    dues = batch_customer_outstanding(db, list(agg))
     out = []
     for cid, r in agg.items():
-        totals = customer_ar_totals(db, cid)
         out.append(
             {
                 "id": cid,
-                "label": _customer_label(db, cid),
+                "label": labels.get(cid) or f"Customer #{cid}",
                 "bill_count": r["bill_count"],
                 "value": _fmt(r["value"]),
-                "outstanding": _fmt(totals["outstanding"]),
+                "outstanding": _fmt(dues.get(cid, Decimal("0"))),
             }
         )
     out.sort(key=lambda x: Decimal(x["value"]), reverse=True)
@@ -220,16 +261,23 @@ def vendor_wise_purchases(db: Session, from_date: Optional[date], to_date: Optio
         )
         row["bill_count"] += 1
         row["value"] += Decimal(str(e.amount or 0))
+    labels = _vendor_labels(db, set(agg))
+    due_rows = (
+        db.query(ApLedgerEntry.vendor_id, func.sum(ApLedgerEntry.amount))
+        .filter(ApLedgerEntry.vendor_id.in_(list(agg)), ApLedgerEntry.deleted_at.is_(None))
+        .group_by(ApLedgerEntry.vendor_id)
+        .all()
+    ) if agg else []
+    dues = {vid: Decimal(str(total or 0)) for vid, total in due_rows}
     out = []
     for vid, r in agg.items():
-        totals = vendor_ap_totals(db, vid)
         out.append(
             {
                 "id": vid,
-                "label": _vendor_label(db, vid),
+                "label": labels.get(vid) or f"Vendor #{vid}",
                 "bill_count": r["bill_count"],
                 "value": _fmt(r["value"]),
-                "outstanding": _fmt(totals["outstanding"]),
+                "outstanding": _fmt(dues.get(vid, Decimal("0"))),
             }
         )
     out.sort(key=lambda x: Decimal(x["value"]), reverse=True)
@@ -284,28 +332,17 @@ def _fifo_age_buckets(
 
 
 def ageing_ar(db: Session, as_of: Optional[date] = None) -> dict:
-    """Bulk-load AR ledger once — no per-customer queries."""
+    """Two queries: ledger columns, then names for parties that have rows."""
     as_of = as_of or date.today()
-    customers = {
-        c.id: c
-        for c in db.query(Customer).filter(Customer.deleted_at.is_(None), Customer.is_active.is_(True)).all()
-    }
-    if not customers:
+    by_cid = _grouped_age_entries(db, ArLedgerEntry, ArLedgerEntry.customer_id, Customer)
+    if not by_cid:
         return {"as_of": as_of.isoformat(), "totals": {k: "0.00" for k in ("0-30", "31-60", "61-90", "90+")}, "items": []}
+    customers = _parties(db, Customer, set(by_cid))
     city_ids = {c.city_id for c in customers.values() if c.city_id}
     cities = {
         c.id: c.name
-        for c in (db.query(City).filter(City.id.in_(city_ids)).all() if city_ids else [])
+        for c in (db.query(City.id, City.name).filter(City.id.in_(city_ids)).all() if city_ids else [])
     }
-    entries = (
-        db.query(ArLedgerEntry)
-        .filter(ArLedgerEntry.customer_id.in_(list(customers.keys())), ArLedgerEntry.deleted_at.is_(None))
-        .order_by(ArLedgerEntry.customer_id.asc(), ArLedgerEntry.created_at.asc(), ArLedgerEntry.id.asc())
-        .all()
-    )
-    by_cid: dict[int, list] = {}
-    for e in entries:
-        by_cid.setdefault(e.customer_id, []).append(e)
 
     buckets = {"0-30": Decimal("0"), "31-60": Decimal("0"), "61-90": Decimal("0"), "90+": Decimal("0")}
     items = []
@@ -352,28 +389,17 @@ def ageing_ar(db: Session, as_of: Optional[date] = None) -> dict:
 
 
 def ageing_ap(db: Session, as_of: Optional[date] = None) -> dict:
-    """Bulk-load AP ledger once — no per-vendor queries."""
+    """Two queries: ledger columns, then names for parties that have rows."""
     as_of = as_of or date.today()
-    vendors = {
-        v.id: v
-        for v in db.query(Vendor).filter(Vendor.deleted_at.is_(None), Vendor.is_active.is_(True)).all()
-    }
-    if not vendors:
+    by_vid = _grouped_age_entries(db, ApLedgerEntry, ApLedgerEntry.vendor_id, Vendor)
+    if not by_vid:
         return {"as_of": as_of.isoformat(), "totals": {k: "0.00" for k in ("0-30", "31-60", "61-90", "90+")}, "items": []}
+    vendors = _parties(db, Vendor, set(by_vid))
     city_ids = {v.city_id for v in vendors.values() if v.city_id}
     cities = {
         c.id: c.name
-        for c in (db.query(City).filter(City.id.in_(city_ids)).all() if city_ids else [])
+        for c in (db.query(City.id, City.name).filter(City.id.in_(city_ids)).all() if city_ids else [])
     }
-    entries = (
-        db.query(ApLedgerEntry)
-        .filter(ApLedgerEntry.vendor_id.in_(list(vendors.keys())), ApLedgerEntry.deleted_at.is_(None))
-        .order_by(ApLedgerEntry.vendor_id.asc(), ApLedgerEntry.created_at.asc(), ApLedgerEntry.id.asc())
-        .all()
-    )
-    by_vid: dict[int, list] = {}
-    for e in entries:
-        by_vid.setdefault(e.vendor_id, []).append(e)
 
     buckets = {"0-30": Decimal("0"), "31-60": Decimal("0"), "61-90": Decimal("0"), "90+": Decimal("0")}
     items = []
@@ -609,15 +635,22 @@ def returns_register(db: Session, from_date: Optional[date], to_date: Optional[d
         q = q.filter(CustomerReturn.created_at >= start)
     if end:
         q = q.filter(CustomerReturn.created_at <= end)
+    rows = q.limit(500).all()
+    return_ids = [r.id for r in rows]
+    lines_by: dict[int, list] = {}
+    if return_ids:
+        for ln in db.query(CustomerReturnLine).filter(CustomerReturnLine.return_id.in_(return_ids)).all():
+            lines_by.setdefault(ln.return_id, []).append(ln)
+    labels = _customer_labels(db, {r.customer_id for r in rows})
     out = []
-    for r in q.limit(500).all():
-        lines = db.query(CustomerReturnLine).filter(CustomerReturnLine.return_id == r.id).all()
+    for r in rows:
+        lines = lines_by.get(r.id) or []
         out.append(
             {
                 "id": r.id,
                 "doc_number": r.return_number,
                 "date": r.created_at.date().isoformat() if r.created_at else None,
-                "party_label": _customer_label(db, r.customer_id),
+                "party_label": labels.get(r.customer_id) or f"Customer #{r.customer_id}",
                 "customer_id": r.customer_id,
                 "credit_amount": _fmt(r.credit_amount),
                 "calculated_amount": _fmt(r.calculated_amount),
@@ -635,13 +668,15 @@ def debit_note_register(db: Session, from_date: Optional[date], to_date: Optiona
         q = q.filter(DebitNote.created_at >= start)
     if end:
         q = q.filter(DebitNote.created_at <= end)
+    notes = q.limit(500).all()
+    labels = _vendor_labels(db, {d.vendor_id for d in notes})
     out = []
-    for d in q.limit(500).all():
+    for d in notes:
         out.append(
             {
                 "id": d.id,
                 "date": d.created_at.date().isoformat() if d.created_at else None,
-                "party_label": _vendor_label(db, d.vendor_id),
+                "party_label": labels.get(d.vendor_id) or f"Vendor #{d.vendor_id}",
                 "vendor_id": d.vendor_id,
                 "note_type": d.note_type,
                 "direction": d.direction,
@@ -661,15 +696,16 @@ def gst_sales_register(db: Session, from_date: Optional[date], to_date: Optional
         q = q.filter(CustomerBill.created_at >= start)
     if end:
         q = q.filter(CustomerBill.created_at <= end)
+    bills = q.limit(500).all()
+    labels = _customer_labels(db, {b.customer_id for b in bills})
     out = []
-    for b in q.limit(500).all():
-        view = present(db, "customer_bill", b)
+    for b in bills:
         out.append(
             {
                 "id": b.id,
                 "date": b.created_at.date().isoformat() if b.created_at else None,
                 "doc_number": b.bill_number,
-                "party_label": view.get("party_name") or _customer_label(db, b.customer_id),
+                "party_label": labels.get(b.customer_id) or f"Customer #{b.customer_id}",
                 "gst_enabled": bool(b.gst_enabled),
                 "gst_rate": _fmt(b.gst_rate_percent),
                 "taxable_value": _fmt(b.taxable_value),
@@ -696,14 +732,16 @@ def gst_purchase_register(db: Session, from_date: Optional[date], to_date: Optio
         q = q.filter(ApLedgerEntry.created_at >= start)
     if end:
         q = q.filter(ApLedgerEntry.created_at <= end)
+    rows = q.limit(500).all()
+    labels = _vendor_labels(db, {e.vendor_id for e in rows})
+    receipt_ids = {e.receipt_id for e in rows if e.receipt_id}
+    receipts = {
+        r.id: r for r in db.query(StockReceipt).filter(StockReceipt.id.in_(receipt_ids)).all()
+    } if receipt_ids else {}
     out = []
-    for e in q.limit(500).all():
-        receipt = db.get(StockReceipt, e.receipt_id) if e.receipt_id else None
-        if receipt is not None:
-            kind = "vendor_bill" if getattr(receipt, "bill_status", None) == "billed" else "vendor_receipt"
-            party_label = present(db, kind, receipt).get("party_name") or _vendor_label(db, e.vendor_id)
-        else:
-            party_label = _vendor_label(db, e.vendor_id)
+    for e in rows:
+        receipt = receipts.get(e.receipt_id) if e.receipt_id else None
+        party_label = labels.get(e.vendor_id) or f"Vendor #{e.vendor_id}"
         out.append(
             {
                 "id": e.receipt_id or e.id,
@@ -1041,8 +1079,9 @@ def list_ledger_routes(db: Session) -> list[dict]:
         if not city_ids:
             out.append({"id": r.id, "label": r.name, "outstanding": "0.00", "customer_count": 0})
             continue
-        customers = db.query(Customer).filter(Customer.city_id.in_(city_ids), Customer.deleted_at.is_(None), Customer.is_active.is_(True)).all()
-        due = sum((customer_ar_totals(db, c.id)["outstanding"] for c in customers), Decimal("0"))
+        customers = db.query(Customer.id).filter(Customer.city_id.in_(city_ids), Customer.deleted_at.is_(None), Customer.is_active.is_(True)).all()
+        dues = batch_customer_outstanding(db, [c.id for c in customers])
+        due = sum(dues.values(), Decimal("0"))
         out.append({"id": r.id, "label": r.name, "outstanding": _fmt(due), "customer_count": len(customers)})
     return out
 
@@ -1062,9 +1101,9 @@ def route_ledger_detail(db: Session, route_id: int) -> dict:
     )
     entries = []
     total = Decimal("0")
+    dues = batch_customer_outstanding(db, [c.id for c in customers])
     for c in customers:
-        t = customer_ar_totals(db, c.id)
-        due = t["outstanding"]
+        due = dues.get(c.id, Decimal("0"))
         total += due
         entries.append(
             {

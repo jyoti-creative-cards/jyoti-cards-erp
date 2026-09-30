@@ -14,9 +14,10 @@ from app.models.debit_note import DebitNote
 from app.models.accounts_payable import ApLedgerEntry
 from app.models.vendor_order import VendorOrder, VendorOrderLine, VendorOrderPlacement
 from app.deps import AuthContext
+from app.models.vendor import Vendor
+from app.models.customer import Customer
 from app.services.ap_ledger import debit_note_payable_effect
 from app.services.cost_visibility import hide_cost
-from app.services.document_present import present
 from app.schemas.ledger import EntityLedgerEntry, LedgerLineDetail
 from app.services.storage import presigned_url
 
@@ -44,6 +45,28 @@ def _sortable_ts(ts: datetime) -> datetime:
 
 def _line_name(live: Optional[str], stored: Optional[str]) -> str:
     return live or stored or "—"
+
+
+def _doc_status(row) -> str:
+    if row is None:
+        return "open"
+    if getattr(row, "deleted_at", None):
+        return "voided"
+    if getattr(row, "cancelled_at", None) or getattr(row, "status", None) == "cancelled":
+        return "cancelled"
+    return "open"
+
+
+def _product_maps(db: Session, product_ids: set[int]) -> tuple[dict[int, str], dict[int, Optional[str]]]:
+    ids = {int(pid) for pid in product_ids if pid}
+    if not ids:
+        return {}, {}
+    rows = (
+        db.query(CatalogProduct.id, CatalogProduct.our_product_id, CatalogProduct.vendor_product_id)
+        .filter(CatalogProduct.id.in_(ids))
+        .all()
+    )
+    return {p.id: p.our_product_id for p in rows}, {p.id: p.vendor_product_id for p in rows}
 
 
 def vendor_bill_channels(receipt: StockReceipt) -> tuple[Decimal, Decimal]:
@@ -95,13 +118,36 @@ def build_vendor_ledger(
     if placement_ids:
         for ln in db.query(VendorOrderLine).filter(VendorOrderLine.placement_id.in_(placement_ids)).all():
             plines_by[ln.placement_id].append(ln)
-    vendor_rows = (
-        db.query(CatalogProduct.id, CatalogProduct.our_product_id, CatalogProduct.vendor_product_id)
-        .filter(CatalogProduct.vendor_id == vendor_id)
+    receipts = (
+        db.query(StockReceipt)
+        .filter(StockReceipt.vendor_id == vendor_id, StockReceipt.deleted_at.is_(None))
+        .order_by(StockReceipt.received_at.desc())
         .all()
     )
-    vendor_products = {p.id: p.vendor_product_id for p in vendor_rows}
-    vendor_names = {p.id: p.our_product_id for p in vendor_rows}
+    receipt_ids = [r.id for r in receipts]
+    rlines_by: dict[int, list] = defaultdict(list)
+    if receipt_ids:
+        for ln in db.query(StockReceiptLine).filter(StockReceiptLine.receipt_id.in_(receipt_ids)).all():
+            rlines_by[ln.receipt_id].append(ln)
+
+    all_notes = (
+        db.query(DebitNote)
+        .filter(DebitNote.vendor_id == vendor_id, DebitNote.deleted_at.is_(None))
+        .order_by(DebitNote.created_at.desc())
+        .all()
+    )
+    notes_by_receipt: dict[int, list] = defaultdict(list)
+    for n in all_notes:
+        notes_by_receipt[n.receipt_id].append(n)
+    receipts_by_id = {r.id: r for r in receipts}
+    product_ids: set[int] = set()
+    for lines in list(plines_by.values()) + list(rlines_by.values()):
+        product_ids.update(ln.catalog_product_id for ln in lines if ln.catalog_product_id)
+    product_ids.update(n.catalog_product_id for n in all_notes if n.catalog_product_id)
+    vendor_names, vendor_products = _product_maps(db, product_ids)
+    vendor = db.get(Vendor, vendor_id)
+    vendor_party = vendor.business_name if vendor else f"Vendor #{vendor_id}"
+
     for placement, order in placements:
         lines = plines_by.get(placement.id) or []
         line_details = [
@@ -144,29 +190,6 @@ def build_vendor_ledger(
                 ),
             )
         )
-
-    receipts = (
-        db.query(StockReceipt)
-        .filter(StockReceipt.vendor_id == vendor_id, StockReceipt.deleted_at.is_(None))
-        .order_by(StockReceipt.received_at.desc())
-        .all()
-    )
-    receipt_ids = [r.id for r in receipts]
-    rlines_by: dict[int, list] = defaultdict(list)
-    if receipt_ids:
-        for ln in db.query(StockReceiptLine).filter(StockReceiptLine.receipt_id.in_(receipt_ids)).all():
-            rlines_by[ln.receipt_id].append(ln)
-
-    all_notes = (
-        db.query(DebitNote)
-        .filter(DebitNote.vendor_id == vendor_id, DebitNote.deleted_at.is_(None))
-        .order_by(DebitNote.created_at.desc())
-        .all()
-    )
-    notes_by_receipt: dict[int, list] = defaultdict(list)
-    for n in all_notes:
-        notes_by_receipt[n.receipt_id].append(n)
-    receipts_by_id = {r.id: r for r in receipts}
 
     def _receipt_bill_amount(receipt: StockReceipt, rlines: list) -> Decimal:
         if receipt.actual_ap_amount is not None:
@@ -211,29 +234,15 @@ def build_vendor_ledger(
             ),
         ))
         if receipt.bill_status == "billed":
-            view = present(db, "vendor_bill", receipt)
-            if view.get("status") == "voided":
+            if _doc_status(receipt) == "voided":
                 continue
             bill_amt = _receipt_bill_amount(receipt, rlines)
             dn_total = _receipt_debit_note_total(receipt.id)
             bank_amt, cash_amt = vendor_bill_channels(receipt)
-            card_by_cid = {
-                int(cl["catalog_product_id"]): cl
-                for cl in (view.get("lines") or [])
-                if isinstance(cl, dict) and cl.get("catalog_product_id") is not None
-            }
             line_details = [
                 LedgerLineDetail(
-                    our_product_id=(
-                        card_by_cid[ln.catalog_product_id]["our_product_id"]
-                        if ln.catalog_product_id in card_by_cid
-                        else ln.our_product_id
-                    ),
-                    vendor_product_id=(
-                        card_by_cid[ln.catalog_product_id].get("vendor_product_id")
-                        if ln.catalog_product_id in card_by_cid
-                        else vendor_products.get(ln.catalog_product_id)
-                    ),
+                    our_product_id=_line_name(vendor_names.get(ln.catalog_product_id), ln.our_product_id),
+                    vendor_product_id=vendor_products.get(ln.catalog_product_id),
                     quantity_received=ln.quantity_received,
                     quantity_billed=ln.quantity_billed,
                     billed_amount=_fmt_amount(ln.billed_amount),
@@ -241,9 +250,9 @@ def build_vendor_ledger(
                 )
                 for ln in rlines
             ]
-            bill_number = view.get("bill_number") or receipt.bill_number
+            bill_number = receipt.bill_number
             occurred = _occurred_at_from_display(
-                view.get("display_date"), receipt.billed_at or receipt.received_at
+                receipt.billed_at or receipt.received_at, receipt.billed_at or receipt.received_at
             )
             entries.append((
                 occurred,
@@ -267,24 +276,20 @@ def build_vendor_ledger(
 
     for note in all_notes:
         receipt = receipts_by_id.get(note.receipt_id)
-        view = present(db, "debit_note", note)
-        if view.get("status") == "voided":
+        if _doc_status(note) == "voided":
             continue
-        card_line = (view.get("lines") or [None])[0] if view.get("lines") else None
-        our_product_id = (
-            card_line.get("our_product_id") if isinstance(card_line, dict) else note.our_product_id
+        our_product_id = _line_name(
+            vendor_names.get(note.catalog_product_id) if note.catalog_product_id else None,
+            note.our_product_id,
         )
-        vendor_product_id = (
-            card_line.get("vendor_product_id")
-            if isinstance(card_line, dict)
-            else (vendor_products.get(note.catalog_product_id) if note.catalog_product_id else None)
-        )
+        vendor_product_id = vendor_products.get(note.catalog_product_id) if note.catalog_product_id else None
         summary = (
             f"{our_product_id} × {note.quantity} = ₹{note.amount}"
             if note.note_type == "item"
             else f"Value debit ₹{note.amount}"
         )
-        occurred = _occurred_at_from_display(view.get("display_date"), note.created_at)
+        display_date = receipt.billed_at if receipt is not None and receipt.billed_at else note.created_at
+        occurred = _occurred_at_from_display(display_date, note.created_at)
         entries.append(
             (
                 occurred,
@@ -305,7 +310,7 @@ def build_vendor_ledger(
                         "quantity": note.quantity,
                         "amount": format(note.amount, "f"),
                         "notes": note.notes,
-                        "party_name": view.get("party_name"),
+                        "party_name": vendor_party,
                     },
                 ),
             )
@@ -334,10 +339,9 @@ def build_vendor_ledger(
         )
         reversed_ap_ids = {r[0] for r in rev_rows if r[0]}
     for ap in ap_entries:
-        view = present(db, "payment", ap)
-        if view.get("status") == "voided":
+        if _doc_status(ap) == "voided":
             continue
-        occurred = _occurred_at_from_display(view.get("display_date"), ap.created_at)
+        occurred = _occurred_at_from_display(ap.value_date or ap.created_at, ap.created_at)
         entries.append(
             (
                 occurred,
@@ -356,7 +360,7 @@ def build_vendor_ledger(
                         "comment": ap.payment_comment,
                         "payment_mode": ap.payment_mode,
                         "reversed": ap.id in reversed_ap_ids,
-                        "party_name": view.get("party_name"),
+                        "party_name": vendor_party,
                     },
                 ),
             )
@@ -406,10 +410,17 @@ def build_customer_ledger(db: Session, customer_id: int, *, show_actor: bool = T
     if placement_ids:
         for ln in db.query(CustomerOrderLine).filter(CustomerOrderLine.placement_id.in_(placement_ids)).all():
             olines_by[ln.placement_id].append(ln)
+    order_ids = {
+        ln.catalog_product_id
+        for lines in olines_by.values()
+        for ln in lines
+        if ln.catalog_product_id
+    }
+    order_names, _order_vendor_codes = _product_maps(db, order_ids)
+    customer = db.get(Customer, customer_id)
+    customer_party = customer.business_name if customer else f"Customer #{customer_id}"
     for placement, order in placements:
         lines = olines_by.get(placement.id) or []
-        from app.services.document_present import live_product_names
-        order_names = live_product_names(db, [ln.catalog_product_id for ln in lines if ln.catalog_product_id])
 
         def _order_line_name(ln) -> str:
             cid = ln.catalog_product_id
@@ -471,23 +482,22 @@ def build_customer_ledger(db: Session, customer_id: int, *, show_actor: bool = T
     if bill_ids:
         for ln in db.query(CustomerBillLine).filter(CustomerBillLine.bill_id.in_(bill_ids)).all():
             blines_by[ln.bill_id].append(ln)
+    bill_names, _bill_vendor_codes = _product_maps(
+        db,
+        {ln.catalog_product_id for lines in blines_by.values() for ln in lines if ln.catalog_product_id},
+    )
     for bill in bills:
-        view = present(db, "customer_bill", bill)
-        if view.get("status") == "voided":
+        if _doc_status(bill) == "voided":
             continue
         blines = blines_by.get(bill.id) or []
-        card_by_cid = {
-            int(cl["catalog_product_id"]): cl
-            for cl in (view.get("lines") or [])
-            if isinstance(cl, dict) and cl.get("catalog_product_id") is not None
-        }
+
+        def _bill_line_name(ln) -> str:
+            live = bill_names.get(ln.catalog_product_id) if ln.catalog_product_id else None
+            return _line_name(live, ln.our_product_id)
+
         line_details = [
             LedgerLineDetail(
-                our_product_id=(
-                    card_by_cid[ln.catalog_product_id]["our_product_id"]
-                    if ln.catalog_product_id in card_by_cid
-                    else ln.our_product_id
-                ),
+                our_product_id=_bill_line_name(ln),
                 quantity=ln.quantity_shipped,
                 quantity_billed=ln.quantity_shipped,
                 billed_amount=_fmt_amount(ln.line_total),
@@ -498,19 +508,16 @@ def build_customer_ledger(db: Session, customer_id: int, *, show_actor: bool = T
             for ln in blines
         ]
         summary = (
-            ", ".join(
-                f"{(card_by_cid[ln.catalog_product_id]['our_product_id'] if ln.catalog_product_id in card_by_cid else ln.our_product_id)} × {ln.quantity_shipped}"
-                for ln in blines[:8]
-            )
+            ", ".join(f"{_bill_line_name(ln)} × {ln.quantity_shipped}" for ln in blines[:8])
             or "—"
         )
-        bill_number = view.get("bill_number") or bill.bill_number
+        bill_number = bill.bill_number
         title = (
             f"Cancelled bill {bill_number}"
-            if view.get("status") == "cancelled"
+            if _doc_status(bill) == "cancelled"
             else f"Bill {bill_number}"
         )
-        occurred = _occurred_at_from_display(view.get("display_date"), bill.created_at)
+        occurred = _occurred_at_from_display(bill.bill_date, bill.created_at)
         entries.append(
             (
                 occurred,
@@ -545,25 +552,25 @@ def build_customer_ledger(db: Session, customer_id: int, *, show_actor: bool = T
     if return_ids:
         for ln in db.query(CustomerReturnLine).filter(CustomerReturnLine.return_id.in_(return_ids)).all():
             rlines_by[ln.return_id].append(ln)
+    return_names, _return_vendor_codes = _product_maps(
+        db,
+        {ln.catalog_product_id for lines in rlines_by.values() for ln in lines if ln.catalog_product_id},
+    )
     for ret in returns:
-        view = present(db, "customer_return", ret)
-        if view.get("status") == "voided":
+        if _doc_status(ret) == "voided":
             continue
         rlines = rlines_by.get(ret.id) or []
-        card_by_cid = {
-            int(cl["catalog_product_id"]): cl
-            for cl in (view.get("lines") or [])
-            if isinstance(cl, dict) and cl.get("catalog_product_id") is not None
-        }
+
+        def _return_line_name(ln) -> str:
+            live = return_names.get(ln.catalog_product_id) if ln.catalog_product_id else None
+            return _line_name(live, ln.our_product_id)
+
         summary = (
-            ", ".join(
-                f"{(card_by_cid[ln.catalog_product_id]['our_product_id'] if ln.catalog_product_id in card_by_cid else ln.our_product_id)} × {ln.quantity_returned}"
-                for ln in rlines[:8]
-            )
+            ", ".join(f"{_return_line_name(ln)} × {ln.quantity_returned}" for ln in rlines[:8])
             or "—"
         )
-        return_number = view.get("return_number") or ret.return_number
-        occurred = _occurred_at_from_display(view.get("display_date"), ret.created_at)
+        return_number = ret.return_number
+        occurred = _occurred_at_from_display(ret.created_at, ret.created_at)
         entries.append(
             (
                 occurred,
@@ -583,11 +590,7 @@ def build_customer_ledger(db: Session, customer_id: int, *, show_actor: bool = T
                         "notes": ret.notes,
                         "lines": [
                             {
-                                "our_product_id": (
-                                    card_by_cid[ln.catalog_product_id]["our_product_id"]
-                                    if ln.catalog_product_id in card_by_cid
-                                    else ln.our_product_id
-                                ),
+                                "our_product_id": _return_line_name(ln),
                                 "quantity": ln.quantity_returned,
                                 "billed_amount": format(ln.line_calculated, "f"),
                             }
@@ -640,10 +643,9 @@ def build_customer_ledger(db: Session, customer_id: int, *, show_actor: bool = T
                 )
             )
         else:
-            view = present(db, "payment", ar)
-            if view.get("status") == "voided":
+            if _doc_status(ar) == "voided":
                 continue
-            occurred = _occurred_at_from_display(view.get("display_date"), ar.created_at)
+            occurred = _occurred_at_from_display(ar.value_date or ar.created_at, ar.created_at)
             entries.append(
                 (
                     occurred,
@@ -661,7 +663,7 @@ def build_customer_ledger(db: Session, customer_id: int, *, show_actor: bool = T
                             "comment": ar.payment_comment,
                             "reversed": ar.id in reversed_ar_ids,
                             "customer_id": customer_id,
-                            "party_name": view.get("party_name"),
+                            "party_name": customer_party,
                         },
                     ),
                 )

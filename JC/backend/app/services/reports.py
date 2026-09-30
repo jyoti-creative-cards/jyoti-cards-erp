@@ -17,8 +17,6 @@ from app.models.stock import StockBalance, StockLedger, StockReceipt
 from app.models.catalog_product import CatalogProduct
 from app.models.vendor import Vendor
 from app.models.city import City
-from app.services.ap_ledger import _vendor_label, vendor_ap_totals
-from app.services.ar_ledger import _customer_label, customer_ar_totals
 from app.services.biz_date import ist_day_bounds_utc, ist_range_bounds_utc
 def _day_bounds(d: date) -> tuple[datetime, datetime]:
     """IST calendar day → UTC bounds (aligns with plain-Date columns like expense_date)."""
@@ -287,16 +285,18 @@ def daybook(db: Session, day: date) -> dict:
             }
         )
 
-    for e in db.query(ArLedgerEntry).filter(
+    ar_pays = db.query(ArLedgerEntry).filter(
         ArLedgerEntry.entry_type == "payment",
         ArLedgerEntry.deleted_at.is_(None),
         _payment_on_ist_day(ArLedgerEntry, day),
-    ).all():
+    ).all()
+    ar_pay_labels = _customer_labels(db, {e.customer_id for e in ar_pays})
+    for e in ar_pays:
         rows.append(
             {
                 "kind": "payment_in",
                 "label": e.description,
-                "party": _customer_label(db, e.customer_id),
+                "party": ar_pay_labels.get(e.customer_id) or f"Customer #{e.customer_id}",
                 "amount": format(abs(e.amount), "f"),
                 "signed": format(e.amount, "f"),
                 "ref_id": e.id,
@@ -304,16 +304,18 @@ def daybook(db: Session, day: date) -> dict:
             }
         )
 
-    for e in db.query(ApLedgerEntry).filter(
+    ap_pays = db.query(ApLedgerEntry).filter(
         ApLedgerEntry.entry_type == "payment",
         ApLedgerEntry.deleted_at.is_(None),
         _payment_on_ist_day(ApLedgerEntry, day),
-    ).all():
+    ).all()
+    ap_pay_labels = _vendor_labels(db, {e.vendor_id for e in ap_pays})
+    for e in ap_pays:
         rows.append(
             {
                 "kind": "payment_out",
                 "label": e.description,
-                "party": _vendor_label(db, e.vendor_id),
+                "party": ap_pay_labels.get(e.vendor_id) or f"Vendor #{e.vendor_id}",
                 "amount": format(abs(e.amount), "f"),
                 "signed": format(e.amount, "f"),
                 "ref_id": e.id,
@@ -321,17 +323,19 @@ def daybook(db: Session, day: date) -> dict:
             }
         )
 
-    for e in db.query(ArLedgerEntry).filter(
+    ar_other = db.query(ArLedgerEntry).filter(
         ArLedgerEntry.entry_type.in_(("opening_balance", "credit_note")),
         ArLedgerEntry.deleted_at.is_(None),
         ArLedgerEntry.created_at >= start,
         ArLedgerEntry.created_at <= end,
-    ).all():
+    ).all()
+    ar_other_labels = _customer_labels(db, {e.customer_id for e in ar_other})
+    for e in ar_other:
         rows.append(
             {
                 "kind": e.entry_type,
                 "label": e.description,
-                "party": _customer_label(db, e.customer_id),
+                "party": ar_other_labels.get(e.customer_id) or f"Customer #{e.customer_id}",
                 "amount": format(abs(e.amount), "f"),
                 "signed": format(e.amount, "f"),
                 "ref_id": e.id,
@@ -339,17 +343,19 @@ def daybook(db: Session, day: date) -> dict:
             }
         )
 
-    for e in db.query(ApLedgerEntry).filter(
+    ap_other = db.query(ApLedgerEntry).filter(
         ApLedgerEntry.entry_type.in_(("opening_balance", "debit_note")),
         ApLedgerEntry.deleted_at.is_(None),
         ApLedgerEntry.created_at >= start,
         ApLedgerEntry.created_at <= end,
-    ).all():
+    ).all()
+    ap_other_labels = _vendor_labels(db, {e.vendor_id for e in ap_other})
+    for e in ap_other:
         rows.append(
             {
                 "kind": e.entry_type,
                 "label": e.description,
-                "party": _vendor_label(db, e.vendor_id),
+                "party": ap_other_labels.get(e.vendor_id) or f"Vendor #{e.vendor_id}",
                 "amount": format(abs(e.amount), "f"),
                 "signed": format(e.amount, "f"),
                 "ref_id": e.id,

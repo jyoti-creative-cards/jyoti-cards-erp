@@ -10,8 +10,17 @@ from app.models.accounts_receivable import ArLedgerEntry, CustomerArAccount
 from app.models.customer import Customer
 from app.models.customer_bill import CustomerBill
 from app.models.city import City
-from app.services.document_present import present
 from app.services.money import as_signed_decrease, as_signed_increase, mag
+
+
+def _doc_status(row) -> str:
+    if row is None:
+        return "open"
+    if getattr(row, "deleted_at", None):
+        return "voided"
+    if getattr(row, "cancelled_at", None) or getattr(row, "status", None) == "cancelled":
+        return "cancelled"
+    return "open"
 
 
 def _customer_label(db: Session, customer_id: int) -> str:
@@ -295,20 +304,30 @@ def build_ar_ledger(db: Session, customer_id: int) -> list[dict]:
         .order_by(ArLedgerEntry.created_at.asc(), ArLedgerEntry.id.asc())
         .all()
     )
+    customer = db.get(Customer, customer_id)
+    party = customer.business_name if customer else f"Customer #{customer_id}"
+    bill_ids = {e.bill_id for e in entries if e.entry_type == "bill" and e.bill_id}
+    bills = {
+        b.id: b for b in db.query(CustomerBill).filter(CustomerBill.id.in_(bill_ids)).all()
+    } if bill_ids else {}
     running = Decimal("0")
     out: list[dict] = []
     for e in entries:
         signed = Decimal(str(e.amount)).quantize(Decimal("0.01"))
         running = (running + signed).quantize(Decimal("0.01"))
         party_name = None
-        view: dict = {}
+        display_date = e.value_date or e.created_at
+        display_name = e.payment_ref or e.description
+        status = "open"
         if e.entry_type == "payment":
-            view = present(db, "payment", e)
-            party_name = view.get("party_name")
+            party_name = party
+            display_name = e.payment_ref or party or e.description
         elif e.entry_type == "bill" and e.bill_id:
-            bill = db.get(CustomerBill, e.bill_id)
+            bill = bills.get(e.bill_id)
             if bill is not None:
-                view = present(db, "customer_bill", bill)
+                display_date = bill.bill_date or display_date
+                display_name = f"Bill {bill.bill_number}" if bill.bill_number else f"Bill #{bill.id}"
+                status = _doc_status(bill)
         out.append(
             {
                 "id": e.id,
@@ -322,9 +341,9 @@ def build_ar_ledger(db: Session, customer_id: int) -> list[dict]:
                 "payment_mode": getattr(e, "payment_mode", None),
                 "payment_comment": e.payment_comment,
                 "party_name": party_name,
-                "display_date": view.get("display_date") or e.value_date or e.created_at,
-                "display_name": view.get("display_name") or e.payment_ref or e.description,
-                "status": view.get("status") or "open",
+                "display_date": display_date,
+                "display_name": display_name,
+                "status": status,
                 "description": e.description,
                 "value_date": e.value_date.isoformat() if e.value_date else None,
                 "reverses_entry_id": e.reverses_entry_id,

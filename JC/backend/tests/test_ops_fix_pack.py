@@ -127,13 +127,28 @@ def test_ap_record_payment_over_due_ok(db):
     assert vendor_ap_totals(db, v.id)["outstanding"] == Decimal("-50.00")
 
 
-def test_ar_settle_zero_outstanding_still_400(db):
+def test_ar_settle_zero_outstanding_becomes_credit(db):
     c = _customer(db)
-    body = ArSettlementIn(amount=Decimal("10.00"), payment_ref="CASH")
-    with pytest.raises(HTTPException) as ei:
-        settle_customer_ar(c.id, body, db, AUTH)
-    assert ei.value.status_code == 400
-    assert "no outstanding" in str(ei.value.detail).lower()
+    body = ArSettlementIn(amount=Decimal("100.00"), payment_ref="CASH")
+    settle_customer_ar(c.id, body, db, AUTH)
+    assert customer_ar_totals(db, c.id)["outstanding"] == Decimal("-100.00")
+
+
+def test_ar_record_payment_zero_outstanding_becomes_credit(db):
+    c = _customer(db)
+    body = ArSettlementIn(amount=Decimal("100.00"), payment_ref="CASH")
+    out = record_customer_payment(c.id, body, db, AUTH)
+    assert out["ok"] is True
+    assert customer_ar_totals(db, c.id)["outstanding"] == Decimal("-100.00")
+
+
+def test_ar_record_payment_over_due_becomes_credit(db):
+    c = _customer(db)
+    _ar_due(db, c.id, Decimal("100.00"))
+    body = ArSettlementIn(amount=Decimal("200.00"), payment_ref="CASH")
+    out = record_customer_payment(c.id, body, db, AUTH)
+    assert out["ok"] is True
+    assert customer_ar_totals(db, c.id)["outstanding"] == Decimal("-100.00")
 
 
 def test_ap_settle_zero_outstanding_still_400(db):

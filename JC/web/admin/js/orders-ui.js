@@ -25,11 +25,12 @@ const OrdersUI = (() => {
     const city = String(party.city_name || party.city || "").toLowerCase();
     const person = `${party.person_name || ""} ${party.alias || ""}`.toLowerCase();
     const phone = `${party.phone || ""} ${party.secondary_phone || ""}`.toLowerCase();
-    const address = String(party.address || "").toLowerCase();
     const label = String(party.customer_label || party.vendor_label || party.customer_name || "").toLowerCase();
     const partyNum = party.party_number ?? party.vendor_number;
     const partyNumStr = partyNum != null ? String(partyNum) : "";
-    const textHay = [biz, city, person, phone, address, label].join(" ");
+    // Address is left out on purpose. Shared landmarks ("shop", a market,
+    // a road name) were matching parties the typed name had nothing to do with.
+    const textHay = [biz, city, person, phone, label].join(" ");
     if (!tokens.length) return [0, 0, 0, biz];
 
     const tokenMatches = (t) => /^\d+$/.test(t) ? partyNumStr === t : textHay.includes(t);

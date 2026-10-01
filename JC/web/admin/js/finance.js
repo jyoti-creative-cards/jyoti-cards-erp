@@ -398,7 +398,8 @@ const Finance = (() => {
       <label class="label">Collection date</label>
       <input type="date" class="input" id="quick-pay-date" value="${ctx.esc(localToday())}" required style="margin-bottom:12px;" />
       <label class="label">Amount (₹)</label>
-      <input type="number" step="0.01" class="input" id="quick-pay-amount" placeholder="Enter amount" style="margin-bottom:12px;" />
+      <input type="number" step="0.01" class="input" id="quick-pay-amount" placeholder="Enter amount" style="margin-bottom:8px;" />
+      <p style="font-size:12px;color:var(--muted);margin:0 0 12px;">More than they owe, or a payment when nothing is due, is saved as credit.</p>
       <label class="label">Payment reference (optional)</label>
       <input class="input" id="quick-pay-ref" style="margin-bottom:12px;" placeholder="UTR, cheque #…" />
       <label class="label">Comment (optional)</label>
@@ -669,6 +670,19 @@ const Finance = (() => {
   }
 
   function dueRow({ name, amount, openFn, settleFn, cta, settled = false }) {
+    const n = Number(amount) || 0;
+    if (n < 0) {
+      return HubUI.partyCard({
+        title: name,
+        meta: `<strong>Credit ${fmtPrice(Math.abs(n))}</strong>`,
+        pillHtml: HubUI.pill("Credit", "ok"),
+        primaryLabel: cta || "Collect",
+        primaryOnclick: settleFn,
+        moreItems: [{ label: "Open", onclick: openFn }],
+        rowOnclick: openFn,
+        canWrite: true,
+      });
+    }
     if (settled) {
       return HubUI.partyCard({
         title: name,
@@ -882,7 +896,7 @@ const Finance = (() => {
         ${ctx.reviewRow("Receipt no.", receipt || "—")}
         ${ctx.reviewRow("Comment", comment || "—")}
         ${ctx.reviewRow("Cash / Bank", mode || "—")}
-        ${ctx.reviewRow("Balance after", fmtPrice(balanceAfter))}
+        ${ctx.reviewRow(Number(balanceAfter) < 0 ? "Credit after" : "Balance after", Number(balanceAfter) < 0 ? fmtPrice(Math.abs(balanceAfter)) : fmtPrice(balanceAfter))}
       </div>`,
       `<button class="btn btn-primary" style="flex:1;" onclick="App.closeDetail();${reopenFn}">Open party</button>
        <button class="btn btn-secondary" style="flex:1;" onclick="App.closeDetail();App.showView('money');Finance.showHub()">Done</button>`,
@@ -908,8 +922,9 @@ const Finance = (() => {
     refreshChipCounts();
     renderHubChrome();
     let list = rankParties(vendors, "vendor_label");
-    if (!showSettled) list = list.filter(v => Number(v.outstanding) > 0);
+    if (!showSettled && !hubSearch.trim()) list = list.filter(v => Number(v.outstanding) > 0);
     const dueVendors = vendors.filter(v => Number(v.outstanding) > 0);
+    const barVendors = hubSearch.trim() ? list.filter(v => Number(v.outstanding) > 0) : dueVendors;
     const totalOut = dueVendors.reduce((s, v) => s + (Number(v.outstanding) || 0), 0);
     if (sum) {
       sum.innerHTML = `
@@ -925,7 +940,7 @@ const Finance = (() => {
               Show clear
             </label>
           </div>
-          ${dueVendors.length ? hBarList(dueVendors.slice(0, 5), "vendor_label", "outstanding") : ""}
+          ${barVendors.length ? hBarList(barVendors.slice(0, 5), "vendor_label", "outstanding") : ""}
         </div>`;
     }
     if (!list.length) {
@@ -1363,8 +1378,9 @@ const Finance = (() => {
     refreshChipCounts();
     renderHubChrome();
     let list = rankParties(customers, "customer_label");
-    if (!showSettled) list = list.filter(c => Number(c.outstanding) > 0);
+    if (!showSettled && !hubSearch.trim()) list = list.filter(c => Number(c.outstanding) > 0);
     const dueCustomers = customers.filter(c => Number(c.outstanding) > 0);
+    const barCustomers = hubSearch.trim() ? list.filter(c => Number(c.outstanding) > 0) : dueCustomers;
     const totalOut = dueCustomers.reduce((s, c) => s + (Number(c.outstanding) || 0), 0);
     if (sum) {
       sum.innerHTML = `
@@ -1380,7 +1396,7 @@ const Finance = (() => {
               Show clear
             </label>
           </div>
-          ${dueCustomers.length ? hBarList(dueCustomers.slice(0, 5), "customer_label", "outstanding") : ""}
+          ${barCustomers.length ? hBarList(barCustomers.slice(0, 5), "customer_label", "outstanding") : ""}
         </div>`;
     }
     if (!list.length) {
@@ -1432,12 +1448,17 @@ const Finance = (() => {
     const body = document.getElementById("finance-ar-body");
     if (!arDetail || !body) return;
     const outstanding = Number(arDetail.outstanding) || 0;
+    const dueLine = outstanding > 0
+      ? `${fmtPrice(outstanding)} due`
+      : outstanding < 0
+        ? `Credit ${fmtPrice(Math.abs(outstanding))}`
+        : "Clear";
     if (hero) {
       hero.innerHTML = HubUI.pageHero({
         title: arDetail.customer_label,
-        sub: `Collect · ${outstanding > 0 ? `${fmtPrice(outstanding)} due` : "Clear"}`,
+        sub: `Collect · ${dueLine}`,
         actionsHtml: `
-            ${outstanding > 0 && (ctx.isAdmin?.() || ctx.can?.("ar.write")) ? `<button class="btn btn-primary" onclick="Finance.openArSettle()">Collect</button>` : ""}
+            ${(ctx.isAdmin?.() || ctx.can?.("ar.write")) ? `<button class="btn btn-primary" onclick="Finance.openArSettle()">Collect</button>` : ""}
             <button class="btn btn-secondary" onclick="Finance.shareArStatement()">Print / PDF / WA</button>
             ${ctx.isAdmin?.() ? `<button class="btn btn-secondary" onclick="Finance.setArOpeningBalance()">Set opening</button>` : ""}
             <button class="btn btn-secondary" onclick="App.openCustomerDetail(${currentCustomer})">Open customer</button>`,
@@ -1726,7 +1747,7 @@ const Finance = (() => {
     document.getElementById("ar-settle-body").innerHTML = `
       <div class="review-block" style="margin-bottom:16px;">
         ${ctx.reviewRow("Customer", arDetail.customer_label)}
-        ${ctx.reviewRow("Due", fmtPrice(outstanding))}
+        ${ctx.reviewRow(outstanding < 0 ? "Credit" : "Due", outstanding < 0 ? fmtPrice(Math.abs(outstanding)) : fmtPrice(outstanding))}
       </div>
       ${modeOpts}
       <label class="label">Collection date</label>
@@ -1749,7 +1770,13 @@ const Finance = (() => {
     const due = Number(arDetail?.outstanding) || 0;
     const amount = parseFloat(document.getElementById("ar-settle-amount")?.value || "0");
     const hint = document.getElementById("ar-settle-over-hint");
-    if (hint) hint.classList.toggle("hidden", !(due > 0 && amount > due));
+    if (!hint) return;
+    const createsCredit = amount > 0 && (due <= 0 || amount > due);
+    hint.classList.toggle("hidden", !createsCredit);
+    if (!createsCredit) return;
+    hint.textContent = due > 0
+      ? "Extra will sit as credit on this customer."
+      : "Nothing is due — this amount will sit as credit.";
   }
 
   function closeArSettle() { document.getElementById("ar-settle-modal")?.classList.add("hidden"); }

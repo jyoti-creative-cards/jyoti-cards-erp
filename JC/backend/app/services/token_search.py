@@ -12,6 +12,12 @@ def search_tokens(q: str | None) -> list[str]:
     return [t for t in str(q).strip().lower().split() if t]
 
 
+def _contains_pattern(token: str) -> str:
+    """LIKE pattern with % and _ treated as literal characters."""
+    escaped = token.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
 def token_match(
     q: str | None, columns: Iterable, *, exact_int_columns: Iterable = (),
 ) -> ColumnElement | None:
@@ -20,6 +26,9 @@ def token_match(
     `exact_int_columns` (e.g. party_number / vendor_number) use exact equality for
     purely-numeric tokens instead of substring LIKE — searching "1" should not also
     surface "11" / "111" against a party's unique # field.
+
+    Returns None when there is nothing to match. Callers must not treat that as
+    "match every row".
     """
     tokens = search_tokens(q)
     if not tokens:
@@ -30,11 +39,12 @@ def token_match(
         return None
     parts = []
     for tok in tokens:
-        pat = f"%{tok}%"
-        ors = [func.lower(c).like(pat) for c in cols]
+        ors = [func.lower(c).like(_contains_pattern(tok), escape="\\") for c in cols]
         if tok.isdigit():
             for c in exact_cols:
                 ors.append(c == int(tok))
+        if not ors:
+            return None
         parts.append(or_(*ors))
     return and_(*parts) if len(parts) > 1 else parts[0]
 

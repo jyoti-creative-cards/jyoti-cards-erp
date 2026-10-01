@@ -255,15 +255,18 @@ def list_customers(
                 Customer.business_name,
                 Customer.person_name,
                 Customer.phone,
+                Customer.secondary_phone,
                 Customer.alias,
-                Customer.address,
                 City.name,
             ],
             exact_int_columns=[Customer.party_number],
         )
-        if clause is not None:
-            q = q.filter(clause)
-        rows = q.all()
+        # Address is not searched: many parties share landmark text ("shop",
+        # a market name), which made unrelated parties show up for any query.
+        # No tokens (e.g. "#" only) must return nobody, not the full list.
+        if clause is None:
+            return []
+        rows = q.filter(clause).all()
         city_ids = {r.city_id for r in rows if r.city_id}
         city_lookup = {
             c.id: c.name
@@ -294,12 +297,21 @@ def quick_search_customers(
     query = query.outerjoin(City, Customer.city_id == City.id)
     clause = token_match(
         search_clean,
-        [Customer.business_name, Customer.person_name, Customer.phone, Customer.alias, Customer.address, City.name],
+        [
+            Customer.business_name,
+            Customer.person_name,
+            Customer.phone,
+            Customer.secondary_phone,
+            Customer.alias,
+            City.name,
+        ],
         exact_int_columns=[Customer.party_number],
     )
-    if clause is not None:
-        query = query.filter(clause)
-    rows = query.limit(50).all()
+    if clause is None:
+        return []
+    # Rank every real match, then keep 8. A limit before ranking kept the
+    # oldest rows and dropped the party that actually matched the typed name.
+    rows = query.filter(clause).all()
     city_ids = sorted({r.city_id for r in rows if r.city_id})
     cities = {c.id: c.name for c in (db.query(City).filter(City.id.in_(city_ids)).all() if city_ids else [])}
     rows = sort_parties_by_search(rows, search_clean, city_lookup=cities)

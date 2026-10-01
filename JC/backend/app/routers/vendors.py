@@ -100,15 +100,15 @@ def list_vendors(
                 Vendor.business_name,
                 Vendor.person_name,
                 Vendor.phone,
+                Vendor.secondary_phone,
                 Vendor.alias,
-                Vendor.address,
                 City.name,
             ],
             exact_int_columns=[Vendor.vendor_number],
         )
-        if clause is not None:
-            q = q.filter(clause)
-        rows = q.all()
+        if clause is None:
+            return []
+        rows = q.filter(clause).all()
         city_ids = sorted({r.city_id for r in rows if r.city_id})
         cities = {
             c.id: c.name
@@ -173,12 +173,19 @@ def quick_search_vendors(
     query = query.outerjoin(City, Vendor.city_id == City.id)
     clause = token_match(
         search_clean,
-        [Vendor.business_name, Vendor.person_name, Vendor.phone, Vendor.alias, Vendor.address, City.name],
+        [
+            Vendor.business_name,
+            Vendor.person_name,
+            Vendor.phone,
+            Vendor.secondary_phone,
+            Vendor.alias,
+            City.name,
+        ],
         exact_int_columns=[Vendor.vendor_number],
     )
-    if clause is not None:
-        query = query.filter(clause)
-    rows = query.limit(50).all()
+    if clause is None:
+        return []
+    rows = query.filter(clause).all()
     city_ids = sorted({r.city_id for r in rows if r.city_id})
     cities = {c.id: c.name for c in (db.query(City).filter(City.id.in_(city_ids)).all() if city_ids else [])}
     rows = sort_parties_by_search(rows, search_clean, city_lookup=cities)

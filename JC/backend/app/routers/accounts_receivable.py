@@ -125,10 +125,6 @@ def settle_customer_ar(
     if not customer or customer.deleted_at:
         raise HTTPException(404, "customer not found")
     lock_ar_account(db, customer_id)
-    totals = customer_ar_totals(db, customer_id)
-    outstanding = totals["outstanding"]
-    if outstanding <= 0:
-        raise HTTPException(400, "no outstanding balance to settle")
     amount = body.amount.quantize(Decimal("0.01"))
 
     from app.models.payment_mode import PaymentMode
@@ -194,10 +190,6 @@ def record_customer_payment(
     if not customer or customer.deleted_at:
         raise HTTPException(404, "customer not found")
     lock_ar_account(db, customer_id)
-    totals = customer_ar_totals(db, customer_id)
-    outstanding = totals["outstanding"]
-    if outstanding <= 0:
-        raise HTTPException(400, "No outstanding balance on this customer to record a payment against")
     amount = body.amount.quantize(Decimal("0.01"))
 
     from app.models.payment_mode import PaymentMode

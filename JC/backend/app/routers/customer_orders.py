@@ -280,6 +280,68 @@ def _sources_for_received_many(db: Session, received_order_ids: list[int]) -> di
     return {oid: sorted(s) for oid, s in found.items()}
 
 
+def _summaries_batch(db: Session, orders: list[CustomerOrder]) -> list[CustomerOrderSummary]:
+    """One round of queries for a list of orders. Replaces per-order _summary."""
+    if not orders:
+        return []
+    ids = [o.id for o in orders]
+    cids = list({o.customer_id for o in orders})
+    placement_counts = dict(
+        db.query(CustomerOrderPlacement.customer_order_id, func.count(CustomerOrderPlacement.id))
+        .filter(
+            CustomerOrderPlacement.customer_order_id.in_(ids),
+            CustomerOrderPlacement.deleted_at.is_(None),
+        )
+        .group_by(CustomerOrderPlacement.customer_order_id)
+        .all()
+    )
+    line_rows = (
+        db.query(
+            CustomerOrderPlacement.customer_order_id,
+            func.count(CustomerOrderLine.id),
+            func.coalesce(func.sum(CustomerOrderLine.quantity), 0),
+        )
+        .join(CustomerOrderLine, CustomerOrderLine.placement_id == CustomerOrderPlacement.id)
+        .filter(
+            CustomerOrderPlacement.customer_order_id.in_(ids),
+            CustomerOrderLine.status == "active",
+        )
+        .group_by(CustomerOrderPlacement.customer_order_id)
+        .all()
+    )
+    line_stats = {int(oid): (int(cnt or 0), int(qty or 0)) for oid, cnt, qty in line_rows}
+    customers = {c.id: c for c in db.query(Customer).filter(Customer.id.in_(cids)).all()}
+    city_ids = [c.city_id for c in customers.values() if c.city_id]
+    cities = {c.id: c for c in db.query(City).filter(City.id.in_(city_ids)).all()} if city_ids else {}
+    sources = _sources_for_received_many(db, ids)
+    out: list[CustomerOrderSummary] = []
+    for order in orders:
+        cust = customers.get(order.customer_id)
+        city = cities.get(cust.city_id) if cust and cust.city_id else None
+        line_count, total = line_stats.get(order.id, (0, 0))
+        display_date = order.updated_at
+        out.append(
+            CustomerOrderSummary(
+                id=order.id,
+                customer_id=order.customer_id,
+                customer_name=cust.business_name if cust else str(order.customer_id),
+                bucket=order.bucket,
+                placement_count=int(placement_counts.get(order.id) or 0),
+                line_count=line_count,
+                total_quantity=total,
+                updated_at=display_date,
+                display_date=display_date,
+                sources=sources.get(order.id, []) if order.bucket == "received" else [],
+                party_number=getattr(cust, "party_number", None) if cust else None,
+                marker_1=getattr(cust, "marker_1", None) if cust else None,
+                marker_2=getattr(cust, "marker_2", None) if cust else None,
+                payment_type=getattr(cust, "payment_type", None) if cust else None,
+                city_name=city.name if city else None,
+            )
+        )
+    return out
+
+
 def _summary(db: Session, order: CustomerOrder) -> CustomerOrderSummary:
     placements = db.query(CustomerOrderPlacement).filter(
         CustomerOrderPlacement.customer_order_id == order.id, CustomerOrderPlacement.deleted_at.is_(None)
@@ -431,39 +493,35 @@ def list_customer_orders(
                 if row[1] and day_start <= row[1].astimezone(timezone.utc) < day_end
             ]
         rows.sort(key=lambda row: _sort_business_date(row[1]), reverse=True)
-        out = []
-        for order, display_date in rows:
-            summary = _summary(db, order)
-            summary.updated_at = display_date or order.updated_at
-            summary.display_date = display_date or order.updated_at
-            out.append(summary)
+        orders = [order for order, _display in rows]
+        out = _summaries_batch(db, orders)
+        by_id = {order.id: display for order, display in rows}
+        for summary in out:
+            display_date = by_id.get(summary.id) or summary.updated_at
+            summary.updated_at = display_date
+            summary.display_date = display_date
         return _filter_by_product(out)
 
     if bucket == "billed":
-        bill_rows_by_customer: dict[int, dict[str, int | date | datetime]] = {}
-        for bill in (
-            db.query(CustomerBill)
+        bill_q = (
+            db.query(
+                CustomerBill.customer_id,
+                func.count(CustomerBill.id),
+                func.max(CustomerBill.bill_date),
+                func.max(CustomerBill.created_at),
+            )
             .filter(
                 CustomerBill.cancelled_at.is_(None),
                 CustomerBill.closed_at.is_(None),
                 CustomerBill.deleted_at.is_(None),
             )
-            .all()
-        ):
-            if day_start is not None and bill.bill_date != today_ist():
-                continue
-            display_date = bill.bill_date or bill.created_at
-            entry = bill_rows_by_customer.setdefault(
-                int(bill.customer_id),
-                {"count": 0, "display_date": display_date},
-            )
-            entry["count"] = int(entry["count"]) + 1
-            if _sort_business_date(display_date) > _sort_business_date(entry["display_date"]):
-                entry["display_date"] = display_date
-        bill_rows = [
-            (cid, int(info["count"]), info["display_date"])
-            for cid, info in bill_rows_by_customer.items()
-        ]
+        )
+        if day_start is not None:
+            bill_q = bill_q.filter(CustomerBill.bill_date == today_ist())
+        bill_rows = []
+        for cid, cnt, bill_date, created in bill_q.group_by(CustomerBill.customer_id).all():
+            display = bill_date if bill_date is not None else created
+            bill_rows.append((int(cid), int(cnt or 0), display or today_ist()))
         bill_rows.sort(key=lambda row: _sort_business_date(row[2]), reverse=True)
         # Batch the customer-name lookup — was one query PER customer (N+1), which
         # noticeably hung the UI once dozens of customers had unclosed bills sitting
@@ -502,7 +560,7 @@ def list_customer_orders(
             o for o in orders
             if o.updated_at and day_start <= o.updated_at.astimezone(timezone.utc) < day_end
         ]
-    return _filter_by_product([_summary(db, o) for o in orders])
+    return _filter_by_product(_summaries_batch(db, orders))
 
 
 @router.get("/customer/{customer_id}", response_model=CustomerOrderDetail)
@@ -528,9 +586,18 @@ def get_customer_order_detail(
         addon_map = addon_snapshots_map(
             db, [r.catalog_product_id for r in open_lines], with_images=False
         ) if open_lines else {}
+        product_ids = [r.catalog_product_id for r in open_lines]
+        products = {
+            p.id: p
+            for p in (
+                db.query(CatalogProduct).filter(CatalogProduct.id.in_(product_ids)).all()
+                if product_ids else []
+            )
+        }
         lines_out: list[CustomerOpenLineOut] = []
         for row in open_lines:
-            prod = db.get(CatalogProduct, row.catalog_product_id)
+            prod = products.get(row.catalog_product_id)
+            first_key = ((prod.image_keys or [])[:1] if prod else [])
             lines_out.append(
                 CustomerOpenLineOut(
                     id=row.id,
@@ -542,7 +609,7 @@ def get_customer_order_detail(
                     unit_price=format(row.unit_price, "f"),
                     status=row.status,
                     cancel_reason=row.cancel_reason,
-                    image_urls=presigned_urls(prod.image_keys or []) if prod else [],
+                    image_urls=presigned_urls(first_key) if first_key else [],
                     addons=addon_map.get(int(row.catalog_product_id), []),
                     marking=prod.marking if prod else None,
                 )
@@ -639,17 +706,34 @@ def get_customer_order_detail(
             .order_by(CustomerBill.created_at.desc())
             .all()
         )
+        bill_ids = [b.id for b in bills]
+        all_blines = (
+            db.query(CustomerBillLine)
+            .filter(CustomerBillLine.bill_id.in_(bill_ids))
+            .order_by(CustomerBillLine.id.asc())
+            .all()
+            if bill_ids else []
+        )
+        lines_by_bill: dict[int, list] = defaultdict(list)
+        for ln in all_blines:
+            lines_by_bill[ln.bill_id].append(ln)
+        prepared = []
+        missing_ids: list[int] = []
         for b in bills:
-            blines = db.query(CustomerBillLine).filter(CustomerBillLine.bill_id == b.id).order_by(CustomerBillLine.id.asc()).all()
+            blines = lines_by_bill.get(b.id, [])
             addon_by_cid: dict[int, list] = {}
             totals_lines = (b.totals_json or {}).get("lines") if isinstance(b.totals_json, dict) else None
             if isinstance(totals_lines, list):
                 for tl in totals_lines:
                     if isinstance(tl, dict) and tl.get("catalog_product_id") and tl.get("addons"):
                         addon_by_cid[int(tl["catalog_product_id"])] = list(tl["addons"])
-            missing = [ln.catalog_product_id for ln in blines if ln.catalog_product_id not in addon_by_cid]
-            if missing:
-                addon_by_cid.update(addon_snapshots_map(db, missing, with_images=False))
+            missing = [ln.catalog_product_id for ln in blines if int(ln.catalog_product_id) not in addon_by_cid]
+            missing_ids.extend(int(x) for x in missing)
+            prepared.append((b, blines, addon_by_cid, missing))
+        live_addons_billed = addon_snapshots_map(db, missing_ids, with_images=False) if missing_ids else {}
+        for b, blines, addon_by_cid, missing in prepared:
+            for cid in missing:
+                addon_by_cid.setdefault(int(cid), list(live_addons_billed.get(int(cid), [])))
             bills_out.append(serialize_customer_bill(db, b, blines, addon_by_cid))
     return CustomerOrderDetail(
         id=order.id,

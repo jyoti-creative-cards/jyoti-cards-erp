@@ -111,6 +111,12 @@ const CustomerOrders = (() => {
   let offlineSearchQuery = "";
   let focusQtyProductId = null;
   let offlineSearchResults = [];
+  let offlineSearchPending = false;
+  let offlineProductTimer = null;
+  let offlineCustomerTimer = null;
+  let offlinePicked = null;
+  let billEditSearchPending = false;
+  let billEditTimer = null;
   let offlineNotes = "";
   let offlinePlacedOn = "";
   let offlinePreview = null;
@@ -1051,10 +1057,7 @@ const CustomerOrders = (() => {
     offlineBusy = false;
     offlineSearchQuery = "";
     offlineSearchResults = [];
-    ctx.showLoading?.();
     try {
-      offlineCustomers = await ctx.api("/customers", {}, 30000) || [];
-      await ensureOfflineProductsLoaded();
       offlineLines = active.map(ln => {
         const stock = offlineSearchResults.find(x => x.catalog_product_id === ln.catalog_product_id);
         return {
@@ -1069,7 +1072,6 @@ const CustomerOrders = (() => {
       document.getElementById("co-offline-wizard")?.classList.remove("hidden");
       renderOfflineWizard();
     } catch (e) { ctx.toast(e.message, "error"); offlineEditPlacementId = null; }
-    finally { ctx.hideLoading?.(); }
   }
 
   function promptReason(title, onOk) {
@@ -1453,7 +1455,8 @@ const CustomerOrders = (() => {
   }
 
   async function processFromHub(customerId, bucket) {
-    await openDetail(customerId, bucket || "open");
+    detailCustomerId = customerId;
+    currentBucket = bucket || "open";
     await processOrder();
   }
 
@@ -1627,10 +1630,8 @@ const CustomerOrders = (() => {
       customerNotes = "";
       narration = bill.narration || "";
       billEditSearch = "";
-      if (!billEditProducts.length) {
-        try { billEditProducts = await ctx.api("/stock/products?lite=1", {}, 120000) || []; }
-        catch (_) { billEditProducts = []; }
-      }
+      billEditProducts = [];
+      billEditSearchPending = false;
       document.getElementById("co-wizard")?.classList.remove("hidden");
       const title = document.getElementById("co-wizard-title");
       if (title) title.textContent = `Edit bill ${bill.bill_number}`;
@@ -1839,7 +1840,7 @@ const CustomerOrders = (() => {
           ${matches.length ? `<div style="display:flex;flex-direction:column;gap:4px;">${matches.map(p => `
             <button type="button" class="btn btn-secondary btn-sm" style="justify-content:flex-start;" onclick="CustomerOrders.addBillEditProduct(${p.catalog_product_id})">
               ${ctx.esc(p.our_product_id)} · ${fmtPrice(p.selling_price)} · stock ${p.quantity_on_hand ?? 0}
-            </button>`).join("")}</div>` : (q ? `<p style="font-size:12px;color:var(--muted);">No matches</p>` : "")}
+            </button>`).join("")}</div>` : (q ? `<p style="font-size:12px;color:var(--muted);">${billEditSearchPending ? "Searching…" : "No matches"}</p>` : `<p style="font-size:12px;color:var(--muted);">Type a product number</p>`)}
         </div>`;
       })() : "";
       bodyEl.innerHTML = `
@@ -2051,7 +2052,29 @@ const CustomerOrders = (() => {
     renderProcessWizard();
   }
   function setOverallDisc(v) { overallDiscount = v; renderWizardTotalsBar(); }
-  function setBillEditSearch(v) { billEditSearch = v || ""; renderProcessWizard(); }
+  function setBillEditSearch(v) {
+    billEditSearch = v || "";
+    renderProcessWizard();
+    clearTimeout(billEditTimer);
+    const q = billEditSearch.trim();
+    if (q.length < 1) {
+      billEditProducts = [];
+      billEditSearchPending = false;
+      renderProcessWizard();
+      return;
+    }
+    billEditSearchPending = true;
+    billEditTimer = setTimeout(async () => {
+      try {
+        billEditProducts = await ctx.api(`/stock/products?lite=1&limit=8&search=${encodeURIComponent(q)}`, {}, 0) || [];
+      } catch (_) {
+        billEditProducts = [];
+      }
+      if (billEditSearch.trim() !== q) return;
+      billEditSearchPending = false;
+      renderProcessWizard();
+    }, 200);
+  }
   function defaultFreightAgentId() {
     const hit = freightAgents.find(a => String(a.name || "").trim().toLowerCase() === "vishnu parcel");
     return hit ? String(hit.id) : "";
@@ -2189,8 +2212,8 @@ const CustomerOrders = (() => {
           `<button class="btn btn-secondary" style="flex:1;" onclick="App.closeDetail()">Done</button>`, "sm");
         ctx.toast(`Bill ${res.bill_number} — ${fmtPrice(res.grand_total)}`, "success");
       }
-      await openDetail(detailCustomerId, "billed");
       loadList();
+      if (edited) await openDetail(detailCustomerId, "billed");
     } catch (e) {
       ctx.toast(e.message, "error");
       renderProcessWizard();
@@ -2284,19 +2307,24 @@ const CustomerOrders = (() => {
     offlineLines = [];
     offlineSearchQuery = "";
     offlineSearchResults = [];
+    offlinePicked = null;
     offlineNotes = "";
     offlinePlacedOn = localToday();
     offlinePreview = null;
     offlineBusy = false;
-    ctx.showLoading?.();
+    offlineCustomers = [];
+    document.getElementById("co-offline-wizard")?.classList.remove("hidden");
+    renderOfflineWizard();
+    if (!cid) return;
     try {
-      offlineCustomers = await ctx.api("/customers", {}, 30000) || [];
-      document.getElementById("co-offline-wizard")?.classList.remove("hidden");
+      const c = await ctx.api(`/customers/${cid}`, {}, 0);
+      offlineCustomers = [c];
+      offlinePicked = c;
+      offlineCustomerId = cid;
+      offlineCustomerName = c.business_name || "";
+      offlineSelectedDetail = c;
       renderOfflineWizard();
-      // preset customer: fetch detail for credit summary (same path as manual pick)
-      if (cid) await pickOfflineCustomer(cid);
     } catch (e) { ctx.toast(e.message, "error"); }
-    finally { ctx.hideLoading?.(); }
   }
 
   function matchOfflineCustomer(c, tokens) {
@@ -2313,6 +2341,21 @@ const CustomerOrders = (() => {
       el.focus();
       try { el.setSelectionRange(el.value.length, el.value.length); } catch (_) {}
     }, 0);
+    clearTimeout(offlineCustomerTimer);
+    const q = (offlineCustomerSearch || "").trim();
+    if (q.length < 1) {
+      offlineCustomers = offlinePicked ? [offlinePicked] : [];
+      renderOfflineWizard();
+      return;
+    }
+    offlineCustomerTimer = setTimeout(async () => {
+      try {
+        const rows = await ctx.api(`/customers/quick-search?q=${encodeURIComponent(q)}`, {}, 0) || [];
+        if ((offlineCustomerSearch || "").trim() !== q) return;
+        offlineCustomers = rows;
+        renderOfflineWizard();
+      } catch (e) { ctx.toast(e.message, "error"); }
+    }, 200);
   }
 
   async function pickOfflineCustomer(id) {
@@ -2320,17 +2363,20 @@ const CustomerOrders = (() => {
       offlineCustomerId = null;
       offlineCustomerName = "";
       offlineSelectedDetail = null;
+      offlinePicked = null;
       renderOfflineWizard();
       return;
     }
     const c = (offlineCustomers || []).find(x => x.id === id);
     offlineCustomerId = id;
     offlineCustomerName = c?.business_name || "";
+    offlinePicked = c || null;
     offlineSelectedDetail = c || null;
     renderOfflineWizard();
     // fetch full detail (has outstanding_balance + available_credit)
     try {
       offlineSelectedDetail = await ctx.api(`/customers/${id}`, {}, 0);
+      offlinePicked = { ...(offlinePicked || {}), ...offlineSelectedDetail, id };
       renderOfflineWizard();
     } catch (_) {}
   }
@@ -2354,7 +2400,7 @@ const CustomerOrders = (() => {
   function filterOfflineProducts() {
     const q = offlineSearchQuery.trim().toLowerCase();
     const all = offlineSearchResults || [];
-    if (!q) return all.slice(0, 40);
+    if (!q) return [];
     const scored = [];
     for (const p of all) {
       const id = String(p.our_product_id || "").toLowerCase();
@@ -2403,7 +2449,7 @@ const CustomerOrders = (() => {
         offlineCustomerSearch,
       ).slice(0, tokens.length ? 40 : 60);
       const selected = offlineCustomerId
-        ? (offlineCustomers || []).find(c => c.id === offlineCustomerId)
+        ? (offlinePicked || (offlineCustomers || []).find(c => c.id === offlineCustomerId))
         : null;
       bodyEl.innerHTML = `
         <div class="vo-wiz-step-head">
@@ -2454,8 +2500,8 @@ const CustomerOrders = (() => {
               <span class="vo-wiz-vendor-check">${offlineCustomerId === c.id ? "✓" : ""}</span>
             </button>`;
           }).join("") : HubUI.emptyState({
-            title: "No matches",
-            sub: tokens.length ? `No customer matches “${ctx.esc(offlineCustomerSearch)}”.` : "No customers loaded.",
+            title: tokens.length ? "No matches" : "Type to search",
+            sub: tokens.length ? `No customer matches “${ctx.esc(offlineCustomerSearch)}”.` : "Name, city, or phone.",
           })}
         </div>`;
       footerEl.innerHTML = `
@@ -2500,7 +2546,10 @@ const CustomerOrders = (() => {
           <span>Showing ${list.length}${offlineSearchQuery ? " match" : " (type to search)"}${offlineSearchResults.length ? ` · ${offlineSearchResults.length} loaded` : ""}</span>
         </div>
         <div class="vo-wiz-products" id="co-offline-product-list">
-          ${!offlineSearchResults.length ? HubUI.emptyState({ title: "Loading…", sub: "Loading products…" })
+          ${!offlineSearchQuery.trim()
+            ? HubUI.emptyState({ title: "Type to search", sub: "Product number, category, or vendor." })
+            : offlineSearchPending && !list.length
+            ? HubUI.emptyState({ title: "Searching…", sub: "Looking up products." })
             : list.length ? list.map(p => {
               const line = offlineLines.find(l => l.catalog_product_id === p.catalog_product_id);
               const qty = line ? line.quantity : 1;
@@ -2600,6 +2649,7 @@ const CustomerOrders = (() => {
     const prev = document.getElementById("co-offline-search");
     const start = prev?.selectionStart;
     offlineSearchQuery = val || "";
+    offlineSearchPending = !!(offlineSearchQuery || "").trim();
     renderOfflineWizard();
     const inp = document.getElementById("co-offline-search");
     if (inp) {
@@ -2608,6 +2658,28 @@ const CustomerOrders = (() => {
         try { inp.setSelectionRange(start, start); } catch (_) {}
       }
     }
+    clearTimeout(offlineProductTimer);
+    const q = (offlineSearchQuery || "").trim();
+    if (!q) {
+      offlineSearchResults = [];
+      offlineSearchPending = false;
+      return;
+    }
+    offlineSearchPending = true;
+    offlineProductTimer = setTimeout(() => loadOfflineProductSearch(q), 200);
+  }
+
+  async function loadOfflineProductSearch(q) {
+    try {
+      const rows = await ctx.api(`/stock/products?lite=1&limit=40&search=${encodeURIComponent(q)}`, {}, 0) || [];
+      if ((offlineSearchQuery || "").trim() !== q) return;
+      offlineSearchResults = rows;
+    } catch (e) {
+      offlineSearchResults = [];
+      ctx.toast(e.message, "error");
+    }
+    offlineSearchPending = false;
+    renderOfflineWizard();
   }
 
   function focusPendingQty(searchId) {
@@ -2623,11 +2695,14 @@ const CustomerOrders = (() => {
     try { const n = (offlineSearchQuery || "").length; inp.setSelectionRange(n, n); } catch (_) {}
   }
 
-  function onOfflineSearchKey(e) {
+  async function onOfflineSearchKey(e) {
     if (e.key !== "Enter") return;
     e.preventDefault();
     const q = offlineSearchQuery.trim().toLowerCase();
     if (!q) return;
+    if (!offlineSearchResults.length) {
+      await loadOfflineProductSearch(offlineSearchQuery.trim());
+    }
     const exact = offlineSearchResults.find(p => String(p.our_product_id || "").toLowerCase() === q);
     const best = exact || filterOfflineProducts()[0];
     if (!best) return ctx.toast("No product match", "error");
@@ -2652,13 +2727,7 @@ const CustomerOrders = (() => {
   }
 
   async function ensureOfflineProductsLoaded() {
-    if (offlineSearchResults.length) return;
-    try {
-      offlineSearchResults = await ctx.api("/stock/products?lite=1", {}, 120000) || [];
-    } catch (e) {
-      offlineSearchResults = [];
-      ctx.toast(e.message, "error");
-    }
+    return;
   }
 
   function toggleOfflineProduct(catalogProductId, checked) {
@@ -2726,8 +2795,6 @@ const CustomerOrders = (() => {
     if (offlineStep === 1) {
       if (!offlineCustomerId) return ctx.toast("Select a customer", "error");
       offlineStep = 2;
-      renderOfflineWizard();
-      await ensureOfflineProductsLoaded();
       renderOfflineWizard();
       return;
     }

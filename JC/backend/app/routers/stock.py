@@ -4,7 +4,7 @@ from decimal import Decimal
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
-from sqlalchemy import text
+from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -146,19 +146,108 @@ def _vendor_map(db: Session, vendor_ids: list[int]) -> dict[int, tuple[Optional[
     }
 
 
+def _list_stock_sqlite(
+    db: Session,
+    search_clean: str,
+    year_group: str,
+    lite: bool,
+    limit: Optional[int],
+    auth: AuthContext,
+) -> list[StockProductSummary]:
+    """Postgres list SQL uses ::int and jsonb. Local sqlite uses this ORM path."""
+    q = (
+        db.query(CatalogProduct, StockBalance, Vendor, City)
+        .outerjoin(StockBalance, StockBalance.catalog_product_id == CatalogProduct.id)
+        .outerjoin(Vendor, Vendor.id == CatalogProduct.vendor_id)
+        .outerjoin(City, City.id == Vendor.city_id)
+        .filter(CatalogProduct.is_active.is_(True), CatalogProduct.deleted_at.is_(None))
+    )
+    if year_group:
+        q = q.filter(CatalogProduct.year_group == year_group)
+    if search_clean:
+        like = f"%{search_clean.lower().replace('%', '').replace('_', '')}%"
+        q = q.filter(
+            or_(
+                func.lower(CatalogProduct.our_product_id).like(like),
+                func.lower(func.coalesce(CatalogProduct.vendor_product_id, "")).like(like),
+                func.lower(func.coalesce(CatalogProduct.category, "")).like(like),
+                func.lower(func.coalesce(CatalogProduct.second_category, "")).like(like),
+                func.lower(func.coalesce(CatalogProduct.series, "")).like(like),
+                func.lower(func.coalesce(CatalogProduct.year_group, "")).like(like),
+                func.lower(func.coalesce(Vendor.business_name, "")).like(like),
+                func.lower(func.coalesce(City.name, "")).like(like),
+            )
+        )
+    q = q.order_by(CatalogProduct.our_product_id.asc(), CatalogProduct.id.asc())
+    if limit:
+        q = q.limit(int(limit))
+    out: list[StockProductSummary] = []
+    for product, balance, vendor, city in q.all():
+        qty = int(balance.quantity_on_hand) if balance else 0
+        th = int(balance.low_stock_threshold) if balance else 5
+        vn = vendor.business_name if vendor else ""
+        city_name = city.name if city else None
+        label = f"{vn} — {city_name}" if vn and city_name else (vn or "")
+        keys = [] if lite else ((product.image_keys or [])[:1])
+        image_urls = presigned_urls(keys) if keys else []
+        out.append(
+            StockProductSummary(
+                catalog_product_id=product.id,
+                our_product_id=product.our_product_id,
+                vendor_product_id=product.vendor_product_id,
+                vendor_id=product.vendor_id,
+                vendor_name=vn,
+                vendor_city=city_name,
+                vendor_label=label,
+                category=product.category,
+                second_category=product.second_category,
+                series=product.series,
+                year_group=product.year_group,
+                marking=product.marking,
+                quantity_on_hand=qty,
+                low_stock_threshold=th,
+                stock_status=admin_stock_status_label(qty, th),
+                selling_price=(
+                    format(eff, "f")
+                    if (eff := effective_selling_price(product.buying_price, product.selling_price)) is not None
+                    else None
+                ),
+                buying_price=hide_cost(
+                    format(product.buying_price, "f") if product.buying_price is not None else None,
+                    auth,
+                ),
+                unit=product.unit,
+                image_urls=image_urls,
+                addon_count=0,
+                alt_count=0,
+            )
+        )
+    return out
+
+
 @router.get("/products", response_model=List[StockProductSummary])
 def list_stock(
     db: Session = Depends(get_db),
     search: Optional[str] = Query(None),
     year_group: Optional[str] = Query(None),
     lite: bool = Query(False, description="Skip images for faster pickers"),
+    limit: Optional[int] = Query(None, ge=1, le=100),
     auth: AuthContext = Depends(require_permission("stock.read")),
 ):
     yg = (year_group or "").replace("\x00", "").strip()
-    cache_key = f"stock:products:v3:{(search or '').replace(chr(0), '')}:{yg}:{int(lite)}:cost={int(can_see_cost(auth))}"
+    cache_key = (
+        f"stock:products:v4:{(search or '').replace(chr(0), '')}:{yg}:{int(lite)}:"
+        f"lim={limit or 0}:cost={int(can_see_cost(auth))}"
+    )
     cached = response_cache.get(cache_key)
     if cached is not None:
         return cached
+
+    search_clean_early = (search or "").replace("\x00", "").strip()
+    if db.get_bind().dialect.name == "sqlite":
+        out = _list_stock_sqlite(db, search_clean_early, yg, lite, limit, auth)
+        response_cache.set(cache_key, out, 25.0)
+        return out
 
     params: dict = {}
     search_sql = ""
@@ -182,6 +271,10 @@ def list_stock(
     if yg:
         year_sql = " AND p.year_group = :year_group "
         params["year_group"] = yg
+    limit_sql = ""
+    if limit is not None:
+        params["lim"] = int(limit)
+        limit_sql = " LIMIT :lim "
     if lite:
         image_select = "NULL AS image_key"
         addon_select = "0 AS addon_count"
@@ -235,6 +328,7 @@ def list_stock(
               {search_sql}
               {year_sql}
             ORDER BY p.our_product_id ASC, COALESCE(p.year_group, '') ASC, p.id ASC
+            {limit_sql}
             """
         ),
         params,

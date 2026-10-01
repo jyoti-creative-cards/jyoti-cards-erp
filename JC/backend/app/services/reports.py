@@ -401,15 +401,17 @@ def daybook(
     if to_date is not None:
         expense_q = expense_q.filter(Expense.expense_date <= to_date)
     for ex in expense_q.all():
+        cash = ex.is_cash is not False
         rows.append(
             {
-                "kind": "expense",
+                "kind": "expense" if cash else "stock_journal",
                 "label": ex.description or ex.category,
                 "party": ex.category,
                 "amount": format(ex.amount, "f"),
                 "signed": format(-ex.amount, "f"),
                 "ref_id": ex.id,
                 "at": ex.expense_date.isoformat() if ex.expense_date else None,
+                "cash": cash,
             }
         )
 

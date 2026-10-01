@@ -21,6 +21,7 @@ from app.models.customer_bill import CustomerBill, CustomerBillLine
 from app.models.bill_series import BillSeries
 from app.models.freight_agent import FreightAgent, FreightLedgerEntry
 from app.models.expense import Expense
+from app.models.stock_journal import StockJournal, StockJournalLine
 from app.models.accounts_receivable import CustomerArAccount, ArLedgerEntry
 from app.models.customer_return import CustomerReturn, CustomerReturnLine
 from app.models.manual_loss import ManualLoss
@@ -34,5 +35,6 @@ __all__ = [
     "PriceHistory", "Route", "Staff", "Vendor",
     "VendorOrder", "VendorOrderLine", "VendorOrderPlacement", "VendorOpenLine",
     "StockBalance", "StockLedger", "StockReceipt", "StockReceiptLine",
+    "StockJournal", "StockJournalLine",
     "DebitNote", "VendorApAccount", "ApLedgerEntry",
 ]

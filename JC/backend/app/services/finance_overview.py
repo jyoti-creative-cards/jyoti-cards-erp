@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.models.accounts_payable import ApLedgerEntry
@@ -71,9 +71,19 @@ def finance_overview(db: Session) -> dict:
     expense_total = Decimal(
         str(db.query(func.coalesce(func.sum(Expense.amount), 0)).scalar() or 0)
     ).quantize(Decimal("0.01"))
+    # Sample catalogues and other stock-journal costs stay in expense_total.
+    # Cash leaving the bank is only is_cash expenses (NULL = old rows, still cash).
+    cash_expense_total = Decimal(
+        str(
+            db.query(func.coalesce(func.sum(Expense.amount), 0))
+            .filter(or_(Expense.is_cash.is_(True), Expense.is_cash.is_(None)))
+            .scalar()
+            or 0
+        )
+    ).quantize(Decimal("0.01"))
     ap_payment_sum = _sum_types(db, ApLedgerEntry, ("payment", "payment_reversal"))
     ap_paid = mag(ap_payment_sum)
-    cash_out = (expense_total + ap_paid).quantize(Decimal("0.01"))
+    cash_out = (cash_expense_total + ap_paid).quantize(Decimal("0.01"))
     ap_billed = _sum_type(db, ApLedgerEntry, "bill")
 
     loss_total = Decimal(
@@ -102,6 +112,12 @@ def finance_overview(db: Session) -> dict:
         .group_by(month_expr_ex)
         .all()
     )
+    ex_cash_by_month = (
+        db.query(month_expr_ex, func.coalesce(func.sum(Expense.amount), 0))
+        .filter(or_(Expense.is_cash.is_(True), Expense.is_cash.is_(None)))
+        .group_by(month_expr_ex)
+        .all()
+    )
 
     monthly: dict[str, dict] = {}
 
@@ -127,9 +143,11 @@ def finance_overview(db: Session) -> dict:
     for dt, amt in ex_by_month:
         k = _mk(dt)
         monthly.setdefault(k, {"month": k, "revenue": Decimal("0"), "cost": Decimal("0"), "expenses": Decimal("0"), "ap_paid": Decimal("0")})
-        a = Decimal(str(amt or 0))
-        monthly[k]["expenses"] += a
-        monthly[k]["cost"] += a
+        monthly[k]["expenses"] += Decimal(str(amt or 0))
+    for dt, amt in ex_cash_by_month:
+        k = _mk(dt)
+        monthly.setdefault(k, {"month": k, "revenue": Decimal("0"), "cost": Decimal("0"), "expenses": Decimal("0"), "ap_paid": Decimal("0")})
+        monthly[k]["cost"] += Decimal(str(amt or 0))
 
     month_series = []
     for k in sorted(monthly.keys())[-6:]:

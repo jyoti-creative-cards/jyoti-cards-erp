@@ -97,6 +97,7 @@ def init_db() -> None:
         VendorOrder, VendorOrderLine, VendorOrderPlacement, VendorOpenLine,
         CustomerOrder, CustomerOrderLine, CustomerOrderPlacement, CustomerOpenLine,
         CustomerBill, CustomerBillLine, BillSeries, FreightAgent, FreightLedgerEntry, Expense,
+        StockJournal, StockJournalLine,
         CustomerArAccount, ArLedgerEntry, PaymentMode,
         StockBalance, StockLedger, StockReceipt, StockReceiptLine,
         DebitNote, VendorApAccount, ApLedgerEntry, ManualLoss,
@@ -145,6 +146,7 @@ def init_db() -> None:
         _migrate_bill_number_unique()
         _migrate_catalog_marking()
         _migrate_vendor_cash_discount_gst()
+        _migrate_expense_is_cash()
         with engine.begin() as conn:
             conn.execute(text("SELECT 1"))
         _DB_READY = True
@@ -392,6 +394,25 @@ def _migrate_receipt_gst_pct() -> None:
             _exec_sql(conn, "ALTER TABLE jc_stock_receipts ADD COLUMN gst_rate_pct_applied NUMERIC(5,2)", critical=False)
         else:
             _exec_sql(conn, "ALTER TABLE jc_stock_receipts ADD COLUMN IF NOT EXISTS gst_rate_pct_applied NUMERIC(5,2)", critical=False)
+
+
+def _migrate_expense_is_cash() -> None:
+    """Sample-catalogue cost is an expense that is not cash leaving the bank.
+
+    Alembic f6a7b8c9d0e1 is the deploy path. This keeps a database that already
+    exists from crashing when Expense.is_cash is selected on boot.
+    """
+    with engine.begin() as conn:
+        if _is_sqlite:
+            cols = [r[1] for r in conn.execute(text("PRAGMA table_info(jc_expenses)")).fetchall()]
+            if "is_cash" not in cols:
+                _exec_sql(conn, "ALTER TABLE jc_expenses ADD COLUMN is_cash BOOLEAN NOT NULL DEFAULT 1")
+        else:
+            _exec_sql(
+                conn,
+                "ALTER TABLE jc_expenses ADD COLUMN IF NOT EXISTS is_cash BOOLEAN NOT NULL DEFAULT TRUE",
+                critical=False,
+            )
 
 
 def _migrate_catalog_marking() -> None:

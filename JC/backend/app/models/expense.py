@@ -4,7 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import Date, DateTime, Integer, Numeric, String, Text, func
+from sqlalchemy import Boolean, Date, DateTime, Integer, Numeric, String, Text, func, true as sql_true
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -21,5 +21,7 @@ class Expense(Base):
     reference: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     freight_agent_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     addon_product_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # False = stock journal / sample cost. Stays on the expense list, not in cash out.
+    is_cash: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=sql_true())
     created_by_name: Mapped[str] = mapped_column(String(200), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

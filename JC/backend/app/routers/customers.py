@@ -315,7 +315,19 @@ def quick_search_customers(
     city_ids = sorted({r.city_id for r in rows if r.city_id})
     cities = {c.id: c.name for c in (db.query(City).filter(City.id.in_(city_ids)).all() if city_ids else [])}
     rows = sort_parties_by_search(rows, search_clean, city_lookup=cities)
-    return [{"id": r.id, "business_name": r.business_name, "city_name": cities.get(r.city_id)} for r in rows[:8]]
+    return [
+        {
+            "id": r.id,
+            "business_name": r.business_name,
+            "city_name": cities.get(r.city_id),
+            "phone": r.phone,
+            "party_number": r.party_number,
+            "marker_1": r.marker_1,
+            "marker_2": r.marker_2,
+            "payment_type": r.payment_type,
+        }
+        for r in rows[:8]
+    ]
 
 
 @router.get("/{customer_id}", response_model=CustomerPublic)

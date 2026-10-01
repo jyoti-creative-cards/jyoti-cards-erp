@@ -26,6 +26,10 @@ const Finance = (() => {
   let hubSearch = "";
   let showSettled = false;
   let expenseFilters = { from_date: "", to_date: "", category: "" };
+  let journals = [];
+  let journalHits = { from: [], to: [], line: [] };
+  let journalTimer = null;
+  let journalForm = null;
   let settleFile = null;
   let freightSettleFile = null;
   let freightPayMode = "settle"; // settle | advance
@@ -48,6 +52,7 @@ const Finance = (() => {
     ap: "Money to pay vendors",
     freight: "Freight agent dues",
     expenses: "Rent, salary, misc",
+    journal: "Move stock or record sample catalogues",
     routes: "Collect by route",
     reports: "Quick cash snapshot — full books under More → Reports",
   };
@@ -132,7 +137,7 @@ const Finance = (() => {
   }
 
   function hideAllPanels() {
-    ["ap", "ar", "expenses", "freight", "routes", "reports"].forEach(k => {
+    ["ap", "ar", "expenses", "journal", "freight", "routes", "reports"].forEach(k => {
       document.getElementById(`finance-panel-${k}`)?.classList.add("hidden");
     });
     document.getElementById("finance-freight-detail")?.classList.add("hidden");
@@ -162,13 +167,14 @@ const Finance = (() => {
       { id: "ap", label: "To pay", count: chipCounts.ap || undefined },
       { id: "freight", label: "Freight", count: chipCounts.freight || undefined },
       { id: "expenses", label: "Other spend" },
+      { id: "journal", label: "Journal" },
       { id: "routes", label: "Routes" },
       { id: "reports", label: "Cash snapshot" },
     ];
     const items = scopedArAp
       ? allChips.filter(i =>
         (i.id === "ar" && ctx.can?.("ar.read")) || (i.id === "ap" && ctx.can?.("ap.read")))
-      : allChips;
+      : allChips.filter(i => i.id !== "journal" || ctx.isAdmin?.());
     OrdersUI.actionChips({
       hostId: "finance-action-chips",
       active: activeChip,
@@ -528,6 +534,9 @@ const Finance = (() => {
     } else if (chip === "expenses") {
       document.getElementById("finance-panel-expenses")?.classList.remove("hidden");
       loadExpenses();
+    } else if (chip === "journal") {
+      document.getElementById("finance-panel-journal")?.classList.remove("hidden");
+      loadJournals();
     } else if (chip === "routes") {
       document.getElementById("finance-panel-routes")?.classList.remove("hidden");
       loadRouteCollections();
@@ -1889,15 +1898,16 @@ const Finance = (() => {
     </tr></thead><tbody>
       ${expenses.map(e => `<tr>
         <td>${fmtDocDate(e.display_date || e.expense_date)}</td>
-        <td>${ctx.esc(e.display_name || e.category)}</td>
+        <td>${ctx.esc(e.display_name || e.category)}${e.is_cash === false ? ` <span class="badge">Stock</span>` : ""}</td>
         <td>${ctx.esc(e.description || "—")}</td>
         <td>${fmtPrice(e.amount)}</td>
         <td>${ctx.esc(e.reference || "—")}</td>
         <td style="white-space:nowrap;display:flex;gap:6px;justify-content:flex-end;">
+          ${e.is_cash === false ? `<span class="fin-muted">Void the journal</span>` : `
           ${ctx.can?.("finance.write") ? `<button class="btn btn-secondary btn-sm" onclick="Finance.editExpense(${e.id})">Edit</button>` : ""}
           ${e.freight_agent_id
             ? `<span class="fin-muted">Freight</span>`
-            : (ctx.isAdmin?.() ? `<button class="btn btn-ghost btn-sm" onclick="Finance.deleteExpense(${e.id})">Delete</button>` : "")}
+            : (ctx.isAdmin?.() ? `<button class="btn btn-ghost btn-sm" onclick="Finance.deleteExpense(${e.id})">Delete</button>` : "")}`}
         </td>
       </tr>`).join("")}
     </tbody></table>`;
@@ -2711,6 +2721,295 @@ const Finance = (() => {
     finally { ctx.hideLoading?.(); }
   }
 
+  function todayIstInput() {
+    try {
+      return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+    } catch (_) {
+      return new Date().toISOString().slice(0, 10);
+    }
+  }
+
+  function blankJournalForm() {
+    return {
+      kind: "transfer",
+      journal_date: todayIstInput(),
+      narration: "",
+      expense_category: "Sample catalogues",
+      from_id: null,
+      to_id: null,
+      from_label: "",
+      to_label: "",
+      from_q: "",
+      to_q: "",
+      quantity: "",
+      consume_mode: "items",
+      album: "",
+      copies: "",
+      lines: [],
+      line_q: "",
+      preview: null,
+      busy: false,
+    };
+  }
+
+  function journalBody() {
+    const f = journalForm;
+    const body = {
+      journal_date: f.journal_date,
+      kind: f.kind,
+      narration: (f.narration || "").trim() || null,
+    };
+    if (f.kind === "transfer") {
+      body.from_product_id = f.from_id;
+      body.to_product_id = f.to_id;
+      body.quantity = Number(f.quantity) || null;
+    } else {
+      body.expense_category = (f.expense_category || "Sample catalogues").trim();
+      if (f.consume_mode === "album") {
+        body.album = (f.album || "").trim();
+        body.copies = Number(f.copies) || null;
+      } else {
+        body.lines = (f.lines || []).map(l => ({
+          catalog_product_id: l.catalog_product_id,
+          quantity: Number(l.quantity) || 0,
+          rate: l.rate !== "" && l.rate != null ? l.rate : null,
+        }));
+      }
+    }
+    return body;
+  }
+
+  async function loadJournals() {
+    if (!journalForm) journalForm = blankJournalForm();
+    const el = document.getElementById("finance-journal-body");
+    if (!el) return;
+    try {
+      journals = await ctx.api("/stock-journals", {}, 0) || [];
+    } catch (e) {
+      journals = [];
+      ctx.toast(e.message, "error");
+    }
+    renderJournal();
+  }
+
+  function renderJournal() {
+    const el = document.getElementById("finance-journal-body");
+    if (!el || !journalForm) return;
+    const f = journalForm;
+    const hitList = (hits, which) => (hits || []).map(p => `
+      <button type="button" class="btn btn-secondary btn-sm" style="justify-content:flex-start;" onclick="Finance.pickJournalProduct('${which}', ${p.catalog_product_id})">
+        ${ctx.esc(p.our_product_id)} · stock ${p.quantity_on_hand ?? 0}${p.buying_price ? ` · buy ${ctx.esc(p.buying_price)}` : ""}
+      </button>`).join("");
+    const transfer = f.kind === "transfer";
+    const preview = f.preview;
+    el.innerHTML = `
+      <div class="card" style="padding:16px;display:grid;gap:12px;margin-bottom:16px;">
+        <div style="display:flex;gap:16px;flex-wrap:wrap;">
+          <label style="display:flex;gap:6px;align-items:center;"><input type="radio" name="fj-kind" ${transfer ? "checked" : ""} onchange="Finance.setJournalKind('transfer')" /> Move to new item</label>
+          <label style="display:flex;gap:6px;align-items:center;"><input type="radio" name="fj-kind" ${!transfer ? "checked" : ""} onchange="Finance.setJournalKind('consumption')" /> Sample catalogues</label>
+        </div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;">
+          <label>Date <input class="input" type="date" value="${ctx.esc(f.journal_date)}" onchange="Finance.setJournalField('journal_date', this.value)" /></label>
+          <label style="flex:1;min-width:220px;">Note <input class="input" style="width:100%;" value="${ctx.esc(f.narration)}" oninput="Finance.setJournalField('narration', this.value)" placeholder="Why this journal" /></label>
+        </div>
+        ${transfer ? `
+          <div style="display:grid;gap:8px;">
+            <label>Old item <input class="input" id="fj-from" value="${ctx.esc(f.from_q)}" placeholder="Item number" oninput="Finance.searchJournalProduct('from', this.value)" /></label>
+            ${f.from_label ? `<p style="margin:0;font-size:13px;">Selected ${ctx.esc(f.from_label)}</p>` : ""}
+            <div id="fj-hits-from" style="display:flex;flex-direction:column;gap:4px;">${hitList(journalHits.from, "from")}</div>
+            <label>New item <input class="input" id="fj-to" value="${ctx.esc(f.to_q)}" placeholder="Item number" oninput="Finance.searchJournalProduct('to', this.value)" /></label>
+            ${f.to_label ? `<p style="margin:0;font-size:13px;">Selected ${ctx.esc(f.to_label)}</p>` : ""}
+            <div id="fj-hits-to" style="display:flex;flex-direction:column;gap:4px;">${hitList(journalHits.to, "to")}</div>
+            <label>Quantity <input class="input" type="number" min="1" value="${ctx.esc(f.quantity)}" oninput="Finance.setJournalField('quantity', this.value)" /></label>
+          </div>
+        ` : `
+          <label>Expense category <input class="input" value="${ctx.esc(f.expense_category)}" oninput="Finance.setJournalField('expense_category', this.value)" /></label>
+          <div style="display:flex;gap:16px;">
+            <label style="display:flex;gap:6px;align-items:center;"><input type="radio" name="fj-mode" ${f.consume_mode === "items" ? "checked" : ""} onchange="Finance.setJournalField('consume_mode', 'items')" /> Item lines</label>
+            <label style="display:flex;gap:6px;align-items:center;"><input type="radio" name="fj-mode" ${f.consume_mode === "album" ? "checked" : ""} onchange="Finance.setJournalField('consume_mode', 'album')" /> Whole album</label>
+          </div>
+          ${f.consume_mode === "album" ? `
+            <label>Album name <input class="input" value="${ctx.esc(f.album)}" placeholder="Album 1" oninput="Finance.setJournalField('album', this.value)" /></label>
+            <label>Copies <input class="input" type="number" min="1" value="${ctx.esc(f.copies)}" oninput="Finance.setJournalField('copies', this.value)" /></label>
+          ` : `
+            <label>Add item <input class="input" id="fj-line" value="${ctx.esc(f.line_q)}" placeholder="Item number" oninput="Finance.searchJournalProduct('line', this.value)" /></label>
+            <div id="fj-hits-line" style="display:flex;flex-direction:column;gap:4px;">${hitList(journalHits.line, "line")}</div>
+            ${(f.lines || []).map((l, i) => `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <strong>${ctx.esc(l.our_product_id)}</strong>
+              <span style="color:var(--muted);font-size:12px;">stock ${l.on_hand ?? 0}</span>
+              <input class="input" style="width:90px;" type="number" min="1" value="${ctx.esc(l.quantity)}" oninput="Finance.setJournalLine(${i}, 'quantity', this.value)" />
+              <input class="input" style="width:110px;" placeholder="Rate" value="${ctx.esc(l.rate ?? "")}" oninput="Finance.setJournalLine(${i}, 'rate', this.value)" />
+              <button type="button" class="btn btn-ghost btn-sm" onclick="Finance.removeJournalLine(${i})">Remove</button>
+            </div>`).join("")}
+          `}
+        `}
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button type="button" class="btn btn-secondary" ${f.busy ? "disabled" : ""} onclick="Finance.previewJournal()">Preview</button>
+          <button type="button" class="btn btn-primary" ${f.busy ? "disabled" : ""} onclick="Finance.saveJournal()">Save journal</button>
+        </div>
+        ${preview ? `
+          ${(preview.warnings || []).map(w => `<p style="margin:0;color:#b45309;font-size:13px;">${ctx.esc(w)}</p>`).join("")}
+          <p style="margin:0;font-size:13px;">Cost ${fmtPrice(preview.total_cost)} · ${preview.lines.length} line(s)</p>
+          <table class="data"><thead><tr><th>Item</th><th>Qty</th><th>Rate</th><th>Amount</th><th>On hand</th></tr></thead><tbody>
+            ${(preview.lines || []).map(l => `<tr>
+              <td>${ctx.esc(l.our_product_id)}</td>
+              <td>${l.quantity_delta}</td>
+              <td>${fmtPrice(l.rate)}</td>
+              <td>${fmtPrice(l.amount)}</td>
+              <td>${l.on_hand}</td>
+            </tr>`).join("")}
+          </tbody></table>
+        ` : ""}
+      </div>
+      <div class="card table-wrap">
+        ${journals.length ? `<table class="data"><thead><tr><th>Date</th><th>Kind</th><th>Note</th><th>Cost</th><th></th></tr></thead><tbody>
+          ${journals.map(j => `<tr>
+            <td>${ctx.esc(j.journal_date)}</td>
+            <td>${j.kind === "transfer" ? "Move" : "Samples"}${j.voided_at ? " · voided" : ""}</td>
+            <td>${ctx.esc(j.narration || "—")}</td>
+            <td>${fmtPrice(j.total_cost)}</td>
+            <td>${j.voided_at ? "" : `<button class="btn btn-ghost btn-sm" onclick="Finance.voidJournal(${j.id})">Void</button>`}</td>
+          </tr>`).join("")}
+        </tbody></table>` : `<p style="padding:16px;margin:0;color:var(--muted);">No journals yet.</p>`}
+      </div>`;
+  }
+
+  function setJournalKind(kind) {
+    if (!journalForm) journalForm = blankJournalForm();
+    journalForm.kind = kind;
+    journalForm.preview = null;
+    renderJournal();
+  }
+
+  function setJournalField(key, value) {
+    if (!journalForm) journalForm = blankJournalForm();
+    journalForm[key] = value;
+    journalForm.preview = null;
+  }
+
+  function setJournalLine(i, key, value) {
+    if (!journalForm?.lines[i]) return;
+    journalForm.lines[i][key] = value;
+    journalForm.preview = null;
+  }
+
+  function removeJournalLine(i) {
+    journalForm.lines.splice(i, 1);
+    journalForm.preview = null;
+    renderJournal();
+  }
+
+  function searchJournalProduct(which, value) {
+    if (!journalForm) journalForm = blankJournalForm();
+    if (which === "from") journalForm.from_q = value;
+    else if (which === "to") journalForm.to_q = value;
+    else journalForm.line_q = value;
+    clearTimeout(journalTimer);
+    const q = (value || "").trim();
+    const paintHits = () => {
+      const host = document.getElementById(`fj-hits-${which}`);
+      if (!host) return;
+      host.innerHTML = hitButtons(journalHits[which], which);
+    };
+    if (q.length < 1) {
+      journalHits[which] = [];
+      paintHits();
+      return;
+    }
+    journalTimer = setTimeout(async () => {
+      try {
+        const rows = await ctx.api(`/stock-journals/products?q=${encodeURIComponent(q)}`, {}, 0) || [];
+        if ((which === "from" ? journalForm.from_q : which === "to" ? journalForm.to_q : journalForm.line_q).trim() !== q) return;
+        journalHits[which] = rows;
+      } catch (e) {
+        journalHits[which] = [];
+        ctx.toast(e.message, "error");
+      }
+      paintHits();
+    }, 200);
+  }
+
+  function hitButtons(hits, which) {
+    return (hits || []).map(p => `
+      <button type="button" class="btn btn-secondary btn-sm" style="justify-content:flex-start;" onclick="Finance.pickJournalProduct('${which}', ${p.catalog_product_id})">
+        ${ctx.esc(p.our_product_id)} · stock ${p.quantity_on_hand ?? 0}${p.buying_price ? ` · buy ${ctx.esc(p.buying_price)}` : ""}
+      </button>`).join("");
+  }
+
+  function pickJournalProduct(which, id) {
+    const p = (journalHits[which] || []).find(x => x.catalog_product_id === id);
+    if (!p || !journalForm) return;
+    if (which === "from") {
+      journalForm.from_id = id;
+      journalForm.from_label = p.our_product_id;
+      journalForm.from_q = p.our_product_id;
+    } else if (which === "to") {
+      journalForm.to_id = id;
+      journalForm.to_label = p.our_product_id;
+      journalForm.to_q = p.our_product_id;
+    } else if (!journalForm.lines.some(l => l.catalog_product_id === id)) {
+      journalForm.lines.push({
+        catalog_product_id: id,
+        our_product_id: p.our_product_id,
+        quantity: 1,
+        rate: p.buying_price || "",
+        on_hand: p.quantity_on_hand,
+      });
+      journalForm.line_q = "";
+    }
+    journalHits[which] = [];
+    journalForm.preview = null;
+    renderJournal();
+  }
+
+  async function previewJournal() {
+    journalForm.busy = true;
+    renderJournal();
+    try {
+      journalForm.preview = await ctx.api("/stock-journals/preview", { method: "POST", body: JSON.stringify(journalBody()) }, 0);
+    } catch (e) {
+      journalForm.preview = null;
+      ctx.toast(e.message, "error");
+    } finally {
+      journalForm.busy = false;
+      renderJournal();
+    }
+  }
+
+  async function saveJournal() {
+    journalForm.busy = true;
+    renderJournal();
+    ctx.showLoading?.();
+    try {
+      const saved = await ctx.api("/stock-journals", { method: "POST", body: JSON.stringify(journalBody()) }, 0);
+      ctx.toast(saved.kind === "consumption" ? "Sample cost recorded" : "Stock moved", "success");
+      journalForm = blankJournalForm();
+      journalHits = { from: [], to: [], line: [] };
+      ctx.invalidateCache?.("/stock");
+      ctx.invalidateCache?.("/expenses");
+      await loadJournals();
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally {
+      if (journalForm) journalForm.busy = false;
+      ctx.hideLoading?.();
+      renderJournal();
+    }
+  }
+
+  async function voidJournal(id) {
+    const reason = window.prompt("Reason to void this journal");
+    if (!reason || !reason.trim()) return;
+    ctx.showLoading?.();
+    try {
+      await ctx.api(`/stock-journals/${id}/void`, { method: "POST", body: JSON.stringify({ reason: reason.trim() }) }, 0);
+      ctx.toast("Journal voided. Stock put back.", "success");
+      ctx.invalidateCache?.("/stock");
+      ctx.invalidateCache?.("/expenses");
+      await loadJournals();
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
   return {
     init, showHub, showQuickEntry, openQuickEntry, showArApHub, quickVendorPayment, quickCustomerPayment, closeQuickPay, submitQuickPay, quickAddExpense, loadNeedsAction,
     setHubMode, setChip, setHubSearch, setBrowseSection, setShowSettled, setReportTab,
@@ -2723,6 +3022,8 @@ const Finance = (() => {
     shareArStatement, shareApStatement,
     setArOpeningBalance, setApOpeningBalance, saveArOpeningBalance, saveApOpeningBalance,
     openExpenseForm, editExpense, saveExpenseEdit, closeExpenseForm, submitExpense, deleteExpense, onExpenseFilterChange, clearExpenseFilters,
+    setJournalKind, setJournalField, setJournalLine, removeJournalLine, searchJournalProduct,
+    pickJournalProduct, previewJournal, saveJournal, voidJournal,
     editApPayment, saveApPaymentEdit, editArPayment, saveArPaymentEdit,
     openLossForm, closeLossForm, submitLoss, deleteLoss,
     openFreightAgent, openFreightSettle, openFreightAdvance, closeFreightSettle, submitFreightSettle,

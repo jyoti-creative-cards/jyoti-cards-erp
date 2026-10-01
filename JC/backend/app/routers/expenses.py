@@ -35,6 +35,7 @@ class ExpensePublic(BaseModel):
     reference: Optional[str] = None
     freight_agent_id: Optional[int] = None
     addon_product_id: Optional[int] = None
+    is_cash: bool = True
     created_by_name: str
     display_date: Optional[date] = None
     display_name: Optional[str] = None
@@ -53,6 +54,7 @@ class ExpensePublic(BaseModel):
             reference=row.reference,
             freight_agent_id=row.freight_agent_id,
             addon_product_id=row.addon_product_id,
+            is_cash=True if row.is_cash is None else bool(row.is_cash),
             created_by_name=row.created_by_name,
             display_date=view.get("display_date") or row.expense_date,
             display_name=view.get("display_name") or row.category,
@@ -121,6 +123,8 @@ def patch_expense(
     row = db.get(Expense, expense_id)
     if not row:
         raise HTTPException(404, "expense not found")
+    if row.is_cash is False:
+        raise HTTPException(400, "This cost comes from a stock journal. Void the journal to change it.")
     row.expense_date = body.expense_date
     row.category = body.category.lower().strip()
     row.description = (body.description or "").strip() or None
@@ -156,6 +160,8 @@ def delete_expense(
     row = db.get(Expense, expense_id)
     if not row:
         raise HTTPException(404, "expense not found")
+    if row.is_cash is False:
+        raise HTTPException(400, "This cost comes from a stock journal. Void the journal to remove it.")
     if row.freight_agent_id:
         raise HTTPException(400, "cannot delete freight-linked expense")
     if row.addon_product_id:

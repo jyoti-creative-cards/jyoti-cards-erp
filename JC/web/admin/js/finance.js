@@ -330,6 +330,7 @@ const Finance = (() => {
     if (!Number.isFinite(amount) || amount <= 0) return ctx.toast("Enter a valid amount", "error");
 
     let paymentModeId;
+    let modeName = "";
     try {
       const modes = await ctx.api("/payment-modes?active_only=true", {}, 0);
       if (modes && modes.length) {
@@ -338,6 +339,7 @@ const Finance = (() => {
         const idx = parseInt(String(pick || "").trim(), 10) - 1;
         if (!Number.isFinite(idx) || idx < 0 || idx >= modes.length) return ctx.toast("Payment mode required", "error");
         paymentModeId = modes[idx].id;
+        modeName = modes[idx].name || "";
       }
     } catch (e) { ctx.toast(e.message, "error"); return; }
 
@@ -351,6 +353,15 @@ const Finance = (() => {
         body: JSON.stringify({ payment_ref: ref.trim(), payment_mode_id: paymentModeId, amount, comment: comment.trim() || undefined }),
       });
       ctx.toast(res.message || "Payment recorded", "success");
+      showPaymentDone({
+        title: "Paid",
+        party: partyWithCity(vendor),
+        amount,
+        receipt: ref.trim() || (res.id ? `#${res.id}` : ""),
+        comment: comment.trim(),
+        mode: res.payment_mode || modeName,
+        againFn: "Finance.quickVendorPayment()",
+      });
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
   }
@@ -426,14 +437,17 @@ const Finance = (() => {
       });
       closeQuickPay();
       ctx.toast(res.message || "Payment recorded", "success");
-      ctx.openDetail?.("Collected", `
-        <div class="review-block">
-          ${ctx.reviewRow("Party", partyWithCity(customer))}
-          ${ctx.reviewRow("Amount", fmtPrice(amount))}
-          ${ctx.reviewRow("Date", fmtDocDate(valueDate))}
-        </div>`,
-        `<button class="btn btn-primary" style="flex:1;" onclick="App.closeDetail()">Done</button>`,
-        "sm");
+      const modeName = quickPayModes.find(m => m.id === paymentModeId)?.name || res.payment_mode || "";
+      showPaymentDone({
+        title: "Collected",
+        party: partyWithCity(customer),
+        amount,
+        valueDate,
+        receipt: ref || (res.id ? `#${res.id}` : res.payment_ref || ""),
+        comment,
+        mode: modeName,
+        againFn: "Finance.quickCustomerPayment()",
+      });
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
   }
@@ -823,7 +837,39 @@ const Finance = (() => {
     }).join("")}</div>`;
   }
 
-  function settleSuccess({ title, party, amount, balanceAfter, valueDate, reopenFn }) {
+  function entryDay(row) {
+    const raw = row?.display_date || row?.value_date || row?.created_at || "";
+    const m = String(raw).match(/(\d{4}-\d{2}-\d{2})/);
+    return m ? m[1] : "";
+  }
+
+  function newestFirst(rows) {
+    return [...(rows || [])].sort((a, b) => {
+      const da = entryDay(a);
+      const db = entryDay(b);
+      if (da !== db) return da < db ? 1 : -1;
+      const ia = Number(a.id || a.receipt_id) || 0;
+      const ib = Number(b.id || b.receipt_id) || 0;
+      return ib - ia;
+    });
+  }
+
+  function showPaymentDone({ title, party, amount, valueDate, receipt, comment, mode, againFn }) {
+    ctx.openDetail?.(title, `
+      <div class="review-block">
+        ${ctx.reviewRow("Party", party)}
+        ${ctx.reviewRow("Amount", fmtPrice(amount))}
+        ${valueDate ? ctx.reviewRow("Date", fmtDocDate(valueDate)) : ""}
+        ${ctx.reviewRow("Receipt no.", receipt || "—")}
+        ${ctx.reviewRow("Comment", comment || "—")}
+        ${ctx.reviewRow("Cash / Bank", mode || "—")}
+      </div>`,
+      `<button class="btn btn-primary" style="flex:1;" onclick="App.closeDetail();${againFn}">Create another payment</button>
+       <button class="btn btn-secondary" style="flex:1;" onclick="App.closeDetail()">Done</button>`,
+      "sm");
+  }
+
+  function settleSuccess({ title, party, amount, balanceAfter, valueDate, reopenFn, receipt, comment, mode }) {
     ctx.openDetail?.(title, `
       <div class="doc-success-banner">
         <strong>Payment settled</strong>
@@ -833,6 +879,9 @@ const Finance = (() => {
         ${ctx.reviewRow("Party", party)}
         ${ctx.reviewRow("Amount", fmtPrice(amount))}
         ${valueDate ? ctx.reviewRow("Date", fmtDocDate(valueDate)) : ""}
+        ${ctx.reviewRow("Receipt no.", receipt || "—")}
+        ${ctx.reviewRow("Comment", comment || "—")}
+        ${ctx.reviewRow("Cash / Bank", mode || "—")}
         ${ctx.reviewRow("Balance after", fmtPrice(balanceAfter))}
       </div>`,
       `<button class="btn btn-primary" style="flex:1;" onclick="App.closeDetail();${reopenFn}">Open party</button>
@@ -977,11 +1026,11 @@ const Finance = (() => {
   }
 
   function renderApStatement() {
-    const bills = apDetail.bills || [];
+    const bills = newestFirst(apDetail.bills);
     if (!bills.length) return OrdersUI.emptyState({ title: "No bills yet", sub: "Bills appear after you receive/bill vendor stock." });
     return `<div class="fin-stmt">${bills.map(b => {
       const open = expandedBillId === b.receipt_id;
-      const dns = b.debit_notes || [];
+      const dns = newestFirst(b.debit_notes);
       return `<div class="fin-bill-card ${open ? "is-open" : ""}">
         <button type="button" class="fin-bill-head" onclick="Finance.toggleBill(${b.receipt_id})">
           <div>
@@ -1067,7 +1116,7 @@ const Finance = (() => {
       <table class="data"><thead><tr>
         <th>When</th><th>Type</th><th>Description</th><th>Amount</th><th>Balance</th>
       </tr></thead><tbody>
-        ${(apDetail.entries || []).map(e => `<tr class="clickable" onclick="Finance.openEntry(${e.id})">
+        ${newestFirst(apDetail.entries).map(e => `<tr class="clickable" onclick="Finance.openEntry(${e.id})">
           <td style="font-size:12px;">${fmtDocDate(e.display_date || e.value_date || e.created_at)}</td>
           <td>${ctx.esc(e.entry_type)}${e.status && e.status !== "open" ? ` <span class="badge badge-amber">${ctx.esc(e.status)}</span>` : ""}</td>
           <td>${ctx.esc(e.display_name || e.description)}</td>
@@ -1079,7 +1128,7 @@ const Finance = (() => {
   }
 
   function renderApPayments() {
-    const pays = apDetail.payments || [];
+    const pays = newestFirst(apDetail.payments);
     if (!pays.length) return OrdersUI.emptyState({ title: "No payments yet", sub: "Pay above to record a payment." });
     return `<div class="card table-wrap"><table class="data"><thead><tr>
       <th>When</th><th>Reference</th><th>Comment</th><th>Amount</th><th>Balance after</th><th></th>
@@ -1253,7 +1302,7 @@ const Finance = (() => {
       }
       const body = { payment_ref: ref, amount, payment_receipt_key: key, comment, value_date: valueDate };
       if (payment_mode_id) body.payment_mode_id = payment_mode_id;
-      await ctx.api(`/accounts-payable/vendor/${currentVendor}/settle`, {
+      const saved = await ctx.api(`/accounts-payable/vendor/${currentVendor}/settle`, {
         method: "POST",
         body: JSON.stringify(body),
       });
@@ -1263,11 +1312,16 @@ const Finance = (() => {
       ctx.toast("Paid", "success");
       await openVendorAp(vid);
       const bal = Number(apDetail?.outstanding) || 0;
+      const modeName = paymentModes.find(m => m.id === payment_mode_id)?.name || saved?.payment_mode || "";
       settleSuccess({
         title: "Paid",
         party,
         amount,
         balanceAfter: bal,
+        valueDate,
+        receipt: ref || (saved?.id ? `#${saved.id}` : ""),
+        comment: comment || "",
+        mode: modeName,
         reopenFn: `Finance.openVendorAp(${vid})`,
       });
       loadApList();
@@ -1516,7 +1570,7 @@ const Finance = (() => {
   }
 
   function renderArStatement() {
-    const bills = (arDetail.entries || []).filter(e => e.entry_type === "bill" || e.entry_type === "credit_note" || e.entry_type === "opening_balance");
+    const bills = newestFirst((arDetail.entries || []).filter(e => e.entry_type === "bill" || e.entry_type === "credit_note" || e.entry_type === "opening_balance"));
     if (!bills.length) return OrdersUI.emptyState({ title: "No bills yet", sub: "Bills appear after you process customer orders." });
     return `<div class="card table-wrap"><table class="data"><thead><tr>
       <th>When</th><th>Type</th><th>Description</th><th>Amount</th><th>Balance</th>
@@ -1539,7 +1593,7 @@ const Finance = (() => {
       <table class="data"><thead><tr>
         <th>When</th><th>Type</th><th>Description</th><th>Amount</th><th>Balance</th>
       </tr></thead><tbody>
-        ${(arDetail.entries || []).map(e => {
+        ${newestFirst(arDetail.entries).map(e => {
           const badgeCls = e.entry_type === "credit_note" ? "badge-green" : e.entry_type === "opening_balance" ? "badge-blue" : e.entry_type === "bill" ? "badge-amber" : e.entry_type === "payment_reversal" ? "badge-red" : "badge-green";
           const typeLabel = { bill: "Bill", credit_note: "Credit Note", opening_balance: "Opening", payment: "Payment", payment_reversal: "Reversal" }[e.entry_type] || e.entry_type;
           return `<tr>
@@ -1564,7 +1618,7 @@ const Finance = (() => {
   function renderArPayments() {
     const entries = arDetail.entries || [];
     const reversed = reversedPaymentIds(entries);
-    const pays = entries.filter(e => e.entry_type === "payment" || e.entry_type === "payment_reversal");
+    const pays = newestFirst(entries.filter(e => e.entry_type === "payment" || e.entry_type === "payment_reversal"));
     if (!pays.length) return OrdersUI.emptyState({ title: "No payments yet", sub: "Collect above when cash comes in." });
     return `<div class="card table-wrap"><table class="data"><thead><tr>
       <th>When</th><th>Reference</th><th>Comment</th><th>Amount</th><th>Balance</th><th></th>
@@ -1717,7 +1771,7 @@ const Finance = (() => {
     try {
       const body = { amount, comment, payment_ref: ref || null, value_date: valueDate };
       if (payment_mode_id) body.payment_mode_id = payment_mode_id;
-      await ctx.api(`/accounts-receivable/customer/${currentCustomer}/settle`, {
+      const saved = await ctx.api(`/accounts-receivable/customer/${currentCustomer}/settle`, {
         method: "POST",
         body: JSON.stringify(body),
       });
@@ -1726,12 +1780,16 @@ const Finance = (() => {
       closeArSettle();
       ctx.toast("Collected", "success");
       await openCustomerAr(cid);
+      const modeName = paymentModes.find(m => m.id === payment_mode_id)?.name || saved?.payment_mode || "";
       settleSuccess({
         title: "Collected",
         party,
         amount,
         balanceAfter: Number(arDetail?.outstanding) || 0,
         valueDate,
+        receipt: ref || (saved?.id ? `#${saved.id}` : saved?.payment_ref || ""),
+        comment: comment || saved?.payment_comment || "",
+        mode: modeName,
         reopenFn: `Finance.openCustomerAr(${cid})`,
       });
       loadArList();
@@ -2322,7 +2380,7 @@ const Finance = (() => {
         <table class="data"><thead><tr>
           <th>Date</th><th>Type</th><th>Party</th><th>Amount</th><th>Ref</th><th></th>
         </tr></thead><tbody>
-          ${freightLedger.map(r => {
+          ${newestFirst(freightLedger).map(r => {
             const isCharge = r.entry_type === "charge";
             const party = isCharge
               ? (r.party_label || r.notes || "—")

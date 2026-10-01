@@ -223,10 +223,23 @@ def process_customer_bill(
     ar_posted_at = resolve_biz_dt(bill_date)
 
     billed_order = get_or_create_customer_order(db, customer_id, "billed", "billed")
+    from app.services.doc_gen import source_order_for_customer
+
+    src_at, src_by = source_order_for_customer(
+        db, customer_id, [int(x["catalog_product_id"]) for x in bill_items]
+    )
+    if src_by == "Party (app)":
+        src_source, src_name = "app", None
+    elif src_by:
+        src_source, src_name = "offline", src_by
+    else:
+        src_source, src_name = None, None
     placement = CustomerOrderPlacement(
         customer_order_id=billed_order.id,
         status="billed",
-        placed_at=entered_at,
+        placed_at=src_at or entered_at,
+        order_source=src_source,
+        placed_by_name=src_name,
     )
     db.add(placement)
     db.flush()
@@ -708,6 +721,8 @@ def process_offline_customer_order(
         customer_order_id=billed_order.id,
         status="billed",
         customer_notes=narration or "Offline order",
+        order_source="offline",
+        placed_by_name="Admin" if actor_type == "admin" else ((actor_name or "").strip() or "Staff"),
         placed_at=now,
     )
     db.add(placement)

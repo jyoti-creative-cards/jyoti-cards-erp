@@ -546,6 +546,8 @@ def _draw_header(
     customer_address: str | None,
     customer_city: str | None,
     customer_party_number: object,
+    order_at: datetime | None = None,
+    order_by: str | None = None,
 ) -> float:
     """Draw the Tally header. Returns the table-top y measured from the top of the page."""
     if show_printed and printed is not None:
@@ -565,7 +567,15 @@ def _draw_header(
         c.setFont("Helvetica", 9)
         c.drawRightString(RIGHT - c.stringWidth(dated, "Helvetica-Bold", 9) - 8, _y(52), "Dated")
     c.setFont("Helvetica", 9)
-    c.drawString(LEFT, _y(66), "Ref. No.")
+    if order_at is not None:
+        c.drawString(LEFT, _y(66), f"Order : {_creation_token(order_at)}")
+    else:
+        c.drawString(LEFT, _y(66), "Ref. No.")
+    who = _txt(order_by, 28)
+    if who:
+        by = f"By : {who}"
+        c.setFont("Helvetica-Bold", 9)
+        c.drawRightString(RIGHT, _y(66), by)
 
     c.setFont("Helvetica-Bold", 9)
     c.drawCentredString(PAGE_W / 2, _y(82), COMPANY_NAME)
@@ -973,6 +983,7 @@ def render_customer_bill_pdf(
     narration: str | None = None,
     item_image_urls: Dict[int, str | None] | None = None,
     order_created_at: datetime | None = None,
+    order_by: str | None = None,
     invoice_date=None,
     credit_limit: float | None = None,
     outstanding: float | None = None,
@@ -997,6 +1008,7 @@ def render_customer_bill_pdf(
         narration=narration,
         item_image_urls=item_image_urls,
         order_created_at=order_created_at,
+        order_by=order_by,
         invoice_date=invoice_date,
         with_labels=False,
     )
@@ -1022,6 +1034,7 @@ def render_copies_pdf(
     narration: str | None = None,
     item_image_urls: Dict[int, str | None] | None = None,
     order_created_at: datetime | None = None,
+    order_by: str | None = None,
     invoice_date=None,
     credit_limit: float | None = None,
     outstanding: float | None = None,
@@ -1059,6 +1072,8 @@ def render_copies_pdf(
         customer_address=customer_address,
         customer_city=customer_city,
         customer_party_number=customer_party_number,
+        order_at=order_created_at,
+        order_by=order_by,
     )
     pages = _paginate(running, closing, len(photos), table_top)
 
@@ -1074,6 +1089,8 @@ def render_copies_pdf(
         customer_address=customer_address,
         customer_city=customer_city,
         customer_party_number=customer_party_number,
+        order_at=order_created_at,
+        order_by=order_by,
     )
     buf = BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)

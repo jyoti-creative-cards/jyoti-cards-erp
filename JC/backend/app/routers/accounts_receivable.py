@@ -220,7 +220,7 @@ def record_customer_payment(
     desc_bits.append(f"— ₹{amount}")
 
     pay_day = body.value_date or today_ist()
-    post_payment_entry(
+    entry = post_payment_entry(
         db,
         customer_id=customer_id,
         amount=amount,
@@ -243,7 +243,15 @@ def record_customer_payment(
         detail=f"₹{amount} {mode_name or ''} ref {ref} (entry-only)".strip(),
     )
     db.commit()
-    return {"ok": True, "message": f"Payment of ₹{amount} recorded for {customer.business_name}"}
+    db.refresh(entry)
+    return {
+        "ok": True,
+        "message": f"Payment of ₹{amount} recorded for {customer.business_name}",
+        "id": entry.id,
+        "payment_ref": entry.payment_ref,
+        "payment_mode": entry.payment_mode,
+        "payment_comment": entry.payment_comment,
+    }
 
 
 def _ar_payment_out(db: Session, customer_id: int, entry_id: int) -> ArLedgerEntryOut:

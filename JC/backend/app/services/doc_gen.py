@@ -23,6 +23,84 @@ from app.services.document_present import present
 from app.services.pdf_documents import render_customer_order_pdf, render_vendor_placement_pdf, render_vendor_receipt_pdf
 
 
+def customer_order_by_label(
+    db: Session,
+    placement: CustomerOrderPlacement | None,
+    *,
+    fallback_name: str | None = None,
+    fallback_type: str | None = None,
+) -> str:
+    """Short name for the PDF: staff name, Admin, or Party (app)."""
+    source = (getattr(placement, "order_source", None) or "").strip() if placement is not None else ""
+    who = (getattr(placement, "placed_by_name", None) or "").strip() if placement is not None else ""
+    if source == "app":
+        return "Party (app)"
+    if source == "offline":
+        return "Admin" if not who or who.lower() == "admin" else who
+    if placement is not None and db is not None:
+        from app.models.activity_log import ActivityLog
+
+        log = (
+            db.query(ActivityLog)
+            .filter(
+                ActivityLog.action == "offline_order",
+                ActivityLog.entity_type == "customer_order",
+                ActivityLog.entity_id == placement.id,
+            )
+            .order_by(ActivityLog.id.asc())
+            .first()
+        )
+        if log:
+            return "Admin" if log.actor_type == "admin" else (log.actor_name or "Staff")
+        notes = (placement.customer_notes or "").lower()
+        if "placed by admin" in notes:
+            return "Admin"
+    name = (fallback_name or "").strip()
+    if (fallback_type or "").strip() == "admin" or name.lower() == "admin":
+        return "Admin"
+    if name:
+        return name
+    # Same default as the order-receipt line: no offline record means the party ordered.
+    if placement is not None:
+        return "Party (app)"
+    return "—"
+
+
+def source_order_for_customer(db: Session, customer_id: int, product_ids: list[int]) -> tuple[datetime | None, str | None]:
+    """Earliest open order behind these products, and who placed it."""
+    if not product_ids:
+        return None, None
+    rows = (
+        db.query(CustomerOrderPlacement)
+        .join(CustomerOrder, CustomerOrder.id == CustomerOrderPlacement.customer_order_id)
+        .join(CustomerOrderLine, CustomerOrderLine.placement_id == CustomerOrderPlacement.id)
+        .filter(
+            CustomerOrder.customer_id == customer_id,
+            CustomerOrder.bucket.in_(["open", "received"]),
+            CustomerOrderPlacement.status.in_(["open", "received"]),
+            CustomerOrderLine.catalog_product_id.in_(product_ids),
+            CustomerOrderLine.status == "active",
+        )
+        .order_by(CustomerOrderPlacement.placed_at.asc(), CustomerOrderPlacement.id.asc())
+        .all()
+    )
+    seen: list[CustomerOrderPlacement] = []
+    seen_ids: set[int] = set()
+    for row in rows:
+        if row.id in seen_ids:
+            continue
+        seen_ids.add(row.id)
+        seen.append(row)
+    if not seen:
+        return None, None
+    names: list[str] = []
+    for row in seen:
+        label = customer_order_by_label(db, row)
+        if label and label != "—" and label not in names:
+            names.append(label)
+    return seen[0].placed_at, ", ".join(names[:3]) or None
+
+
 def customer_order_source_line(db: Session, placement: CustomerOrderPlacement) -> str:
     """App order vs offline, and who typed the offline order."""
     source = (getattr(placement, "order_source", None) or "").strip()
@@ -135,6 +213,7 @@ def generate_customer_order_document(db: Session, placement_id: int) -> str | No
         placed_at=view.get("display_date") or placement.placed_at,
         outstanding=outstanding,
         source_line=customer_order_source_line(db, placement),
+        ordered_by=customer_order_by_label(db, placement),
     )
     key = customer_order_key(slug, placement.id)
     upload_bytes(key, pdf, "application/pdf")
@@ -239,6 +318,25 @@ def generate_customer_bill_document(db: Session, bill_id: int) -> str | None:
                 addon["name"] = live_addon.name or live_addon.our_product_id
     totals = {**totals, "lines": [dict(ln) for ln in lines if isinstance(ln, dict)]}
     placement = db.get(CustomerOrderPlacement, bill.placement_id) if bill.placement_id else None
+    order_at = placement.placed_at if placement else bill.created_at
+    order_by = customer_order_by_label(
+        db,
+        placement,
+        fallback_name=bill.created_by_name,
+        fallback_type=bill.created_by_type,
+    )
+    # A bill row is a new placement created at invoice time. The customer's
+    # order date and who placed it live on the earlier open/received order.
+    if placement is None or not (placement.order_source or placement.placed_by_name):
+        product_ids = [
+            int(ln.catalog_product_id)
+            for ln in db.query(CustomerBillLine).filter(CustomerBillLine.bill_id == bill.id).all()
+        ]
+        src_at, src_by = source_order_for_customer(db, bill.customer_id, product_ids)
+        if src_at is not None:
+            order_at = src_at
+        if src_by:
+            order_by = src_by
     from app.services.ar_ledger import customer_ar_totals
 
     ar = customer_ar_totals(db, bill.customer_id)
@@ -261,7 +359,8 @@ def generate_customer_bill_document(db: Session, bill_id: int) -> str | None:
         customer_notes=placement.customer_notes if placement else None,
         narration=bill.narration,
         item_image_urls=image_urls,
-        order_created_at=placement.placed_at if placement else bill.created_at,
+        order_created_at=order_at,
+        order_by=order_by,
         outstanding=outstanding,
     )
     key = customer_bill_key(slug, bill.bill_number)

@@ -227,7 +227,15 @@ def record_vendor_payment(
         detail=f"₹{amount} ref {body.payment_ref.strip()} (entry-only)",
     )
     db.commit()
-    return {"ok": True, "message": f"Payment of ₹{amount} recorded for {vendor.business_name}"}
+    db.refresh(entry)
+    return {
+        "ok": True,
+        "message": f"Payment of ₹{amount} recorded for {vendor.business_name}",
+        "id": entry.id,
+        "payment_ref": entry.payment_ref,
+        "payment_mode": entry.payment_mode,
+        "payment_comment": entry.payment_comment,
+    }
 
 
 def _ap_payment_out(db: Session, vendor_id: int, entry_id: int, auth: Optional[AuthContext] = None) -> ApLedgerEntryOut:

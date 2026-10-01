@@ -474,12 +474,14 @@ def render_customer_order_pdf(
     placed_at: datetime | None = None,
     outstanding: float | None = None,
     source_line: str | None = None,
+    ordered_by: str | None = None,
 ) -> bytes:
     buf = BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=1.5 * cm, rightMargin=1.5 * cm, topMargin=1.5 * cm, bottomMargin=1.5 * cm)
     story: list = []
     total = sum(float(ln.get("line_total") or (float(ln.get("unit_price") or 0) * int(ln.get("quantity") or 0))) for ln in lines)
-    _header(story, "ORDER RECEIPT", f"Customer: {_safe(customer_name, 80)}", f"Order #{placement_id} · {_ist_fmt(placed_at)}")
+    by_bit = f" · By {escape(_safe(ordered_by, 40))}" if ordered_by else ""
+    _header(story, "ORDER RECEIPT", f"Customer: {_safe(customer_name, 80)}", f"Order #{placement_id} · {_ist_fmt(placed_at)}{by_bit}")
     styles = getSampleStyleSheet()
     info = [f"<b>Customer:</b> {escape(_safe(customer_name, 80))}"]
     if customer_phone:
@@ -488,6 +490,9 @@ def render_customer_order_pdf(
         info.append(f"<b>Address:</b> {escape(_safe(customer_address, 120))}")
     if customer_city:
         info.append(f"<b>City:</b> {escape(_safe(customer_city, 60))}")
+    info.append(f"<b>Order date:</b> {escape(_ist_fmt(placed_at))}")
+    if ordered_by:
+        info.append(f"<b>By:</b> {escape(_safe(ordered_by, 40))}")
     if source_line:
         info.append(f"<b>Order from:</b> {escape(_safe(source_line, 80))}")
     story.append(Paragraph("<br/>".join(info), ParagraphStyle("info", parent=styles["Normal"], fontSize=9, spaceAfter=12, leading=13)))

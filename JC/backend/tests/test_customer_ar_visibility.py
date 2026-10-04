@@ -64,6 +64,13 @@ def test_plain_customers_read_staff_cannot_see_outstanding(db):
     assert pub.credit_limit is None
 
 
+def test_opened_customer_shows_that_party_only(db):
+    """The directory stays blank. Opening one customer shows that party's due."""
+    c = _customer(db)
+    pub = _to_public(c, db, include_history=True, auth=PLAIN_STAFF)
+    assert Decimal(pub.outstanding_balance) == Decimal("12345")
+
+
 def test_no_auth_defaults_to_hidden_not_leaked(db):
     c = _customer(db)
     pub = _to_public(c, db)  # auth omitted entirely — must fail safe, not leak

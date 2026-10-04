@@ -1,3 +1,4 @@
+// @slice 00-state
 /** Setup — Freight agents list / create / edit */
 const FreightAgentsSetup = (() => {
   let ctx = {};
@@ -5,6 +6,7 @@ const FreightAgentsSetup = (() => {
   let searchQ = "";
   let editingId = null;
 
+// @slice 01-init
   function init(context) { ctx = context; }
 
   function fmtPrice(val) {
@@ -142,6 +144,7 @@ const FreightAgentsSetup = (() => {
     modal.classList.remove("hidden");
   }
 
+// @slice 02-save
   async function save() {
     const name = document.getElementById("fa-name")?.value?.trim();
     const notes = document.getElementById("fa-notes")?.value?.trim() || null;
@@ -161,5 +164,6 @@ const FreightAgentsSetup = (() => {
     finally { ctx.hideLoading?.(); }
   }
 
+// @slice 03-public
   return { init, load, create: save, openWizard, openEdit, save, setSearch };
 })();

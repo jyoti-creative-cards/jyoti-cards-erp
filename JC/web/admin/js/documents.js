@@ -1,3 +1,4 @@
+// @slice 00-state
 /** Setup — S3 Documents browser */
 const Documents = (() => {
   let ctx = {};
@@ -6,6 +7,7 @@ const Documents = (() => {
   let searchQ = "";
   let renameKey = null;
 
+// @slice 01-init
   function init(context) { ctx = context; }
 
   function esc(s) { return ctx.esc ? ctx.esc(s) : String(s); }
@@ -87,6 +89,7 @@ const Documents = (() => {
     render();
   }
 
+// @slice 02-render
   function render() {
     const el = document.getElementById("documents-browser");
     if (!el) return;
@@ -220,6 +223,7 @@ const Documents = (() => {
     finally { ctx.hideLoading?.(); }
   }
 
+// @slice 03-renameFile
   function renameFile(key) {
     if (!canWrite()) return;
     renameKey = key;
@@ -266,6 +270,7 @@ const Documents = (() => {
 
   function load() { browse(currentPrefix); }
 
+// @slice 04-public
   return {
     init, load, browse, viewFile, openFile, newFolder, uploadFile, renameFile, deleteFile,
     setSearch, submitFolder, submitRename,

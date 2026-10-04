@@ -1,3 +1,4 @@
+// @slice 00-state
 /** Customer returns — one return per customer, multi-bill lines, restock + AR credit */
 const Returns = (() => {
   let ctx = null;
@@ -7,6 +8,7 @@ const Returns = (() => {
   let detailRows = [];
   let wizard = null;
 
+// @slice 01-init
   function init(appCtx) { ctx = appCtx; }
 
   function fmtPrice(v) {
@@ -478,6 +480,7 @@ const Returns = (() => {
     openCreate(detailCustomerId || undefined);
   }
 
+// @slice 02-public
   return {
     init, showHub, setHubSearch, openDetail, openCreate, openCreateFromDetail, closeWizard, onCustomerPick, pickCustomer, setWizardSearch, setQty, next, back, submit,
     openReturn, openDoc, voidReturn,

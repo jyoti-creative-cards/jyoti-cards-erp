@@ -1,3 +1,4 @@
+// @slice 00-state
 /** Vendor orders — Today/Past date scope + same stage chips */
 const VendorOrders = (() => {
   let ctx = {};
@@ -28,6 +29,7 @@ const VendorOrders = (() => {
   let wizardVendorsCache = [];
   let wizardPlacedOn = "";
 
+// @slice 01-localToday
   function localToday() {
     const n = new Date();
     return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
@@ -530,6 +532,7 @@ const VendorOrders = (() => {
     return html;
   }
 
+// @slice 02-renderNoteHubCard
   function renderNoteHubCard(o, bucket, canWrite) {
     const open = hubExpandedVendorId === o.vendor_id;
     const cache = hubExpandCache[`${bucket}-${o.vendor_id}`];
@@ -1035,6 +1038,7 @@ const VendorOrders = (() => {
     }
   }
 
+// @slice 03-reloadAfterVendorChange
   async function reloadAfterVendorChange(vendorId, preferredBucket) {
     clearHubCacheForVendor(vendorId);
     ctx.invalidateCache?.("/vendor-orders");
@@ -1553,6 +1557,7 @@ const VendorOrders = (() => {
     return Number.isFinite(n) ? n : null;
   }
 
+// @slice 04-wizardCartTotal
   function wizardCartTotal() {
     let anyUnknown = false;
     let sum = 0;
@@ -2070,6 +2075,7 @@ const VendorOrders = (() => {
     } catch (e) { ctx.toast(e.message, "error"); }
   }
 
+// @slice 05-openReceiptDoc
   async function openReceiptDoc(receiptId) {
     if (!receiptId) return;
     ctx.showLoading?.();
@@ -2163,6 +2169,7 @@ const VendorOrders = (() => {
 
   function _detailVendorId() { return detailVendorId; }
 
+// @slice 06-public
   return {
     init, showHub, setBucket, setHubMode, setQueueFilter, setHubSearch, loadList, openDetail, switchDetailBucket, refreshIfOpen,
     toggleSummaryRow, togglePlacementRow, toggleClosedRow, loadPlacementExpand,

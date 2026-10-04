@@ -1,3 +1,4 @@
+// @slice 00-state
 /** Staff management — admin only */
 const StaffMgmt = (() => {
   let ctx = {};
@@ -6,6 +7,7 @@ const StaffMgmt = (() => {
   let editingId = null;
   let searchQ = "";
 
+// @slice 01-init
   function init(context) { ctx = context; }
 
   async function load() {
@@ -84,6 +86,7 @@ const StaffMgmt = (() => {
     })).join("")}</div>`;
   }
 
+// @slice 02-openDetail
   async function openDetail(id) {
     ctx.showLoading?.();
     try {
@@ -151,18 +154,15 @@ const StaffMgmt = (() => {
       keys: ["setup.read", "setup.write"],
     },
     {
-      id: "accountant",
-      label: "Accountant",
-      hint: "Runs day-to-day ops — no buying price, no finance figures, entry-only money",
+      id: "staff",
+      label: "Staff",
+      hint: "Customer orders, products at selling price, and payment entry. No buying price, no vendor orders, no company totals.",
       keys: [
-        // Deliberately no customers.write / vendors.write / catalog.write / addons.write / setup.write / recycle.*:
-        // those permissions also gate "Delete" buttons in this app — read-only master data keeps this role delete-free.
-        "customers.read", "vendors.read",
+        "customers.read", "customers.write",
         "catalog.read", "addons.read", "setup.read",
-        "vendor_orders.read", "vendor_orders.write",
         "customer_orders.read", "customer_orders.write",
         "returns.read", "returns.write",
-        "stock.read", "stock.write",
+        "stock.read",
         "finance.write",
       ],
     },
@@ -184,7 +184,7 @@ const StaffMgmt = (() => {
       <div style="display:flex;flex-wrap:wrap;gap:6px;">
         ${ROLE_PRESETS.map(r => `<button type="button" class="btn btn-secondary btn-sm" title="${ctx.esc(r.hint)}" onclick="StaffMgmt.applyRolePreset('${r.id}')">${ctx.esc(r.label)}</button>`).join("")}
       </div>
-      <p style="margin:8px 0 0;font-size:12px;color:var(--muted);">Tap a role to tick the common permissions, then fine-tune below.</p>
+      <p style="margin:8px 0 0;font-size:12px;color:var(--muted);">Tap a role, then tick or untick anything. Staff is the everyday set. Vendor orders, buying price, and company totals stay off unless you tick them.</p>
     </div>`;
     const groups = permGroups.map(g => `
       <div style="margin-bottom:12px;">
@@ -211,7 +211,7 @@ const StaffMgmt = (() => {
           <p style="margin:6px 0 0;font-size:12px;color:var(--muted);">Password = last 4 digits by default. Sent via WhatsApp.</p></div>
         <div><label class="label">Custom Password (optional)</label><input id="sm-password" class="input" placeholder="Leave blank to use last 4 digits of phone" />
           <p style="margin:6px 0 0;font-size:12px;color:var(--muted);">Set this if the phone number isn't real (e.g. no WhatsApp) — you'll need to share it yourself.</p></div>
-        <div><label class="label">Permissions</label><div class="card" style="padding:16px;max-height:240px;overflow-y:auto;">${permCheckboxes([])}</div></div>
+        <div><label class="label">Permissions</label><div class="card" style="padding:16px;max-height:420px;overflow-y:auto;">${permCheckboxes([])}</div></div>
       </div>`;
     document.getElementById("staff-modal-footer").innerHTML = `
       <button class="btn btn-secondary" onclick="StaffMgmt.closeModal()">Cancel</button>
@@ -219,6 +219,7 @@ const StaffMgmt = (() => {
     document.getElementById("staff-modal").classList.remove("hidden");
   }
 
+// @slice 03-openEdit
   async function openEdit(id) {
     const s = staff.find(x => x.id === id) || await ctx.api(`/staff/${id}`);
     editingId = id;
@@ -228,7 +229,7 @@ const StaffMgmt = (() => {
         <div><label class="label">Full Name *</label><input id="sm-name" class="input" value="${ctx.esc(s.name)}" /></div>
         <div><label class="label">Login ID (mobile)</label><input id="sm-phone" class="input" type="tel" maxlength="10" value="${ctx.esc(s.phone)}" />
           <p style="margin:6px 0 0;font-size:12px;color:var(--muted);">Changing this changes their login number too.</p></div>
-        <div><label class="label">Permissions</label><div class="card" style="padding:16px;max-height:240px;overflow-y:auto;">${permCheckboxes(s.permissions)}</div></div>
+        <div><label class="label">Permissions</label><div class="card" style="padding:16px;max-height:420px;overflow-y:auto;">${permCheckboxes(s.permissions)}</div></div>
         <div><button type="button" class="btn btn-secondary btn-sm" onclick="StaffMgmt.resetPassword(${s.id})">Reset Password</button></div>
       </div>`;
     document.getElementById("staff-modal-footer").innerHTML = `
@@ -295,5 +296,6 @@ const StaffMgmt = (() => {
     } catch (e) { ctx.toast(e.message, "error"); }
   }
 
+// @slice 04-public
   return { init, load, openDetail, openWizard, openEdit, closeModal, save, deleteStaff, setSearch, applyRolePreset, resetPassword };
 })();

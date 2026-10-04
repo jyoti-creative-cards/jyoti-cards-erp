@@ -1,3 +1,4 @@
+// @slice 00-state
 /** Setup — Payment modes for customer collect */
 const PaymentModes = (() => {
   let ctx = {};
@@ -5,6 +6,7 @@ const PaymentModes = (() => {
   let searchQ = "";
   let editingId = null;
 
+// @slice 01-init
   function init(context) { ctx = context; }
 
   function canWrite() { return !!ctx.isAdmin?.(); }
@@ -135,5 +137,6 @@ const PaymentModes = (() => {
     finally { ctx.hideLoading?.(); }
   }
 
+// @slice 02-public
   return { init, load, setSearch, openWizard, openEdit, save, deleteMode };
 })();

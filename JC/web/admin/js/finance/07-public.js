@@ -1,0 +1,20 @@
+  return {
+    init, showHub, showQuickEntry, openQuickEntry, showArApHub, quickVendorPayment, quickCustomerPayment, closeQuickPay, submitQuickPay, quickAddExpense, loadNeedsAction,
+    setHubMode, setChip, setHubSearch, setBrowseSection, setShowSettled, setReportTab,
+    showAp, showAr, showExpenses, showRevenue, showCost, showPnl, showFreight,
+    showRouteCollections, openRouteCollection, openRouteCustomer, backRouteCustomers, printRouteCollection,
+    showApFromVendor, showArFromCustomer, openVendorAp, openEntry, openSettle, closeSettle, submitSettle, setSettleFile, onApSettleAmount,
+    setApTab, toggleBill, addDebitNote, editDebitNote, voidDebitNote,
+    openCustomerAr, setArTab, openArSettle, closeArSettle, submitArSettle, onArSettleAmount,
+    undoArPayment, undoApPayment,
+    shareArStatement, shareApStatement,
+    setArOpeningBalance, setApOpeningBalance, saveArOpeningBalance, saveApOpeningBalance,
+    openExpenseForm, editExpense, saveExpenseEdit, closeExpenseForm, submitExpense, deleteExpense, onExpenseFilterChange, clearExpenseFilters,
+    setJournalKind, setJournalField, setJournalLine, removeJournalLine, searchJournalProduct,
+    pickJournalProduct, previewJournal, saveJournal, voidJournal,
+    editApPayment, saveApPaymentEdit, editArPayment, saveArPaymentEdit,
+    openLossForm, closeLossForm, submitLoss, deleteLoss,
+    openFreightAgent, openFreightSettle, openFreightAdvance, closeFreightSettle, submitFreightSettle,
+    setFreightSettleFile, shareFreightStatement, printFreightPayment,
+  };
+})();

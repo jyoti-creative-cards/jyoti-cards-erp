@@ -1,3 +1,4 @@
+// @slice 00-state
 /** Debit notes — create / edit modal with plain-language direction choices */
 const DebitNotes = (() => {
   let ctx = {};
@@ -14,6 +15,7 @@ const DebitNotes = (() => {
     valueDirection: "over", // over = bill too high → pay less
   };
 
+// @slice 01-init
   function init(context) { ctx = context; }
 
   function fmtPrice(val) {
@@ -502,6 +504,7 @@ const DebitNotes = (() => {
     renderForm(state.editing);
   }
 
+// @slice 02-public
   return {
     init, openCreate, openEdit, openForReceipt, addFromList, editFromList, voidFromList, close, setType, setItemDirection, setValueDirection,
     updatePreview, review, saveEdit, saveLocalEdit, buildPayload, reloadLines,

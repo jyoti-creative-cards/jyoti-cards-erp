@@ -93,9 +93,40 @@ def source_order_for_customer(db: Session, customer_id: int, product_ids: list[i
         seen.append(row)
     if not seen:
         return None, None
+    # One activity-log read for placements that have no source stamped on the row.
+    pending_ids = [
+        row.id for row in seen if not (getattr(row, "order_source", None) or "").strip()
+    ]
+    log_by_id: dict[int, object] = {}
+    if pending_ids:
+        from app.models.activity_log import ActivityLog
+
+        for log in (
+            db.query(ActivityLog)
+            .filter(
+                ActivityLog.action == "offline_order",
+                ActivityLog.entity_type == "customer_order",
+                ActivityLog.entity_id.in_(pending_ids),
+            )
+            .order_by(ActivityLog.id.asc())
+            .all()
+        ):
+            log_by_id.setdefault(int(log.entity_id), log)
     names: list[str] = []
     for row in seen:
-        label = customer_order_by_label(db, row)
+        source = (getattr(row, "order_source", None) or "").strip()
+        who = (getattr(row, "placed_by_name", None) or "").strip()
+        if source == "app":
+            label = "Party (app)"
+        elif source == "offline":
+            label = "Admin" if not who or who.lower() == "admin" else who
+        else:
+            log = log_by_id.get(row.id)
+            if log is not None:
+                label = "Admin" if log.actor_type == "admin" else (log.actor_name or "Staff")
+            else:
+                notes = (row.customer_notes or "").lower()
+                label = "Admin" if "placed by admin" in notes else "Party (app)"
         if label and label != "—" and label not in names:
             names.append(label)
     return seen[0].placed_at, ", ".join(names[:3]) or None

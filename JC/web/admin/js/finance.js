@@ -1,3 +1,4 @@
+// @slice 00-state
 /** Finance — money hub (Due / Collect / Pay / Freight / …) */
 const Finance = (() => {
   let ctx = {};
@@ -57,6 +58,7 @@ const Finance = (() => {
     reports: "Quick cash snapshot — full books under More → Reports",
   };
 
+// @slice 01-init
   function init(context) { ctx = context; }
 
   function fmtPrice(val) {
@@ -574,6 +576,7 @@ const Finance = (() => {
   function showFreight() { setChip("freight"); }
   function showRouteCollections() { setChip("routes"); }
 
+// @slice 02-loadDuesSilent
   async function loadDuesSilent() {
     try {
       dues = await ctx.api("/finance/dues", {}, 0);
@@ -1049,6 +1052,7 @@ const Finance = (() => {
       ${content}`;
   }
 
+// @slice 03-renderApStatement
   function renderApStatement() {
     const bills = newestFirst(apDetail.bills);
     if (!bills.length) return OrdersUI.emptyState({ title: "No bills yet", sub: "Bills appear after you receive/bill vendor stock." });
@@ -1563,6 +1567,7 @@ const Finance = (() => {
     finally { ctx.hideLoading?.(); }
   }
 
+// @slice 04-setApOpeningBalance
   async function setApOpeningBalance() {
     if (!currentVendor || !apDetail) return;
     const today = new Date().toISOString().slice(0, 10);
@@ -2070,6 +2075,7 @@ const Finance = (() => {
     finally { saveBusy = false; ctx.hideLoading?.(); }
   }
 
+// @slice 05-openExpenseForm
   function openExpenseForm() {
     const today = localToday();
     document.getElementById("expense-body").innerHTML = `
@@ -2581,6 +2587,7 @@ const Finance = (() => {
   }
 
   /* —— Routes —— */
+// @slice 06-loadRouteCollections
   async function loadRouteCollections() {
     const el = document.getElementById("finance-routes-list");
     if (!el) return;
@@ -3010,6 +3017,7 @@ const Finance = (() => {
     finally { ctx.hideLoading?.(); }
   }
 
+// @slice 07-public
   return {
     init, showHub, showQuickEntry, openQuickEntry, showArApHub, quickVendorPayment, quickCustomerPayment, closeQuickPay, submitQuickPay, quickAddExpense, loadNeedsAction,
     setHubMode, setChip, setHubSearch, setBrowseSection, setShowSettled, setReportTab,

@@ -1,8 +1,10 @@
+// @slice 00-state
 /** Today — do now · money · stock · recent (merged Home + work queues) */
 const Dashboard = (() => {
   let ctx = {};
   let data = null;
 
+// @slice 01-init
   function init(context) { ctx = context; }
 
   function fmtPrice(val) {
@@ -133,6 +135,7 @@ const Dashboard = (() => {
     return Math.min(100, Math.round((a / b) * 100));
   }
 
+// @slice 02-pulseBars
   function pulseBars(pulse) {
     const sales = Number(pulse.sales_billed) || 0;
     const cashIn = Number(pulse.cash_in) || 0;
@@ -187,6 +190,7 @@ const Dashboard = (() => {
     return new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
   }
 
+// @slice 03-render
   function render() {
     const body = document.getElementById("dashboard-body");
     if (!body || !data) return;
@@ -210,7 +214,7 @@ const Dashboard = (() => {
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button type="button" class="btn btn-secondary btn-sm" onclick="App.showView('selling')">Customer orders</button>
-        <button type="button" class="btn btn-secondary btn-sm" onclick="App.showView('buying')">Vendor orders</button>
+        ${(ctx.isAdmin?.() || ctx.can?.("vendor_orders.read") || ctx.can?.("vendor_orders.write")) ? `<button type="button" class="btn btn-secondary btn-sm" onclick="App.showView('buying')">Vendor orders</button>` : ""}
         ${(ctx.isAdmin?.() || ctx.can?.("ar.read") || ctx.can?.("ar.write") || ctx.can?.("ap.read") || ctx.can?.("ap.write") || ctx.can?.("finance.write")) ? `<button type="button" class="btn btn-secondary btn-sm" onclick="App.showView('money')">Money</button>` : ""}
         <button type="button" class="btn btn-ghost btn-sm" onclick="Dashboard.load()">Refresh</button>
       </div>
@@ -228,7 +232,7 @@ const Dashboard = (() => {
         <p class="home-clear-sub">When orders or dues pile up, they show here.</p>
         <div class="home-clear-actions">
           <button type="button" class="btn btn-secondary btn-sm" onclick="Dashboard.goto('orders_customer')">Bill customer</button>
-          <button type="button" class="btn btn-secondary btn-sm" onclick="Dashboard.goto('orders_vendor')">Receive goods</button>
+          ${(ctx.isAdmin?.() || ctx.can?.("vendor_orders.read") || ctx.can?.("vendor_orders.write")) ? `<button type="button" class="btn btn-secondary btn-sm" onclick="Dashboard.goto('orders_vendor')">Receive goods</button>` : ""}
         </div>
       </div>`;
     } else {
@@ -318,5 +322,6 @@ const Dashboard = (() => {
     body.innerHTML = html;
   }
 
+// @slice 04-public
   return { init, showHub, load, goto };
 })();

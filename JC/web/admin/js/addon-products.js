@@ -1,3 +1,4 @@
+// @slice 00-state
 /** Addon products — list/grid, wizard, detail, edit */
 const AddonProducts = (() => {
   let ctx = {};
@@ -9,6 +10,7 @@ const AddonProducts = (() => {
   let wizardForm = {};
   let editingId = null;
 
+// @slice 01-init
   function init(context) {
     ctx = context;
     TableUtils.register("addons", renderView);
@@ -98,6 +100,7 @@ const AddonProducts = (() => {
     return fd;
   }
 
+// @slice 02-openDetail
   async function openDetail(id) {
     const a = await ctx.api(`/addons/${id}`);
     const heroImg = a.image_urls && a.image_urls[0]
@@ -226,6 +229,7 @@ const AddonProducts = (() => {
     wizardStep = 1;
   }
 
+// @slice 03-renderWizard
   function renderWizard() {
     const stepsEl = document.getElementById("addon-wizard-steps");
     const body = document.getElementById("addon-wizard-body");
@@ -336,6 +340,7 @@ const AddonProducts = (() => {
     renderWizard();
   }
 
+// @slice 04-create
   async function create() {
     const btn = document.getElementById("addon-create-btn");
     if (btn) btn.disabled = true;
@@ -423,6 +428,7 @@ const AddonProducts = (() => {
     }
   }
 
+// @slice 05-public
   return {
     init, load, openDetail, openWizard, closeWizard,
     wizardBack, wizardNext, onWizardImagePick, syncField, create,

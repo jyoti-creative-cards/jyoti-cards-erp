@@ -1,3 +1,4 @@
+// @slice 00-state
 /** Catalog module — grid, wizard, detail, edit */
 const Catalog = (() => {
   let ctx = {};
@@ -16,6 +17,7 @@ const Catalog = (() => {
   const STEP_LABELS = ["Product", "Price", "Create"];
 
   let _rowCounter = 0;
+// @slice 01-newRowKey
   function newRowKey() { return `row-${++_rowCounter}`; }
 
   function apiBase() {
@@ -525,6 +527,7 @@ const Catalog = (() => {
       <button class="btn btn-primary" style="flex:1;" onclick="Catalog.closeWizard()">Done</button>`;
   }
 
+// @slice 02-renderWizard
   function renderWizard() {
     renderWizardSteps();
     const body = document.getElementById("catalog-wizard-body");
@@ -986,6 +989,7 @@ const Catalog = (() => {
     }
   }
 
+// @slice 03-public
   return {
     init, load, openDetail, openWizard, openWizardForVendor, closeWizard,
     wizardBack, wizardNext, createAll, setWizardVendor, addWizardRow, maybeAddWizardRow, removeWizardRows, deleteWizardRow,

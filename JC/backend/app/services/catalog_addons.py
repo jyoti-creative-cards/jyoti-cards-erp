@@ -95,6 +95,7 @@ def addon_snapshots_map(
     links = (
         db.query(CatalogAddonLink)
         .filter(CatalogAddonLink.catalog_product_id.in_(catalog_product_ids))
+        .order_by(CatalogAddonLink.id.asc())
         .all()
     )
     addon_ids = {ln.addon_product_id for ln in links}

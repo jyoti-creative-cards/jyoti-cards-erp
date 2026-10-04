@@ -1,0 +1,488 @@
+  function init(context) { ctx = context; }
+
+  function fmtPrice(val) {
+    const n = Number(val);
+    if (Number.isNaN(n)) return "—";
+    const prefix = n < 0 ? "-₹" : "₹";
+    return prefix + Math.abs(n).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  }
+
+  function directionFromNote(note) {
+    if (!note) return { itemDirection: "short", valueDirection: "over" };
+    if (note.note_type === "item") {
+      const d = note.direction || (Number(note.quantity) < 0 ? "extra" : "short");
+      return { itemDirection: d === "extra" ? "extra" : "short", valueDirection: "over" };
+    }
+    const d = note.direction || (Number(note.amount) < 0 ? "over" : "under");
+    return { itemDirection: "short", valueDirection: d === "under" ? "under" : "over" };
+  }
+
+  function openCreate({ vendorId, receiptId, receivingLines, receivingLinesLoadFailed, onDone, prefill, editIndex }) {
+    const dirs = prefill ? directionFromNote(prefill) : { itemDirection: "short", valueDirection: "over" };
+    state = {
+      vendorId,
+      receiptId,
+      lines: receivingLines || [],
+      linesLoadFailed: !!receivingLinesLoadFailed,
+      editing: null,
+      editIndex: editIndex != null ? editIndex : null,
+      prefillNote: prefill || null,
+      onDone: onDone || null,
+      noteType: prefill?.note_type || "item",
+      itemDirection: dirs.itemDirection,
+      valueDirection: dirs.valueDirection,
+    };
+    document.getElementById("dn-modal-title").textContent = editIndex != null ? "Edit Debit Note" : "Add Debit Note";
+    renderForm(prefill);
+    document.getElementById("debit-note-modal").classList.remove("hidden");
+  }
+
+  async function openEdit(noteId, onDone) {
+    ctx.showLoading?.();
+    try {
+      const note = await ctx.api(`/debit-notes/${noteId}`, {}, 0);
+      let lines = [];
+      let linesLoadFailed = false;
+      try {
+        lines = await ctx.api(`/stock/receipts/${note.receipt_id}/lines`, {}, 0);
+      } catch (_) {
+        // Previously swallowed to [] — indistinguishable from "this receipt
+        // genuinely has no lines" (impossible) and left the Product dropdown
+        // silently empty with zero explanation.
+        linesLoadFailed = true;
+      }
+      const dirs = directionFromNote(note);
+      state = {
+        vendorId: note.vendor_id,
+        receiptId: note.receipt_id,
+        lines,
+        linesLoadFailed,
+        editing: note,
+        onDone: onDone || null,
+        noteType: note.note_type || "item",
+        itemDirection: dirs.itemDirection,
+        valueDirection: dirs.valueDirection,
+      };
+      document.getElementById("dn-modal-title").textContent = "Edit Debit Note";
+      renderForm(note);
+      document.getElementById("debit-note-modal").classList.remove("hidden");
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  function close() {
+    document.getElementById("debit-note-modal")?.classList.add("hidden");
+    state = {
+      vendorId: null, receiptId: null, lines: [], editing: null, editIndex: null, prefillNote: null, onDone: null,
+      noteType: "item", itemDirection: "short", valueDirection: "over",
+    };
+  }
+
+  function setType(type) {
+    state.noteType = type === "value" ? "value" : "item";
+    renderForm(state.editing || state.prefillNote);
+  }
+
+  function setItemDirection(dir) {
+    state.itemDirection = dir === "extra" ? "extra" : "short";
+    updatePreview();
+  }
+
+  function setValueDirection(dir) {
+    state.valueDirection = dir === "under" ? "under" : "over";
+    updatePreview();
+  }
+
+  function absQty(note) {
+    if (!note || note.quantity == null) return "";
+    return Math.abs(Number(note.quantity) || 0) || "";
+  }
+
+  function absAmount(note) {
+    if (!note || note.amount == null || note.amount === "") return "";
+    return Math.abs(Number(note.amount) || 0) || "";
+  }
+
+  function renderForm(note) {
+    const body = document.getElementById("debit-note-body");
+    const footer = document.getElementById("debit-note-footer");
+    if (!body) return;
+    const type = state.noteType || "item";
+    const productOpts = state.lines.map(l => {
+      const recv = l.quantity_received != null ? Number(l.quantity_received) : null;
+      const billed = l.quantity_billed != null ? Number(l.quantity_billed) : null;
+      let hint = fmtPrice(l.buying_price);
+      if (recv != null || billed != null) {
+        hint += ` · recv ${recv ?? 0} / bill ${billed ?? 0}`;
+      }
+      return `<option value="${l.catalog_product_id}" ${note?.catalog_product_id === l.catalog_product_id ? "selected" : ""}>${ctx.esc(ctx.productIdLabel(l))} · ${hint}</option>`;
+    }).join("");
+
+    body.innerHTML = `
+      <div class="dn-form">
+        <p class="dn-lead">Adjust what you owe the vendor when the bill and goods don’t match.</p>
+
+        <div class="dn-type-seg" role="group" aria-label="Debit note type">
+          <button type="button" class="dn-type-btn ${type === "item" ? "active" : ""}" onclick="DebitNotes.setType('item')">Quantity</button>
+          <button type="button" class="dn-type-btn ${type === "value" ? "active" : ""}" onclick="DebitNotes.setType('value')">Amount</button>
+        </div>
+
+        ${type === "item" ? `
+          <label class="label">Product</label>
+          ${state.linesLoadFailed
+            ? `<p style="font-size:13px;color:var(--danger);margin:4px 0 0;">Couldn't load this receipt's products — <a href="#" onclick="event.preventDefault();DebitNotes.reloadLines()">retry</a>, or use an Amount adjustment instead.</p>`
+            : `<select class="input" id="dn-product" onchange="DebitNotes.updatePreview()">
+            <option value="">— Select product —</option>${productOpts}
+          </select>`}
+
+          <p class="dn-section-label">What happened?</p>
+          <div class="dn-choice-list">
+            <label class="dn-choice ${state.itemDirection === "short" ? "selected" : ""}">
+              <input type="radio" name="dn-item-dir" value="short" ${state.itemDirection === "short" ? "checked" : ""} onchange="DebitNotes.setItemDirection('short')" />
+              <span class="dn-choice-body">
+                <strong>Short delivery</strong>
+                <span>Received less than billed — you pay less</span>
+              </span>
+            </label>
+            <label class="dn-choice ${state.itemDirection === "extra" ? "selected" : ""}">
+              <input type="radio" name="dn-item-dir" value="extra" ${state.itemDirection === "extra" ? "checked" : ""} onchange="DebitNotes.setItemDirection('extra')" />
+              <span class="dn-choice-body">
+                <strong>Extra goods</strong>
+                <span>Received more than billed — you pay more</span>
+              </span>
+            </label>
+          </div>
+
+          <label class="label">Quantity difference</label>
+          <input type="number" min="1" step="1" class="input" id="dn-qty" value="${absQty(note) || 1}" oninput="DebitNotes.updatePreview()" placeholder="e.g. 5" />
+          <div id="dn-preview" class="dn-preview"></div>
+        ` : `
+          <p class="dn-section-label">What happened on the bill?</p>
+          <div class="dn-choice-list">
+            <label class="dn-choice ${state.valueDirection === "over" ? "selected" : ""}">
+              <input type="radio" name="dn-value-dir" value="over" ${state.valueDirection === "over" ? "checked" : ""} onchange="DebitNotes.setValueDirection('over')" />
+              <span class="dn-choice-body">
+                <strong>Bill overcharged</strong>
+                <span>Vendor billed too much — you pay less</span>
+              </span>
+            </label>
+            <label class="dn-choice ${state.valueDirection === "under" ? "selected" : ""}">
+              <input type="radio" name="dn-value-dir" value="under" ${state.valueDirection === "under" ? "checked" : ""} onchange="DebitNotes.setValueDirection('under')" />
+              <span class="dn-choice-body">
+                <strong>Bill undercharged</strong>
+                <span>Vendor billed too little — you pay more</span>
+              </span>
+            </label>
+          </div>
+
+          <label class="label">Amount (₹)</label>
+          <input type="number" min="0.01" step="0.01" class="input" id="dn-value" value="${absAmount(note)}" oninput="DebitNotes.updatePreview()" placeholder="e.g. 250" />
+          <div id="dn-preview" class="dn-preview"></div>
+        `}
+
+        <label class="label" style="margin-top:14px;">Note (optional)</label>
+        <input class="input" id="dn-notes" value="${ctx.esc(note?.notes || "")}" placeholder="Short reason for your records" />
+      </div>`;
+
+    footer.innerHTML = state.editing
+      ? `<button class="btn btn-secondary" onclick="DebitNotes.close()">Cancel</button>
+         <button class="btn btn-primary" onclick="DebitNotes.saveEdit()">Save</button>`
+      : state.editIndex != null
+      ? `<button class="btn btn-secondary" onclick="DebitNotes.close()">Cancel</button>
+         <button class="btn btn-primary" onclick="DebitNotes.saveLocalEdit()">Save</button>`
+      : `<button class="btn btn-secondary" onclick="DebitNotes.close()">Cancel</button>
+         <button class="btn btn-primary" onclick="DebitNotes.review()">Add Note</button>`;
+
+    updatePreview();
+  }
+
+  function calcEffect() {
+    const type = state.noteType || "item";
+    if (type === "item") {
+      const catId = parseInt(document.getElementById("dn-product")?.value, 10);
+      const qtyAbs = Math.abs(parseInt(document.getElementById("dn-qty")?.value || "0", 10) || 0);
+      const line = state.lines.find(l => l.catalog_product_id === catId);
+      if (!line || !qtyAbs) return null;
+      // buying_price is the masked "—" placeholder (see cost_visibility.hide_cost)
+      // for staff without costs.read — Number("—") || 0 used to silently render/
+      // confirm a fake ₹0 payable effect. The backend always recomputes the real
+      // amount server-side regardless of what we show here, but showing ₹0 for a
+      // real adjustment is misleading, so surface "hidden" instead of a number.
+      const priceHidden = line.buying_price === "—";
+      const price = priceHidden ? null : (Number(line.buying_price) || 0);
+      const signedQty = state.itemDirection === "extra" ? -qtyAbs : qtyAbs;
+      const amt = priceHidden ? null : price * signedQty;
+      const effect = priceHidden ? null : -amt; // item: positive qty → pay less
+      return {
+        type, line, qtyAbs, signedQty, price, amt, effect, priceHidden,
+        label: state.itemDirection === "short" ? "Short delivery" : "Extra goods",
+      };
+    }
+    const valAbs = Math.abs(parseFloat(document.getElementById("dn-value")?.value || "0") || 0);
+    if (!valAbs) return null;
+    const signedAmt = state.valueDirection === "over" ? -valAbs : valAbs;
+    const effect = signedAmt; // value: negative → pay less
+    return {
+      type, valAbs, signedAmt, effect,
+      label: state.valueDirection === "over" ? "Bill overcharged" : "Bill undercharged",
+    };
+  }
+
+  function updatePreview() {
+    const el = document.getElementById("dn-preview");
+    if (!el) return;
+    const info = calcEffect();
+    if (!info) {
+      el.className = "dn-preview";
+      el.textContent = state.noteType === "item" ? "Select a product and enter quantity." : "Enter the amount to adjust.";
+      return;
+    }
+    if (info.type === "item" && info.priceHidden) {
+      el.className = "dn-preview";
+      el.innerHTML = `<strong>${info.label}</strong> · ${info.qtyAbs} × —
+        <span>Amount hidden — you don't have cost visibility. The real amount is still applied correctly on save.</span>`;
+      return;
+    }
+    const payLess = info.effect < 0;
+    el.className = `dn-preview ${payLess ? "is-less" : "is-more"}`;
+    if (info.type === "item") {
+      el.innerHTML = `<strong>${info.label}</strong> · ${info.qtyAbs} × ${fmtPrice(info.price)}
+        <span>AP ${payLess ? "reduces" : "increases"} by <b>${fmtPrice(Math.abs(info.effect))}</b> — you ${payLess ? "pay less" : "pay more"}</span>`;
+    } else {
+      el.innerHTML = `<strong>${info.label}</strong>
+        <span>AP ${payLess ? "reduces" : "increases"} by <b>${fmtPrice(Math.abs(info.effect))}</b> — you ${payLess ? "pay less" : "pay more"}</span>`;
+    }
+  }
+
+  async function review() {
+    const payload = buildPayload();
+    if (!payload) return;
+    const info = calcEffect();
+    if (!info) return;
+    const summary = info.type === "item"
+      ? `${info.label}: ${ctx.productIdLabel(info.line)} × ${info.qtyAbs}`
+      : `${info.label}: ${fmtPrice(info.valAbs)}`;
+    const effectLine = info.priceHidden
+      ? "Amount hidden — you don't have cost visibility. The real amount is still applied correctly."
+      : `You ${info.effect < 0 ? "pay less" : "pay more"} by ${fmtPrice(Math.abs(info.effect))}.`;
+    if (!confirm(`${summary}\n${effectLine}\n\nAdd this debit note?`)) return;
+    // Wizard queue (no receipt yet): hand payload to parent
+    if (state.onDone && !state.receiptId) {
+      state.onDone(payload);
+      close();
+      return;
+    }
+    // Existing receipt: persist then notify parent
+    await submitNew();
+  }
+
+  function buildPayload() {
+    const notes = document.getElementById("dn-notes")?.value?.trim() || null;
+    const info = calcEffect();
+    if (!info) {
+      ctx.toast(state.noteType === "item" ? "Select product and quantity" : "Enter amount", "error");
+      return null;
+    }
+    if (info.type === "item") {
+      return {
+        note_type: "item",
+        direction: state.itemDirection,
+        catalog_product_id: info.line.catalog_product_id,
+        quantity: info.signedQty,
+        notes,
+        _direction: state.itemDirection,
+        _direction_label: info.label,
+      };
+    }
+    return {
+      note_type: "value",
+      direction: state.valueDirection,
+      amount: info.signedAmt,
+      notes,
+      _direction: state.valueDirection,
+      _direction_label: info.label,
+    };
+  }
+
+  let saveBusy = false; // guard submitNew/saveEdit double-click — both post real AP rows
+  async function submitNew() {
+    if (saveBusy) return;
+    const payload = buildPayload();
+    if (!payload) return;
+    if (!state.receiptId) {
+      ctx.toast("No receipt linked for this debit note", "error");
+      return;
+    }
+    const done = state.onDone;
+    saveBusy = true;
+    ctx.showLoading?.();
+    try {
+      await ctx.api(`/debit-notes?vendor_id=${state.vendorId}&receipt_id=${state.receiptId}`, {
+        method: "POST",
+        body: JSON.stringify({
+          note_type: payload.note_type,
+          direction: payload.direction,
+          catalog_product_id: payload.catalog_product_id,
+          quantity: payload.quantity,
+          amount: payload.amount,
+          notes: payload.notes,
+        }),
+      });
+      ctx.invalidateCache?.("/debit-notes");
+      ctx.invalidateCache?.("/accounts-payable");
+      ctx.toast("Debit note created", "success");
+      close();
+      if (done) await done(null);
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { saveBusy = false; ctx.hideLoading?.(); }
+  }
+
+  async function saveEdit() {
+    if (saveBusy || !state.editing) return;
+    const payload = buildPayload();
+    if (!payload) return;
+    const body = {
+      notes: payload.notes,
+      note_type: payload.note_type,
+      direction: payload.direction,
+    };
+    if (payload.note_type === "item") {
+      body.catalog_product_id = payload.catalog_product_id;
+      body.quantity = payload.quantity;
+    } else {
+      body.amount = payload.amount;
+    }
+    saveBusy = true;
+    ctx.showLoading?.();
+    try {
+      await ctx.api(`/debit-notes/${state.editing.id}`, { method: "PATCH", body: JSON.stringify(body) });
+      ctx.invalidateCache?.("/debit-notes");
+      ctx.invalidateCache?.("/accounts-payable");
+      ctx.toast("Debit note updated", "success");
+      close();
+      if (state.onDone) state.onDone(null);
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { saveBusy = false; ctx.hideLoading?.(); }
+  }
+
+  function saveLocalEdit() {
+    const payload = buildPayload();
+    if (!payload) return;
+    const idx = state.editIndex;
+    const onDone = state.onDone;
+    close();
+    if (onDone) onDone(payload, idx);
+  }
+
+  let listCtx = null;
+
+  async function openForReceipt({ vendorId, receiptId, receivingLines, onDone }) {
+    if (!receiptId) return openCreate({ vendorId, receiptId, receivingLines, onDone });
+    listCtx = { vendorId, receiptId, receivingLines: receivingLines || [], onDone: onDone || null, receivingLinesLoadFailed: false };
+    ctx.showLoading?.();
+    try {
+      const notes = await ctx.api(`/debit-notes?receipt_id=${receiptId}`, {}, 0);
+      if (!listCtx.receivingLines.length) {
+        try {
+          listCtx.receivingLines = await ctx.api(`/stock/receipts/${receiptId}/lines`, {}, 0);
+        } catch (_) {
+          listCtx.receivingLinesLoadFailed = true;
+        }
+      }
+      document.getElementById("dn-modal-title").textContent = "Debit Notes";
+      const body = document.getElementById("debit-note-body");
+      const footer = document.getElementById("debit-note-footer");
+      // Backend: edit needs vendor_orders.write, void reverses AP history so it's admin-only.
+      const canEdit = ctx.isAdmin?.() || ctx.canWrite?.("vendor_orders");
+      const canVoid = ctx.isAdmin?.();
+      const rows = (notes || []).map(n => {
+        const effect = n.payable_effect != null ? n.payable_effect : (n.note_type === "item" ? -Number(n.amount) : Number(n.amount));
+        const payLess = Number(effect) < 0;
+        const title = n.note_type === "item"
+          ? `${ctx.esc(n.our_product_id ? ctx.productIdLabel(n) : "Item")} × ${n.quantity}${n.direction ? ` (${ctx.esc(n.direction)})` : ""}`
+          : `Value ${ctx.esc(n.direction || "adj.")}`;
+        const autoTag = n.source === "auto" ? ` <span class="badge badge-blue" style="font-size:10px;">auto</span>` : "";
+        const voided = !!n.deleted_at;
+        return `<div class="dn-list-card">
+          <div class="dn-list-main">
+            <strong>${title}</strong>${autoTag}${voided ? ` <span class="badge badge-red" style="font-size:10px;">voided</span>` : ""}
+            <span class="dn-effect-pill ${payLess ? "is-less" : "is-more"}">${payLess ? "Pay less" : "Pay more"} ${fmtPrice(Math.abs(effect))}</span>
+          </div>
+          ${n.notes ? `<div class="dn-row-note">${ctx.esc(n.notes)}</div>` : ""}
+          ${voided && n.deleted_reason ? `<div class="dn-row-note" style="color:var(--danger);">Voided — ${ctx.esc(n.deleted_reason)}</div>` : ""}
+          <div class="vo-muted" style="margin-top:4px;">${new Date(n.created_at).toLocaleString()}</div>
+          ${!voided && (canEdit || canVoid) ? `<div style="margin-top:6px;">
+            ${canEdit ? `<button type="button" class="btn btn-ghost btn-sm" onclick="DebitNotes.editFromList(${n.id})">Edit</button>` : ""}
+            ${canVoid ? `<button type="button" class="btn btn-ghost btn-sm" onclick="DebitNotes.voidFromList(${n.id})">Void</button>` : ""}
+          </div>` : ""}
+        </div>`;
+      }).join("");
+      body.innerHTML = `
+        <p class="dn-lead">Adjustments on this bill. Add another if needed.</p>
+        ${rows || HubUI.emptyState({ title: "No debit notes yet", sub: "Add one if the bill needs adjusting." })}`;
+      footer.innerHTML = `
+        <button class="btn btn-secondary" onclick="DebitNotes.close()">Close</button>
+        <button class="btn btn-primary" onclick="DebitNotes.addFromList()">+ Add Debit Note</button>`;
+      document.getElementById("debit-note-modal").classList.remove("hidden");
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  function addFromList() {
+    if (!listCtx) return;
+    const { vendorId, receiptId, receivingLines, receivingLinesLoadFailed, onDone } = listCtx;
+    openCreate({
+      vendorId,
+      receiptId,
+      receivingLines,
+      receivingLinesLoadFailed,
+      onDone: async () => {
+        if (onDone) await onDone();
+        await openForReceipt({ vendorId, receiptId, receivingLines, onDone });
+      },
+    });
+  }
+
+  function editFromList(noteId) {
+    if (!listCtx) return;
+    const { vendorId, receiptId, receivingLines, onDone } = listCtx;
+    openEdit(noteId, async () => {
+      if (onDone) await onDone();
+      await openForReceipt({ vendorId, receiptId, receivingLines, onDone });
+    });
+  }
+
+  async function voidFromList(noteId) {
+    if (!listCtx) return;
+    const { vendorId, receiptId, receivingLines, onDone } = listCtx;
+    // Single dialog — entering a reason (or leaving it blank) and pressing OK confirms.
+    const reason = prompt("Void this debit note? Moves to recycle bin, can be restored.\n\nReason (optional):", "");
+    if (reason === null) return;
+    ctx.showLoading?.();
+    try {
+      await ctx.api(`/debit-notes/${noteId}/void`, { method: "POST", body: JSON.stringify({ reason: reason || null }) });
+      ctx.invalidateCache?.("/debit-notes");
+      ctx.invalidateCache?.("/accounts-payable");
+      ctx.toast("Debit note voided — moved to recycle bin", "success");
+      if (onDone) await onDone();
+      await openForReceipt({ vendorId, receiptId, receivingLines, onDone });
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  /** Retry the receipt-lines fetch after it failed (see linesLoadFailed above). */
+  async function reloadLines() {
+    if (!state.receiptId) return;
+    ctx.showLoading?.();
+    try {
+      state.lines = await ctx.api(`/stock/receipts/${state.receiptId}/lines`, {}, 0);
+      state.linesLoadFailed = false;
+    } catch (e) {
+      ctx.toast?.(e.message || "Still couldn't load products", "error");
+      return;
+    } finally {
+      ctx.hideLoading?.();
+    }
+    renderForm(state.editing);
+  }
+

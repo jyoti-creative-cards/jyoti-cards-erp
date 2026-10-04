@@ -1,3 +1,4 @@
+// @slice 00-state
 /** Vendor module — CRUD, wizard, detail, edit */
 const Vendors = (() => {
   let ctx = {};
@@ -17,6 +18,7 @@ const Vendors = (() => {
     { key: "_actions", label: "", filterable: false, sortable: false },
   ];
 
+// @slice 01-init
   function init(context) {
     ctx = context;
     TableUtils.register("vendors", renderTable);
@@ -537,6 +539,7 @@ const Vendors = (() => {
     }
   }
 
+// @slice 02-cityOptionLabel
   function cityOptionLabel(c) {
     const route = c.route_name ? ` (${c.route_name})` : "";
     return `${c.name || "City"}${route}`;
@@ -930,6 +933,7 @@ const Vendors = (() => {
     App.updateGlobalBack?.();
   }
 
+// @slice 03-public
   return {
     init, load, reload, openDetail, openLedgerEntry, openDebitNote,
     toggleLedgerRow, openOrderFromLedger, openBillDebitNotes, settlePayment, setOpeningBalance, saveOpeningBalance,

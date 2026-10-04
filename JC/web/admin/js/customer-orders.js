@@ -1,3 +1,4 @@
+// @slice 00-state
 /** Customer orders — Today/Past date scope + same stage chips */
 const CustomerOrders = (() => {
   let ctx = {};
@@ -74,6 +75,7 @@ const CustomerOrders = (() => {
     closed: "All settled.",
   };
 
+// @slice 01-hub
   function isTodayMode() {
     return hubMode === "queue" || hubMode === "needs_action" || hubMode === "today";
   }
@@ -339,6 +341,7 @@ const CustomerOrders = (() => {
     loadList();
   }
 
+// @slice 02-dispatch
   async function loadDispatch() {
     ctx.showLoading?.();
     try {
@@ -478,6 +481,7 @@ const CustomerOrders = (() => {
     finally { ctx.hideLoading?.(); }
   }
 
+// @slice 03-list
   async function loadList() {
     if (isDispatchBucket()) {
       await loadDispatch();
@@ -707,6 +711,7 @@ const CustomerOrders = (() => {
     App.updateGlobalBack?.();
   }
 
+// @slice 04-detail
   async function openDetail(customerId, bucket) {
     ctx.showLoading?.();
     try {
@@ -1351,6 +1356,7 @@ const CustomerOrders = (() => {
     });
   }
 
+// @slice 05-bill
   function buildProcessBody() {
     const discOn = discountEnabled;
     const lines = processLines
@@ -2165,6 +2171,7 @@ const CustomerOrders = (() => {
     if (processStep > 1) { processStep -= 1; renderProcessWizard(); }
   }
 
+// @slice 06-bill-submit
   async function submitProcess() {
     if (processBusy || !detailCustomerId) return;
     processBusy = true;
@@ -2296,6 +2303,7 @@ const CustomerOrders = (() => {
     finally { ctx.hideLoading?.(); }
   }
 
+// @slice 07-offline
   async function openOfflineWizard(presetCustomerId) {
     const cid = presetCustomerId != null ? presetCustomerId : detailCustomerId;
     offlineEditPlacementId = null;
@@ -2861,9 +2869,9 @@ const CustomerOrders = (() => {
           <strong>Placed for customer</strong>
           <span>Same as portal · stock reserved</span>
         </div>
-        <p style="margin:12px 0;font-size:14px;color:var(--muted);">Order is in <strong>New</strong>. Bill now confirms it and opens billing, or view the order first.</p>`,
+        <p style="margin:12px 0;font-size:14px;color:var(--muted);">Order is in <strong>Confirmed</strong>. Bill it now, or view it first.</p>`,
         `<button class="btn btn-primary" style="flex:1;" onclick="CustomerOrders.billNow(${cid})">Bill now</button>
-         <button class="btn btn-secondary" style="flex:1;" onclick="App.closeDetail();CustomerOrders.openDetail(${cid}, 'received')">View order</button>`, "sm");
+         <button class="btn btn-secondary" style="flex:1;" onclick="App.closeDetail();CustomerOrders.openDetail(${cid}, 'open')">View order</button>`, "sm");
       ctx.toast("Order placed for customer", "success");
       hubMode = "needs_action";
       currentBucket = "open";
@@ -2880,6 +2888,7 @@ const CustomerOrders = (() => {
     }
   }
 
+// @slice 08-public
   function _detailCustomerId() { return detailCustomerId; }
 
   function openCustomer(customerId, bucket) {

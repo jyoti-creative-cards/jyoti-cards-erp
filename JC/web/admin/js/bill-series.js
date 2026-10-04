@@ -1,3 +1,4 @@
+// @slice 00-state
 /** Setup — Bill series create, list, drill-down */
 const BillSeries = (() => {
   let ctx = {};
@@ -5,6 +6,7 @@ const BillSeries = (() => {
   let currentSeries = null;
   let searchQ = "";
 
+// @slice 01-init
   function init(context) { ctx = context; }
 
   function fmtPrice(val) {
@@ -138,6 +140,7 @@ const BillSeries = (() => {
     }
   }
 
+// @slice 02-openWizard
   function openWizard() {
     if (!canWrite()) return ctx.toast("Admin only", "error");
     const modal = document.getElementById("modal");
@@ -278,6 +281,7 @@ const BillSeries = (() => {
     finally { ctx.hideLoading?.(); }
   }
 
+// @slice 03-viewBillDoc
   function viewBillDoc(name, url) {
     if (!url) return ctx.toast("No document", "error");
     ctx.openDetail?.(name,
@@ -292,5 +296,6 @@ const BillSeries = (() => {
     CustomerOrders.openDetail(customerId, "billed");
   }
 
+// @slice 04-public
   return { init, load, create, deleteSeries, openSeries, openBill, openBillDoc, viewBillDoc, viewOrder, openWizard, setSearch };
 })();

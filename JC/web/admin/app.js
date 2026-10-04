@@ -1,3 +1,4 @@
+// @slice 00-state
 const App = (() => {
   const API = (() => {
     const saved = localStorage.getItem("jc_api");
@@ -34,6 +35,7 @@ const App = (() => {
   let viewStack = [];
   let currentViewName = null;
 
+// @slice 01-headers
   function headers() {
     const h = { "Content-Type": "application/json" };
     if (authMode === "admin" && adminKey) h["X-Admin-Key"] = adminKey;
@@ -523,6 +525,7 @@ const App = (() => {
     bar.classList.toggle("hidden", !canBack);
   }
 
+// @slice 02-goBack
   function goBack() {
     // Modal detail panel first
     if (!document.getElementById("detail")?.classList.contains("hidden")) {
@@ -1001,6 +1004,7 @@ const App = (() => {
   }
 
   // ── Data ──────────────────────────────────────────────────────────
+// @slice 03-refreshAll
   async function refreshAll() {
     showLoading();
     try {
@@ -1445,6 +1449,7 @@ const App = (() => {
     return prefix + Math.abs(n).toLocaleString("en-IN", { maximumFractionDigits: 2 });
   }
 
+// @slice 04-openCustomerDetail
   async function openCustomerDetail(id, opts = {}) {
     const c = await api(`/customers/${id}`);
     detailMode = "customer"; detailId = id;
@@ -1577,6 +1582,10 @@ const App = (() => {
             <div><span class="person-summary-label">Opening</span><strong>${fmtPersonMoney(ar.opening_total || "0")}</strong></div>
             <div><span class="person-summary-label">Bills</span><strong>${fmtPersonMoney(ar.bill_total)}</strong></div>
             <div><span class="person-summary-label">Collected</span><strong>${fmtPersonMoney(ar.payment_total)}</strong></div>
+          </div>`;
+        } else if (cust && cust.outstanding_balance != null && cust.outstanding_balance !== "") {
+          sumWrap.innerHTML = `<div class="person-summary-grid">
+            <div><span class="person-summary-label">Due</span><strong>${fmtPersonMoney(cust.outstanding_balance)}</strong></div>
           </div>`;
         } else {
           sumWrap.innerHTML = "";
@@ -1961,6 +1970,7 @@ const App = (() => {
     } catch (e) { toast(e.message, "error"); }
   }
 
+// @slice 05-toggleCustomerActive
   async function toggleCustomerActive(id, makeActive) {
     const label = makeActive ? "restore to active" : "mark as inactive";
     if (!confirm(`${makeActive ? "Restore" : "Mark inactive"} this customer?`)) return;
@@ -2450,6 +2460,7 @@ const App = (() => {
   }
   function closeWizard() { document.getElementById("wizard").classList.add("hidden"); }
 
+// @slice 06-renderWizard
   function renderWizard() {
     const steps = document.getElementById("wizard-steps");
     if (steps) { steps.innerHTML = ""; steps.classList.add("hidden"); }
@@ -2733,6 +2744,7 @@ const App = (() => {
     showView(ordersType === "customer" ? "selling" : "buying");
   }
 
+// @slice 07-public
   return {
     login, staffLogin, setLoginTab, logout, toggleSidebar, showView, goBack, updateGlobalBack,
     showPeopleHub, showPeopleTab, renderPeopleCustomerSearch, renderPeopleVendorSearch, showSetupHub, showSetupTab,

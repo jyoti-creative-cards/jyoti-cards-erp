@@ -1,3 +1,4 @@
+// @slice 00-state
 /** Calculator — Alt+C to toggle, or click the small 🧮 button bottom-right. Popup, no
  * backdrop (doesn't block the rest of the app). Near-zero cost until first use: the full
  * panel DOM/CSS is only built on first open. The only always-on costs are one keydown
@@ -8,6 +9,7 @@ const Calculator = (() => {
   let expr = ""; // raw expression string, e.g. "12+4*3"
   let justEvaluated = false;
 
+// @slice 01-buildLauncher
   function buildLauncher() {
     if (launcherBuilt || document.getElementById("calc-launcher")) return;
     injectStyle();
@@ -138,6 +140,7 @@ const Calculator = (() => {
     return expr.replace(/\*/g, "×").replace(/\//g, "÷");
   }
 
+// @slice 02-safeEval
   function safeEval(str) {
     // Only digits/operators/parens/dot ever reach here (press() whitelists input) — no
     // arbitrary code execution risk, but avoid `eval` anyway and do it by hand.
@@ -242,5 +245,6 @@ const Calculator = (() => {
   if (document.body) buildLauncher();
   else document.addEventListener("DOMContentLoaded", buildLauncher);
 
+// @slice 03-public
   return { open, close, toggle, press, backspace, clearAll, evaluate };
 })();

@@ -273,3 +273,51 @@ def test_old_bill_moves_from_today_to_past_billed_queue(db):
     assert not any(r.customer_id == customer.id for r in today_rows)
     all_rows = list_customer_orders(bucket="billed", day="all", db=db, auth=AUTH)
     assert any(r.customer_id == customer.id for r in all_rows)
+
+
+def test_fully_billed_order_drops_out_of_new(db):
+    from app.routers.customer_orders import list_customer_orders
+    from app.services.customer_order_flow import close_received_order_if_fully_billed
+
+    customer, prod = _setup(db)
+    placement = create_received_placement(
+        db, customer_id=customer.id, customer_name=customer.business_name,
+        lines=[{"catalog_product_id": prod.id, "quantity": 5}],
+    )
+    line = db.query(CustomerOrderLine).filter(CustomerOrderLine.placement_id == placement.id).one()
+    line.quantity_billed = line.quantity
+    db.commit()
+
+    rows = list_customer_orders(bucket="received", day="all", db=db, auth=AUTH)
+    assert not any(r.customer_id == customer.id for r in rows)
+
+    close_received_order_if_fully_billed(db, customer.id)
+    db.commit()
+    order = get_open_customer_order(db, customer.id, "received")
+    assert order is None
+
+
+def test_offline_order_skips_new_portal_order_stays(db):
+    from app.routers.customer_orders import list_customer_orders
+    from app.services.customer_order_flow import promote_placement_to_confirmed
+
+    customer, prod = _setup(db)
+    create_received_placement(
+        db, customer_id=customer.id, customer_name=customer.business_name,
+        lines=[{"catalog_product_id": prod.id, "quantity": 3}],
+        order_source="app",
+    )
+    offline = create_received_placement(
+        db, customer_id=customer.id, customer_name=customer.business_name,
+        lines=[{"catalog_product_id": prod.id, "quantity": 4}],
+        order_source="offline",
+    )
+    promote_placement_to_confirmed(db, offline)
+    db.commit()
+
+    new_rows = list_customer_orders(bucket="received", day="all", db=db, auth=AUTH)
+    assert len([r for r in new_rows if r.customer_id == customer.id]) == 1
+    assert new_rows[0].total_quantity == 3
+    open_rows = list_customer_orders(bucket="open", day="all", db=db, auth=AUTH)
+    assert any(r.customer_id == customer.id and r.total_quantity == 4 for r in open_rows)
+    assert _open_qty(db, customer.id, prod.id) == 4

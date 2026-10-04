@@ -1,3 +1,4 @@
+// @slice 00-state
 /** Products — Stock / Catalog tabs with unified Products + Add-ons views */
 const Products = (() => {
   let ctx = {};
@@ -17,6 +18,7 @@ const Products = (() => {
   let filtersOpen = false;
   let attentionFilter = "all"; // all | low_stock | out_of_stock | negative_stock | no_sell | no_addons
 
+// @slice 01-init
   function init(context) { ctx = context; }
 
   function showHub() {
@@ -536,6 +538,7 @@ const Products = (() => {
     return map[status] || { cls: "is-out", label: status || "—" };
   }
 
+// @slice 02-stockSummaryHtml
   function stockSummaryHtml(items) {
     if (mainTab !== "stock") return "";
     const productsOnly = items.filter(it => it.kind === "product");
@@ -890,6 +893,7 @@ const Products = (() => {
     else AddonProducts.openDetail(id);
   }
 
+// @slice 03-openProductDetail
   async function openProductDetail(id, section = "stock") {
     const sec = ["stock", "catalog", "addons", "alts"].includes(section) ? section : "stock";
     ctx.showLoading?.();
@@ -1342,6 +1346,7 @@ const Products = (() => {
     if (img) img.src = "";
   }
 
+// @slice 04-public
   return {
     init, showHub, setMainTab, showAddons, showProducts, setTypeFilter, setViewMode, onSearch, clearSearch,
     onFilterChange, clearFilters, setAttentionFilter, toggleFilters,

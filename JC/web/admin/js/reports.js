@@ -1,3 +1,4 @@
+// @slice 00-state
 /** Reports — Today / Books / Stock / Tax hub */
 const Reports = (() => {
   let ctx = {};
@@ -73,6 +74,7 @@ const Reports = (() => {
     { id: "expenses", label: "Expense" },
   ];
 
+// @slice 01-init
   function init(context) { ctx = context; applyDatePreset(datePreset, false); }
 
   function fmtPrice(val) {
@@ -578,6 +580,7 @@ const Reports = (() => {
     </tbody></table></div>` : empty("No item lines", "Widen dates or check another period.");
   }
 
+// @slice 02-renderAgeing
   async function renderAgeing(body) {
     const side = ageingSide === "ap" ? "ap" : "ar";
     const data = await ctx.api(`/reports/ageing/${side}`, {}, 0);
@@ -1036,6 +1039,7 @@ const Reports = (() => {
     finally { ctx.hideLoading?.(); }
   }
 
+// @slice 03-public
   return {
     init, showHub, setMode, setChip, setLedgerKind, setAgeingSide, setHubSearch, pickQuestion,
     setDatePreset, onRangeChange, onThresholdChange,

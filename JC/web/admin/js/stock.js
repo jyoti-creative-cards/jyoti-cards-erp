@@ -1,3 +1,4 @@
+// @slice 00-state
 /** Stock — inventory, vendor order receipts */
 const Stock = (() => {
   let ctx = {};
@@ -17,6 +18,7 @@ const Stock = (() => {
   let wizardPendingBillList = null; // { vendor_id, vendor_label, receipts } from /stock/vendor-order/{id}/received
   let billingTerms = null; // vendor's typed billing terms, loaded with the chosen receipt
   let billPreview = null; // { expected_bill_total, expected_extra_cash, suggested_debit_notes } from /bill-preview
+// @slice 01-localToday
   function localToday() {
     const n = new Date();
     return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
@@ -508,6 +510,7 @@ const Stock = (() => {
       }
     } catch (e) { ctx.toast(e.message, "error"); }
   }
+// @slice 02-renderWizard
   async function renderWizard() {
     const stepsEl = document.getElementById("stock-wizard-steps");
     const bodyEl = document.getElementById("stock-wizard-body");
@@ -1168,6 +1171,7 @@ const Stock = (() => {
       return;
     }
   }
+// @slice 03-saveReceiptMeta
   function saveReceiptMeta() {
     // Only overwrite fields when their inputs exist — review step has none,
     // so a blanket read was wiping total bill amount before submit.
@@ -1644,6 +1648,7 @@ const Stock = (() => {
       wizardStep = 1; wizardMode = null; renderWizard();
     }
   }
+// @slice 04-wizardNext
   async function wizardNext() {
     if (wizardMode === "offline_vendor") {
       if (wizardStep === 1 && !wizardVendorId) return;
@@ -2139,6 +2144,7 @@ const Stock = (() => {
       ${ctx.detailFooterChild()}`;
     ctx.openDetail(title, voidedBanner + ctx.ledgerDetailCard("Receipt details", meta, table, extra), footer, "md", { push: true });
   }
+// @slice 05-voidReceipt
   function voidReceipt(receiptId, vendorId) {
     // Styled confirm (details table + optional-reason textarea) instead of a bare
     // native prompt() — matches every other void/cancel/close action in the buying
@@ -2255,6 +2261,7 @@ const Stock = (() => {
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
   }
+// @slice 06-public
   return {
     init, load, setViewMode, render, openDetail, openLedgerDetail, openReceiptDetail, openVoucher, toastNoBill, ledgerTableHtml,
     openAddWizard, openReceiveForVendor, openBillForVendor, openOfflineWizard, openOfflineForVendor, closeWizard, pickMode, pickVendor, setLine, setLineAmount, setLineRate, setBillFile,

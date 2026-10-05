@@ -14,6 +14,7 @@ from app.models.stock import StockBalance
 from app.models.vendor import Vendor
 from app.schemas.stock_journal import JournalIn, JournalOut, JournalVoidIn
 from app.services import stock_journal as journal_svc
+from app.services.stock_journal import album_parent_needles
 
 router = APIRouter(prefix="/stock-journals", tags=["stock-journals"])
 
@@ -27,31 +28,55 @@ def search_journal_products(
     """Small product picker for the journal form. Does not load the whole catalog."""
     needle = q.replace("\x00", "").strip().lower()
     like = f"%{needle}%"
-    rows = (
+    parent = album_parent_needles(q)
+    active = (
+        CatalogProduct.is_active.is_(True),
+        CatalogProduct.deleted_at.is_(None),
+    )
+    base = (
         db.query(CatalogProduct, StockBalance, Vendor)
         .outerjoin(StockBalance, StockBalance.catalog_product_id == CatalogProduct.id)
         .outerjoin(Vendor, Vendor.id == CatalogProduct.vendor_id)
-        .filter(
-            CatalogProduct.is_active.is_(True),
-            CatalogProduct.deleted_at.is_(None),
-            or_(
-                func.lower(CatalogProduct.our_product_id).like(like),
-                func.lower(func.coalesce(CatalogProduct.category, "")).like(like),
-                func.lower(func.coalesce(CatalogProduct.second_category, "")).like(like),
-                func.lower(func.coalesce(CatalogProduct.series, "")).like(like),
-                func.lower(func.coalesce(Vendor.business_name, "")).like(like),
-            ),
-        )
-        .order_by(CatalogProduct.our_product_id.asc(), CatalogProduct.id.asc())
-        .limit(8)
-        .all()
     )
+    if parent is not None:
+        # "Album" alone is every album. "Album 1" is the parent category, every series.
+        if not parent:
+            return []
+        rows = (
+            base.filter(*active, func.lower(CatalogProduct.category).in_(parent))
+            .order_by(CatalogProduct.our_product_id.asc(), CatalogProduct.id.asc())
+            .limit(200)
+            .all()
+        )
+    else:
+        # Item number, vendor, or an exact other category such as BOX NO. 09.
+        # A series code is not a parent album, and a loose "album" substring is not either.
+        exact_category = func.lower(CatalogProduct.category) == needle
+        category_hit = (
+            db.query(CatalogProduct.id)
+            .filter(*active, exact_category)
+            .first()
+        )
+        rows = (
+            base.filter(
+                *active,
+                or_(
+                    func.lower(CatalogProduct.our_product_id).like(like),
+                    exact_category,
+                    func.lower(func.coalesce(Vendor.business_name, "")).like(like),
+                ),
+            )
+            .order_by(CatalogProduct.our_product_id.asc(), CatalogProduct.id.asc())
+            .limit(200 if category_hit else 8)
+            .all()
+        )
     out = []
     for product, balance, vendor in rows:
         out.append({
             "catalog_product_id": product.id,
             "our_product_id": product.our_product_id,
             "category": product.category,
+            "series": product.series,
             "buying_price": format(product.buying_price, "f") if product.buying_price is not None else None,
             "quantity_on_hand": int(balance.quantity_on_hand) if balance else 0,
             "vendor_name": vendor.business_name if vendor else "",

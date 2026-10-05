@@ -196,10 +196,17 @@
     return body;
   }
 
+  let journalCategories = [];
+
   async function loadJournals() {
     if (!journalForm) journalForm = blankJournalForm();
     const el = document.getElementById("finance-journal-body");
     if (!el) return;
+    try {
+      journalCategories = await ctx.api("/catalog/categories", {}, 0) || [];
+    } catch (_) {
+      journalCategories = [];
+    }
     try {
       journals = await ctx.api("/stock-journals", {}, 0) || [];
     } catch (e) {
@@ -213,10 +220,7 @@
     const el = document.getElementById("finance-journal-body");
     if (!el || !journalForm) return;
     const f = journalForm;
-    const hitList = (hits, which) => (hits || []).map(p => `
-      <button type="button" class="btn btn-secondary btn-sm" style="justify-content:flex-start;" onclick="Finance.pickJournalProduct('${which}', ${p.catalog_product_id})">
-        ${ctx.esc(p.our_product_id)} · stock ${p.quantity_on_hand ?? 0}${p.buying_price ? ` · buy ${ctx.esc(p.buying_price)}` : ""}
-      </button>`).join("");
+    const hitList = (hits, which) => hitButtons(hits, which);
     const transfer = f.kind === "transfer";
     const preview = f.preview;
     el.innerHTML = `
@@ -242,14 +246,21 @@
         ` : `
           <label>Expense category <input class="input" value="${ctx.esc(f.expense_category)}" oninput="Finance.setJournalField('expense_category', this.value)" /></label>
           <div style="display:flex;gap:16px;">
-            <label style="display:flex;gap:6px;align-items:center;"><input type="radio" name="fj-mode" ${f.consume_mode === "items" ? "checked" : ""} onchange="Finance.setJournalField('consume_mode', 'items')" /> Item lines</label>
-            <label style="display:flex;gap:6px;align-items:center;"><input type="radio" name="fj-mode" ${f.consume_mode === "album" ? "checked" : ""} onchange="Finance.setJournalField('consume_mode', 'album')" /> Whole album</label>
+            <label style="display:flex;gap:6px;align-items:center;"><input type="radio" name="fj-mode" ${f.consume_mode === "items" ? "checked" : ""} onchange="Finance.setJournalMode('items')" /> Item wise</label>
+            <label style="display:flex;gap:6px;align-items:center;"><input type="radio" name="fj-mode" ${f.consume_mode === "album" ? "checked" : ""} onchange="Finance.setJournalMode('album')" /> Album wise</label>
           </div>
           ${f.consume_mode === "album" ? `
-            <label>Album name <input class="input" value="${ctx.esc(f.album)}" placeholder="Album 1" oninput="Finance.setJournalField('album', this.value)" /></label>
-            <label>Copies <input class="input" type="number" min="1" value="${ctx.esc(f.copies)}" oninput="Finance.setJournalField('copies', this.value)" /></label>
+            <label>Category
+              <select class="input" onchange="Finance.setJournalField('album', this.value)">
+                <option value="">— Select category —</option>
+                ${(journalCategories || []).map(c => `<option value="${ctx.esc(c)}" ${f.album === c ? "selected" : ""}>${ctx.esc(c)}</option>`).join("")}
+              </select>
+            </label>
+            <label>Quantity <input class="input" type="number" min="1" value="${ctx.esc(f.copies)}" oninput="Finance.setJournalField('copies', this.value)" /></label>
+            <p style="margin:0;font-size:12px;color:var(--muted);">Every item in this category loses this quantity. The expense is each item's buying price times that quantity, added up.</p>
           ` : `
-            <label>Add item <input class="input" id="fj-line" value="${ctx.esc(f.line_q)}" placeholder="Item number" oninput="Finance.searchJournalProduct('line', this.value)" /></label>
+            <label>Search item <input class="input" id="fj-line" value="${ctx.esc(f.line_q)}" placeholder="Item number or name" oninput="Finance.searchJournalProduct('line', this.value)" /></label>
+            <p style="margin:0;font-size:12px;color:var(--muted);">Tap a result to add it. Add as many items as you need, then set each quantity. One expense covers all of them.</p>
             <div id="fj-hits-line" style="display:flex;flex-direction:column;gap:4px;">${hitList(journalHits.line, "line")}</div>
             ${(f.lines || []).map((l, i) => `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
               <strong>${ctx.esc(l.our_product_id)}</strong>
@@ -294,6 +305,13 @@
   function setJournalKind(kind) {
     if (!journalForm) journalForm = blankJournalForm();
     journalForm.kind = kind;
+    journalForm.preview = null;
+    renderJournal();
+  }
+
+  function setJournalMode(mode) {
+    if (!journalForm) journalForm = blankJournalForm();
+    journalForm.consume_mode = mode;
     journalForm.preview = null;
     renderJournal();
   }
@@ -349,7 +367,7 @@
   function hitButtons(hits, which) {
     return (hits || []).map(p => `
       <button type="button" class="btn btn-secondary btn-sm" style="justify-content:flex-start;" onclick="Finance.pickJournalProduct('${which}', ${p.catalog_product_id})">
-        ${ctx.esc(p.our_product_id)} · stock ${p.quantity_on_hand ?? 0}${p.buying_price ? ` · buy ${ctx.esc(p.buying_price)}` : ""}
+        ${ctx.esc(p.our_product_id)}${p.category ? ` · ${ctx.esc(p.category)}` : ""} · stock ${p.quantity_on_hand ?? 0}${p.buying_price ? ` · buy ${ctx.esc(p.buying_price)}` : ""}
       </button>`).join("");
   }
 

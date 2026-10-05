@@ -10,7 +10,7 @@
     shareArStatement, shareApStatement,
     setArOpeningBalance, setApOpeningBalance, saveArOpeningBalance, saveApOpeningBalance,
     openExpenseForm, editExpense, saveExpenseEdit, closeExpenseForm, submitExpense, deleteExpense, onExpenseFilterChange, clearExpenseFilters,
-    setJournalKind, setJournalField, setJournalLine, removeJournalLine, searchJournalProduct,
+    setJournalKind, setJournalMode, setJournalField, setJournalLine, removeJournalLine, searchJournalProduct,
     pickJournalProduct, previewJournal, saveJournal, voidJournal,
     editApPayment, saveApPaymentEdit, editArPayment, saveArPaymentEdit,
     openLossForm, closeLossForm, submitLoss, deleteLoss,

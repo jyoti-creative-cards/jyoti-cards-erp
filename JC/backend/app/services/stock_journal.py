@@ -5,11 +5,12 @@ Consumption posts one non-cash expense so the cost is tracked without leaving th
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from decimal import Decimal
 
 from fastapi import HTTPException
-from sqlalchemy import func, or_
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.deps import AuthContext
@@ -44,26 +45,60 @@ def _on_hand(db: Session, product_id: int) -> int:
     return int(bal.quantity_on_hand) if bal else 0
 
 
+# "Album 1", "album 01", and "ALBUM NO. 01" are the same parent category.
+_ALBUM_NUM = re.compile(r"^album(?:\s+no\.?)?\s*0*(\d+)$", re.IGNORECASE)
+
+
+def album_parent_needles(typed: str) -> set[str] | None:
+    """Parent-category names this text is asking for.
+
+    None: not an album phrase (an item number, a box, DC, and so on).
+    Empty: the word album with no number. That is not one parent category.
+    """
+    text = re.sub(r"\s+", " ", (typed or "").strip().lower())
+    if not text:
+        return None
+    if text in {"album", "albums"}:
+        return set()
+    match = _ALBUM_NUM.fullmatch(text)
+    if not match:
+        return None
+    number = int(match.group(1))
+    return {f"album no. {number:02d}", text}
+
+
 def _album_products(db: Session, name: str) -> list[CatalogProduct]:
-    needle = (name or "").strip().lower()
-    if not needle:
+    typed = (name or "").strip()
+    if not typed:
         raise HTTPException(400, "Enter the album name")
+    needles = album_parent_needles(typed)
+    if needles is not None and not needles:
+        raise HTTPException(
+            400,
+            "Type the album name, for example ALBUM NO. 01. Album 1 works too.",
+        )
+    active = (
+        CatalogProduct.is_active.is_(True),
+        CatalogProduct.deleted_at.is_(None),
+    )
+    # Parent category only. Series (1000, 4000, …) is a subgroup inside the album,
+    # and second category is the other album on a shared design. Neither replaces the parent.
+    if needles:
+        cond = func.lower(CatalogProduct.category).in_(needles)
+    else:
+        needle = typed.lower()
+        cond = func.lower(CatalogProduct.category) == needle
     rows = (
         db.query(CatalogProduct)
-        .filter(
-            CatalogProduct.is_active.is_(True),
-            CatalogProduct.deleted_at.is_(None),
-            or_(
-                func.lower(CatalogProduct.category) == needle,
-                func.lower(CatalogProduct.second_category) == needle,
-                func.lower(CatalogProduct.series) == needle,
-            ),
-        )
+        .filter(*active, cond)
         .order_by(CatalogProduct.our_product_id.asc(), CatalogProduct.id.asc())
         .all()
     )
     if not rows:
-        raise HTTPException(400, f"No active products match “{name.strip()}”")
+        raise HTTPException(
+            400,
+            f"No active products in “{typed}”. Albums are named ALBUM NO. 01, ALBUM NO. 02, and so on.",
+        )
     return rows
 
 

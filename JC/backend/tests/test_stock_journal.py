@@ -145,6 +145,43 @@ def test_album_consumption_is_expense_not_cash(db):
     assert "expense" in kinds
 
 
+def test_album_name_uses_parent_category_not_one_series(db):
+    vendor = _vendor(db)
+    series_1000 = _product(db, vendor, "1042", category="ALBUM NO. 01")
+    series_4000 = _product(db, vendor, "4385", category="ALBUM NO. 01")
+    other_album = _product(db, vendor, "5151", category="ALBUM NO. 02")
+    series_only = _product(db, vendor, "9001", category="DC")
+    second_only = _product(db, vendor, "2071", category="BOX NO. 09")
+    series_1000.series = "1000"
+    series_4000.series = "4000"
+    series_only.series = "1000"
+    second_only.second_category = "ALBUM NO. 01"
+    db.commit()
+
+    saved = post_journal(
+        db,
+        JournalIn(
+            journal_date=today_ist(),
+            kind="consumption",
+            album="Album 1",
+            copies=1,
+        ),
+        AUTH,
+    )
+    assert {ln.our_product_id for ln in saved.lines} == {"1042", "4385"}
+    assert _hand(db, series_only.id) == 10
+    assert _hand(db, second_only.id) == 10
+    assert _hand(db, other_album.id) == 10
+
+    with pytest.raises(HTTPException) as bare:
+        preview_journal(
+            db,
+            JournalIn(journal_date=today_ist(), kind="consumption", album="Album", copies=1),
+        )
+    assert bare.value.status_code == 400
+    assert "ALBUM NO. 01" in bare.value.detail
+
+
 def test_missing_rate_and_oversell_blocked(db):
     vendor = _vendor(db)
     bare = _product(db, vendor, "NORATE", buying=None, stock=5)

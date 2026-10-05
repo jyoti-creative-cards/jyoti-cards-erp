@@ -321,3 +321,23 @@ def test_offline_order_skips_new_portal_order_stays(db):
     open_rows = list_customer_orders(bucket="open", day="all", db=db, auth=AUTH)
     assert any(r.customer_id == customer.id and r.total_quantity == 4 for r in open_rows)
     assert _open_qty(db, customer.id, prod.id) == 4
+
+
+def test_offline_promote_counts_lines_when_autoflush_is_off(db):
+    """Production sessions do not autoflush. Bill Now and the Confirmed list both
+    read CustomerOpenLine, so a promote that misses the pending lines hides the order."""
+    from app.services.customer_bill_process import get_process_lines
+    from app.services.customer_order_flow import promote_placement_to_confirmed
+
+    db.autoflush = False
+    customer, prod = _setup(db)
+    offline = create_received_placement(
+        db, customer_id=customer.id, customer_name=customer.business_name,
+        lines=[{"catalog_product_id": prod.id, "quantity": 4}],
+        order_source="offline",
+        allow_negative_stock=True,
+    )
+    promote_placement_to_confirmed(db, offline)
+    db.flush()
+    assert _open_qty(db, customer.id, prod.id) == 4
+    assert len(get_process_lines(db, customer.id)["lines"]) == 1

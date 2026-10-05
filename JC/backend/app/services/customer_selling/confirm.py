@@ -84,6 +84,10 @@ def promote_placement_to_confirmed(db: Session, placement: CustomerOrderPlacemen
     order = db.get(CustomerOrder, placement.customer_order_id)
     if not order or order.bucket != "received":
         return
+    # The app session has autoflush off. Lines added in this same request are
+    # still pending, so this query would see nothing and the order would move
+    # to Confirmed with no billable quantity.
+    db.flush()
     lines = (
         db.query(CustomerOrderLine)
         .filter(CustomerOrderLine.placement_id == placement.id, CustomerOrderLine.status == "active")

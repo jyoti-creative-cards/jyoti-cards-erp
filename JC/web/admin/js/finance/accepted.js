@@ -459,39 +459,8 @@ const Finance = (() => {
     finally { ctx.hideLoading?.(); }
   }
 
-  async function quickAddExpense() {
-    const category = prompt("Category (e.g. rent, salary, transport, misc):");
-    if (category == null || !category.trim()) return;
-    const amtRaw = prompt("Amount (₹):");
-    if (amtRaw == null) return;
-    const amount = Number(amtRaw);
-    if (!Number.isFinite(amount) || amount <= 0) return ctx.toast("Enter a valid amount", "error");
-    // description/date are genuinely optional (fall back to "" / today) — but that
-    // exact `|| fallback` pattern can't tell "user cleared the field and hit OK"
-    // apart from "user hit Cancel", so a Cancel here used to silently continue and
-    // record the expense anyway with today's date, instead of aborting like the
-    // category/amount prompts above correctly do.
-    const descriptionRaw = prompt("Description (optional):");
-    if (descriptionRaw === null) return;
-    const description = descriptionRaw || "";
-    const today = new Date().toISOString().slice(0, 10);
-    const dateInput = prompt("Date (YYYY-MM-DD):", today);
-    if (dateInput === null) return;
-    const dateRaw = dateInput || today;
-    ctx.showLoading?.();
-    try {
-      await ctx.api("/expenses", {
-        method: "POST",
-        body: JSON.stringify({
-          expense_date: dateRaw.trim(),
-          category: category.trim(),
-          description: description.trim() || undefined,
-          amount,
-        }),
-      });
-      ctx.toast("Expense recorded", "success");
-    } catch (e) { ctx.toast(e.message, "error"); }
-    finally { ctx.hideLoading?.(); }
+  function quickAddExpense() {
+    openExpenseForm();
   }
 
   function setHubMode(mode) {
@@ -1843,11 +1812,11 @@ const Finance = (() => {
         <input type="date" class="input" id="fin-exp-from" value="${ctx.esc(expenseFilters.from_date)}" onchange="Finance.onExpenseFilterChange()" /></label>
       <label class="fin-exp-field"><span>To</span>
         <input type="date" class="input" id="fin-exp-to" value="${ctx.esc(expenseFilters.to_date)}" onchange="Finance.onExpenseFilterChange()" /></label>
-      <label class="fin-exp-field"><span>Category</span>
+      <label class="fin-exp-field"><span>Head</span>
         <select class="input" id="fin-exp-cat" onchange="Finance.onExpenseFilterChange()">
           <option value="">All</option>
-          ${["rent", "salary", "electricity", "transport", "misc", "other"].map(c =>
-            `<option value="${c}" ${expenseFilters.category === c ? "selected" : ""}>${c}</option>`).join("")}
+          ${expenseCategoryOptions().map(c =>
+            `<option value="${ctx.esc(c)}" ${expenseFilters.category === c ? "selected" : ""}>${ctx.esc(c)}</option>`).join("")}
         </select>
       </label>
       <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.clearExpenseFilters()">Clear</button>`;
@@ -1928,46 +1897,20 @@ const Finance = (() => {
   }
 
   function editExpense(id) {
-    const e = expenses.find(x => x.id === id);
-    if (!e) return;
-    const day = docDateIso(e.display_date || e.expense_date) || localToday();
-    document.getElementById("expense-body").innerHTML = `
-      <label class="label">Date</label>
-      <input type="date" class="input" id="exp-date" value="${ctx.esc(day)}" style="margin-bottom:12px;" />
-      <label class="label">Category</label>
-      <select class="input" id="exp-cat" style="margin-bottom:12px;width:100%;">
-        ${["rent","salary","electricity","transport","misc","other"].map(c =>
-          `<option value="${c}" ${e.category === c ? "selected" : ""}>${c}</option>`).join("")}
-      </select>
-      <label class="label">Description</label>
-      <input class="input" id="exp-desc" value="${ctx.esc(e.description || "")}" style="margin-bottom:12px;" />
-      <label class="label">Amount (₹)</label>
-      <input type="number" step="0.01" class="input" id="exp-amount" value="${ctx.esc(String(e.amount))}" style="margin-bottom:12px;" />
-      <label class="label">Reference</label>
-      <input class="input" id="exp-ref" value="${ctx.esc(e.reference || "")}" />`;
-    const modal = document.getElementById("expense-modal");
-    modal?.classList.remove("hidden");
-    const saveBtn = modal?.querySelector(".btn-primary");
-    if (saveBtn) {
-      saveBtn.textContent = "Save";
-      saveBtn.setAttribute("onclick", `Finance.saveExpenseEdit(${id})`);
-    }
+    fillExpenseForm(expenses.find(x => x.id === id) || null, id);
   }
 
   async function saveExpenseEdit(id) {
     if (saveBusy) return;
-    const expense_date = document.getElementById("exp-date")?.value;
-    const category = document.getElementById("exp-cat")?.value || "misc";
-    const description = (document.getElementById("exp-desc")?.value || "").trim() || null;
-    const amount = parseFloat(document.getElementById("exp-amount")?.value || "0");
-    const reference = (document.getElementById("exp-ref")?.value || "").trim() || null;
-    if (!expense_date || !amount || amount <= 0) return ctx.toast("Enter date and amount", "error");
+    const payload = expensePayload();
+    if (!payload) return;
+    const { expense_date, description, amount, reference, head_id, subhead_id } = payload;
     saveBusy = true;
     ctx.showLoading?.();
     try {
       await ctx.api(`/expenses/${id}`, {
         method: "PATCH",
-        body: JSON.stringify({ expense_date, category, description, amount, reference }),
+        body: JSON.stringify({ expense_date, description, amount, reference, head_id, subhead_id }),
       });
       ctx.invalidateCache?.("/expenses");
       ctx.invalidateCache?.("/finance");
@@ -2070,48 +2013,165 @@ const Finance = (() => {
     finally { saveBusy = false; ctx.hideLoading?.(); }
   }
 
-  function openExpenseForm() {
-    const today = localToday();
+  let expenseHeadCache = [];
+
+  function expenseCategoryOptions() {
+    const cats = new Set((expenses || []).map(e => e.category).filter(Boolean));
+    if (expenseFilters?.category) cats.add(expenseFilters.category);
+    return [...cats].sort((a, b) => a.localeCompare(b));
+  }
+
+  function expenseSubOptions(headId, selectedId) {
+    const head = expenseHeadCache.find(h => String(h.id) === String(headId));
+    const subs = head?.subheads || [];
+    return `<option value="">— Select sub-head —</option>` + subs.map(s =>
+      `<option value="${s.id}" ${String(selectedId) === String(s.id) ? "selected" : ""}>${ctx.esc(s.name)}</option>`
+    ).join("");
+  }
+
+  async function fillExpenseForm(existing, editId) {
+    let heads = [];
+    try { heads = await ctx.api("/expenses/heads", {}, 0) || []; } catch (err) { heads = []; }
+    expenseHeadCache = heads;
+    const cat = (existing?.category || "").toLowerCase();
+    let headId = "";
+    let subId = "";
+    heads.forEach(h => {
+      (h.subheads || []).forEach(s => {
+        if ((s.category || "").toLowerCase() === cat) { headId = h.id; subId = s.id; }
+      });
+    });
+    const day = existing ? (docDateIso(existing.display_date || existing.expense_date) || localToday()) : localToday();
+    const note = existing && !subId
+      ? `<p style="margin:0 0 12px;font-size:12px;color:var(--muted);">Filed under ${ctx.esc(existing.category || "—")}. Pick a head and sub-head to move it.</p>`
+      : "";
     document.getElementById("expense-body").innerHTML = `
+      ${note}
       <label class="label">Date</label>
-      <input type="date" class="input" id="exp-date" value="${today}" style="margin-bottom:12px;" />
-      <label class="label">Category</label>
-      <select class="input" id="exp-cat" style="margin-bottom:12px;width:100%;">
-        <option value="rent">Rent</option><option value="salary">Salary</option>
-        <option value="electricity">Electricity</option><option value="transport">Freight</option>
-        <option value="misc">Misc</option><option value="other">Other</option>
-      </select>
+      <input type="date" class="input" id="exp-date" value="${ctx.esc(day)}" style="margin-bottom:12px;" />
+      <label class="label">Head</label>
+      <div style="display:flex;gap:8px;margin-bottom:12px;">
+        <select class="input" id="exp-head" style="flex:1;" onchange="Finance.onExpenseHeadChange()">
+          <option value="">— Select head —</option>
+          ${heads.map(h => `<option value="${h.id}" ${String(headId) === String(h.id) ? "selected" : ""}>${ctx.esc(h.name)}</option>`).join("")}
+        </select>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.addExpenseHead()">New head</button>
+      </div>
+      <label class="label">Sub-head</label>
+      <div style="display:flex;gap:8px;margin-bottom:12px;">
+        <select class="input" id="exp-sub" style="flex:1;">${expenseSubOptions(headId, subId)}</select>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.addExpenseSubhead()">New sub-head</button>
+      </div>
       <label class="label">Description</label>
-      <input class="input" id="exp-desc" style="margin-bottom:12px;" />
+      <input class="input" id="exp-desc" value="${ctx.esc(existing?.description || "")}" style="margin-bottom:12px;" />
       <label class="label">Amount (₹)</label>
-      <input type="number" step="0.01" class="input" id="exp-amount" style="margin-bottom:12px;" />
+      <input type="number" step="0.01" class="input" id="exp-amount" value="${existing ? ctx.esc(String(existing.amount)) : ""}" style="margin-bottom:12px;" />
       <label class="label">Reference</label>
-      <input class="input" id="exp-ref" />`;
+      <input class="input" id="exp-ref" value="${ctx.esc(existing?.reference || "")}" />`;
     const modal = document.getElementById("expense-modal");
     modal?.classList.remove("hidden");
     const saveBtn = modal?.querySelector(".btn-primary");
     if (saveBtn) {
-      saveBtn.textContent = "Save expense";
-      saveBtn.setAttribute("onclick", "Finance.submitExpense()");
+      saveBtn.textContent = editId ? "Save" : "Save expense";
+      saveBtn.setAttribute("onclick", editId ? `Finance.saveExpenseEdit(${editId})` : "Finance.submitExpense()");
     }
+  }
+
+  function openExpenseForm() {
+    fillExpenseForm(null, null);
+  }
+
+  function onExpenseHeadChange() {
+    const headId = document.getElementById("exp-head")?.value || "";
+    const sub = document.getElementById("exp-sub");
+    if (sub) sub.innerHTML = expenseSubOptions(headId, "");
+  }
+
+  async function addExpenseHead() {
+    const name = prompt("Expense head name:");
+    if (name == null || !name.trim()) return;
+    const keep = expenseDraft();
+    try {
+      await ctx.api("/expenses/heads", { method: "POST", body: JSON.stringify({ name: name.trim() }) });
+      ctx.toast("Head saved", "success");
+      await fillExpenseForm(keep.existing, keep.editId);
+      const head = expenseHeadCache.find(h => (h.name || "").toLowerCase() === name.trim().toLowerCase());
+      const sel = document.getElementById("exp-head");
+      if (head && sel) { sel.value = String(head.id); onExpenseHeadChange(); }
+      restoreExpenseDraft(keep);
+    } catch (e) { ctx.toast(e.message, "error"); }
+  }
+
+  async function addExpenseSubhead() {
+    const headId = document.getElementById("exp-head")?.value;
+    if (!headId) return ctx.toast("Pick a head first", "error");
+    const name = prompt("Sub-head name:");
+    if (name == null || !name.trim()) return;
+    const keep = expenseDraft();
+    try {
+      const created = await ctx.api(`/expenses/heads/${headId}/subheads`, { method: "POST", body: JSON.stringify({ name: name.trim() }) });
+      ctx.toast("Sub-head saved", "success");
+      await fillExpenseForm(keep.existing, keep.editId);
+      const sel = document.getElementById("exp-head");
+      if (sel) { sel.value = String(headId); onExpenseHeadChange(); }
+      const sub = document.getElementById("exp-sub");
+      if (sub && created?.id) sub.value = String(created.id);
+      restoreExpenseDraft(keep);
+    } catch (e) { ctx.toast(e.message, "error"); }
+  }
+
+  function expenseDraft() {
+    const editOnclick = document.querySelector("#expense-modal .btn-primary")?.getAttribute("onclick") || "";
+    const editMatch = editOnclick.match(/saveExpenseEdit\((\d+)\)/);
+    return {
+      editId: editMatch ? Number(editMatch[1]) : null,
+      existing: {
+        expense_date: document.getElementById("exp-date")?.value || "",
+        display_date: document.getElementById("exp-date")?.value || "",
+        description: document.getElementById("exp-desc")?.value || "",
+        amount: document.getElementById("exp-amount")?.value || "",
+        reference: document.getElementById("exp-ref")?.value || "",
+        category: "",
+      },
+    };
+  }
+
+  function restoreExpenseDraft(keep) {
+    const date = document.getElementById("exp-date");
+    const desc = document.getElementById("exp-desc");
+    const amount = document.getElementById("exp-amount");
+    const ref = document.getElementById("exp-ref");
+    if (date) date.value = keep.existing.expense_date || date.value;
+    if (desc) desc.value = keep.existing.description || "";
+    if (amount) amount.value = keep.existing.amount || "";
+    if (ref) ref.value = keep.existing.reference || "";
+  }
+
+  function expensePayload() {
+    const expense_date = document.getElementById("exp-date")?.value;
+    const head_id = Number(document.getElementById("exp-head")?.value || 0);
+    const subhead_id = Number(document.getElementById("exp-sub")?.value || 0);
+    const description = (document.getElementById("exp-desc")?.value || "").trim() || null;
+    const amount = parseFloat(document.getElementById("exp-amount")?.value || "0");
+    const reference = (document.getElementById("exp-ref")?.value || "").trim() || null;
+    if (!expense_date || !amount || amount <= 0) { ctx.toast("Enter date and amount", "error"); return null; }
+    if (!head_id || !subhead_id) { ctx.toast("Pick a head and a sub-head", "error"); return null; }
+    return { expense_date, head_id, subhead_id, description, amount, reference };
   }
 
   function closeExpenseForm() { document.getElementById("expense-modal")?.classList.add("hidden"); }
 
   async function submitExpense() {
     if (saveBusy) return;
-    const expense_date = document.getElementById("exp-date")?.value;
-    const category = document.getElementById("exp-cat")?.value || "misc";
-    const description = (document.getElementById("exp-desc")?.value || "").trim() || null;
-    const amount = parseFloat(document.getElementById("exp-amount")?.value || "0");
-    const reference = (document.getElementById("exp-ref")?.value || "").trim() || null;
-    if (!expense_date || !amount || amount <= 0) return ctx.toast("Enter date and amount", "error");
+    const payload = expensePayload();
+    if (!payload) return;
+    const { expense_date, description, amount, reference, head_id, subhead_id } = payload;
     saveBusy = true;
     ctx.showLoading?.();
     try {
       await ctx.api("/expenses", {
         method: "POST",
-        body: JSON.stringify({ expense_date, category, description, amount, reference }),
+        body: JSON.stringify({ expense_date, description, amount, reference, head_id, subhead_id }),
       });
       ctx.invalidateCache?.("/expenses");
       ctx.invalidateCache?.("/finance");
@@ -2860,7 +2920,11 @@ const Finance = (() => {
         </div>
         ${preview ? `
           ${(preview.warnings || []).map(w => `<p style="margin:0;color:#b45309;font-size:13px;">${ctx.esc(w)}</p>`).join("")}
-          <p style="margin:0;font-size:13px;">Cost ${fmtPrice(preview.total_cost)} · ${preview.lines.length} line(s)</p>
+          <p style="margin:0;font-size:13px;">Cost ${fmtPrice(preview.total_cost)} · ${preview.lines.length} item(s) · ${journalPieces(preview)} total pieces</p>
+          <div style="display:flex;gap:8px;">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.printJournalPreview()">Print</button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.exportJournalExcel()">Excel</button>
+          </div>
           <table class="data"><thead><tr><th>Item</th><th>Qty</th><th>Rate</th><th>Amount</th><th>On hand</th></tr></thead><tbody>
             ${(preview.lines || []).map(l => `<tr>
               <td>${ctx.esc(l.our_product_id)}</td>
@@ -2883,6 +2947,62 @@ const Finance = (() => {
           </tr>`).join("")}
         </tbody></table>` : `<p style="padding:16px;margin:0;color:var(--muted);">No journals yet.</p>`}
       </div>`;
+  }
+
+  function journalPieces(preview) {
+    return (preview?.lines || []).reduce((sum, line) => sum + Math.abs(Number(line.quantity_delta) || 0), 0);
+  }
+
+  function printJournalPreview() {
+    const preview = journalForm?.preview;
+    if (!preview) return;
+    const pieces = journalPieces(preview);
+    const rows = (preview.lines || []).map(l => `<tr>
+      <td>${ctx.esc(l.our_product_id)}</td>
+      <td>${ctx.esc(String(l.quantity_delta))}</td>
+      <td>${ctx.esc(String(l.rate ?? ""))}</td>
+      <td>${ctx.esc(String(l.amount ?? ""))}</td>
+      <td>${ctx.esc(String(l.on_hand ?? ""))}</td>
+    </tr>`).join("");
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Sample catalogue</title>
+      <style>body{font-family:sans-serif;font-size:12px;color:#111}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:4px 6px;text-align:left}h1{font-size:16px}</style>
+      </head><body>
+      <h1>Sample catalogue</h1>
+      <p>Cost ${ctx.esc(String(preview.total_cost))} · ${(preview.lines || []).length} items · ${pieces} total pieces</p>
+      <table><thead><tr><th>Item</th><th>Qty</th><th>Rate</th><th>Amount</th><th>On hand</th></tr></thead><tbody>${rows}</tbody></table>
+      </body></html>`;
+    const w = window.open("", "_blank");
+    if (!w) return ctx.toast("Allow pop-ups to print", "error");
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    w.print();
+  }
+
+  function exportJournalExcel() {
+    const preview = journalForm?.preview;
+    if (!preview) return;
+    const pieces = journalPieces(preview);
+    const cell = (v) => ctx.esc(v == null ? "" : String(v));
+    const rows = (preview.lines || []).map(l => `<tr>
+      <td>${cell(l.our_product_id)}</td><td>${cell(l.quantity_delta)}</td><td>${cell(l.rate)}</td>
+      <td>${cell(l.amount)}</td><td>${cell(l.on_hand)}</td></tr>`).join("");
+    const html = `<html><head><meta charset="utf-8"></head><body>
+      <table>
+        <tr><td>Items</td><td>${(preview.lines || []).length}</td></tr>
+        <tr><td>Total pieces</td><td>${pieces}</td></tr>
+        <tr><td>Total cost</td><td>${cell(preview.total_cost)}</td></tr>
+        <tr></tr>
+        <tr><th>Item</th><th>Qty</th><th>Rate</th><th>Amount</th><th>On hand</th></tr>
+        ${rows}
+      </table></body></html>`;
+    const blob = new Blob([html], { type: "application/vnd.ms-excel" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "sample-catalogue.xls";
+    a.click();
+    URL.revokeObjectURL(a.href);
   }
 
   function setJournalKind(kind) {
@@ -3039,9 +3159,9 @@ const Finance = (() => {
     undoArPayment, undoApPayment,
     shareArStatement, shareApStatement,
     setArOpeningBalance, setApOpeningBalance, saveArOpeningBalance, saveApOpeningBalance,
-    openExpenseForm, editExpense, saveExpenseEdit, closeExpenseForm, submitExpense, deleteExpense, onExpenseFilterChange, clearExpenseFilters,
+    openExpenseForm, onExpenseHeadChange, addExpenseHead, addExpenseSubhead, editExpense, saveExpenseEdit, closeExpenseForm, submitExpense, deleteExpense, onExpenseFilterChange, clearExpenseFilters,
     setJournalKind, setJournalMode, setJournalField, setJournalLine, removeJournalLine, searchJournalProduct,
-    pickJournalProduct, previewJournal, saveJournal, voidJournal,
+    pickJournalProduct, previewJournal, printJournalPreview, exportJournalExcel, saveJournal, voidJournal,
     editApPayment, saveApPaymentEdit, editArPayment, saveArPaymentEdit,
     openLossForm, closeLossForm, submitLoss, deleteLoss,
     openFreightAgent, openFreightSettle, openFreightAdvance, closeFreightSettle, submitFreightSettle,

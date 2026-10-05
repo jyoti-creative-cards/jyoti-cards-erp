@@ -845,16 +845,43 @@ const Reports = (() => {
     }
 
     if (ledgerKind === "expenses") {
-      items = items.filter(it => matchSearch(it.label, it.category));
-      body.innerHTML = items.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
-        <th>Category</th><th>Count</th><th>Total</th>
-      </tr></thead><tbody>
-        ${items.map(it => `<tr class="clickable" onclick="Reports.openExpenseLedger('${ctx.esc(it.category || it.label)}')">
+      let heads = [];
+      try { heads = await ctx.api("/expenses/heads", {}, 0) || []; } catch (err) { heads = []; }
+      const covered = new Set();
+      heads.forEach(h => {
+        covered.add((h.name || "").toLowerCase());
+        (h.subheads || []).forEach(s => covered.add((s.category || "").toLowerCase()));
+      });
+      const shownHeads = heads.filter(h => matchSearch(h.name) || (h.subheads || []).some(s => matchSearch(h.name, s.name)));
+      const earlier = items.filter(it => !covered.has(String(it.category || it.label || "").toLowerCase()) && matchSearch(it.label, it.category));
+      const headRows = shownHeads.map(h => `
+        <tr class="clickable" onclick="Reports.openExpenseLedger('${ctx.esc(h.name)}')">
+          <td><strong>${ctx.esc(h.name)}</strong></td>
+          <td>All</td>
+          <td>${h.count || 0}</td>
+          <td>${fmtPrice(h.total)}</td>
+          <td><button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); Reports.addExpenseSubhead(${h.id})">Sub-head</button></td>
+        </tr>
+        ${(h.subheads || []).filter(s => matchSearch(h.name, s.name)).map(s => `
+          <tr class="clickable" onclick="Reports.openExpenseLedger('${ctx.esc(s.category)}')">
+            <td></td>
+            <td>${ctx.esc(s.name)}</td>
+            <td>${s.count || 0}</td>
+            <td>${fmtPrice(s.total)}</td>
+            <td></td>
+          </tr>`).join("")}`).join("");
+      const oldRows = earlier.map(it => `<tr class="clickable" onclick="Reports.openExpenseLedger('${ctx.esc(it.category || it.label)}')">
           <td><strong>${ctx.esc(it.label)}</strong></td>
+          <td>—</td>
           <td>${it.count || 0}</td>
           <td>${fmtPrice(it.outstanding)}</td>
-        </tr>`).join("")}
-      </tbody></table></div>` : empty("No expense categories", "Add expenses in Finance first.");
+          <td></td>
+        </tr>`).join("");
+      body.innerHTML = `<div style="display:flex;gap:8px;margin-bottom:12px;">
+          <button type="button" class="btn btn-primary btn-sm" onclick="Reports.addExpenseHead()">New head</button>
+        </div>` + ((headRows || oldRows) ? `<div class="card table-wrap"><table class="data"><thead><tr>
+        <th>Head</th><th>Sub-head</th><th>Count</th><th>Total</th><th></th>
+      </tr></thead><tbody>${headRows}${oldRows}</tbody></table></div>` : empty("No expense heads", "Create a head, then a sub-head, then enter the expense in Finance."));
       return;
     }
 
@@ -911,11 +938,31 @@ const Reports = (() => {
     finally { ctx.hideLoading?.(); }
   }
 
+  async function addExpenseHead() {
+    const name = prompt("Expense head name:");
+    if (name == null || !name.trim()) return;
+    try {
+      await ctx.api("/expenses/heads", { method: "POST", body: JSON.stringify({ name: name.trim() }) });
+      ctx.toast("Head saved", "success");
+      setLedgerKind("expenses");
+    } catch (e) { ctx.toast(e.message, "error"); }
+  }
+
+  async function addExpenseSubhead(headId) {
+    const name = prompt("Sub-head name:");
+    if (name == null || !name.trim()) return;
+    try {
+      await ctx.api(`/expenses/heads/${headId}/subheads`, { method: "POST", body: JSON.stringify({ name: name.trim() }) });
+      ctx.toast("Sub-head saved", "success");
+      setLedgerKind("expenses");
+    } catch (e) { ctx.toast(e.message, "error"); }
+  }
+
   async function openExpenseLedger(category) {
     backLabel = "Back";
     ctx.showLoading?.();
     try {
-      ledgerDetail = await ctx.api(`/reports/ledgers/expenses/${encodeURIComponent(category)}${rangeQs()}`, {}, 0);
+      ledgerDetail = await ctx.api(`/reports/ledgers/expense-book${rangeQs({ category })}`, {}, 0);
       showDetail();
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
@@ -1043,7 +1090,7 @@ const Reports = (() => {
   return {
     init, showHub, setMode, setChip, setLedgerKind, setAgeingSide, setHubSearch, pickQuestion,
     setDatePreset, onRangeChange, onThresholdChange,
-    openLedger, openStaffLedger, openExpenseLedger, openCashLedger, backFromLedger, openDoc,
+    openLedger, openStaffLedger, openExpenseLedger, addExpenseHead, addExpenseSubhead, openCashLedger, backFromLedger, openDoc,
     shareDaybook, waDaybook, shareAgeing, waAgeing, exportExcel,
   };
 })();

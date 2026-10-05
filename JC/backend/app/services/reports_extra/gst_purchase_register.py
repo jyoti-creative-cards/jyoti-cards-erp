@@ -7,7 +7,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import and_, case, func
+from sqlalchemy import and_, case, func, or_
 from sqlalchemy.orm import Session
 
 from app.models.accounts_payable import ApLedgerEntry
@@ -151,7 +151,13 @@ def stock_valuation(db: Session) -> dict:
     }
 
 def expense_ledger_detail(db: Session, category: str, from_date: Optional[date] = None, to_date: Optional[date] = None) -> dict:
-    q = db.query(Expense).filter(Expense.category == category).order_by(Expense.expense_date.desc(), Expense.id.desc())
+    needle = (category or "").strip().lower()
+    col = func.lower(Expense.category)
+    if " / " in needle:
+        match = col == needle
+    else:
+        match = or_(col == needle, col.like(needle + " / %"))
+    q = db.query(Expense).filter(match).order_by(Expense.expense_date.desc(), Expense.id.desc())
     if from_date:
         q = q.filter(Expense.expense_date >= from_date)
     if to_date:

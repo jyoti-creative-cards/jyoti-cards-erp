@@ -277,7 +277,11 @@
         </div>
         ${preview ? `
           ${(preview.warnings || []).map(w => `<p style="margin:0;color:#b45309;font-size:13px;">${ctx.esc(w)}</p>`).join("")}
-          <p style="margin:0;font-size:13px;">Cost ${fmtPrice(preview.total_cost)} · ${preview.lines.length} line(s)</p>
+          <p style="margin:0;font-size:13px;">Cost ${fmtPrice(preview.total_cost)} · ${preview.lines.length} item(s) · ${journalPieces(preview)} total pieces</p>
+          <div style="display:flex;gap:8px;">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.printJournalPreview()">Print</button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.exportJournalExcel()">Excel</button>
+          </div>
           <table class="data"><thead><tr><th>Item</th><th>Qty</th><th>Rate</th><th>Amount</th><th>On hand</th></tr></thead><tbody>
             ${(preview.lines || []).map(l => `<tr>
               <td>${ctx.esc(l.our_product_id)}</td>
@@ -300,6 +304,62 @@
           </tr>`).join("")}
         </tbody></table>` : `<p style="padding:16px;margin:0;color:var(--muted);">No journals yet.</p>`}
       </div>`;
+  }
+
+  function journalPieces(preview) {
+    return (preview?.lines || []).reduce((sum, line) => sum + Math.abs(Number(line.quantity_delta) || 0), 0);
+  }
+
+  function printJournalPreview() {
+    const preview = journalForm?.preview;
+    if (!preview) return;
+    const pieces = journalPieces(preview);
+    const rows = (preview.lines || []).map(l => `<tr>
+      <td>${ctx.esc(l.our_product_id)}</td>
+      <td>${ctx.esc(String(l.quantity_delta))}</td>
+      <td>${ctx.esc(String(l.rate ?? ""))}</td>
+      <td>${ctx.esc(String(l.amount ?? ""))}</td>
+      <td>${ctx.esc(String(l.on_hand ?? ""))}</td>
+    </tr>`).join("");
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Sample catalogue</title>
+      <style>body{font-family:sans-serif;font-size:12px;color:#111}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:4px 6px;text-align:left}h1{font-size:16px}</style>
+      </head><body>
+      <h1>Sample catalogue</h1>
+      <p>Cost ${ctx.esc(String(preview.total_cost))} · ${(preview.lines || []).length} items · ${pieces} total pieces</p>
+      <table><thead><tr><th>Item</th><th>Qty</th><th>Rate</th><th>Amount</th><th>On hand</th></tr></thead><tbody>${rows}</tbody></table>
+      </body></html>`;
+    const w = window.open("", "_blank");
+    if (!w) return ctx.toast("Allow pop-ups to print", "error");
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    w.print();
+  }
+
+  function exportJournalExcel() {
+    const preview = journalForm?.preview;
+    if (!preview) return;
+    const pieces = journalPieces(preview);
+    const cell = (v) => ctx.esc(v == null ? "" : String(v));
+    const rows = (preview.lines || []).map(l => `<tr>
+      <td>${cell(l.our_product_id)}</td><td>${cell(l.quantity_delta)}</td><td>${cell(l.rate)}</td>
+      <td>${cell(l.amount)}</td><td>${cell(l.on_hand)}</td></tr>`).join("");
+    const html = `<html><head><meta charset="utf-8"></head><body>
+      <table>
+        <tr><td>Items</td><td>${(preview.lines || []).length}</td></tr>
+        <tr><td>Total pieces</td><td>${pieces}</td></tr>
+        <tr><td>Total cost</td><td>${cell(preview.total_cost)}</td></tr>
+        <tr></tr>
+        <tr><th>Item</th><th>Qty</th><th>Rate</th><th>Amount</th><th>On hand</th></tr>
+        ${rows}
+      </table></body></html>`;
+    const blob = new Blob([html], { type: "application/vnd.ms-excel" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "sample-catalogue.xls";
+    a.click();
+    URL.revokeObjectURL(a.href);
   }
 
   function setJournalKind(kind) {

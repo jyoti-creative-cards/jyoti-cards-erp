@@ -77,15 +77,47 @@ def test_short_bill_is_one_page():
     for n in (1, 2, 9):
         pdf = _render(n, gst=False)
         assert pdf.startswith(b"%PDF")
-        assert _pages(pdf) == 1, n
+        assert _pages(pdf) == 2, n
 
 
 def test_long_bill_continues_onto_second_page():
     pdf = _render(29, gst=False)
     assert pdf.startswith(b"%PDF")
-    assert _pages(pdf) == 2
+    assert _pages(pdf) == 4
 
 
 def test_gst_bill_uses_the_same_page_breaks():
-    assert _pages(_render(9, gst=True)) == 1
-    assert _pages(_render(29, gst=True)) == 2
+    assert _pages(_render(9, gst=True)) == 2
+    assert _pages(_render(29, gst=True)) == 4
+
+
+def _pdf_text(pdf: bytes) -> str:
+    import zlib
+    from base64 import a85decode
+
+    parts = []
+    rest = pdf
+    while b"stream\n" in rest:
+        start = rest.index(b"stream\n") + len(b"stream\n")
+        end = rest.find(b"endstream", start)
+        if end < 0:
+            break
+        blob = rest[start:end].strip()
+        rest = rest[end + len(b"endstream"):]
+        for attempt in (
+            lambda: zlib.decompress(blob).decode("latin1"),
+            lambda: zlib.decompress(a85decode(blob, adobe=True)).decode("latin1"),
+        ):
+            try:
+                parts.append(attempt())
+                break
+            except Exception:
+                continue
+    return "\n".join(parts)
+
+
+def test_every_bill_is_original_and_duplicate():
+    text = _pdf_text(_render(1, gst=False))
+    assert text.count("ORIGINAL") == 1
+    assert text.count("DUPLICATE") == 1
+    assert "TRIPLICATE" not in text

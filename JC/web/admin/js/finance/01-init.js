@@ -400,39 +400,8 @@
     finally { ctx.hideLoading?.(); }
   }
 
-  async function quickAddExpense() {
-    const category = prompt("Category (e.g. rent, salary, transport, misc):");
-    if (category == null || !category.trim()) return;
-    const amtRaw = prompt("Amount (₹):");
-    if (amtRaw == null) return;
-    const amount = Number(amtRaw);
-    if (!Number.isFinite(amount) || amount <= 0) return ctx.toast("Enter a valid amount", "error");
-    // description/date are genuinely optional (fall back to "" / today) — but that
-    // exact `|| fallback` pattern can't tell "user cleared the field and hit OK"
-    // apart from "user hit Cancel", so a Cancel here used to silently continue and
-    // record the expense anyway with today's date, instead of aborting like the
-    // category/amount prompts above correctly do.
-    const descriptionRaw = prompt("Description (optional):");
-    if (descriptionRaw === null) return;
-    const description = descriptionRaw || "";
-    const today = new Date().toISOString().slice(0, 10);
-    const dateInput = prompt("Date (YYYY-MM-DD):", today);
-    if (dateInput === null) return;
-    const dateRaw = dateInput || today;
-    ctx.showLoading?.();
-    try {
-      await ctx.api("/expenses", {
-        method: "POST",
-        body: JSON.stringify({
-          expense_date: dateRaw.trim(),
-          category: category.trim(),
-          description: description.trim() || undefined,
-          amount,
-        }),
-      });
-      ctx.toast("Expense recorded", "success");
-    } catch (e) { ctx.toast(e.message, "error"); }
-    finally { ctx.hideLoading?.(); }
+  function quickAddExpense() {
+    openExpenseForm();
   }
 
   function setHubMode(mode) {

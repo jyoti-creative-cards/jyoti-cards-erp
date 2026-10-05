@@ -278,11 +278,11 @@
         <input type="date" class="input" id="fin-exp-from" value="${ctx.esc(expenseFilters.from_date)}" onchange="Finance.onExpenseFilterChange()" /></label>
       <label class="fin-exp-field"><span>To</span>
         <input type="date" class="input" id="fin-exp-to" value="${ctx.esc(expenseFilters.to_date)}" onchange="Finance.onExpenseFilterChange()" /></label>
-      <label class="fin-exp-field"><span>Category</span>
+      <label class="fin-exp-field"><span>Head</span>
         <select class="input" id="fin-exp-cat" onchange="Finance.onExpenseFilterChange()">
           <option value="">All</option>
-          ${["rent", "salary", "electricity", "transport", "misc", "other"].map(c =>
-            `<option value="${c}" ${expenseFilters.category === c ? "selected" : ""}>${c}</option>`).join("")}
+          ${expenseCategoryOptions().map(c =>
+            `<option value="${ctx.esc(c)}" ${expenseFilters.category === c ? "selected" : ""}>${ctx.esc(c)}</option>`).join("")}
         </select>
       </label>
       <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.clearExpenseFilters()">Clear</button>`;
@@ -363,46 +363,20 @@
   }
 
   function editExpense(id) {
-    const e = expenses.find(x => x.id === id);
-    if (!e) return;
-    const day = docDateIso(e.display_date || e.expense_date) || localToday();
-    document.getElementById("expense-body").innerHTML = `
-      <label class="label">Date</label>
-      <input type="date" class="input" id="exp-date" value="${ctx.esc(day)}" style="margin-bottom:12px;" />
-      <label class="label">Category</label>
-      <select class="input" id="exp-cat" style="margin-bottom:12px;width:100%;">
-        ${["rent","salary","electricity","transport","misc","other"].map(c =>
-          `<option value="${c}" ${e.category === c ? "selected" : ""}>${c}</option>`).join("")}
-      </select>
-      <label class="label">Description</label>
-      <input class="input" id="exp-desc" value="${ctx.esc(e.description || "")}" style="margin-bottom:12px;" />
-      <label class="label">Amount (₹)</label>
-      <input type="number" step="0.01" class="input" id="exp-amount" value="${ctx.esc(String(e.amount))}" style="margin-bottom:12px;" />
-      <label class="label">Reference</label>
-      <input class="input" id="exp-ref" value="${ctx.esc(e.reference || "")}" />`;
-    const modal = document.getElementById("expense-modal");
-    modal?.classList.remove("hidden");
-    const saveBtn = modal?.querySelector(".btn-primary");
-    if (saveBtn) {
-      saveBtn.textContent = "Save";
-      saveBtn.setAttribute("onclick", `Finance.saveExpenseEdit(${id})`);
-    }
+    fillExpenseForm(expenses.find(x => x.id === id) || null, id);
   }
 
   async function saveExpenseEdit(id) {
     if (saveBusy) return;
-    const expense_date = document.getElementById("exp-date")?.value;
-    const category = document.getElementById("exp-cat")?.value || "misc";
-    const description = (document.getElementById("exp-desc")?.value || "").trim() || null;
-    const amount = parseFloat(document.getElementById("exp-amount")?.value || "0");
-    const reference = (document.getElementById("exp-ref")?.value || "").trim() || null;
-    if (!expense_date || !amount || amount <= 0) return ctx.toast("Enter date and amount", "error");
+    const payload = expensePayload();
+    if (!payload) return;
+    const { expense_date, description, amount, reference, head_id, subhead_id } = payload;
     saveBusy = true;
     ctx.showLoading?.();
     try {
       await ctx.api(`/expenses/${id}`, {
         method: "PATCH",
-        body: JSON.stringify({ expense_date, category, description, amount, reference }),
+        body: JSON.stringify({ expense_date, description, amount, reference, head_id, subhead_id }),
       });
       ctx.invalidateCache?.("/expenses");
       ctx.invalidateCache?.("/finance");

@@ -20,7 +20,7 @@ from app.models.customer_order import CustomerOrder, CustomerOrderLine, Customer
 from app.models.customer_bill import CustomerBill, CustomerBillLine
 from app.models.bill_series import BillSeries
 from app.models.freight_agent import FreightAgent, FreightLedgerEntry
-from app.models.expense import Expense
+from app.models.expense import Expense, ExpenseHead, ExpenseSubhead
 from app.models.stock_journal import StockJournal, StockJournalLine
 from app.models.accounts_receivable import CustomerArAccount, ArLedgerEntry
 from app.models.customer_return import CustomerReturn, CustomerReturnLine
@@ -30,7 +30,7 @@ from app.models.payment_mode import PaymentMode
 __all__ = [
     "ActivityLog", "AddonProduct", "AddonStockLedger", "CatalogAddonLink", "CatalogAlternative",
     "CatalogProduct", "City", "Customer", "CustomerOrder", "CustomerOrderLine", "CustomerOrderPlacement", "CustomerOpenLine",
-    "CustomerBill", "CustomerBillLine", "BillSeries", "FreightAgent", "FreightLedgerEntry", "Expense",
+    "CustomerBill", "CustomerBillLine", "BillSeries", "FreightAgent", "FreightLedgerEntry", "Expense", "ExpenseHead", "ExpenseSubhead",
     "CustomerArAccount", "ArLedgerEntry", "PaymentMode", "CustomerReturn", "CustomerReturnLine", "ManualLoss",
     "PriceHistory", "Route", "Staff", "Vendor",
     "VendorOrder", "VendorOrderLine", "VendorOrderPlacement", "VendorOpenLine",

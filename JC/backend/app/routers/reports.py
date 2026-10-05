@@ -366,6 +366,17 @@ def ledger_freight_detail(agent_id: int, db: Session = Depends(get_db), auth: Au
     return data
 
 
+@router.get("/ledgers/expense-book")
+def ledger_expense_book(
+    category: str = Query(...),
+    from_date: Optional[date] = Query(None),
+    to_date: Optional[date] = Query(None),
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    return ext.expense_ledger_detail(db, category, from_date, to_date)
+
+
 @router.get("/ledgers/expenses/{category}")
 def ledger_expense_detail(
     category: str,

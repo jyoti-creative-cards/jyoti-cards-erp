@@ -4,7 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import Boolean, Date, DateTime, Integer, Numeric, String, Text, func, true as sql_true
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, func, true as sql_true
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -24,4 +24,22 @@ class Expense(Base):
     # False = stock journal / sample cost. Stays on the expense list, not in cash out.
     is_cash: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=sql_true())
     created_by_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class ExpenseHead(Base):
+    __tablename__ = "jc_expense_heads"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class ExpenseSubhead(Base):
+    __tablename__ = "jc_expense_subheads"
+    __table_args__ = (UniqueConstraint("head_id", "name", name="uq_expense_subhead_name"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    head_id: Mapped[int] = mapped_column(ForeignKey("jc_expense_heads.id"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

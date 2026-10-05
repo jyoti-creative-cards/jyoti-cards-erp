@@ -96,7 +96,7 @@ def init_db() -> None:
         CatalogProduct, City, Customer, EntityHistory, PriceHistory, Route, Staff, Vendor,
         VendorOrder, VendorOrderLine, VendorOrderPlacement, VendorOpenLine,
         CustomerOrder, CustomerOrderLine, CustomerOrderPlacement, CustomerOpenLine,
-        CustomerBill, CustomerBillLine, BillSeries, FreightAgent, FreightLedgerEntry, Expense,
+        CustomerBill, CustomerBillLine, BillSeries, FreightAgent, FreightLedgerEntry, Expense, ExpenseHead, ExpenseSubhead,
         StockJournal, StockJournalLine,
         CustomerArAccount, ArLedgerEntry, PaymentMode,
         StockBalance, StockLedger, StockReceipt, StockReceiptLine,

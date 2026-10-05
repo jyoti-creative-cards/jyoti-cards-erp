@@ -292,7 +292,7 @@ def render_customer_bill_pdf(
 ) -> bytes:
     del credit_limit, outstanding
     return render_copies_pdf(
-        copies=1,
+        copies=2,
         bill_id=bill_id,
         order_id=order_id,
         bill_number=bill_number,
@@ -311,7 +311,7 @@ def render_customer_bill_pdf(
         order_created_at=order_created_at,
         order_by=order_by,
         invoice_date=invoice_date,
-        with_labels=False,
+        with_labels=True,
     )
 
 def _cash_discount_mode(item_rows: list[dict], totals: Dict[str, Any]) -> bool:

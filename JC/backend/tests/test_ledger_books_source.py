@@ -107,12 +107,37 @@ def test_sales_receipt_and_daybook_totals():
     assert len(sales) == 1
     assert sales[0]["doc_number"] == "JC-200"
     assert sales[0]["amount"] == "500.00"
+    assert sales[0]["date"] == today.isoformat()
     payments = [p for p in list_payments(db, today, today) if p["direction"] == "in"]
     assert len(payments) == 1
     assert payments[0]["amount"] == "150.00"
     book = daybook(db, today)
     assert book["totals"]["sales_count"] >= 1
     assert any(e["kind"] == "sales" and e["ref_id"] == bill.id for e in book["entries"])
+    db.close()
+
+
+def test_sales_book_uses_bill_date_not_entry_date():
+    db = _db()
+    customer = Customer(business_name="Sharma Cards", phone="9000000004", password_hash="x")
+    db.add(customer)
+    db.flush()
+    bill_day = date(2026, 8, 1)
+    entered = datetime(2026, 8, 13, 6, 0, tzinfo=timezone.utc)
+    bill = CustomerBill(
+        customer_id=customer.id, bill_number="JC-201",
+        subtotal_inclusive=Decimal("80"), discount_amount=Decimal("0"),
+        taxable_value=Decimal("80"), gst_amount=Decimal("0"), grand_total=Decimal("80"),
+        created_by_type="admin", created_by_name="Admin", bill_date=bill_day,
+        created_at=entered,
+    )
+    db.add(bill)
+    db.commit()
+    on_bill_day = list_sales(db, bill_day, bill_day)
+    on_entry_day = list_sales(db, date(2026, 8, 13), date(2026, 8, 13))
+    assert [r["doc_number"] for r in on_bill_day] == ["JC-201"]
+    assert on_bill_day[0]["date"] == "2026-08-01"
+    assert on_entry_day == []
     db.close()
 
 

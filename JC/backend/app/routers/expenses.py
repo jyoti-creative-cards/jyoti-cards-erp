@@ -4,13 +4,15 @@ from datetime import date
 from decimal import Decimal
 from typing import List, Optional
 
+from sqlalchemy import func
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session, object_session
 
 from app.db.session import get_db
 from app.deps import AuthContext, require_admin, require_permission
-from app.models.expense import Expense
+from app.models.expense import Expense, ExpenseHead, ExpenseSubhead
 from app.services.activity import log_from_auth
 from app.services import response_cache
 from app.services.document_present import present
@@ -20,10 +22,81 @@ router = APIRouter(prefix="/expenses", tags=["expenses"])
 
 class ExpenseIn(BaseModel):
     expense_date: date
-    category: str
+    category: str = ""
     description: Optional[str] = None
     amount: Decimal
     reference: Optional[str] = None
+    head_id: Optional[int] = None
+    subhead_id: Optional[int] = None
+
+
+class HeadIn(BaseModel):
+    name: str
+
+
+def _clean_head_name(name: str) -> str:
+    text = " ".join((name or "").split())
+    if not text:
+        raise HTTPException(400, "Enter a name")
+    if "/" in text or "%" in text or "_" in text:
+        raise HTTPException(400, "Name cannot contain / _ or %")
+    if len(text) > 80:
+        raise HTTPException(400, "Name is too long")
+    return text
+
+
+def resolve_expense_category(db: Session, body: ExpenseIn) -> str:
+    if body.head_id or body.subhead_id:
+        if not body.head_id or not body.subhead_id:
+            raise HTTPException(400, "Pick a head and a sub-head")
+        head = db.get(ExpenseHead, body.head_id)
+        sub = db.get(ExpenseSubhead, body.subhead_id)
+        if not head or not sub or sub.head_id != head.id:
+            raise HTTPException(400, "Pick a head and a sub-head")
+        return f"{head.name} / {sub.name}".lower()
+    text = (body.category or "").strip().lower()
+    if not text:
+        raise HTTPException(400, "Pick a head and a sub-head")
+    return text
+
+
+def expense_head_tree(db: Session) -> list[dict]:
+    heads = db.query(ExpenseHead).order_by(ExpenseHead.name.asc(), ExpenseHead.id.asc()).all()
+    subs = db.query(ExpenseSubhead).order_by(ExpenseSubhead.name.asc(), ExpenseSubhead.id.asc()).all()
+    grouped = (
+        db.query(Expense.category, func.count(Expense.id), func.coalesce(func.sum(Expense.amount), 0))
+        .group_by(Expense.category)
+        .all()
+    )
+    by_cat = {(c or "").lower(): (int(n), Decimal(str(total))) for c, n, total in grouped}
+    out = []
+    for head in heads:
+        own_n, own_amt = by_cat.get(head.name.lower(), (0, Decimal("0")))
+        count = own_n
+        total = own_amt
+        sub_rows = []
+        for sub in subs:
+            if sub.head_id != head.id:
+                continue
+            key = f"{head.name} / {sub.name}".lower()
+            n, amt = by_cat.get(key, (0, Decimal("0")))
+            count += n
+            total += amt
+            sub_rows.append({
+                "id": sub.id,
+                "name": sub.name,
+                "category": key,
+                "count": n,
+                "total": format(amt, "f"),
+            })
+        out.append({
+            "id": head.id,
+            "name": head.name,
+            "count": count,
+            "total": format(total, "f"),
+            "subheads": sub_rows,
+        })
+    return out
 
 
 class ExpensePublic(BaseModel):
@@ -62,6 +135,63 @@ class ExpensePublic(BaseModel):
         )
 
 
+@router.get("/heads")
+def list_expense_heads(
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("finance.write")),
+):
+    return expense_head_tree(db)
+
+
+@router.post("/heads", status_code=201)
+def create_expense_head(
+    body: HeadIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    name = _clean_head_name(body.name)
+    taken = db.query(ExpenseHead).filter(func.lower(ExpenseHead.name) == name.lower()).first()
+    if taken:
+        raise HTTPException(400, "That head already exists")
+    row = ExpenseHead(name=name)
+    db.add(row)
+    db.flush()
+    log_from_auth(db, auth, action="create", entity_type="expense_head", entity_id=row.id, entity_label=name)
+    db.commit()
+    db.refresh(row)
+    return {"id": row.id, "name": row.name}
+
+
+@router.post("/heads/{head_id}/subheads", status_code=201)
+def create_expense_subhead(
+    head_id: int,
+    body: HeadIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    head = db.get(ExpenseHead, head_id)
+    if not head:
+        raise HTTPException(404, "head not found")
+    name = _clean_head_name(body.name)
+    taken = (
+        db.query(ExpenseSubhead)
+        .filter(ExpenseSubhead.head_id == head.id, func.lower(ExpenseSubhead.name) == name.lower())
+        .first()
+    )
+    if taken:
+        raise HTTPException(400, "That sub-head already exists")
+    row = ExpenseSubhead(head_id=head.id, name=name)
+    db.add(row)
+    db.flush()
+    log_from_auth(
+        db, auth, action="create", entity_type="expense_subhead", entity_id=row.id,
+        entity_label=f"{head.name} / {name}",
+    )
+    db.commit()
+    db.refresh(row)
+    return {"id": row.id, "name": row.name, "category": f"{head.name} / {row.name}".lower()}
+
+
 @router.get("", response_model=List[ExpensePublic])
 def list_expenses(
     from_date: Optional[date] = Query(None),
@@ -90,9 +220,10 @@ def create_expense(
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("finance.write")),
 ):
+    category = resolve_expense_category(db, body)
     row = Expense(
         expense_date=body.expense_date,
-        category=body.category.lower().strip(),
+        category=category,
         description=(body.description or "").strip() or None,
         amount=body.amount,
         reference=(body.reference or "").strip() or None,
@@ -126,7 +257,7 @@ def patch_expense(
     if row.is_cash is False:
         raise HTTPException(400, "This cost comes from a stock journal. Void the journal to change it.")
     row.expense_date = body.expense_date
-    row.category = body.category.lower().strip()
+    row.category = resolve_expense_category(db, body)
     row.description = (body.description or "").strip() or None
     row.amount = body.amount
     row.reference = (body.reference or "").strip() or None

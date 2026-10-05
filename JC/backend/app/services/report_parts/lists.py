@@ -2,7 +2,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, or_, nulls_last
 from sqlalchemy.orm import Session
 from app.models.accounts_payable import ApLedgerEntry
 from app.models.accounts_receivable import ArLedgerEntry
@@ -19,20 +19,29 @@ from app.services.biz_date import ist_day_bounds_utc, ist_range_bounds_utc
 from app.services.report_parts.bounds import _batch_labels, _customer_labels, _payment_in_ist_range, _range_bounds, _vendor_labels
 
 def list_sales(db: Session, from_date: Optional[date] = None, to_date: Optional[date] = None) -> list[dict]:
-    q = (
-        db.query(CustomerBill)
-        .filter(CustomerBill.deleted_at.is_(None))
-        .order_by(CustomerBill.created_at.desc(), CustomerBill.id.desc())
+    q = db.query(CustomerBill).filter(CustomerBill.deleted_at.is_(None))
+    if from_date is not None or to_date is not None:
+        start, end = _range_bounds(from_date, to_date)
+        bill_parts = []
+        if from_date is not None:
+            bill_parts.append(CustomerBill.bill_date >= from_date)
+        if to_date is not None:
+            bill_parts.append(CustomerBill.bill_date <= to_date)
+        created_parts = [CustomerBill.bill_date.is_(None)]
+        if start is not None:
+            created_parts.append(CustomerBill.created_at >= start)
+        if end is not None:
+            created_parts.append(CustomerBill.created_at <= end)
+        q = q.filter(or_(and_(*bill_parts), and_(*created_parts)))
+    bills = (
+        q.order_by(nulls_last(CustomerBill.bill_date.desc()), CustomerBill.id.desc())
+        .limit(500)
+        .all()
     )
-    start, end = _range_bounds(from_date, to_date)
-    if start:
-        q = q.filter(CustomerBill.created_at >= start)
-    if end:
-        q = q.filter(CustomerBill.created_at <= end)
-    bills = q.limit(500).all()
     labels = _customer_labels(db, {b.customer_id for b in bills})
     out = []
     for b in bills:
+        shown = b.bill_date or (b.created_at.date() if b.created_at else None)
         out.append(
             {
                 "id": b.id,
@@ -41,7 +50,7 @@ def list_sales(db: Session, from_date: Optional[date] = None, to_date: Optional[
                 "party_id": b.customer_id,
                 "party_label": labels.get(b.customer_id) or f"Customer #{b.customer_id}",
                 "amount": format(b.grand_total or Decimal("0"), "f"),
-                "date": b.created_at.date().isoformat() if b.created_at else None,
+                "date": shown.isoformat() if shown else None,
                 "created_at": b.created_at.isoformat() if b.created_at else None,
             }
         )

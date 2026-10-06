@@ -437,10 +437,10 @@ def get_receipt_document(
     receipt = db.get(StockReceipt, receipt_id)
     if not receipt:
         raise HTTPException(404, "receipt not found")
-    if storage_configured():
+    if storage_configured() and not receipt.receipt_document_key:
         try:
-            generate_vendor_receipt_document(db, receipt.id, auth)
-            db.commit()
+            from app.services.doc_jobs import receipt_pdf_key
+            receipt_pdf_key(db, receipt.id, auth)
             db.refresh(receipt)
         except Exception as exc:
             db.rollback()

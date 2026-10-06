@@ -65,10 +65,11 @@ def get_order_document(
     order = db.get(CustomerOrder, placement.customer_order_id)
     if not order or order.customer_id != customer.id:
         raise HTTPException(404, "order not found")
-    if storage_configured():
+    if storage_configured() and not placement.document_key:
         try:
-            generate_customer_order_document(db, placement.id)
-            db.commit()
+            from app.services.doc_jobs import order_pdf_key
+            order_pdf_key(db, placement.id)
+            db.refresh(placement)
         except Exception:
             db.rollback()
             logger.exception("order PDF regen failed placement=%s", placement_id)
@@ -91,10 +92,11 @@ def get_bill_document(
     bill = db.get(CustomerBill, bill_id)
     if not bill or bill.customer_id != customer.id:
         raise HTTPException(404, "bill not found")
-    if storage_configured():
+    if storage_configured() and not bill.document_key:
         try:
-            generate_customer_bill_document(db, bill.id)
-            db.commit()
+            from app.services.doc_jobs import bill_pdf_bytes
+            bill_pdf_bytes(db, bill.id)
+            db.refresh(bill)
         except Exception:
             db.rollback()
             logger.exception("bill PDF regen failed bill=%s", bill_id)

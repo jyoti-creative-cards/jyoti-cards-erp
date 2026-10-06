@@ -169,7 +169,17 @@
     };
   }
 
+  function syncJournalFields() {
+    const root = document.getElementById("finance-journal-body");
+    if (!root || !journalForm) return;
+    const date = root.querySelector("input[type='date']");
+    if (date?.value) journalForm.journal_date = date.value;
+    const note = root.querySelector("input[placeholder='Why this journal']");
+    if (note) journalForm.narration = note.value;
+  }
+
   function journalBody() {
+    syncJournalFields();
     const f = journalForm;
     const body = {
       journal_date: f.journal_date,
@@ -321,10 +331,11 @@
       <td>${ctx.esc(String(l.amount ?? ""))}</td>
       <td>${ctx.esc(String(l.on_hand ?? ""))}</td>
     </tr>`).join("");
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Sample catalogue</title>
+    const title = journalForm?.kind === "transfer" ? "Move to new item" : "Sample catalogue";
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${ctx.esc(title)}</title>
       <style>body{font-family:sans-serif;font-size:12px;color:#111}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:4px 6px;text-align:left}h1{font-size:16px}</style>
       </head><body>
-      <h1>Sample catalogue</h1>
+      <h1>${ctx.esc(title)}</h1>
       <p>Cost ${ctx.esc(String(preview.total_cost))} · ${(preview.lines || []).length} items · ${pieces} total pieces</p>
       <table><thead><tr><th>Item</th><th>Qty</th><th>Rate</th><th>Amount</th><th>On hand</th></tr></thead><tbody>${rows}</tbody></table>
       </body></html>`;
@@ -357,7 +368,7 @@
     const blob = new Blob([html], { type: "application/vnd.ms-excel" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = "sample-catalogue.xls";
+    a.download = journalForm?.kind === "transfer" ? "move-to-new-item.xls" : "sample-catalogue.xls";
     a.click();
     URL.revokeObjectURL(a.href);
   }
@@ -458,6 +469,7 @@
   }
 
   async function previewJournal() {
+    syncJournalFields();
     journalForm.busy = true;
     renderJournal();
     try {
@@ -472,6 +484,7 @@
   }
 
   async function saveJournal() {
+    syncJournalFields();
     journalForm.busy = true;
     renderJournal();
     ctx.showLoading?.();

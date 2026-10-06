@@ -16,6 +16,7 @@ const Reports = (() => {
   let lowThreshold = 10;
   let hubSearch = "";
   let ledgerDetail = null;
+  let hideVoids = true;
   let backLabel = "Back";
   let ageingSide = "ar";
 

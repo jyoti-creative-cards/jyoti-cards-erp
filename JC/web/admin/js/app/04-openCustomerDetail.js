@@ -146,10 +146,28 @@
     }
   }
 
+  function setCustomerRealOnly(on) {
+    customerRealOnly = !!on;
+    const wrap = document.getElementById("customer-ledger-wrap");
+    if (wrap && detailId) wrap.innerHTML = renderCustomerStatement(detailId);
+  }
+
+  function customerRealBar() {
+    return `<label style="display:inline-flex;gap:6px;align-items:center;margin:0 0 10px;font-size:13px;">
+      <input type="checkbox" ${customerRealOnly ? "checked" : ""} onchange="App.setCustomerRealOnly(this.checked)" />
+      Real entries only
+    </label>`;
+  }
+
   function renderCustomerStatement(customerId) {
-    const orders = customerLedger.filter(e => e.event_type === "order_placed" || e.event_type === "order_cancelled");
-    const bills = customerLedger.filter(e => e.event_type === "customer_bill");
-    const payments = customerLedger.filter(e => e.event_type === "ar_payment");
+    let orders = customerLedger.filter(e => e.event_type === "order_placed" || e.event_type === "order_cancelled");
+    let bills = customerLedger.filter(e => e.event_type === "customer_bill");
+    let payments = customerLedger.filter(e => e.event_type === "ar_payment");
+    if (customerRealOnly) {
+      orders = orders.filter(e => e.event_type !== "order_cancelled");
+      bills = bills.filter(e => !String(e.title || "").toLowerCase().startsWith("cancelled"));
+      payments = payments.filter(e => !e.details?.reversed);
+    }
     const returns = customerLedger.filter(e => e.event_type === "customer_return");
     const openings = customerLedger.filter(e => e.event_type === "ar_opening");
     const sections = [];
@@ -263,10 +281,10 @@
       </div>`;
     });
 
-    if (!sections.length) {
-      return `<div class="detail-section"><h4>Activity</h4><p style="color:var(--muted);font-size:13px;">Nothing yet. Place an order or bill this customer.</p></div>`;
-    }
-    return `<div class="detail-section"><h4>Activity</h4>${sections.join("")}</div>`;
+    const emptyNote = customerLedger.length
+      ? `<p style="color:var(--muted);font-size:13px;">No real entries. Uncheck Real entries only to see voids.</p>`
+      : `<p style="color:var(--muted);font-size:13px;">Nothing yet. Place an order or bill this customer.</p>`;
+    return `<div class="detail-section"><h4>Activity</h4>${customerRealBar()}${sections.length ? sections.join("") : emptyNote}</div>`;
   }
 
   function toggleCustomerLedgerRow(entryId) {

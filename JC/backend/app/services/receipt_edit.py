@@ -283,6 +283,8 @@ def _edit_receive(db: Session, auth: AuthContext, receipt: StockReceipt, body: V
     )
     _cleanup_s3(old_doc_key, old_bill_key, receipt.bill_file_key)
     db.commit()
+    from app.services.doc_jobs import enqueue_receipt_pdf
+    enqueue_receipt_pdf(receipt.id, auth)
     return {"ok": True, "receipt_id": receipt.id, "message": "Receive updated", "change_summary": summary}
 
 
@@ -409,6 +411,8 @@ def _edit_bill(db: Session, auth: AuthContext, receipt: StockReceipt, body: Vend
     )
     _cleanup_s3(old_doc_key, old_bill_key, receipt.bill_file_key)
     db.commit()
+    from app.services.doc_jobs import enqueue_receipt_pdf
+    enqueue_receipt_pdf(receipt.id, auth)
     return {"ok": True, "receipt_id": receipt.id, "message": "Bill updated", "change_summary": summary}
 
 

@@ -6,10 +6,13 @@
     return [...cats].sort((a, b) => a.localeCompare(b));
   }
 
-  function expenseSubOptions(headId, selectedId) {
-    const head = expenseHeadCache.find(h => String(h.id) === String(headId));
-    const subs = head?.subheads || [];
-    return `<option value="">— Select sub-head —</option>` + subs.map(s =>
+  function expenseSubOptions(selectedId) {
+    const rows = [];
+    for (const head of expenseHeadCache) {
+      for (const sub of head.subheads || []) rows.push(sub);
+    }
+    rows.sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+    return `<option value="">— Select sub-head —</option>` + rows.map(s =>
       `<option value="${s.id}" ${String(selectedId) === String(s.id) ? "selected" : ""}>${ctx.esc(s.name)}</option>`
     ).join("");
   }
@@ -28,25 +31,14 @@
     });
     const day = existing ? (docDateIso(existing.display_date || existing.expense_date) || localToday()) : localToday();
     const note = existing && !subId
-      ? `<p style="margin:0 0 12px;font-size:12px;color:var(--muted);">Filed under ${ctx.esc(existing.category || "—")}. Pick a head and sub-head to move it.</p>`
+      ? `<p style="margin:0 0 12px;font-size:12px;color:var(--muted);">Filed under ${ctx.esc(existing.category || "—")}. Pick a sub-head to move it. Heads are set under Reports → Ledgers → Expense.</p>`
       : "";
     document.getElementById("expense-body").innerHTML = `
       ${note}
       <label class="label">Date</label>
       <input type="date" class="input" id="exp-date" value="${ctx.esc(day)}" style="margin-bottom:12px;" />
-      <label class="label">Head</label>
-      <div style="display:flex;gap:8px;margin-bottom:12px;">
-        <select class="input" id="exp-head" style="flex:1;" onchange="Finance.onExpenseHeadChange()">
-          <option value="">— Select head —</option>
-          ${heads.map(h => `<option value="${h.id}" ${String(headId) === String(h.id) ? "selected" : ""}>${ctx.esc(h.name)}</option>`).join("")}
-        </select>
-        <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.addExpenseHead()">New head</button>
-      </div>
       <label class="label">Sub-head</label>
-      <div style="display:flex;gap:8px;margin-bottom:12px;">
-        <select class="input" id="exp-sub" style="flex:1;">${expenseSubOptions(headId, subId)}</select>
-        <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.addExpenseSubhead()">New sub-head</button>
-      </div>
+      <select class="input" id="exp-sub" style="margin-bottom:12px;">${expenseSubOptions(subId)}</select>
       <label class="label">Description</label>
       <input class="input" id="exp-desc" value="${ctx.esc(existing?.description || "")}" style="margin-bottom:12px;" />
       <label class="label">Amount (₹)</label>
@@ -67,9 +59,8 @@
   }
 
   function onExpenseHeadChange() {
-    const headId = document.getElementById("exp-head")?.value || "";
     const sub = document.getElementById("exp-sub");
-    if (sub) sub.innerHTML = expenseSubOptions(headId, "");
+    if (sub) sub.innerHTML = expenseSubOptions("");
   }
 
   async function addExpenseHead() {
@@ -134,14 +125,13 @@
 
   function expensePayload() {
     const expense_date = document.getElementById("exp-date")?.value;
-    const head_id = Number(document.getElementById("exp-head")?.value || 0);
     const subhead_id = Number(document.getElementById("exp-sub")?.value || 0);
     const description = (document.getElementById("exp-desc")?.value || "").trim() || null;
     const amount = parseFloat(document.getElementById("exp-amount")?.value || "0");
     const reference = (document.getElementById("exp-ref")?.value || "").trim() || null;
     if (!expense_date || !amount || amount <= 0) { ctx.toast("Enter date and amount", "error"); return null; }
-    if (!head_id || !subhead_id) { ctx.toast("Pick a head and a sub-head", "error"); return null; }
-    return { expense_date, head_id, subhead_id, description, amount, reference };
+    if (!subhead_id) { ctx.toast("Pick a sub-head", "error"); return null; }
+    return { expense_date, subhead_id, description, amount, reference };
   }
 
   function closeExpenseForm() { document.getElementById("expense-modal")?.classList.add("hidden"); }
@@ -150,13 +140,13 @@
     if (saveBusy) return;
     const payload = expensePayload();
     if (!payload) return;
-    const { expense_date, description, amount, reference, head_id, subhead_id } = payload;
+    const { expense_date, description, amount, reference, subhead_id } = payload;
     saveBusy = true;
     ctx.showLoading?.();
     try {
       await ctx.api("/expenses", {
         method: "POST",
-        body: JSON.stringify({ expense_date, description, amount, reference, head_id, subhead_id }),
+        body: JSON.stringify({ expense_date, description, amount, reference, subhead_id }),
       });
       ctx.invalidateCache?.("/expenses");
       ctx.invalidateCache?.("/finance");

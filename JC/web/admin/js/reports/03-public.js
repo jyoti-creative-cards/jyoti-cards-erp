@@ -3,5 +3,6 @@
     setDatePreset, onRangeChange, onThresholdChange,
     openLedger, openStaffLedger, openExpenseLedger, addExpenseHead, addExpenseSubhead, openCashLedger, backFromLedger, openDoc,
     shareDaybook, waDaybook, shareAgeing, waAgeing, exportExcel,
+    printCurrent, exportCurrentExcel, setHideVoids,
   };
 })();

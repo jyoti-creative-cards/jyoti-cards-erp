@@ -167,6 +167,8 @@ def receive_vendor_goods(
         detail=", ".join(line_summary[:10]),
     )
     db.commit()
+    from app.services.doc_jobs import enqueue_receipt_pdf
+    enqueue_receipt_pdf(receipt.id, auth)
     return {
         "ok": True,
         "receipt_id": receipt.id,
@@ -291,12 +293,15 @@ def bill_receipt(db: Session, auth: AuthContext, receipt_id: int, body: VendorBi
         )
 
     freeze_card(db, "vendor_bill", receipt)
+    receipt.receipt_document_key = None
 
     log_from_auth(
         db, auth, action="bill_received", entity_type="stock_receipt", entity_id=receipt.id,
         entity_label=label, detail=f"billed {len(normalized)} line(s), total ₹{entered_total}",
     )
     db.commit()
+    from app.services.doc_jobs import enqueue_receipt_pdf
+    enqueue_receipt_pdf(receipt.id, auth)
     response_cache.invalidate("stock:")
     response_cache.invalidate("shop:")
     response_cache.invalidate("catalog:")

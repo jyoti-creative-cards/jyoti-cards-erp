@@ -99,14 +99,8 @@ def create_customer_order(
             customer_notes=(body.customer_notes or "").strip() or None,
             addons_json=addons,
         )
-        doc_key = None
-        doc_url = None
-        if storage_configured():
-            try:
-                doc_key = generate_customer_order_document(db, placement.id)
-                doc_url = presigned_url(doc_key) if doc_key else None
-            except Exception:
-                logger.exception("order PDF failed placement=%s", placement.id)
+        if merged:
+            placement.document_key = None
         log_activity(
             db,
             actor_type="customer",
@@ -119,6 +113,8 @@ def create_customer_order(
             detail=f"{prod.our_product_id} × {body.quantity}",
         )
         db.commit()
+        from app.services.doc_jobs import enqueue_order_pdf
+        enqueue_order_pdf(placement.id)
         response_cache.invalidate("shop:")
         response_cache.invalidate("stock:")
     except ValueError as e:
@@ -140,7 +136,7 @@ def create_customer_order(
         unit_price=unit_price,
         placement_id=placement.id,
         merged=merged,
-        document_key=doc_key,
+        document_key=None,
     )
 
     msg = (
@@ -157,8 +153,8 @@ def create_customer_order(
         "unit_price": format(unit_price, "f"),
         "line_total": format(unit_price * body.quantity, "f"),
         "message": msg,
-        "document_key": doc_key,
-        "document_url": doc_url,
+        "document_key": None,
+        "document_url": None,
         "whatsapp_sent": True,
     }
 

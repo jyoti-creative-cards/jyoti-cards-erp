@@ -189,9 +189,10 @@
     const noDates = chip === "valuation" || chip === "ageing" || chip === "low"
       || (chip === "ledgers" && ["products", "staff", "routes", "freight", "customers", "vendors", "expenses"].includes(ledgerKind));
     if (noDates) {
-      el.innerHTML = chip === "low"
-        ? `<div class="rep-filters"><label class="label">Threshold<input type="number" class="input" id="rep-threshold" min="0" value="${lowThreshold}" onchange="Reports.onThresholdChange()" style="min-width:90px" /></label></div>`
-        : "";
+      el.innerHTML = `<div class="rep-filters">
+        ${chip === "low" ? `<label class="label">Threshold<input type="number" class="input" id="rep-threshold" min="0" value="${lowThreshold}" onchange="Reports.onThresholdChange()" style="min-width:90px" /></label>` : ""}
+        ${reportActionButtons()}
+      </div>`;
       return;
     }
     const presets = [
@@ -211,7 +212,67 @@
         <label class="label">To<input type="date" class="input" id="rep-to" value="${ctx.esc(toDate)}" onchange="Reports.onRangeChange()" /></label>
       ` : ""}
       ${chip === "low" ? `<label class="label">Threshold<input type="number" class="input" id="rep-threshold" min="0" value="${lowThreshold}" onchange="Reports.onThresholdChange()" style="min-width:90px" /></label>` : ""}
+      ${reportActionButtons()}
     </div>`;
+  }
+
+  function reportActionButtons() {
+    return `<div class="rep-presets" style="margin-left:auto;">
+      <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.printCurrent()">Print</button>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.exportCurrentExcel()">Excel</button>
+    </div>`;
+  }
+
+  function reportPrintRoot() {
+    const detail = document.getElementById("reports-ledger-detail");
+    if (detail && !detail.classList.contains("hidden")) return detail;
+    return document.getElementById("reports-body");
+  }
+
+  function reportTables(root) {
+    const tables = [...(root?.querySelectorAll("table") || [])];
+    if (tables.length) return tables;
+    const rows = [...(root?.querySelectorAll(".review-row") || [])];
+    if (!rows.length) return [];
+    const body = rows.map(row => {
+      const label = row.querySelector(".review-label")?.textContent || "";
+      const value = row.querySelector(".review-value")?.textContent || "";
+      return `<tr><td>${ctx.esc(label)}</td><td>${ctx.esc(value)}</td></tr>`;
+    }).join("");
+    const holder = document.createElement("div");
+    holder.innerHTML = `<table><thead><tr><th>Item</th><th>Value</th></tr></thead><tbody>${body}</tbody></table>`;
+    return [...holder.querySelectorAll("table")];
+  }
+
+  function printCurrent() {
+    const root = reportPrintRoot();
+    const tables = reportTables(root);
+    const chunk = tables.length ? tables.map(t => t.outerHTML).join("<br>") : (root?.innerHTML || "");
+    if (!chunk.trim()) return ctx.toast?.("Nothing to print", "error");
+    const title = (document.querySelector("#reports-ledger-hero h1, #reports-ledger-hero .hub-title, #reports-hero h1")?.textContent || chip || "Report").trim();
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${ctx.esc(title)}</title>
+      <style>body{font-family:sans-serif;font-size:12px;color:#111} h1{font-size:16px} table{border-collapse:collapse;width:100%;margin:0 0 16px} td,th{border:1px solid #ccc;padding:4px 6px;text-align:left;vertical-align:top} button,.btn{display:none}</style>
+      </head><body><h1>${ctx.esc(title)}</h1>${chunk}</body></html>`;
+    const w = window.open("", "_blank");
+    if (!w) return ctx.toast?.("Allow pop-ups to print", "error");
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    setTimeout(() => { try { w.print(); } catch (_) {} }, 200);
+  }
+
+  function exportCurrentExcel() {
+    const root = reportPrintRoot();
+    const tables = reportTables(root);
+    if (!tables.length) return ctx.toast?.("Nothing to export", "error");
+    const html = `<html><head><meta charset="utf-8"></head><body>${tables.map(t => t.outerHTML).join("<br>")}</body></html>`;
+    const blob = new Blob([html], { type: "application/vnd.ms-excel" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${String(chip || "report").replace(/[^a-z0-9_-]+/gi, "-")}.xls`;
+    a.click();
+    URL.revokeObjectURL(a.href);
   }
 
   function renderSearch() {

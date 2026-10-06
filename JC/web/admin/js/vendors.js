@@ -92,10 +92,17 @@ const Vendors = (() => {
   let vendorAp = null;
   let vendorLedgerExpanded = null;
   let vendorPayModeFilter = "all"; // "all" | "cash" | "bank"
+  let vendorRealOnly = true;
 
   function setVendorPayModeFilter(mode) {
     vendorPayModeFilter = mode;
     paintVendorSummary();
+    const wrap = document.getElementById("vendor-ledger-wrap");
+    if (wrap && currentVendorId) wrap.innerHTML = renderVendorStatement(currentVendorId);
+  }
+
+  function setVendorRealOnly(on) {
+    vendorRealOnly = !!on;
     const wrap = document.getElementById("vendor-ledger-wrap");
     if (wrap && currentVendorId) wrap.innerHTML = renderVendorStatement(currentVendorId);
   }
@@ -276,9 +283,14 @@ const Vendors = (() => {
   }
 
   function renderVendorStatement(vendorId) {
-    const orders = vendorLedger.filter(e => e.event_type === "order_placed" || e.event_type === "order_cancelled");
-    const bills = vendorLedger.filter(e => e.event_type === "stock_received");
-    const payments = vendorLedger.filter(e => e.event_type === "ap_payment");
+    let orders = vendorLedger.filter(e => e.event_type === "order_placed" || e.event_type === "order_cancelled");
+    let bills = vendorLedger.filter(e => e.event_type === "stock_received");
+    let payments = vendorLedger.filter(e => e.event_type === "ap_payment");
+    if (vendorRealOnly) {
+      orders = orders.filter(e => e.event_type !== "order_cancelled");
+      bills = bills.filter(e => !String(e.title || "").toLowerCase().startsWith("cancelled"));
+      payments = payments.filter(e => !e.details?.reversed);
+    }
     // "stock_received" only carries the receipt note; the actual bill_number/amount
     // live on a separate "vendor_bill" event once billed — merge by receipt_id so
     // the ledger card shows the real bill number instead of falling back to the id.
@@ -423,10 +435,17 @@ const Vendors = (() => {
           <button type="button" class="ord-mode-btn${channel === "bank" ? " active" : ""}" onclick="Vendors.setVendorPayModeFilter('bank')">Bank</button>
           <button type="button" class="ord-mode-btn${channel === "cash" ? " active" : ""}" onclick="Vendors.setVendorPayModeFilter('cash')">Cash</button>
         </span>
+        <label style="display:inline-flex;gap:6px;align-items:center;font-size:13px;font-weight:400;">
+          <input type="checkbox" ${vendorRealOnly ? "checked" : ""} onchange="Vendors.setVendorRealOnly(this.checked)" />
+          Real entries only
+        </label>
       </div>
     </div>`;
     if (!orders.length && !bills.length && !payments.length) {
-      return `<div class="detail-section"><h4>Activity</h4><p style="color:var(--muted);font-size:13px;">Nothing yet. Place an order or receive goods.</p></div>`;
+      const note = vendorLedger.length
+        ? `<p class="vo-muted" style="margin:0;">No real entries. Uncheck Real entries only to see voids.</p>`
+        : `<p style="color:var(--muted);font-size:13px;">Nothing yet. Place an order or receive goods.</p>`;
+      return `<div class="detail-section"><h4>Activity</h4>${vendorLedger.length ? filterBar : ""}${note}</div>`;
     }
     const nothingInFilter = channel !== "all" && !ordersShown.length && !billsShown.length && !paymentsFiltered.length;
     const emptyFilter = nothingInFilter
@@ -937,7 +956,7 @@ const Vendors = (() => {
   return {
     init, load, reload, openDetail, openLedgerEntry, openDebitNote,
     toggleLedgerRow, openOrderFromLedger, openBillDebitNotes, settlePayment, setOpeningBalance, saveOpeningBalance,
-    setVendorPayModeFilter,
+    setVendorPayModeFilter, setVendorRealOnly,
     openWizard, closeWizard, wizardBack, wizardNext, create, openEdit, closeEdit, save, deleteVendor,
     placeOrder, stockIn, createOrder, receiveGoods, openMoney, openBuying,
     onWizardCityChange, onEditCityChange, finishOpen, finishPlaceOrder, finishAddProducts,

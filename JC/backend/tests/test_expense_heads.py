@@ -30,6 +30,10 @@ def test_head_and_subhead_each_have_a_ledger():
         expense_date=date(2026, 8, 1), amount=Decimal("85"), head_id=head.id, subhead_id=office.id,
     ))
     assert category == "rent / office"
+    by_sub_only = resolve_expense_category(db, ExpenseIn(
+        expense_date=date(2026, 8, 1), amount=Decimal("85"), subhead_id=office.id,
+    ))
+    assert by_sub_only == "rent / office"
     db.add(Expense(
         expense_date=date(2026, 8, 1), category=category, amount=Decimal("85"),
         created_by_name="Admin",

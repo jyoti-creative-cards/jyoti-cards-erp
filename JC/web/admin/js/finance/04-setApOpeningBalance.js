@@ -34,8 +34,55 @@
     finally { ctx.hideLoading?.(); }
   }
 
+  function setRealEntriesOnly(on) {
+    realEntriesOnly = !!on;
+    renderArDetail?.();
+    renderApDetail?.();
+  }
+
+  function realEntriesBar() {
+    return `<label style="display:inline-flex;gap:6px;align-items:center;margin:0 0 12px;font-size:13px;">
+      <input type="checkbox" ${realEntriesOnly ? "checked" : ""} onchange="Finance.setRealEntriesOnly(this.checked)" />
+      Real entries only
+    </label>`;
+  }
+
+  function moneyEntryIsVoid(e) {
+    const status = String(e.status || "").toLowerCase();
+    if (status === "voided" || status === "cancelled") return true;
+    const type = String(e.entry_type || "").toLowerCase();
+    if (type.includes("reversal")) return true;
+    if (e.reversed) return true;
+    const title = String(e.display_name || e.description || "").toLowerCase();
+    if (title.startsWith("cancelled") || title.startsWith("void")) return true;
+    return false;
+  }
+
+  function liveMoneyEntries(entries) {
+    const list = entries || [];
+    if (!realEntriesOnly) return list;
+    const reversed = new Set();
+    for (const e of list) {
+      if (e.reverses_entry_id) reversed.add(e.reverses_entry_id);
+    }
+    const kept = list.filter(e => !moneyEntryIsVoid(e) && !reversed.has(e.id));
+    const chrono = [...kept].sort((a, b) => {
+      const da = String(a.value_date || a.created_at || "");
+      const db = String(b.value_date || b.created_at || "");
+      if (da !== db) return da < db ? -1 : 1;
+      return (Number(a.id) || 0) - (Number(b.id) || 0);
+    });
+    let run = 0;
+    const stamped = new Map();
+    for (const e of chrono) {
+      run += Number(e.signed_amount ?? e.amount ?? 0);
+      stamped.set(e.id, Math.round(run * 100) / 100);
+    }
+    return kept.map(e => stamped.has(e.id) ? { ...e, running_balance: stamped.get(e.id) } : e);
+  }
+
   function renderArStatement() {
-    const bills = newestFirst((arDetail.entries || []).filter(e => e.entry_type === "bill" || e.entry_type === "credit_note" || e.entry_type === "opening_balance"));
+    const bills = newestFirst(liveMoneyEntries(arDetail.entries).filter(e => e.entry_type === "bill" || e.entry_type === "credit_note" || e.entry_type === "opening_balance"));
     if (!bills.length) return OrdersUI.emptyState({ title: "No bills yet", sub: "Bills appear after you process customer orders." });
     return `<div class="card table-wrap"><table class="data"><thead><tr>
       <th>When</th><th>Type</th><th>Description</th><th>Amount</th><th>Balance</th>
@@ -58,7 +105,7 @@
       <table class="data"><thead><tr>
         <th>When</th><th>Type</th><th>Description</th><th>Amount</th><th>Balance</th>
       </tr></thead><tbody>
-        ${newestFirst(arDetail.entries).map(e => {
+        ${newestFirst(liveMoneyEntries(arDetail.entries)).map(e => {
           const badgeCls = e.entry_type === "credit_note" ? "badge-green" : e.entry_type === "opening_balance" ? "badge-blue" : e.entry_type === "bill" ? "badge-amber" : e.entry_type === "payment_reversal" ? "badge-red" : "badge-green";
           const typeLabel = { bill: "Bill", credit_note: "Credit Note", opening_balance: "Opening", payment: "Payment", payment_reversal: "Reversal" }[e.entry_type] || e.entry_type;
           return `<tr>
@@ -81,8 +128,8 @@
   }
 
   function renderArPayments() {
-    const entries = arDetail.entries || [];
-    const reversed = reversedPaymentIds(entries);
+    const entries = liveMoneyEntries(arDetail.entries);
+    const reversed = reversedPaymentIds(arDetail.entries || []);
     const pays = newestFirst(entries.filter(e => e.entry_type === "payment" || e.entry_type === "payment_reversal"));
     if (!pays.length) return OrdersUI.emptyState({ title: "No payments yet", sub: "Collect above when cash comes in." });
     return `<div class="card table-wrap"><table class="data"><thead><tr>
@@ -370,13 +417,13 @@
     if (saveBusy) return;
     const payload = expensePayload();
     if (!payload) return;
-    const { expense_date, description, amount, reference, head_id, subhead_id } = payload;
+    const { expense_date, description, amount, reference, subhead_id } = payload;
     saveBusy = true;
     ctx.showLoading?.();
     try {
       await ctx.api(`/expenses/${id}`, {
         method: "PATCH",
-        body: JSON.stringify({ expense_date, description, amount, reference, head_id, subhead_id }),
+        body: JSON.stringify({ expense_date, description, amount, reference, subhead_id }),
       });
       ctx.invalidateCache?.("/expenses");
       ctx.invalidateCache?.("/finance");

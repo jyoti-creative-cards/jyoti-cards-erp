@@ -106,7 +106,13 @@ def _client():
         aws_access_key_id=key[1],
         aws_secret_access_key=key[2],
         region_name=key[3],
-        config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
+        config=Config(
+            signature_version="s3v4",
+            s3={"addressing_style": "path"},
+            connect_timeout=4,
+            read_timeout=12,
+            retries={"max_attempts": 2},
+        ),
     )
     _s3_client_key = key
     return _s3_client

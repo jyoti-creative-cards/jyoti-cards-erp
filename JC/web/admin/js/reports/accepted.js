@@ -16,6 +16,7 @@ const Reports = (() => {
   let lowThreshold = 10;
   let hubSearch = "";
   let ledgerDetail = null;
+  let hideVoids = true;
   let backLabel = "Back";
   let ageingSide = "ar";
 
@@ -264,9 +265,10 @@ const Reports = (() => {
     const noDates = chip === "valuation" || chip === "ageing" || chip === "low"
       || (chip === "ledgers" && ["products", "staff", "routes", "freight", "customers", "vendors", "expenses"].includes(ledgerKind));
     if (noDates) {
-      el.innerHTML = chip === "low"
-        ? `<div class="rep-filters"><label class="label">Threshold<input type="number" class="input" id="rep-threshold" min="0" value="${lowThreshold}" onchange="Reports.onThresholdChange()" style="min-width:90px" /></label></div>`
-        : "";
+      el.innerHTML = `<div class="rep-filters">
+        ${chip === "low" ? `<label class="label">Threshold<input type="number" class="input" id="rep-threshold" min="0" value="${lowThreshold}" onchange="Reports.onThresholdChange()" style="min-width:90px" /></label>` : ""}
+        ${reportActionButtons()}
+      </div>`;
       return;
     }
     const presets = [
@@ -286,7 +288,67 @@ const Reports = (() => {
         <label class="label">To<input type="date" class="input" id="rep-to" value="${ctx.esc(toDate)}" onchange="Reports.onRangeChange()" /></label>
       ` : ""}
       ${chip === "low" ? `<label class="label">Threshold<input type="number" class="input" id="rep-threshold" min="0" value="${lowThreshold}" onchange="Reports.onThresholdChange()" style="min-width:90px" /></label>` : ""}
+      ${reportActionButtons()}
     </div>`;
+  }
+
+  function reportActionButtons() {
+    return `<div class="rep-presets" style="margin-left:auto;">
+      <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.printCurrent()">Print</button>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.exportCurrentExcel()">Excel</button>
+    </div>`;
+  }
+
+  function reportPrintRoot() {
+    const detail = document.getElementById("reports-ledger-detail");
+    if (detail && !detail.classList.contains("hidden")) return detail;
+    return document.getElementById("reports-body");
+  }
+
+  function reportTables(root) {
+    const tables = [...(root?.querySelectorAll("table") || [])];
+    if (tables.length) return tables;
+    const rows = [...(root?.querySelectorAll(".review-row") || [])];
+    if (!rows.length) return [];
+    const body = rows.map(row => {
+      const label = row.querySelector(".review-label")?.textContent || "";
+      const value = row.querySelector(".review-value")?.textContent || "";
+      return `<tr><td>${ctx.esc(label)}</td><td>${ctx.esc(value)}</td></tr>`;
+    }).join("");
+    const holder = document.createElement("div");
+    holder.innerHTML = `<table><thead><tr><th>Item</th><th>Value</th></tr></thead><tbody>${body}</tbody></table>`;
+    return [...holder.querySelectorAll("table")];
+  }
+
+  function printCurrent() {
+    const root = reportPrintRoot();
+    const tables = reportTables(root);
+    const chunk = tables.length ? tables.map(t => t.outerHTML).join("<br>") : (root?.innerHTML || "");
+    if (!chunk.trim()) return ctx.toast?.("Nothing to print", "error");
+    const title = (document.querySelector("#reports-ledger-hero h1, #reports-ledger-hero .hub-title, #reports-hero h1")?.textContent || chip || "Report").trim();
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${ctx.esc(title)}</title>
+      <style>body{font-family:sans-serif;font-size:12px;color:#111} h1{font-size:16px} table{border-collapse:collapse;width:100%;margin:0 0 16px} td,th{border:1px solid #ccc;padding:4px 6px;text-align:left;vertical-align:top} button,.btn{display:none}</style>
+      </head><body><h1>${ctx.esc(title)}</h1>${chunk}</body></html>`;
+    const w = window.open("", "_blank");
+    if (!w) return ctx.toast?.("Allow pop-ups to print", "error");
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    setTimeout(() => { try { w.print(); } catch (_) {} }, 200);
+  }
+
+  function exportCurrentExcel() {
+    const root = reportPrintRoot();
+    const tables = reportTables(root);
+    if (!tables.length) return ctx.toast?.("Nothing to export", "error");
+    const html = `<html><head><meta charset="utf-8"></head><body>${tables.map(t => t.outerHTML).join("<br>")}</body></html>`;
+    const blob = new Blob([html], { type: "application/vnd.ms-excel" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${String(chip || "report").replace(/[^a-z0-9_-]+/gi, "-")}.xls`;
+    a.click();
+    URL.revokeObjectURL(a.href);
   }
 
   function renderSearch() {
@@ -959,7 +1021,8 @@ const Reports = (() => {
     backLabel = "Back";
     ctx.showLoading?.();
     try {
-      ledgerDetail = await ctx.api(`/reports/ledgers/expense-book${rangeQs({ category })}`, {}, 0);
+      const qs = new URLSearchParams({ category });
+      ledgerDetail = await ctx.api(`/reports/ledgers/expense-book?${qs}`, {}, 0);
       showDetail();
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
@@ -992,6 +1055,54 @@ const Reports = (() => {
     App.updateGlobalBack?.();
   }
 
+  function setHideVoids(on) {
+    hideVoids = !!on;
+    if (ledgerDetail) renderLedgerDetail();
+  }
+
+  function ledgerRowIsVoid(e) {
+    const status = String(e.status || e.details?.status || "").toLowerCase();
+    if (status === "voided" || status === "cancelled") return true;
+    const type = String(e.entry_type || e.event_type || e.action || "").toLowerCase();
+    if (type.includes("reversal") || type === "order_cancelled" || type.includes("void")) return true;
+    if (e.reversed || e.voided_at || e.details?.reversed) return true;
+    const title = String(e.title || e.description || e.detail || e.notes || "").toLowerCase();
+    if (title.startsWith("cancelled") || title.startsWith("void")) return true;
+    return false;
+  }
+
+  function realLedgerEntries(entries) {
+    const list = entries || [];
+    if (!hideVoids) return list;
+    const reversed = new Set();
+    for (const e of list) {
+      if (e.reverses_entry_id) reversed.add(e.reverses_entry_id);
+    }
+    const kept = list.filter(e => !ledgerRowIsVoid(e) && !reversed.has(e.id));
+    const chrono = [...kept].sort((a, b) => {
+      const da = String(a.value_date || a.created_at || "");
+      const db = String(b.value_date || b.created_at || "");
+      if (da !== db) return da < db ? -1 : 1;
+      return (Number(a.id) || 0) - (Number(b.id) || 0);
+    });
+    let run = 0;
+    const stamped = new Map();
+    for (const e of chrono) {
+      run += Number(e.signed_amount ?? e.amount ?? 0);
+      stamped.set(e.id, Math.round(run * 100) / 100);
+    }
+    return kept.map(e => (e.signed_amount != null || e.amount != null) && stamped.has(e.id)
+      ? { ...e, running_balance: stamped.get(e.id) }
+      : e);
+  }
+
+  function voidFilterBar() {
+    return `<label style="display:inline-flex;gap:6px;align-items:center;margin:0 0 12px;font-size:13px;">
+      <input type="checkbox" ${hideVoids ? "checked" : ""} onchange="Reports.setHideVoids(this.checked)" />
+      Real entries only
+    </label>`;
+  }
+
   function renderLedgerDetail() {
     const hero = document.getElementById("reports-ledger-hero");
     const body = document.getElementById("reports-ledger-body");
@@ -1006,12 +1117,14 @@ const Reports = (() => {
       hero.innerHTML = HubUI.pageHero({
         title: d.party_label || d.label || "Ledger",
         sub: d.party_type || "ledger",
-        actionsHtml: badges,
+        actionsHtml: `${badges}
+          <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.printCurrent()">Print</button>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.exportCurrentExcel()">Excel</button>`,
       });
     }
     if (d.party_type === "staff") {
-      const entries = d.entries || [];
-      body.innerHTML = entries.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
+      const entries = realLedgerEntries(d.entries || []);
+      body.innerHTML = voidFilterBar() + (entries.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
         <th>When</th><th>Action</th><th>What</th><th>Detail</th>
       </tr></thead><tbody>
         ${entries.map(e => `<tr>
@@ -1024,12 +1137,13 @@ const Reports = (() => {
       return;
     }
     if (d.party_type === "product") {
-      body.innerHTML = Stock.ledgerTableHtml
-        ? `<p style="font-size:12px;color:var(--muted);margin:0 0 8px;">Click a row to open that bill.</p>${Stock.ledgerTableHtml(d.entries)}`
-        : empty("No stock moves", "No ledger lines for this product.");
+      const rows = realLedgerEntries(d.entries || []);
+      body.innerHTML = voidFilterBar() + (Stock.ledgerTableHtml
+        ? `<p style="font-size:12px;color:var(--muted);margin:0 0 8px;">Click a row to open that bill.</p>${Stock.ledgerTableHtml(rows)}`
+        : empty("No stock moves", "No ledger lines for this product."));
       return;
     }
-    const entries = d.entries || [];
+    const entries = d.party_type === "expense" ? (d.entries || []) : realLedgerEntries(d.entries || []);
     body.innerHTML = `
       <div class="fin-hub-strip" style="margin-bottom:16px;">
         ${d.opening_total != null ? `<div class="fin-stat"><span class="fin-stat-label">Opening</span><strong>${fmtPrice(d.opening_total)}</strong></div>` : ""}
@@ -1039,11 +1153,12 @@ const Reports = (() => {
         ${d.debit_note_total != null ? `<div class="fin-stat"><span class="fin-stat-label">Debit notes</span><strong>${fmtPrice(d.debit_note_total)}</strong></div>` : ""}
         ${d.outstanding != null ? `<div class="fin-stat"><span class="fin-stat-label">Net</span><strong>${fmtPrice(d.outstanding)}</strong></div>` : ""}
       </div>
+      ${voidFilterBar()}
       ${entries.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
-        <th>When</th><th>Type</th><th>Description</th><th>Amount</th><th>Balance</th>
+        <th>Date</th><th>Type</th><th>Description</th><th>Amount</th><th>Balance</th>
       </tr></thead><tbody>
         ${[...entries].reverse().map(e => `<tr>
-          <td style="font-size:12px;">${e.value_date || (e.created_at ? new Date(e.created_at).toLocaleDateString() : "—")}</td>
+          <td style="font-size:12px;">${ctx.esc(e.value_date || e.display_date || "—")}</td>
           <td><span class="badge badge-blue">${ctx.esc(e.entry_type)}</span></td>
           <td>${ctx.esc(e.description || "—")}</td>
           <td>${fmtPrice(e.signed_amount || e.amount)}</td>
@@ -1088,5 +1203,6 @@ const Reports = (() => {
     setDatePreset, onRangeChange, onThresholdChange,
     openLedger, openStaffLedger, openExpenseLedger, addExpenseHead, addExpenseSubhead, openCashLedger, backFromLedger, openDoc,
     shareDaybook, waDaybook, shareAgeing, waAgeing, exportExcel,
+    printCurrent, exportCurrentExcel, setHideVoids,
   };
 })();

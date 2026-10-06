@@ -18,7 +18,7 @@ from app.models.customer_bill import CustomerBill
 from app.models.freight_agent import FreightAgent, FreightLedgerEntry
 from app.models.vendor import Vendor
 from app.services.activity import log_from_auth
-from app.services.doc_gen import generate_customer_bill_document
+from app.services.doc_jobs import bill_pdf_bytes
 from app.services.report_pdfs import (
     render_ageing_pdf,
     render_ap_statement_pdf,
@@ -50,22 +50,10 @@ def bill_pdf(
     bill = db.get(CustomerBill, bill_id)
     if not bill:
         raise HTTPException(404, "bill not found")
-    generate_customer_bill_document(db, bill_id)
-    db.commit()
+    data = bill_pdf_bytes(db, bill_id)
     bill = db.get(CustomerBill, bill_id)
-    from app.services.storage import download_bytes
-
-    if not bill or not bill.document_key:
+    if not data or not bill:
         raise HTTPException(500, "could not generate bill PDF")
-    data = download_bytes(bill.document_key)
-    if not data:
-        # regenerate
-        generate_customer_bill_document(db, bill_id)
-        db.commit()
-        bill = db.get(CustomerBill, bill_id)
-        data = download_bytes(bill.document_key) if bill and bill.document_key else None
-    if not data:
-        raise HTTPException(500, "PDF unavailable")
     return _pdf_response(data, f"{bill.bill_number}.pdf")
 
 
@@ -200,12 +188,7 @@ def whatsapp_share(
             raise HTTPException(404, "bill not found")
         cust = db.get(Customer, bill.customer_id)
         phone = phone or (cust.phone if cust else "")
-        generate_customer_bill_document(db, bill.id)
-        db.commit()
-        bill = db.get(CustomerBill, bill.id)
-        from app.services.storage import download_bytes
-
-        pdf = download_bytes(bill.document_key) if bill and bill.document_key else b""
+        pdf = bill_pdf_bytes(db, bill.id) or b""
         if not pdf:
             raise HTTPException(500, "bill PDF missing")
         filename = f"{bill.bill_number}.pdf"

@@ -30,6 +30,7 @@ const App = (() => {
   let editingCustomerId = null;
   let customerLedger = [];
   let customerLedgerExpanded = null;
+  let customerRealOnly = true;
   let customerAr = null;
   let viewStack = [];
   let currentViewName = null;

@@ -81,6 +81,38 @@ def _setup(db):
     return bill, prod, addon
 
 
+def test_print_keeps_pdf_when_storage_refuses_payment(db, monkeypatch):
+    bill, _prod, _addon = _setup(db)
+
+    def refuse(*_a, **_k):
+        raise RuntimeError("An error occurred (401) when calling the PutObject operation: Payment Required")
+
+    monkeypatch.setattr(doc_gen, "upload_bytes", refuse)
+    key = doc_gen.generate_customer_bill_document(db, bill.id)
+    db.refresh(bill)
+    assert key is None
+    assert bill.document_key is None
+    assert bill._pdf_bytes == b"%PDF-fake%"
+
+
+def test_print_reads_the_stored_pdf(db, monkeypatch):
+    bill, _prod, _addon = _setup(db)
+    bill.document_key = "customers/cust/bill.pdf"
+    db.commit()
+    calls = {"n": 0}
+
+    def render(**_kw):
+        calls["n"] += 1
+        return b"%PDF-rebuilt%"
+
+    monkeypatch.setattr(doc_gen, "render_customer_bill_pdf", render)
+    monkeypatch.setattr("app.services.doc_jobs.download_bytes", lambda _key: b"%PDF-stored%")
+    from app.services.doc_jobs import bill_pdf_bytes
+
+    assert bill_pdf_bytes(db, bill.id) == b"%PDF-stored%"
+    assert calls["n"] == 0
+
+
 def test_regenerating_pdf_does_not_overwrite_frozen_empty_addon_snapshot(db):
     """Line was billed with NO addons (frozen as []); a link added afterward must
     not retroactively appear on regen — the historical bill had none."""

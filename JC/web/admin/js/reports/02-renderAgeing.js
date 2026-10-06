@@ -379,7 +379,8 @@
     backLabel = "Back";
     ctx.showLoading?.();
     try {
-      ledgerDetail = await ctx.api(`/reports/ledgers/expense-book${rangeQs({ category })}`, {}, 0);
+      const qs = new URLSearchParams({ category });
+      ledgerDetail = await ctx.api(`/reports/ledgers/expense-book?${qs}`, {}, 0);
       showDetail();
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
@@ -412,6 +413,54 @@
     App.updateGlobalBack?.();
   }
 
+  function setHideVoids(on) {
+    hideVoids = !!on;
+    if (ledgerDetail) renderLedgerDetail();
+  }
+
+  function ledgerRowIsVoid(e) {
+    const status = String(e.status || e.details?.status || "").toLowerCase();
+    if (status === "voided" || status === "cancelled") return true;
+    const type = String(e.entry_type || e.event_type || e.action || "").toLowerCase();
+    if (type.includes("reversal") || type === "order_cancelled" || type.includes("void")) return true;
+    if (e.reversed || e.voided_at || e.details?.reversed) return true;
+    const title = String(e.title || e.description || e.detail || e.notes || "").toLowerCase();
+    if (title.startsWith("cancelled") || title.startsWith("void")) return true;
+    return false;
+  }
+
+  function realLedgerEntries(entries) {
+    const list = entries || [];
+    if (!hideVoids) return list;
+    const reversed = new Set();
+    for (const e of list) {
+      if (e.reverses_entry_id) reversed.add(e.reverses_entry_id);
+    }
+    const kept = list.filter(e => !ledgerRowIsVoid(e) && !reversed.has(e.id));
+    const chrono = [...kept].sort((a, b) => {
+      const da = String(a.value_date || a.created_at || "");
+      const db = String(b.value_date || b.created_at || "");
+      if (da !== db) return da < db ? -1 : 1;
+      return (Number(a.id) || 0) - (Number(b.id) || 0);
+    });
+    let run = 0;
+    const stamped = new Map();
+    for (const e of chrono) {
+      run += Number(e.signed_amount ?? e.amount ?? 0);
+      stamped.set(e.id, Math.round(run * 100) / 100);
+    }
+    return kept.map(e => (e.signed_amount != null || e.amount != null) && stamped.has(e.id)
+      ? { ...e, running_balance: stamped.get(e.id) }
+      : e);
+  }
+
+  function voidFilterBar() {
+    return `<label style="display:inline-flex;gap:6px;align-items:center;margin:0 0 12px;font-size:13px;">
+      <input type="checkbox" ${hideVoids ? "checked" : ""} onchange="Reports.setHideVoids(this.checked)" />
+      Real entries only
+    </label>`;
+  }
+
   function renderLedgerDetail() {
     const hero = document.getElementById("reports-ledger-hero");
     const body = document.getElementById("reports-ledger-body");
@@ -426,12 +475,14 @@
       hero.innerHTML = HubUI.pageHero({
         title: d.party_label || d.label || "Ledger",
         sub: d.party_type || "ledger",
-        actionsHtml: badges,
+        actionsHtml: `${badges}
+          <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.printCurrent()">Print</button>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.exportCurrentExcel()">Excel</button>`,
       });
     }
     if (d.party_type === "staff") {
-      const entries = d.entries || [];
-      body.innerHTML = entries.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
+      const entries = realLedgerEntries(d.entries || []);
+      body.innerHTML = voidFilterBar() + (entries.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
         <th>When</th><th>Action</th><th>What</th><th>Detail</th>
       </tr></thead><tbody>
         ${entries.map(e => `<tr>
@@ -444,12 +495,13 @@
       return;
     }
     if (d.party_type === "product") {
-      body.innerHTML = Stock.ledgerTableHtml
-        ? `<p style="font-size:12px;color:var(--muted);margin:0 0 8px;">Click a row to open that bill.</p>${Stock.ledgerTableHtml(d.entries)}`
-        : empty("No stock moves", "No ledger lines for this product.");
+      const rows = realLedgerEntries(d.entries || []);
+      body.innerHTML = voidFilterBar() + (Stock.ledgerTableHtml
+        ? `<p style="font-size:12px;color:var(--muted);margin:0 0 8px;">Click a row to open that bill.</p>${Stock.ledgerTableHtml(rows)}`
+        : empty("No stock moves", "No ledger lines for this product."));
       return;
     }
-    const entries = d.entries || [];
+    const entries = d.party_type === "expense" ? (d.entries || []) : realLedgerEntries(d.entries || []);
     body.innerHTML = `
       <div class="fin-hub-strip" style="margin-bottom:16px;">
         ${d.opening_total != null ? `<div class="fin-stat"><span class="fin-stat-label">Opening</span><strong>${fmtPrice(d.opening_total)}</strong></div>` : ""}
@@ -459,11 +511,12 @@
         ${d.debit_note_total != null ? `<div class="fin-stat"><span class="fin-stat-label">Debit notes</span><strong>${fmtPrice(d.debit_note_total)}</strong></div>` : ""}
         ${d.outstanding != null ? `<div class="fin-stat"><span class="fin-stat-label">Net</span><strong>${fmtPrice(d.outstanding)}</strong></div>` : ""}
       </div>
+      ${voidFilterBar()}
       ${entries.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
-        <th>When</th><th>Type</th><th>Description</th><th>Amount</th><th>Balance</th>
+        <th>Date</th><th>Type</th><th>Description</th><th>Amount</th><th>Balance</th>
       </tr></thead><tbody>
         ${[...entries].reverse().map(e => `<tr>
-          <td style="font-size:12px;">${e.value_date || (e.created_at ? new Date(e.created_at).toLocaleDateString() : "—")}</td>
+          <td style="font-size:12px;">${ctx.esc(e.value_date || e.display_date || "—")}</td>
           <td><span class="badge badge-blue">${ctx.esc(e.entry_type)}</span></td>
           <td>${ctx.esc(e.description || "—")}</td>
           <td>${fmtPrice(e.signed_amount || e.amount)}</td>

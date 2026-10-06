@@ -89,7 +89,7 @@
       <table class="data"><thead><tr>
         <th>When</th><th>Type</th><th>Description</th><th>Amount</th><th>Balance</th>
       </tr></thead><tbody>
-        ${newestFirst(apDetail.entries).map(e => `<tr class="clickable" onclick="Finance.openEntry(${e.id})">
+        ${newestFirst(liveMoneyEntries(apDetail.entries)).map(e => `<tr class="clickable" onclick="Finance.openEntry(${e.id})">
           <td style="font-size:12px;">${fmtDocDate(e.display_date || e.value_date || e.created_at)}</td>
           <td>${ctx.esc(e.entry_type)}${e.status && e.status !== "open" ? ` <span class="badge badge-amber">${ctx.esc(e.status)}</span>` : ""}</td>
           <td>${ctx.esc(e.display_name || e.description)}</td>
@@ -101,7 +101,7 @@
   }
 
   function renderApPayments() {
-    const pays = newestFirst(apDetail.payments);
+    const pays = newestFirst((apDetail.payments || []).filter(p => !realEntriesOnly || !moneyEntryIsVoid(p)));
     if (!pays.length) return OrdersUI.emptyState({ title: "No payments yet", sub: "Pay above to record a payment." });
     return `<div class="card table-wrap"><table class="data"><thead><tr>
       <th>When</th><th>Reference</th><th>Comment</th><th>Amount</th><th>Balance after</th><th></th>
@@ -449,6 +449,7 @@
         ${ctx.reviewRow("Credit notes", fmtPrice(arDetail.credit_total || 0))}
       </div>
       <div style="margin-bottom:12px;">${tabs}</div>
+      ${realEntriesBar()}
       ${content}`;
   }
 

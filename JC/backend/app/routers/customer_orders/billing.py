@@ -219,8 +219,9 @@ def submit_process_bill(
         freight_charges_raw=body.freight_charges,
     )
     log_from_auth(db, auth, action="bill", entity_type="customer_order", entity_id=bill.id, entity_label=customer.business_name, detail=f"Bill {bill.bill_number}")
-    # Defer PDF — generate on first document download so bill submit stays fast
     db.commit()
+    from app.services.doc_jobs import enqueue_bill_pdf
+    enqueue_bill_pdf(bill.id)
     response_cache.invalidate("stock:")
     response_cache.invalidate("shop:")
     response_cache.invalidate("catalog:")
@@ -384,6 +385,8 @@ def update_bill_endpoint(
         detail=f"Bill {updated.bill_number} edited · {len(body.lines)} line(s) · ₹{updated.grand_total}",
     )
     db.commit()
+    from app.services.doc_jobs import enqueue_bill_pdf
+    enqueue_bill_pdf(updated.id)
     response_cache.invalidate("stock:")
     response_cache.invalidate("shop:")
     response_cache.invalidate("catalog:")
@@ -449,6 +452,8 @@ def patch_bill_number(
         detail=f"{old} → {new_num}",
     )
     db.commit()
+    from app.services.doc_jobs import enqueue_bill_pdf
+    enqueue_bill_pdf(bill.id)
     return {"ok": True, "bill_id": bill.id, "bill_number": bill.bill_number}
 
 @router.get("/bills/{bill_id}/document")
@@ -460,10 +465,11 @@ def get_bill_document(
     bill = db.get(CustomerBill, bill_id)
     if not bill:
         raise HTTPException(404, "bill not found")
-    if storage_configured():
+    if storage_configured() and not bill.document_key:
         try:
-            generate_customer_bill_document(db, bill.id)
-            db.commit()
+            from app.services.doc_jobs import bill_pdf_bytes
+            bill_pdf_bytes(db, bill.id)
+            db.refresh(bill)
         except Exception as exc:
             db.rollback()
             import logging

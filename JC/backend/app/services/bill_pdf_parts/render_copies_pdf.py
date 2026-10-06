@@ -392,7 +392,7 @@ def _fetch_reader(url: str) -> Optional[ImageReader]:
         return None
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=4) as resp:
+        with urllib.request.urlopen(req, timeout=2) as resp:
             data = resp.read()
         return ImageReader(BytesIO(data))
     except Exception:

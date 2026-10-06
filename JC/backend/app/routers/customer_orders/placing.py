@@ -134,7 +134,12 @@ def edit_placement_line_endpoint(
         entity_label=customer.business_name if customer else "",
         detail=f"{line.our_product_id} → {body.quantity}",
     )
+    if placement:
+        placement.document_key = None
     db.commit()
+    if placement:
+        from app.services.doc_jobs import enqueue_order_pdf
+        enqueue_order_pdf(placement.id)
     return {"ok": True, "quantity": body.quantity}
 
 @router.delete("/lines/{line_id}")
@@ -160,7 +165,12 @@ def delete_placement_line_endpoint(
         entity_label=customer.business_name if customer else "",
         detail=f"removed {line.our_product_id}",
     )
+    if placement:
+        placement.document_key = None
     db.commit()
+    if placement:
+        from app.services.doc_jobs import enqueue_order_pdf
+        enqueue_order_pdf(placement.id)
     return {"ok": True}
 
 @router.put("/placements/{placement_id}")
@@ -194,7 +204,10 @@ def replace_placement_endpoint(
         entity_id=customer.id, entity_label=customer.business_name,
         detail=f"placement #{placement_id} · {len(body.lines)} line(s)",
     )
+    placement.document_key = None
     db.commit()
+    from app.services.doc_jobs import enqueue_order_pdf
+    enqueue_order_pdf(placement_id)
     return {"ok": True, "placement_id": placement_id}
 
 @router.post("/placements/{placement_id}/cancel")
@@ -424,13 +437,14 @@ def create_offline_customer_order(
         db.rollback()
         raise HTTPException(400, str(e)) from e
 
-    # Defer PDF — sync S3/PDF was hanging the Save button for 30–90s
     log_from_auth(
         db, auth, action="offline_order", entity_type="customer_order",
         entity_id=placement.id, entity_label=customer.business_name,
         detail=f"Confirmed placement #{placement.id}",
     )
     db.commit()
+    from app.services.doc_jobs import enqueue_order_pdf
+    enqueue_order_pdf(placement.id)
     return {
         "ok": True,
         "placement_id": placement.id,

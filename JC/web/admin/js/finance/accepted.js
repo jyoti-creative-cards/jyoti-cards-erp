@@ -25,6 +25,7 @@ const Finance = (() => {
   let reportTab = "revenue";
   let hubSearch = "";
   let showSettled = false;
+  let realEntriesOnly = true;
   let expenseFilters = { from_date: "", to_date: "", category: "" };
   let journals = [];
   let journalHits = { from: [], to: [], line: [] };
@@ -1015,6 +1016,7 @@ const Finance = (() => {
         ${ctx.reviewRow("Paid", fmtPrice(apDetail.payment_total))}
       </div>
       <div style="margin-bottom:12px;">${tabs}</div>
+      ${realEntriesBar()}
       ${content}`;
   }
 
@@ -1109,7 +1111,7 @@ const Finance = (() => {
       <table class="data"><thead><tr>
         <th>When</th><th>Type</th><th>Description</th><th>Amount</th><th>Balance</th>
       </tr></thead><tbody>
-        ${newestFirst(apDetail.entries).map(e => `<tr class="clickable" onclick="Finance.openEntry(${e.id})">
+        ${newestFirst(liveMoneyEntries(apDetail.entries)).map(e => `<tr class="clickable" onclick="Finance.openEntry(${e.id})">
           <td style="font-size:12px;">${fmtDocDate(e.display_date || e.value_date || e.created_at)}</td>
           <td>${ctx.esc(e.entry_type)}${e.status && e.status !== "open" ? ` <span class="badge badge-amber">${ctx.esc(e.status)}</span>` : ""}</td>
           <td>${ctx.esc(e.display_name || e.description)}</td>
@@ -1121,7 +1123,7 @@ const Finance = (() => {
   }
 
   function renderApPayments() {
-    const pays = newestFirst(apDetail.payments);
+    const pays = newestFirst((apDetail.payments || []).filter(p => !realEntriesOnly || !moneyEntryIsVoid(p)));
     if (!pays.length) return OrdersUI.emptyState({ title: "No payments yet", sub: "Pay above to record a payment." });
     return `<div class="card table-wrap"><table class="data"><thead><tr>
       <th>When</th><th>Reference</th><th>Comment</th><th>Amount</th><th>Balance after</th><th></th>
@@ -1469,6 +1471,7 @@ const Finance = (() => {
         ${ctx.reviewRow("Credit notes", fmtPrice(arDetail.credit_total || 0))}
       </div>
       <div style="margin-bottom:12px;">${tabs}</div>
+      ${realEntriesBar()}
       ${content}`;
   }
 
@@ -1568,8 +1571,55 @@ const Finance = (() => {
     finally { ctx.hideLoading?.(); }
   }
 
+  function setRealEntriesOnly(on) {
+    realEntriesOnly = !!on;
+    renderArDetail?.();
+    renderApDetail?.();
+  }
+
+  function realEntriesBar() {
+    return `<label style="display:inline-flex;gap:6px;align-items:center;margin:0 0 12px;font-size:13px;">
+      <input type="checkbox" ${realEntriesOnly ? "checked" : ""} onchange="Finance.setRealEntriesOnly(this.checked)" />
+      Real entries only
+    </label>`;
+  }
+
+  function moneyEntryIsVoid(e) {
+    const status = String(e.status || "").toLowerCase();
+    if (status === "voided" || status === "cancelled") return true;
+    const type = String(e.entry_type || "").toLowerCase();
+    if (type.includes("reversal")) return true;
+    if (e.reversed) return true;
+    const title = String(e.display_name || e.description || "").toLowerCase();
+    if (title.startsWith("cancelled") || title.startsWith("void")) return true;
+    return false;
+  }
+
+  function liveMoneyEntries(entries) {
+    const list = entries || [];
+    if (!realEntriesOnly) return list;
+    const reversed = new Set();
+    for (const e of list) {
+      if (e.reverses_entry_id) reversed.add(e.reverses_entry_id);
+    }
+    const kept = list.filter(e => !moneyEntryIsVoid(e) && !reversed.has(e.id));
+    const chrono = [...kept].sort((a, b) => {
+      const da = String(a.value_date || a.created_at || "");
+      const db = String(b.value_date || b.created_at || "");
+      if (da !== db) return da < db ? -1 : 1;
+      return (Number(a.id) || 0) - (Number(b.id) || 0);
+    });
+    let run = 0;
+    const stamped = new Map();
+    for (const e of chrono) {
+      run += Number(e.signed_amount ?? e.amount ?? 0);
+      stamped.set(e.id, Math.round(run * 100) / 100);
+    }
+    return kept.map(e => stamped.has(e.id) ? { ...e, running_balance: stamped.get(e.id) } : e);
+  }
+
   function renderArStatement() {
-    const bills = newestFirst((arDetail.entries || []).filter(e => e.entry_type === "bill" || e.entry_type === "credit_note" || e.entry_type === "opening_balance"));
+    const bills = newestFirst(liveMoneyEntries(arDetail.entries).filter(e => e.entry_type === "bill" || e.entry_type === "credit_note" || e.entry_type === "opening_balance"));
     if (!bills.length) return OrdersUI.emptyState({ title: "No bills yet", sub: "Bills appear after you process customer orders." });
     return `<div class="card table-wrap"><table class="data"><thead><tr>
       <th>When</th><th>Type</th><th>Description</th><th>Amount</th><th>Balance</th>
@@ -1592,7 +1642,7 @@ const Finance = (() => {
       <table class="data"><thead><tr>
         <th>When</th><th>Type</th><th>Description</th><th>Amount</th><th>Balance</th>
       </tr></thead><tbody>
-        ${newestFirst(arDetail.entries).map(e => {
+        ${newestFirst(liveMoneyEntries(arDetail.entries)).map(e => {
           const badgeCls = e.entry_type === "credit_note" ? "badge-green" : e.entry_type === "opening_balance" ? "badge-blue" : e.entry_type === "bill" ? "badge-amber" : e.entry_type === "payment_reversal" ? "badge-red" : "badge-green";
           const typeLabel = { bill: "Bill", credit_note: "Credit Note", opening_balance: "Opening", payment: "Payment", payment_reversal: "Reversal" }[e.entry_type] || e.entry_type;
           return `<tr>
@@ -1615,8 +1665,8 @@ const Finance = (() => {
   }
 
   function renderArPayments() {
-    const entries = arDetail.entries || [];
-    const reversed = reversedPaymentIds(entries);
+    const entries = liveMoneyEntries(arDetail.entries);
+    const reversed = reversedPaymentIds(arDetail.entries || []);
     const pays = newestFirst(entries.filter(e => e.entry_type === "payment" || e.entry_type === "payment_reversal"));
     if (!pays.length) return OrdersUI.emptyState({ title: "No payments yet", sub: "Collect above when cash comes in." });
     return `<div class="card table-wrap"><table class="data"><thead><tr>
@@ -1904,13 +1954,13 @@ const Finance = (() => {
     if (saveBusy) return;
     const payload = expensePayload();
     if (!payload) return;
-    const { expense_date, description, amount, reference, head_id, subhead_id } = payload;
+    const { expense_date, description, amount, reference, subhead_id } = payload;
     saveBusy = true;
     ctx.showLoading?.();
     try {
       await ctx.api(`/expenses/${id}`, {
         method: "PATCH",
-        body: JSON.stringify({ expense_date, description, amount, reference, head_id, subhead_id }),
+        body: JSON.stringify({ expense_date, description, amount, reference, subhead_id }),
       });
       ctx.invalidateCache?.("/expenses");
       ctx.invalidateCache?.("/finance");
@@ -2021,10 +2071,13 @@ const Finance = (() => {
     return [...cats].sort((a, b) => a.localeCompare(b));
   }
 
-  function expenseSubOptions(headId, selectedId) {
-    const head = expenseHeadCache.find(h => String(h.id) === String(headId));
-    const subs = head?.subheads || [];
-    return `<option value="">— Select sub-head —</option>` + subs.map(s =>
+  function expenseSubOptions(selectedId) {
+    const rows = [];
+    for (const head of expenseHeadCache) {
+      for (const sub of head.subheads || []) rows.push(sub);
+    }
+    rows.sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+    return `<option value="">— Select sub-head —</option>` + rows.map(s =>
       `<option value="${s.id}" ${String(selectedId) === String(s.id) ? "selected" : ""}>${ctx.esc(s.name)}</option>`
     ).join("");
   }
@@ -2043,25 +2096,14 @@ const Finance = (() => {
     });
     const day = existing ? (docDateIso(existing.display_date || existing.expense_date) || localToday()) : localToday();
     const note = existing && !subId
-      ? `<p style="margin:0 0 12px;font-size:12px;color:var(--muted);">Filed under ${ctx.esc(existing.category || "—")}. Pick a head and sub-head to move it.</p>`
+      ? `<p style="margin:0 0 12px;font-size:12px;color:var(--muted);">Filed under ${ctx.esc(existing.category || "—")}. Pick a sub-head to move it. Heads are set under Reports → Ledgers → Expense.</p>`
       : "";
     document.getElementById("expense-body").innerHTML = `
       ${note}
       <label class="label">Date</label>
       <input type="date" class="input" id="exp-date" value="${ctx.esc(day)}" style="margin-bottom:12px;" />
-      <label class="label">Head</label>
-      <div style="display:flex;gap:8px;margin-bottom:12px;">
-        <select class="input" id="exp-head" style="flex:1;" onchange="Finance.onExpenseHeadChange()">
-          <option value="">— Select head —</option>
-          ${heads.map(h => `<option value="${h.id}" ${String(headId) === String(h.id) ? "selected" : ""}>${ctx.esc(h.name)}</option>`).join("")}
-        </select>
-        <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.addExpenseHead()">New head</button>
-      </div>
       <label class="label">Sub-head</label>
-      <div style="display:flex;gap:8px;margin-bottom:12px;">
-        <select class="input" id="exp-sub" style="flex:1;">${expenseSubOptions(headId, subId)}</select>
-        <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.addExpenseSubhead()">New sub-head</button>
-      </div>
+      <select class="input" id="exp-sub" style="margin-bottom:12px;">${expenseSubOptions(subId)}</select>
       <label class="label">Description</label>
       <input class="input" id="exp-desc" value="${ctx.esc(existing?.description || "")}" style="margin-bottom:12px;" />
       <label class="label">Amount (₹)</label>
@@ -2082,9 +2124,8 @@ const Finance = (() => {
   }
 
   function onExpenseHeadChange() {
-    const headId = document.getElementById("exp-head")?.value || "";
     const sub = document.getElementById("exp-sub");
-    if (sub) sub.innerHTML = expenseSubOptions(headId, "");
+    if (sub) sub.innerHTML = expenseSubOptions("");
   }
 
   async function addExpenseHead() {
@@ -2149,14 +2190,13 @@ const Finance = (() => {
 
   function expensePayload() {
     const expense_date = document.getElementById("exp-date")?.value;
-    const head_id = Number(document.getElementById("exp-head")?.value || 0);
     const subhead_id = Number(document.getElementById("exp-sub")?.value || 0);
     const description = (document.getElementById("exp-desc")?.value || "").trim() || null;
     const amount = parseFloat(document.getElementById("exp-amount")?.value || "0");
     const reference = (document.getElementById("exp-ref")?.value || "").trim() || null;
     if (!expense_date || !amount || amount <= 0) { ctx.toast("Enter date and amount", "error"); return null; }
-    if (!head_id || !subhead_id) { ctx.toast("Pick a head and a sub-head", "error"); return null; }
-    return { expense_date, head_id, subhead_id, description, amount, reference };
+    if (!subhead_id) { ctx.toast("Pick a sub-head", "error"); return null; }
+    return { expense_date, subhead_id, description, amount, reference };
   }
 
   function closeExpenseForm() { document.getElementById("expense-modal")?.classList.add("hidden"); }
@@ -2165,13 +2205,13 @@ const Finance = (() => {
     if (saveBusy) return;
     const payload = expensePayload();
     if (!payload) return;
-    const { expense_date, description, amount, reference, head_id, subhead_id } = payload;
+    const { expense_date, description, amount, reference, subhead_id } = payload;
     saveBusy = true;
     ctx.showLoading?.();
     try {
       await ctx.api("/expenses", {
         method: "POST",
-        body: JSON.stringify({ expense_date, description, amount, reference, head_id, subhead_id }),
+        body: JSON.stringify({ expense_date, description, amount, reference, subhead_id }),
       });
       ctx.invalidateCache?.("/expenses");
       ctx.invalidateCache?.("/finance");
@@ -2812,7 +2852,17 @@ const Finance = (() => {
     };
   }
 
+  function syncJournalFields() {
+    const root = document.getElementById("finance-journal-body");
+    if (!root || !journalForm) return;
+    const date = root.querySelector("input[type='date']");
+    if (date?.value) journalForm.journal_date = date.value;
+    const note = root.querySelector("input[placeholder='Why this journal']");
+    if (note) journalForm.narration = note.value;
+  }
+
   function journalBody() {
+    syncJournalFields();
     const f = journalForm;
     const body = {
       journal_date: f.journal_date,
@@ -2964,10 +3014,11 @@ const Finance = (() => {
       <td>${ctx.esc(String(l.amount ?? ""))}</td>
       <td>${ctx.esc(String(l.on_hand ?? ""))}</td>
     </tr>`).join("");
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Sample catalogue</title>
+    const title = journalForm?.kind === "transfer" ? "Move to new item" : "Sample catalogue";
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${ctx.esc(title)}</title>
       <style>body{font-family:sans-serif;font-size:12px;color:#111}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:4px 6px;text-align:left}h1{font-size:16px}</style>
       </head><body>
-      <h1>Sample catalogue</h1>
+      <h1>${ctx.esc(title)}</h1>
       <p>Cost ${ctx.esc(String(preview.total_cost))} · ${(preview.lines || []).length} items · ${pieces} total pieces</p>
       <table><thead><tr><th>Item</th><th>Qty</th><th>Rate</th><th>Amount</th><th>On hand</th></tr></thead><tbody>${rows}</tbody></table>
       </body></html>`;
@@ -3000,7 +3051,7 @@ const Finance = (() => {
     const blob = new Blob([html], { type: "application/vnd.ms-excel" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = "sample-catalogue.xls";
+    a.download = journalForm?.kind === "transfer" ? "move-to-new-item.xls" : "sample-catalogue.xls";
     a.click();
     URL.revokeObjectURL(a.href);
   }
@@ -3101,6 +3152,7 @@ const Finance = (() => {
   }
 
   async function previewJournal() {
+    syncJournalFields();
     journalForm.busy = true;
     renderJournal();
     try {
@@ -3115,6 +3167,7 @@ const Finance = (() => {
   }
 
   async function saveJournal() {
+    syncJournalFields();
     journalForm.busy = true;
     renderJournal();
     ctx.showLoading?.();
@@ -3156,7 +3209,7 @@ const Finance = (() => {
     showApFromVendor, showArFromCustomer, openVendorAp, openEntry, openSettle, closeSettle, submitSettle, setSettleFile, onApSettleAmount,
     setApTab, toggleBill, addDebitNote, editDebitNote, voidDebitNote,
     openCustomerAr, setArTab, openArSettle, closeArSettle, submitArSettle, onArSettleAmount,
-    undoArPayment, undoApPayment,
+    undoArPayment, undoApPayment, setRealEntriesOnly,
     shareArStatement, shareApStatement,
     setArOpeningBalance, setApOpeningBalance, saveArOpeningBalance, saveApOpeningBalance,
     openExpenseForm, onExpenseHeadChange, addExpenseHead, addExpenseSubhead, editExpense, saveExpenseEdit, closeExpenseForm, submitExpense, deleteExpense, onExpenseFilterChange, clearExpenseFilters,

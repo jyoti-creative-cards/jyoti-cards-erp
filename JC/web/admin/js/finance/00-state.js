@@ -25,6 +25,7 @@ const Finance = (() => {
   let reportTab = "revenue";
   let hubSearch = "";
   let showSettled = false;
+  let realEntriesOnly = true;
   let expenseFilters = { from_date: "", to_date: "", category: "" };
   let journals = [];
   let journalHits = { from: [], to: [], line: [] };

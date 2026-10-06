@@ -46,17 +46,17 @@ def _clean_head_name(name: str) -> str:
 
 
 def resolve_expense_category(db: Session, body: ExpenseIn) -> str:
-    if body.head_id or body.subhead_id:
-        if not body.head_id or not body.subhead_id:
-            raise HTTPException(400, "Pick a head and a sub-head")
-        head = db.get(ExpenseHead, body.head_id)
+    if body.subhead_id:
         sub = db.get(ExpenseSubhead, body.subhead_id)
-        if not head or not sub or sub.head_id != head.id:
-            raise HTTPException(400, "Pick a head and a sub-head")
+        head = db.get(ExpenseHead, sub.head_id) if sub else None
+        if not sub or not head or (body.head_id and sub.head_id != body.head_id):
+            raise HTTPException(400, "Pick a sub-head")
         return f"{head.name} / {sub.name}".lower()
+    if body.head_id:
+        raise HTTPException(400, "Pick a sub-head")
     text = (body.category or "").strip().lower()
     if not text:
-        raise HTTPException(400, "Pick a head and a sub-head")
+        raise HTTPException(400, "Pick a sub-head")
     return text
 
 

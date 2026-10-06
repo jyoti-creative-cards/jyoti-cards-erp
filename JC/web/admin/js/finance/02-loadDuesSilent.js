@@ -470,6 +470,7 @@
         ${ctx.reviewRow("Paid", fmtPrice(apDetail.payment_total))}
       </div>
       <div style="margin-bottom:12px;">${tabs}</div>
+      ${realEntriesBar()}
       ${content}`;
   }
 

@@ -11,7 +11,7 @@
     openCustomerDetail, closeDetail, openCustomerEdit, closeEditModal, saveCustomer,
     deleteCustomer, toggleCustomerActive, restoreCustomer, sendCredentials,
     setCustomerStatusTab, toggleInactiveCustomers, toggleMissingPhoneFilter, setCustomerOpeningBalance, saveCustomerOpeningBalance,
-    toggleCustomerLedgerRow, openSelling, billCustomer, collectCustomer, openCustomerMoney,
+    toggleCustomerLedgerRow, setCustomerRealOnly, openSelling, billCustomer, collectCustomer, openCustomerMoney,
     loadRecycleBin, setRecycleTab, openRecycleDetail, restoreItem, purgeItem,
     addLookup, submitLookup, editLookup, deleteLookup, openCustomerLedgerEntry, createCustomerOrder,
     closeModal, init,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -395,11 +396,17 @@ def generate_customer_bill_document(db: Session, bill_id: int) -> str | None:
         outstanding=outstanding,
     )
     key = customer_bill_key(slug, bill.bill_number)
-    upload_bytes(key, pdf, "application/pdf")
-    bill.document_key = key
+    # Print must not wait on storage. A refused upload (401 Payment Required)
+    # used to throw away the PDF that was already built.
+    bill._pdf_bytes = pdf
+    try:
+        upload_bytes(key, pdf, "application/pdf")
+        bill.document_key = key
+    except Exception:
+        logging.getLogger(__name__).warning("bill PDF storage failed for bill %s", bill_id, exc_info=True)
     db.add(bill)
     db.flush()
-    return key
+    return bill.document_key
 
 
 def _vendor_ctx(db: Session, vendor_id: int) -> tuple[Vendor, str | None]:

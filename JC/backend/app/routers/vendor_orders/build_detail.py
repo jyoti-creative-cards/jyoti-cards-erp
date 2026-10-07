@@ -304,7 +304,11 @@ def update_line(
         entity_label=label,
         detail=summary,
     )
+    placement.document_key = None
+    placement.cost_document_key = None
     db.commit()
+    from app.services.doc_jobs import enqueue_vendor_placement_pdf
+    enqueue_vendor_placement_pdf(placement.id)
     db.refresh(order)
     return _build_detail(db, order, auth=auth)
 
@@ -374,8 +378,10 @@ def create_placement(
         entity_label=label,
         detail=f"placement #{placement.id}: {line_summary}",
     )
-    # PDF on demand via GET .../document — sync gen here hung Place Save
+    # PDF is built after the save, so Place does not wait on photos.
     db.commit()
+    from app.services.doc_jobs import enqueue_vendor_placement_pdf
+    enqueue_vendor_placement_pdf(placement.id)
     db.refresh(order)
     return _build_detail(db, order, auth=auth)
 

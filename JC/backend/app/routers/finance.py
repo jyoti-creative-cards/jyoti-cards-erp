@@ -14,7 +14,7 @@ from app.models.city import City
 from app.models.customer import Customer
 from app.models.manual_loss import ManualLoss
 from app.models.route import Route
-from app.services.ar_ledger import build_ar_ledger, customer_ar_totals
+from app.services.ar_ledger import batch_customer_ar_totals, build_ar_ledger, customer_ar_totals
 from app.services.finance_overview import finance_overview
 from app.services.money import assert_dues_consistent, dues_snapshot
 from app.services.activity import log_from_auth
@@ -85,37 +85,51 @@ def list_route_collections(db: Session = Depends(get_db), auth: AuthContext = De
         .order_by(Route.name.asc())
         .all()
     )
+    route_ids = [route.id for route in routes]
+    cities = (
+        db.query(City)
+        .filter(City.route_id.in_(route_ids), City.is_active.is_(True), City.deleted_at.is_(None))
+        .all()
+        if route_ids else []
+    )
+    cities_by_route: dict[int, list] = {}
+    for city in cities:
+        cities_by_route.setdefault(city.route_id, []).append(city)
+    city_ids = [city.id for city in cities]
+    customers = (
+        db.query(Customer)
+        .filter(
+            Customer.city_id.in_(city_ids),
+            Customer.is_active.is_(True),
+            Customer.deleted_at.is_(None),
+        )
+        .all()
+        if city_ids else []
+    )
+    customers_by_city: dict[int, list] = {}
+    for cust in customers:
+        customers_by_city.setdefault(cust.city_id, []).append(cust)
+    totals_by_customer = batch_customer_ar_totals(db, [cust.id for cust in customers])
     out = []
     for route in routes:
-        city_ids = [
-            c.id
-            for c in db.query(City)
-            .filter(City.route_id == route.id, City.is_active.is_(True), City.deleted_at.is_(None))
-            .all()
+        route_cities = cities_by_route.get(route.id, [])
+        route_customers = [
+            cust
+            for city in route_cities
+            for cust in customers_by_city.get(city.id, [])
         ]
-        customers = []
-        if city_ids:
-            customers = (
-                db.query(Customer)
-                .filter(
-                    Customer.city_id.in_(city_ids),
-                    Customer.is_active.is_(True),
-                    Customer.deleted_at.is_(None),
-                )
-                .all()
-            )
         total = Decimal("0")
         with_balance = 0
-        for cust in customers:
-            outstanding = customer_ar_totals(db, cust.id)["outstanding"]
+        for cust in route_customers:
+            outstanding = totals_by_customer.get(cust.id, {}).get("outstanding", Decimal("0"))
             if outstanding > 0:
                 with_balance += 1
                 total += outstanding
         out.append({
             "route_id": route.id,
             "route_name": route.name,
-            "city_count": len(city_ids),
-            "customer_count": len(customers),
+            "city_count": len(route_cities),
+            "customer_count": len(route_customers),
             "customers_with_outstanding": with_balance,
             "total_outstanding": format(total.quantize(Decimal("0.01")), "f"),
         })
@@ -147,10 +161,15 @@ def get_route_collection(route_id: int, db: Session = Depends(get_db), auth: Aut
             .order_by(Customer.business_name.asc())
             .all()
         )
+    totals_by_customer = batch_customer_ar_totals(db, [cust.id for cust in customers])
     rows = []
     total = Decimal("0")
     for cust in customers:
-        totals = customer_ar_totals(db, cust.id)
+        totals = totals_by_customer.get(cust.id) or {
+            "outstanding": Decimal("0"),
+            "bill_total": Decimal("0"),
+            "payment_total": Decimal("0"),
+        }
         outstanding = totals["outstanding"]
         if outstanding <= 0:
             continue

@@ -10,7 +10,11 @@ const Products = (() => {
   let catalogTotal = 0;
   let catalogOffset = 0;
   const CATALOG_PAGE = 100;
+  const STOCK_PAGE = 100;
   let stockProducts = [];
+  let stockTotal = 0;
+  let stockUnits = 0;
+  let stockCounts = null;
   let addons = [];
   let lookups = { categories: [], series: [], year_groups: [] };
   let viewMode = "grid";

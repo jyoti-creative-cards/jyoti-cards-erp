@@ -11,7 +11,11 @@ const Products = (() => {
   let catalogTotal = 0;
   let catalogOffset = 0;
   const CATALOG_PAGE = 100;
+  const STOCK_PAGE = 100;
   let stockProducts = [];
+  let stockTotal = 0;
+  let stockUnits = 0;
+  let stockCounts = null;
   let addons = [];
   let lookups = { categories: [], series: [], year_groups: [] };
   let viewMode = "grid";
@@ -192,7 +196,8 @@ const Products = (() => {
     if (noAdd) noAdd.checked = filters.no_addons;
     document.getElementById("products-clear-filters")?.classList.toggle("hidden", !hasActiveFilters());
     syncFiltersVisibility();
-    if (mainTab === "catalog" && (attentionFilter === "no_sell" || attentionFilter === "no_addons" || attentionFilter === "all")) {
+    if (mainTab === "stock" && !addonMode) load();
+    else if (mainTab === "catalog" && (attentionFilter === "no_sell" || attentionFilter === "no_addons" || attentionFilter === "all")) {
       load();
     } else {
       render();
@@ -243,7 +248,7 @@ const Products = (() => {
       });
       return;
     }
-    const c = attentionCounts(items);
+    const c = (mainTab === "stock" && stockCounts) ? stockCounts : attentionCounts(items);
     if (mainTab === "stock") {
       OrdersUI.actionChips({
         hostId: "products-action-chips",
@@ -346,8 +351,8 @@ const Products = (() => {
     else attentionFilter = "all";
     document.getElementById("products-clear-filters")?.classList.toggle("hidden", !hasActiveFilters());
     syncFiltersVisibility();
-    if (mainTab === "catalog") load();
-    else render();
+    if (addonMode) render();
+    else load();
   }
 
   function clearFilters() {
@@ -356,8 +361,8 @@ const Products = (() => {
     renderFilters();
     document.getElementById("products-clear-filters")?.classList.add("hidden");
     syncFiltersVisibility();
-    if (mainTab === "catalog") load();
-    else render();
+    if (addonMode) render();
+    else load();
   }
 
   function catalogQueryParams(offset = 0) {
@@ -375,6 +380,32 @@ const Products = (() => {
     if (filters.no_sell_price) params.set("no_sell_price", "true");
     if (filters.no_addons) params.set("no_addons", "true");
     return params;
+  }
+
+  function stockQueryParams(offset = 0) {
+    const params = new URLSearchParams({
+      limit: String(STOCK_PAGE),
+      offset: String(offset),
+    });
+    const q = searchQuery.trim();
+    if (q) params.set("search", q);
+    if (filters.vendor_id) params.set("vendor_id", filters.vendor_id);
+    if (filters.category) params.set("category", filters.category);
+    if (filters.year_group) params.set("year_group", filters.year_group);
+    if (filters.price_min) params.set("price_min", filters.price_min);
+    if (filters.price_max) params.set("price_max", filters.price_max);
+    if (filters.stock_status) params.set("stock_status", filters.stock_status);
+    if (filters.no_sell_price) params.set("no_sell_price", "true");
+    if (filters.no_addons) params.set("no_addons", "true");
+    return params;
+  }
+
+  function applyStockPage(page, append) {
+    const items = page.items || [];
+    stockProducts = append ? stockProducts.concat(items) : items;
+    stockTotal = page.total ?? stockProducts.length;
+    stockUnits = Number(page.units_on_hand) || 0;
+    stockCounts = page.counts || null;
   }
 
   async function refreshHub() {
@@ -456,12 +487,8 @@ const Products = (() => {
 
   async function load() {
     const q = searchQuery.trim();
-    const stockParams = new URLSearchParams();
-    if (q) stockParams.set("search", q);
-    if (filters.year_group) stockParams.set("year_group", filters.year_group);
-    const stockQs = stockParams.toString();
     const searchParam = q ? `?search=${encodeURIComponent(q)}` : "";
-    const stockPath = `/stock/products${stockQs ? `?${stockQs}` : ""}`;
+    const stockPath = `/stock/products/page?${stockQueryParams(0)}`;
     catalogOffset = 0;
     const catPath = `/catalog/products?${catalogQueryParams(0)}`;
     const addonPath = `/addons${searchParam}`;
@@ -469,7 +496,7 @@ const Products = (() => {
 
     if (mainTab === "stock") {
       const cached = ctx.peekCache?.(stockPath);
-      if (cached) { stockProducts = cached; renderFilters(); render(); }
+      if (cached && cached.items) { applyStockPage(cached, false); renderFilters(); render(); }
     } else {
       const cached = ctx.peekCache?.(catPath);
       if (cached) {
@@ -488,7 +515,7 @@ const Products = (() => {
         const tasks = [ctx.api(stockPath, {}, ttl)];
         if (ctx.canRead?.("addons")) tasks.push(ctx.api(addonPath, {}, ttl));
         const [stockR, addonR] = await Promise.all(tasks);
-        stockProducts = stockR;
+        applyStockPage(stockR || {}, false);
         addons = addonR || [];
       } else {
         const tasks = [ctx.api(catPath, {}, ttl)];
@@ -521,6 +548,19 @@ const Products = (() => {
     finally { ctx.hideLoading?.(); }
   }
 
+  async function loadMoreStock() {
+    if (mainTab !== "stock" || addonMode || typeFilter === "addons") return;
+    if (stockProducts.length >= stockTotal) return;
+    const path = `/stock/products/page?${stockQueryParams(stockProducts.length)}`;
+    ctx.showLoading?.();
+    try {
+      const page = await ctx.api(path, {}, 0);
+      applyStockPage(page || {}, true);
+      render();
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
   function fmtPrice(val) {
     if (val == null || val === "") return "—";
     const n = Number(val);
@@ -541,10 +581,15 @@ const Products = (() => {
 // @slice 02-stockSummaryHtml
   function stockSummaryHtml(items) {
     if (mainTab !== "stock") return "";
-    const productsOnly = items.filter(it => it.kind === "product");
-    if (!productsOnly.length) return "";
     let units = 0;
-    productsOnly.forEach(it => { units += Number(it.qty) || 0; });
+    if (!addonMode && stockCounts) {
+      if (!stockCounts.all && !stockTotal) return "";
+      units = stockUnits;
+    } else {
+      const productsOnly = items.filter(it => it.kind === "product");
+      if (!productsOnly.length) return "";
+      productsOnly.forEach(it => { units += Number(it.qty) || 0; });
+    }
     return `<div class="prod-stock-summary prod-stock-summary-slim">
       <div class="prod-stock-units">
         <strong>${units.toLocaleString("en-IN")}</strong>
@@ -632,9 +677,10 @@ const Products = (() => {
       return items.filter(it => !filters.stock_status || it.stock_status === filters.stock_status);
     }
     const catalogServer = mainTab === "catalog";
+    const stockServer = mainTab === "stock" && !addonMode;
     return items.filter(it => {
-      // Catalog products already filtered on server
-      if (catalogServer && it.kind === "product") return true;
+      // Catalog and stock products are already filtered on the server
+      if ((catalogServer || stockServer) && it.kind === "product") return true;
       if (filters.vendor_id && String(it.vendor_id) !== String(filters.vendor_id)) return false;
       if (filters.category && (it.category || "") !== filters.category && (it.second_category || "") !== filters.category) return false;
       if (filters.year_group && (it.year_group || "") !== filters.year_group) return false;
@@ -688,7 +734,15 @@ const Products = (() => {
   }
 
   function loadMoreHtml() {
-    if (mainTab !== "catalog" || typeFilter === "addons") return "";
+    if (typeFilter === "addons") return "";
+    if (mainTab === "stock" && !addonMode) {
+      if (stockProducts.length >= stockTotal) return "";
+      const left = stockTotal - stockProducts.length;
+      return `<div class="prod-load-more">
+        <button type="button" class="btn btn-secondary" onclick="Products.loadMoreStock()">Load more · ${left} left</button>
+      </div>`;
+    }
+    if (mainTab !== "catalog") return "";
     if (catalogProducts.length >= catalogTotal) return "";
     const left = catalogTotal - catalogProducts.length;
     return `<div class="prod-load-more">
@@ -707,14 +761,18 @@ const Products = (() => {
         price: a.buying_price, selling_price: null, addon_count: 0,
       }))
     ).length;
-    const rawCount = mainTab === "stock"
-      ? (typeFilter === "addons" ? addons.length : typeFilter === "products" ? stockProducts.length : stockProducts.length + addons.length)
-      : (typeFilter === "addons" ? addons.length : typeFilter === "products" ? catalogTotal : catalogTotal + addonFiltered);
+    const stockPaging = mainTab === "stock" && !addonMode && typeFilter !== "addons";
+    const rawCount = stockPaging
+      ? (stockCounts ? stockCounts.all : stockTotal)
+      : (mainTab === "stock"
+        ? (typeFilter === "addons" ? addons.length : stockProducts.length)
+        : (typeFilter === "addons" ? addons.length : typeFilter === "products" ? catalogTotal : catalogTotal + addonFiltered));
     const items = normalizeItems();
     const catalogMore = mainTab === "catalog" && typeFilter !== "addons" && catalogProducts.length < catalogTotal;
-    updateResultCount(items.length, rawCount, {
-      loaded: mainTab === "catalog" && typeFilter !== "addons" ? catalogProducts.length : null,
-      more: catalogMore,
+    const stockMore = stockPaging && stockProducts.length < stockTotal;
+    updateResultCount(items.length, stockPaging ? stockTotal : rawCount, {
+      loaded: stockMore ? stockProducts.length : (catalogMore ? catalogProducts.length : null),
+      more: stockMore || catalogMore,
     });
 
     if (!items.length) {
@@ -1350,7 +1408,7 @@ const Products = (() => {
   return {
     init, showHub, setMainTab, showAddons, showProducts, setTypeFilter, setViewMode, onSearch, clearSearch,
     onFilterChange, clearFilters, setAttentionFilter, toggleFilters,
-    load, loadMoreCatalog, refreshHub,
+    load, loadMoreCatalog, loadMoreStock, refreshHub,
     openItem, openProductDetail, saveBulkSellPrices,
     openAlternativesManager, closeAlternativesManager, onAltsBoardSearch,
     openAltPicker, closeAltPicker, onAltPickerSearch, addAlternative, removeAlternative,

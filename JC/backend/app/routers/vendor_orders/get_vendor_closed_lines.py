@@ -403,8 +403,12 @@ def delete_line(
         reduce_from_open(db, order.vendor_id, [(line.catalog_product_id, int(line.quantity))])
     db.delete(line)
     order.updated_at = datetime.now(timezone.utc)
+    placement.document_key = None
+    placement.cost_document_key = None
     log_from_auth(db, auth, action="delete_line", entity_type="vendor_order", entity_id=order.id, entity_label=label, detail=detail)
     db.commit()
+    from app.services.doc_jobs import enqueue_vendor_placement_pdf
+    enqueue_vendor_placement_pdf(placement.id)
     db.refresh(order)
     return _build_detail(db, order, auth=auth)
 

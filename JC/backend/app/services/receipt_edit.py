@@ -273,6 +273,13 @@ def _edit_receive(db: Session, auth: AuthContext, receipt: StockReceipt, body: V
     if body.notes is not None:
         receipt.notes = (body.notes or "").strip() or None
     receipt.receipt_document_key = None
+    edited_placement_id = receipt.received_placement_id
+    if edited_placement_id:
+        from app.models.vendor_order import VendorOrderPlacement
+        edited_placement = db.get(VendorOrderPlacement, edited_placement_id)
+        if edited_placement:
+            edited_placement.document_key = None
+            edited_placement.cost_document_key = None
 
     after = _receipt_snapshot(db, receipt)
     summary = _summary_from_snapshots(before, after)
@@ -283,8 +290,10 @@ def _edit_receive(db: Session, auth: AuthContext, receipt: StockReceipt, body: V
     )
     _cleanup_s3(old_doc_key, old_bill_key, receipt.bill_file_key)
     db.commit()
-    from app.services.doc_jobs import enqueue_receipt_pdf
+    from app.services.doc_jobs import enqueue_receipt_pdf, enqueue_vendor_placement_pdf
     enqueue_receipt_pdf(receipt.id, auth)
+    if edited_placement_id:
+        enqueue_vendor_placement_pdf(edited_placement_id)
     return {"ok": True, "receipt_id": receipt.id, "message": "Receive updated", "change_summary": summary}
 
 

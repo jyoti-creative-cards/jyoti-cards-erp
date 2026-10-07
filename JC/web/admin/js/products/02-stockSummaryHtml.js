@@ -1,9 +1,14 @@
   function stockSummaryHtml(items) {
     if (mainTab !== "stock") return "";
-    const productsOnly = items.filter(it => it.kind === "product");
-    if (!productsOnly.length) return "";
     let units = 0;
-    productsOnly.forEach(it => { units += Number(it.qty) || 0; });
+    if (!addonMode && stockCounts) {
+      if (!stockCounts.all && !stockTotal) return "";
+      units = stockUnits;
+    } else {
+      const productsOnly = items.filter(it => it.kind === "product");
+      if (!productsOnly.length) return "";
+      productsOnly.forEach(it => { units += Number(it.qty) || 0; });
+    }
     return `<div class="prod-stock-summary prod-stock-summary-slim">
       <div class="prod-stock-units">
         <strong>${units.toLocaleString("en-IN")}</strong>
@@ -91,9 +96,10 @@
       return items.filter(it => !filters.stock_status || it.stock_status === filters.stock_status);
     }
     const catalogServer = mainTab === "catalog";
+    const stockServer = mainTab === "stock" && !addonMode;
     return items.filter(it => {
-      // Catalog products already filtered on server
-      if (catalogServer && it.kind === "product") return true;
+      // Catalog and stock products are already filtered on the server
+      if ((catalogServer || stockServer) && it.kind === "product") return true;
       if (filters.vendor_id && String(it.vendor_id) !== String(filters.vendor_id)) return false;
       if (filters.category && (it.category || "") !== filters.category && (it.second_category || "") !== filters.category) return false;
       if (filters.year_group && (it.year_group || "") !== filters.year_group) return false;
@@ -147,7 +153,15 @@
   }
 
   function loadMoreHtml() {
-    if (mainTab !== "catalog" || typeFilter === "addons") return "";
+    if (typeFilter === "addons") return "";
+    if (mainTab === "stock" && !addonMode) {
+      if (stockProducts.length >= stockTotal) return "";
+      const left = stockTotal - stockProducts.length;
+      return `<div class="prod-load-more">
+        <button type="button" class="btn btn-secondary" onclick="Products.loadMoreStock()">Load more · ${left} left</button>
+      </div>`;
+    }
+    if (mainTab !== "catalog") return "";
     if (catalogProducts.length >= catalogTotal) return "";
     const left = catalogTotal - catalogProducts.length;
     return `<div class="prod-load-more">
@@ -166,14 +180,18 @@
         price: a.buying_price, selling_price: null, addon_count: 0,
       }))
     ).length;
-    const rawCount = mainTab === "stock"
-      ? (typeFilter === "addons" ? addons.length : typeFilter === "products" ? stockProducts.length : stockProducts.length + addons.length)
-      : (typeFilter === "addons" ? addons.length : typeFilter === "products" ? catalogTotal : catalogTotal + addonFiltered);
+    const stockPaging = mainTab === "stock" && !addonMode && typeFilter !== "addons";
+    const rawCount = stockPaging
+      ? (stockCounts ? stockCounts.all : stockTotal)
+      : (mainTab === "stock"
+        ? (typeFilter === "addons" ? addons.length : stockProducts.length)
+        : (typeFilter === "addons" ? addons.length : typeFilter === "products" ? catalogTotal : catalogTotal + addonFiltered));
     const items = normalizeItems();
     const catalogMore = mainTab === "catalog" && typeFilter !== "addons" && catalogProducts.length < catalogTotal;
-    updateResultCount(items.length, rawCount, {
-      loaded: mainTab === "catalog" && typeFilter !== "addons" ? catalogProducts.length : null,
-      more: catalogMore,
+    const stockMore = stockPaging && stockProducts.length < stockTotal;
+    updateResultCount(items.length, stockPaging ? stockTotal : rawCount, {
+      loaded: stockMore ? stockProducts.length : (catalogMore ? catalogProducts.length : null),
+      more: stockMore || catalogMore,
     });
 
     if (!items.length) {

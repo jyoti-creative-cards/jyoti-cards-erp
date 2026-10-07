@@ -1212,15 +1212,16 @@ def _migrate_customer_orders_v5_fix() -> None:
 
 
 def _migrate_documents_v4() -> None:
-    cols = {
-        "jc_customer_order_placements": "document_key VARCHAR(500)",
-        "jc_customer_order_lines": "addons_json JSONB",
-        "jc_customer_bills": "document_key VARCHAR(500)",
-        "jc_vendor_order_placements": "document_key VARCHAR(500)",
-        "jc_stock_receipts": "receipt_document_key VARCHAR(500)",
-    }
+    cols = [
+        ("jc_customer_order_placements", "document_key VARCHAR(500)"),
+        ("jc_customer_order_lines", "addons_json JSONB"),
+        ("jc_customer_bills", "document_key VARCHAR(500)"),
+        ("jc_vendor_order_placements", "document_key VARCHAR(500)"),
+        ("jc_vendor_order_placements", "cost_document_key VARCHAR(500)"),
+        ("jc_stock_receipts", "receipt_document_key VARCHAR(500)"),
+    ]
     with engine.begin() as conn:
-        for table, coldef in cols.items():
+        for table, coldef in cols:
             try:
                 if _is_sqlite:
                     colname = coldef.split()[0]

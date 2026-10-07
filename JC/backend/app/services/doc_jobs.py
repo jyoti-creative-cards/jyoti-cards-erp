@@ -14,6 +14,7 @@ from app.services.cost_visibility import can_see_cost
 from app.services.doc_gen import (
     generate_customer_bill_document,
     generate_customer_order_document,
+    generate_vendor_placement_document,
     generate_vendor_receipt_document,
 )
 from app.services.storage import download_bytes
@@ -46,6 +47,10 @@ def enqueue_receipt_pdf(receipt_id: int, auth: AuthContext | None = None) -> Non
     _start("receipt", receipt_id, can_see_cost(auth))
 
 
+def enqueue_vendor_placement_pdf(placement_id: int) -> None:
+    _start("vendor_placement", placement_id, False)
+
+
 def _job(kind: str, entity_id: int, show_cost: bool) -> None:
     db = SessionLocal()
     try:
@@ -55,6 +60,9 @@ def _job(kind: str, entity_id: int, show_cost: bool) -> None:
             order_pdf_key(db, entity_id)
         elif kind == "receipt":
             receipt_pdf_key(db, entity_id, _cost_auth(show_cost))
+        elif kind == "vendor_placement":
+            placement_pdf_key(db, entity_id, _cost_auth(False))
+            placement_pdf_key(db, entity_id, _cost_auth(True))
     except Exception:
         db.rollback()
         log.warning("%s pdf job failed id=%s", kind, entity_id, exc_info=True)
@@ -117,3 +125,26 @@ def receipt_pdf_key(db: Session, receipt_id: int, auth: AuthContext | None) -> s
         db.commit()
         db.refresh(receipt)
         return receipt.receipt_document_key
+
+
+def _placement_key_matches(key: str | None, show_cost: bool) -> bool:
+    if not key:
+        return False
+    return key.endswith("_cost.pdf" if show_cost else "_safe.pdf")
+
+
+def placement_pdf_key(db: Session, placement_id: int, auth: AuthContext | None) -> str | None:
+    from app.models.vendor_order import VendorOrderPlacement
+
+    show_cost = can_see_cost(auth)
+    with _lock("vendor_placement", placement_id):
+        placement = db.get(VendorOrderPlacement, placement_id)
+        if not placement:
+            return None
+        stored = placement.cost_document_key if show_cost else placement.document_key
+        if _placement_key_matches(stored, show_cost):
+            return stored
+        generate_vendor_placement_document(db, placement_id, auth)
+        db.commit()
+        db.refresh(placement)
+        return placement.cost_document_key if show_cost else placement.document_key

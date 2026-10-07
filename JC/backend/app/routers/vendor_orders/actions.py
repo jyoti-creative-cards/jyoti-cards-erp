@@ -48,7 +48,6 @@ from app.services.cost_visibility import hide_cost
 from app.services.open_lines import add_to_open, cancel_open_qty, close_open_line, cancel_open_line, open_lines_for_vendor, reduce_from_open
 from app.services.order_summary import pending_qty_by_product, placed_qty_by_product, received_qty_by_product
 from app.services.stock_receipt import get_or_create_open_order
-from app.services.doc_gen import generate_vendor_placement_document
 from app.services.document_present import present
 from app.services.storage import presigned_url, presigned_urls, storage_configured
 
@@ -287,21 +286,26 @@ def get_placement_document(
     placement = db.get(VendorOrderPlacement, placement_id)
     if not placement:
         raise HTTPException(404, "placement not found")
+    from app.services.cost_visibility import can_see_cost
+
+    show_cost = can_see_cost(auth)
     if storage_configured():
         try:
-            # Always regenerate so PDF matches current lines (fixes stale empty PDFs)
-            generate_vendor_placement_document(db, placement.id, auth)
-            db.commit()
+            from app.services.doc_jobs import placement_pdf_key
+            placement_pdf_key(db, placement.id, auth)
             db.refresh(placement)
         except Exception as exc:
             db.rollback()
             import logging
             logging.getLogger(__name__).exception("placement PDF generate failed for %s", placement_id)
             raise HTTPException(500, f"document generation failed: {exc}") from exc
-    if not placement.document_key:
+    key = None
+    if placement:
+        key = placement.cost_document_key if show_cost else placement.document_key
+    if not key:
         raise HTTPException(404, "document not available")
-    url = presigned_url(placement.document_key)
+    url = presigned_url(key)
     if not url:
         raise HTTPException(503, "storage not available")
-    return {"document_url": url, "document_key": placement.document_key}
+    return {"document_url": url, "document_key": key}
 

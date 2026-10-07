@@ -171,7 +171,8 @@
     if (noAdd) noAdd.checked = filters.no_addons;
     document.getElementById("products-clear-filters")?.classList.toggle("hidden", !hasActiveFilters());
     syncFiltersVisibility();
-    if (mainTab === "catalog" && (attentionFilter === "no_sell" || attentionFilter === "no_addons" || attentionFilter === "all")) {
+    if (mainTab === "stock" && !addonMode) load();
+    else if (mainTab === "catalog" && (attentionFilter === "no_sell" || attentionFilter === "no_addons" || attentionFilter === "all")) {
       load();
     } else {
       render();
@@ -222,7 +223,7 @@
       });
       return;
     }
-    const c = attentionCounts(items);
+    const c = (mainTab === "stock" && stockCounts) ? stockCounts : attentionCounts(items);
     if (mainTab === "stock") {
       OrdersUI.actionChips({
         hostId: "products-action-chips",
@@ -325,8 +326,8 @@
     else attentionFilter = "all";
     document.getElementById("products-clear-filters")?.classList.toggle("hidden", !hasActiveFilters());
     syncFiltersVisibility();
-    if (mainTab === "catalog") load();
-    else render();
+    if (addonMode) render();
+    else load();
   }
 
   function clearFilters() {
@@ -335,8 +336,8 @@
     renderFilters();
     document.getElementById("products-clear-filters")?.classList.add("hidden");
     syncFiltersVisibility();
-    if (mainTab === "catalog") load();
-    else render();
+    if (addonMode) render();
+    else load();
   }
 
   function catalogQueryParams(offset = 0) {
@@ -354,6 +355,32 @@
     if (filters.no_sell_price) params.set("no_sell_price", "true");
     if (filters.no_addons) params.set("no_addons", "true");
     return params;
+  }
+
+  function stockQueryParams(offset = 0) {
+    const params = new URLSearchParams({
+      limit: String(STOCK_PAGE),
+      offset: String(offset),
+    });
+    const q = searchQuery.trim();
+    if (q) params.set("search", q);
+    if (filters.vendor_id) params.set("vendor_id", filters.vendor_id);
+    if (filters.category) params.set("category", filters.category);
+    if (filters.year_group) params.set("year_group", filters.year_group);
+    if (filters.price_min) params.set("price_min", filters.price_min);
+    if (filters.price_max) params.set("price_max", filters.price_max);
+    if (filters.stock_status) params.set("stock_status", filters.stock_status);
+    if (filters.no_sell_price) params.set("no_sell_price", "true");
+    if (filters.no_addons) params.set("no_addons", "true");
+    return params;
+  }
+
+  function applyStockPage(page, append) {
+    const items = page.items || [];
+    stockProducts = append ? stockProducts.concat(items) : items;
+    stockTotal = page.total ?? stockProducts.length;
+    stockUnits = Number(page.units_on_hand) || 0;
+    stockCounts = page.counts || null;
   }
 
   async function refreshHub() {
@@ -435,12 +462,8 @@
 
   async function load() {
     const q = searchQuery.trim();
-    const stockParams = new URLSearchParams();
-    if (q) stockParams.set("search", q);
-    if (filters.year_group) stockParams.set("year_group", filters.year_group);
-    const stockQs = stockParams.toString();
     const searchParam = q ? `?search=${encodeURIComponent(q)}` : "";
-    const stockPath = `/stock/products${stockQs ? `?${stockQs}` : ""}`;
+    const stockPath = `/stock/products/page?${stockQueryParams(0)}`;
     catalogOffset = 0;
     const catPath = `/catalog/products?${catalogQueryParams(0)}`;
     const addonPath = `/addons${searchParam}`;
@@ -448,7 +471,7 @@
 
     if (mainTab === "stock") {
       const cached = ctx.peekCache?.(stockPath);
-      if (cached) { stockProducts = cached; renderFilters(); render(); }
+      if (cached && cached.items) { applyStockPage(cached, false); renderFilters(); render(); }
     } else {
       const cached = ctx.peekCache?.(catPath);
       if (cached) {
@@ -467,7 +490,7 @@
         const tasks = [ctx.api(stockPath, {}, ttl)];
         if (ctx.canRead?.("addons")) tasks.push(ctx.api(addonPath, {}, ttl));
         const [stockR, addonR] = await Promise.all(tasks);
-        stockProducts = stockR;
+        applyStockPage(stockR || {}, false);
         addons = addonR || [];
       } else {
         const tasks = [ctx.api(catPath, {}, ttl)];
@@ -495,6 +518,19 @@
       catalogProducts = catalogProducts.concat(more);
       catalogTotal = catR.total ?? catalogProducts.length;
       catalogOffset = catalogProducts.length;
+      render();
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  async function loadMoreStock() {
+    if (mainTab !== "stock" || addonMode || typeFilter === "addons") return;
+    if (stockProducts.length >= stockTotal) return;
+    const path = `/stock/products/page?${stockQueryParams(stockProducts.length)}`;
+    ctx.showLoading?.();
+    try {
+      const page = await ctx.api(path, {}, 0);
+      applyStockPage(page || {}, true);
       render();
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }

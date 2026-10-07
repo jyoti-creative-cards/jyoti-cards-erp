@@ -32,8 +32,9 @@ def customer_return_key(customer_slug: str, return_id: int, return_number: str |
     return f"{_ROOT}/customer/{customer_slug}/returns/{safe}.pdf"
 
 
-def vendor_order_key(vendor_folder: str, placement_id: int) -> str:
-    return f"{_ROOT}/vendor/{vendor_folder}/orders/placement_{placement_id}.pdf"
+def vendor_order_key(vendor_folder: str, placement_id: int, *, with_cost: bool = False) -> str:
+    kind = "cost" if with_cost else "safe"
+    return f"{_ROOT}/vendor/{vendor_folder}/orders/placement_{placement_id}_{kind}.pdf"
 
 
 def vendor_receipt_key(vendor_folder: str, bill_number: str, receipt_id: int | None = None) -> str:

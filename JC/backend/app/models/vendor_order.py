@@ -42,6 +42,7 @@ class VendorOrderPlacement(Base):
     placed_by_name: Mapped[str] = mapped_column(String(200), nullable=False)
     card_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     document_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    cost_document_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     placed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     cancel_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

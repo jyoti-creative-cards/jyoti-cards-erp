@@ -5,11 +5,12 @@ from decimal import Decimal
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
-from sqlalchemy import func, or_, text
+from sqlalchemy import and_, case, func, or_, text
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.deps import AuthContext, get_auth_context, require_admin, require_permission
+from app.models.addon_product import AddonProduct
 from app.models.catalog_alternative import CatalogAlternative
 from app.models.catalog_addon_link import CatalogAddonLink
 from app.models.catalog_product import CatalogProduct
@@ -29,6 +30,7 @@ from app.schemas.stock import (
     StockAdjustIn,
     StockThresholdUpdate,
     StockLedgerEntry,
+    StockBrowsePage,
     StockProductDetail,
     StockProductSummary,
     VendorBillIn,
@@ -296,4 +298,235 @@ def _list_stock_sqlite(
             )
         )
     return out
+
+
+def _active_addon_counts(db: Session):
+    return (
+        db.query(
+            CatalogAddonLink.catalog_product_id.label("pid"),
+            func.count(CatalogAddonLink.id).label("cnt"),
+        )
+        .join(AddonProduct, AddonProduct.id == CatalogAddonLink.addon_product_id)
+        .filter(AddonProduct.is_active.is_(True), AddonProduct.deleted_at.is_(None))
+        .group_by(CatalogAddonLink.catalog_product_id)
+        .subquery()
+    )
+
+
+def _stock_scope(db: Session, search: str, year_group: str):
+    addon_counts = _active_addon_counts(db)
+    qty = func.coalesce(StockBalance.quantity_on_hand, 0)
+    addon_count = func.coalesce(addon_counts.c.cnt, 0)
+    q = (
+        db.query(CatalogProduct, StockBalance, Vendor, City, addon_count)
+        .outerjoin(StockBalance, StockBalance.catalog_product_id == CatalogProduct.id)
+        .outerjoin(Vendor, Vendor.id == CatalogProduct.vendor_id)
+        .outerjoin(City, City.id == Vendor.city_id)
+        .outerjoin(addon_counts, addon_counts.c.pid == CatalogProduct.id)
+        .filter(CatalogProduct.is_active.is_(True), CatalogProduct.deleted_at.is_(None))
+    )
+    if year_group:
+        q = q.filter(CatalogProduct.year_group == year_group)
+    if search:
+        like = f"%{search.lower()}%"
+        q = q.filter(or_(
+            func.lower(CatalogProduct.our_product_id).like(like),
+            func.lower(func.coalesce(CatalogProduct.vendor_product_id, "")).like(like),
+            func.lower(func.coalesce(CatalogProduct.category, "")).like(like),
+            func.lower(func.coalesce(CatalogProduct.second_category, "")).like(like),
+            func.lower(func.coalesce(CatalogProduct.series, "")).like(like),
+            func.lower(func.coalesce(CatalogProduct.year_group, "")).like(like),
+            func.lower(func.coalesce(Vendor.business_name, "")).like(like),
+            func.lower(func.coalesce(City.name, "")).like(like),
+        ))
+    return q, qty, addon_count
+
+
+def _apply_stock_filters(
+    q,
+    *,
+    vendor_id: Optional[int],
+    category: Optional[str],
+    price_min: Optional[Decimal],
+    price_max: Optional[Decimal],
+    stock_status: Optional[str],
+    no_sell_price: bool,
+    no_addons: bool,
+    addon_count,
+    qty,
+):
+    if vendor_id:
+        q = q.filter(CatalogProduct.vendor_id == vendor_id)
+    if category:
+        q = q.filter(or_(
+            CatalogProduct.category == category,
+            CatalogProduct.second_category == category,
+        ))
+    price = func.coalesce(CatalogProduct.selling_price, CatalogProduct.buying_price)
+    if price_min is not None:
+        q = q.filter(price >= price_min)
+    if price_max is not None:
+        q = q.filter(price <= price_max)
+    th = func.coalesce(StockBalance.low_stock_threshold, 5)
+    floor = case((th < 1, 1), else_=th)
+    if stock_status == "negative_stock":
+        q = q.filter(qty < 0)
+    elif stock_status == "out_of_stock":
+        q = q.filter(qty == 0)
+    elif stock_status == "low_stock":
+        q = q.filter(and_(qty > 0, qty < floor))
+    elif stock_status == "in_stock":
+        q = q.filter(qty >= floor)
+    if no_sell_price:
+        q = q.filter(or_(
+            CatalogProduct.selling_price.is_(None),
+            CatalogProduct.selling_price == CatalogProduct.buying_price,
+        ))
+    if no_addons:
+        q = q.filter(addon_count == 0)
+    return q
+
+
+def browse_stock(
+    db: Session,
+    auth: AuthContext,
+    *,
+    search: Optional[str] = None,
+    year_group: Optional[str] = None,
+    vendor_id: Optional[int] = None,
+    category: Optional[str] = None,
+    price_min: Optional[Decimal] = None,
+    price_max: Optional[Decimal] = None,
+    stock_status: Optional[str] = None,
+    no_sell_price: bool = False,
+    no_addons: bool = False,
+    limit: int = 100,
+    offset: int = 0,
+) -> StockBrowsePage:
+    """One page of the stock hub, plus totals for the whole search."""
+    search_clean = (search or "").replace("\x00", "").strip()
+    year_clean = (year_group or "").replace("\x00", "").strip()
+    scope, qty, addon_count = _stock_scope(db, search_clean, year_clean)
+    th = func.coalesce(StockBalance.low_stock_threshold, 5)
+    floor = case((th < 1, 1), else_=th)
+    no_sell = or_(
+        CatalogProduct.selling_price.is_(None),
+        CatalogProduct.selling_price == CatalogProduct.buying_price,
+    )
+    counted = scope.order_by(None).with_entities(
+        func.count(CatalogProduct.id),
+        func.coalesce(func.sum(qty), 0),
+        func.coalesce(func.sum(case((qty < 0, 1), else_=0)), 0),
+        func.coalesce(func.sum(case((qty == 0, 1), else_=0)), 0),
+        func.coalesce(func.sum(case((and_(qty > 0, qty < floor), 1), else_=0)), 0),
+        func.coalesce(func.sum(case((no_sell, 1), else_=0)), 0),
+        func.coalesce(func.sum(case((addon_count == 0, 1), else_=0)), 0),
+    ).one()
+    all_count, units, negative, out_of, low, missing_sell, missing_addons = counted
+    filtered, _qty, filtered_addon = _stock_scope(db, search_clean, year_clean)
+    filtered = _apply_stock_filters(
+        filtered,
+        vendor_id=vendor_id,
+        category=category,
+        price_min=price_min,
+        price_max=price_max,
+        stock_status=stock_status,
+        no_sell_price=no_sell_price,
+        no_addons=no_addons,
+        addon_count=filtered_addon,
+        qty=_qty,
+    )
+    total = filtered.order_by(None).with_entities(func.count(CatalogProduct.id)).scalar() or 0
+    rows = (
+        filtered.order_by(CatalogProduct.our_product_id.asc(), CatalogProduct.id.asc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    items: list[StockProductSummary] = []
+    for product, balance, vendor, city, addons in rows:
+        on_hand = int(balance.quantity_on_hand) if balance else 0
+        threshold = int(balance.low_stock_threshold) if balance else 5
+        vendor_name = vendor.business_name if vendor else ""
+        city_name = city.name if city else None
+        label = f"{vendor_name} — {city_name}" if vendor_name and city_name else (vendor_name or "")
+        keys = (product.image_keys or [])[:1]
+        items.append(StockProductSummary(
+            catalog_product_id=product.id,
+            our_product_id=product.our_product_id,
+            vendor_product_id=product.vendor_product_id,
+            vendor_id=product.vendor_id,
+            vendor_name=vendor_name,
+            vendor_city=city_name,
+            vendor_label=label,
+            category=product.category,
+            second_category=product.second_category,
+            series=product.series,
+            year_group=product.year_group,
+            marking=product.marking,
+            quantity_on_hand=on_hand,
+            low_stock_threshold=threshold,
+            stock_status=admin_stock_status_label(on_hand, threshold),
+            selling_price=(
+                format(eff, "f")
+                if (eff := effective_selling_price(product.buying_price, product.selling_price)) is not None
+                else None
+            ),
+            buying_price=hide_cost(
+                format(product.buying_price, "f") if product.buying_price is not None else None,
+                auth,
+            ),
+            unit=product.unit,
+            image_urls=presigned_urls(keys) if keys else [],
+            addon_count=int(addons or 0),
+            alt_count=0,
+        ))
+    return StockBrowsePage(
+        items=items,
+        total=int(total),
+        units_on_hand=int(units or 0),
+        counts={
+            "all": int(all_count or 0),
+            "low_stock": int(low or 0),
+            "out_of_stock": int(out_of or 0),
+            "negative_stock": int(negative or 0),
+            "no_sell": int(missing_sell or 0),
+            "no_addons": int(missing_addons or 0),
+        },
+    )
+
+
+@router.get("/products/page", response_model=StockBrowsePage)
+def browse_stock_products(
+    db: Session = Depends(get_db),
+    search: Optional[str] = Query(None),
+    year_group: Optional[str] = Query(None),
+    vendor_id: Optional[int] = Query(None),
+    category: Optional[str] = Query(None),
+    price_min: Optional[Decimal] = Query(None, ge=0),
+    price_max: Optional[Decimal] = Query(None, ge=0),
+    stock_status: Optional[str] = Query(None),
+    no_sell_price: bool = Query(False),
+    no_addons: bool = Query(False),
+    limit: int = Query(100, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    auth: AuthContext = Depends(require_permission("stock.read")),
+) -> StockBrowsePage:
+    cache_key = (
+        f"stock:page:v1:{(search or '').replace(chr(0), '')}:{(year_group or '').replace(chr(0), '')}:"
+        f"{vendor_id or ''}:{category or ''}:{price_min}:{price_max}:{stock_status or ''}:"
+        f"{int(no_sell_price)}:{int(no_addons)}:{limit}:{offset}:cost={int(can_see_cost(auth))}"
+    )
+    cached = response_cache.get(cache_key)
+    if cached is not None:
+        return cached
+    page = browse_stock(
+        db, auth,
+        search=search, year_group=year_group, vendor_id=vendor_id, category=category,
+        price_min=price_min, price_max=price_max, stock_status=stock_status,
+        no_sell_price=no_sell_price, no_addons=no_addons, limit=limit, offset=offset,
+    )
+    dumped = page.model_dump()
+    response_cache.set(cache_key, dumped, 25.0)
+    return page
 

@@ -90,6 +90,53 @@ def customer_ar_totals(db: Session, customer_id: int) -> dict[str, Decimal]:
         "outstanding": Decimal(str(outstanding or 0)).quantize(Decimal("0.01")),
     }
 
+def batch_customer_ar_totals(db: Session, customer_ids: list[int]) -> dict[int, dict[str, Decimal]]:
+    """Same figures as customer_ar_totals, for many customers in one query."""
+    if not customer_ids:
+        return {}
+    from sqlalchemy import case, func
+
+    rows = (
+        db.query(
+            ArLedgerEntry.customer_id,
+            func.coalesce(
+                func.sum(case((ArLedgerEntry.entry_type == "opening_balance", ArLedgerEntry.amount), else_=0)),
+                0,
+            ),
+            func.coalesce(
+                func.sum(case((ArLedgerEntry.entry_type == "bill", ArLedgerEntry.amount), else_=0)),
+                0,
+            ),
+            func.coalesce(
+                func.sum(case((ArLedgerEntry.entry_type == "payment", func.abs(ArLedgerEntry.amount)), else_=0)),
+                0,
+            ),
+            func.coalesce(
+                func.sum(case((ArLedgerEntry.entry_type == "payment_reversal", func.abs(ArLedgerEntry.amount)), else_=0)),
+                0,
+            ),
+            func.coalesce(
+                func.sum(case((ArLedgerEntry.entry_type == "credit_note", func.abs(ArLedgerEntry.amount)), else_=0)),
+                0,
+            ),
+            func.coalesce(func.sum(ArLedgerEntry.amount), 0),
+        )
+        .filter(ArLedgerEntry.customer_id.in_(customer_ids), ArLedgerEntry.deleted_at.is_(None))
+        .group_by(ArLedgerEntry.customer_id)
+        .all()
+    )
+    out: dict[int, dict[str, Decimal]] = {}
+    for cid, opening_total, bill_total, pay_mag, rev_mag, credit_total, outstanding in rows:
+        out[int(cid)] = {
+            "opening_total": Decimal(str(opening_total or 0)).quantize(Decimal("0.01")),
+            "bill_total": Decimal(str(bill_total or 0)).quantize(Decimal("0.01")),
+            "payment_total": (Decimal(str(pay_mag or 0)) - Decimal(str(rev_mag or 0))).quantize(Decimal("0.01")),
+            "credit_total": Decimal(str(credit_total or 0)).quantize(Decimal("0.01")),
+            "outstanding": Decimal(str(outstanding or 0)).quantize(Decimal("0.01")),
+        }
+    return out
+
+
 def batch_customer_outstanding(db: Session, customer_ids: list[int]) -> dict[int, Decimal]:
     """Return {customer_id: outstanding_balance} for multiple customers in one query."""
     if not customer_ids:

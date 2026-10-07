@@ -434,16 +434,19 @@ def generate_vendor_placement_document(db: Session, placement_id: int, auth: Aut
     vlines = db.query(VendorOrderLine).filter(VendorOrderLine.placement_id == placement.id).all()
     if not vlines:
         return None
-    # This PDF is regenerated fresh on every view (see callers), so redacting here per
-    # the current viewer's auth is safe — it was previously built straight from
-    # buying_price with no hide_cost() at all, so any staffer with just
-    # vendor_orders.read (which doesn't imply costs.read) could see our exact cost per
-    # unit for every vendor line, bypassing the redaction the rest of the app enforces.
+    # Two stored files: one with cost, one without. Print picks the file for
+    # the person looking, so a stored copy never shows cost to someone who
+    # should not see it.
     show_cost = can_see_cost(auth)
+    product_ids = [ln.catalog_product_id for ln in vlines]
+    products = {
+        p.id: p
+        for p in db.query(CatalogProduct).filter(CatalogProduct.id.in_(product_ids)).all()
+    } if product_ids else {}
     pdf_lines = []
     image_urls: dict[int, str | None] = {}
     for ln in vlines:
-        prod = db.get(CatalogProduct, ln.catalog_product_id)
+        prod = products.get(ln.catalog_product_id)
         urls = presigned_urls(prod.image_keys or []) if prod else []
         image_urls[ln.catalog_product_id] = urls[0] if urls else None
         pdf_lines.append({
@@ -468,9 +471,12 @@ def generate_vendor_placement_document(db: Session, placement_id: int, auth: Aut
         placed_by=placement.placed_by_name,
         placed_at=placement.placed_at,
     )
-    key = vendor_order_key(slug, placement.id)
+    key = vendor_order_key(slug, placement.id, with_cost=show_cost)
     upload_bytes(key, pdf, "application/pdf")
-    placement.document_key = key
+    if show_cost:
+        placement.cost_document_key = key
+    else:
+        placement.document_key = key
     db.add(placement)
     db.flush()
     return key

@@ -49,6 +49,22 @@ class StockProductSummary(BaseModel):
     alt_count: int = 0
 
 
+class StockBrowseCounts(BaseModel):
+    all: int = 0
+    low_stock: int = 0
+    out_of_stock: int = 0
+    negative_stock: int = 0
+    no_sell: int = 0
+    no_addons: int = 0
+
+
+class StockBrowsePage(BaseModel):
+    items: List[StockProductSummary]
+    total: int
+    units_on_hand: int = 0
+    counts: StockBrowseCounts
+
+
 class StockLedgerEntry(BaseModel):
     id: int
     entry_type: str

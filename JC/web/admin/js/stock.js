@@ -83,10 +83,6 @@ const Stock = (() => {
       </div>`;
   }
   async function load() {
-    // Live hub is Products — keep picker cache warm, then refresh hub
-    try {
-      products = await ctx.api("/stock/products", {}, 0);
-    } catch (_) { products = []; }
     if (typeof Products !== "undefined" && Products.refreshHub) await Products.refreshHub();
   }
   function setViewMode() { /* legacy no-op — Products hub owns view */ }

@@ -121,3 +121,5 @@ def test_every_bill_is_original_and_duplicate():
     assert text.count("ORIGINAL") == 1
     assert text.count("DUPLICATE") == 1
     assert "TRIPLICATE" not in text
+    assert "12 pcs" in text
+    assert "12.00 pcs" not in text

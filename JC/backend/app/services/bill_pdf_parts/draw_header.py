@@ -160,8 +160,18 @@ def _draw_header(
     top += 16
 
     if copy_label:
-        c.setFont("Helvetica-Bold", 8)
-        c.drawRightString(RIGHT, _y(32), copy_label)
+        label = str(copy_label)
+        size = 13
+        c.setFont("Helvetica-Bold", size)
+        tw = c.stringWidth(label, "Helvetica-Bold", size)
+        cx = PAGE_W / 2
+        text_y = _y(20)
+        c.setFillColorRGB(1, 0.93, 0.45)
+        c.rect(cx - tw / 2 - 10, text_y - 4, tw + 20, 18, fill=1, stroke=0)
+        c.setFillColorRGB(0.35, 0.18, 0)
+        c.setFont("Helvetica-Bold", size)
+        c.drawCentredString(cx, text_y, label)
+        c.setFillColorRGB(0, 0, 0)
 
     return top
 

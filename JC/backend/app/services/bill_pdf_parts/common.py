@@ -228,7 +228,7 @@ def _draw_total(c: canvas.Canvas, top: float, qty: Decimal, grand: object) -> No
     c.setFont("Helvetica", 8)
     c.drawRightString(COLS[3] - 4, _y(top + 11), "Total")
     c.setFont("Helvetica-Bold", 8)
-    c.drawString(COLS[3] + 8, _y(top + 11), f"{qty:.2f} pcs")
+    c.drawString(COLS[3] + 8, _y(top + 11), _qty_text(qty))
     c.setFont("Helvetica-Bold", 9)
     c.drawRightString(RIGHT - 6, _y(top + 11), f"Rs. {_money(grand)}")
 
@@ -316,7 +316,11 @@ def _printed_token(dt: datetime | None) -> str:
     return f"{ist.day}-{ist.strftime('%b')}-{ist.strftime('%y')} at {ist.strftime('%H:%M')}"
 
 def _qty_text(qty: int) -> str:
-    return f"{qty:.2f} pcs"
+    try:
+        n = int(qty)
+    except (TypeError, ValueError):
+        n = 0
+    return f"{n} pcs"
 
 def _two_digits(n: int) -> str:
     if n < 20:

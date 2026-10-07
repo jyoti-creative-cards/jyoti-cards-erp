@@ -491,7 +491,7 @@
           <td>${ctx.esc([e.entity_type, e.entity_label || e.entity_id].filter(Boolean).join(" · ") || "—")}</td>
           <td style="color:var(--muted);font-size:13px;">${ctx.esc(e.detail || "—")}</td>
         </tr>`).join("")}
-      </tbody></table></div>` : empty("No activity", "This person has no logged actions yet.");
+      </tbody></table></div>` : empty("No activity", "This person has no logged actions yet."));
       return;
     }
     if (d.party_type === "product") {

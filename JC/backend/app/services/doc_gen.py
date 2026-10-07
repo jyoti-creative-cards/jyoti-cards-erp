@@ -166,7 +166,6 @@ from app.services.storage import (
     customer_bill_key,
     customer_folder_slug,
     customer_order_key,
-    presigned_urls,
     upload_bytes,
     vendor_folder_slug,
     vendor_order_key,
@@ -211,14 +210,11 @@ def generate_customer_order_document(db: Session, placement_id: int) -> str | No
     customer, city_name = _customer_ctx(db, customer_id)
     slug = customer_folder_slug(customer.business_name)
     pdf_lines = []
-    image_urls: dict[int, str | None] = {}
     party = view.get("party") or {}
     for cl in view_lines:
         cid = int(cl["catalog_product_id"])
         qty = qty_by_cid.get(cid, 0)
         unit = Decimal(str(cl.get("unit_price") or "0"))
-        urls = presigned_urls(cl.get("image_keys") or [])
-        image_urls[cid] = urls[0] if urls else None
         pdf_lines.append({
             "catalog_product_id": cid,
             "our_product_id": cl.get("our_product_id"),
@@ -240,7 +236,7 @@ def generate_customer_order_document(db: Session, placement_id: int) -> str | No
         customer_address=_card_or_live(view, party.get("address"), customer.address),
         customer_city=_card_or_live(view, party.get("city_name"), city_name),
         lines=pdf_lines,
-        image_urls=image_urls,
+        image_urls={},
         customer_notes=placement.customer_notes,
         placed_at=view.get("display_date") or placement.placed_at,
         outstanding=outstanding,
@@ -328,7 +324,6 @@ def generate_customer_bill_document(db: Session, bill_id: int) -> str | None:
     addon_rows = {
         a.id: a for a in db.query(AddonProduct).filter(AddonProduct.id.in_(set(addon_ids))).all()
     } if addon_ids else {}
-    image_urls: dict[int, str | None] = {}
     for ln in lines:
         if not isinstance(ln, dict):
             continue
@@ -336,8 +331,6 @@ def generate_customer_bill_document(db: Session, bill_id: int) -> str | None:
         if not cid:
             continue
         card = card_by_cid.get(cid) or {}
-        urls = presigned_urls(card.get("image_keys") or [])
-        image_urls[cid] = urls[0] if urls else None
         if card.get("our_product_id"):
             ln["our_product_id"] = card["our_product_id"]
             ln["name"] = card["our_product_id"]
@@ -390,7 +383,7 @@ def generate_customer_bill_document(db: Session, bill_id: int) -> str | None:
         invoice_date=bill_invoice_date(bill),
         customer_notes=placement.customer_notes if placement else None,
         narration=bill.narration,
-        item_image_urls=image_urls,
+        item_image_urls=None,
         order_created_at=order_at,
         order_by=order_by,
         outstanding=outstanding,
@@ -444,11 +437,8 @@ def generate_vendor_placement_document(db: Session, placement_id: int, auth: Aut
         for p in db.query(CatalogProduct).filter(CatalogProduct.id.in_(product_ids)).all()
     } if product_ids else {}
     pdf_lines = []
-    image_urls: dict[int, str | None] = {}
     for ln in vlines:
         prod = products.get(ln.catalog_product_id)
-        urls = presigned_urls(prod.image_keys or []) if prod else []
-        image_urls[ln.catalog_product_id] = urls[0] if urls else None
         pdf_lines.append({
             "catalog_product_id": ln.catalog_product_id,
             "our_product_id": ln.our_product_id,
@@ -467,7 +457,7 @@ def generate_vendor_placement_document(db: Session, placement_id: int, auth: Aut
         vendor_gst=vendor.gst_number,
         vendor_person=vendor.person_name,
         lines=pdf_lines,
-        image_urls=image_urls,
+        image_urls={},
         placed_by=placement.placed_by_name,
         placed_at=placement.placed_at,
     )
@@ -515,11 +505,8 @@ def generate_vendor_receipt_document(db: Session, receipt_id: int, auth: AuthCon
     # for why redacting per the current viewer's auth here (instead of not at all) matters.
     show_cost = can_see_cost(auth)
     pdf_lines = []
-    image_urls: dict[int, str | None] = {}
     for ln in rlines:
         card = card_by_cid.get(ln.catalog_product_id) or {}
-        urls = presigned_urls(card.get("image_keys") or [])
-        image_urls[ln.catalog_product_id] = urls[0] if urls else None
         our_id = card.get("our_product_id") or ln.our_product_id
         vendor_pid = card.get("vendor_product_id") or ""
         if not show_cost:
@@ -606,7 +593,7 @@ def generate_vendor_receipt_document(db: Session, receipt_id: int, auth: AuthCon
         order_receipt_number=receipt.order_receipt_number,
         charge_lines=_receipt_charge_lines(receipt, vendor),
         lines=pdf_lines,
-        image_urls=image_urls,
+        image_urls={},
         total_billed=format(total, "f") if total is not None else None,
         debit_notes=debit_notes_out,
         net_payable=format(net, "f"),

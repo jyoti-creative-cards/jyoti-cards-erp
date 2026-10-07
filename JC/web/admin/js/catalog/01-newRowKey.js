@@ -180,8 +180,8 @@
       ? `<div class="alt-chip-row">${p.alternatives.map(a => {
           const img = (a.image_urls && a.image_urls[0]) || "";
           const place = [a.alternative_vendor_name, a.alternative_vendor_city].filter(Boolean).join(" · ");
-          return `<button type="button" class="alt-chip" onclick="Products.enlargeImage(decodeURIComponent('${encodeURIComponent(img || "")}'))">
-            ${img ? `<img src="${ctx.esc(img)}" alt="" />` : `<span class="alt-chip-empty"></span>`}
+          return `<button type="button" class="alt-chip">
+            <span class="alt-chip-empty"></span>
             <span class="alt-chip-body">
               <strong>${ctx.esc(a.alternative_our_product_id)}</strong>
               <span>${ctx.esc(place || "—")}</span>
@@ -195,7 +195,7 @@
       ? `<div class="alt-chip-row">${p.addon_links.map(l => {
           const img = (l.image_urls && l.image_urls[0]) || "";
           return `<div class="alt-chip is-static">
-            ${img ? `<img src="${ctx.esc(img)}" alt="" onclick="Products.enlargeImage(decodeURIComponent('${encodeURIComponent(img)}'))" style="cursor:zoom-in;" />` : `<span class="alt-chip-empty"></span>`}
+            <span class="alt-chip-empty"></span>
             <span class="alt-chip-body">
               <strong>${ctx.esc(l.addon_our_product_id)}</strong>
               <span>${ctx.esc(l.addon_name || "Add-on")} · qty ${l.quantity}</span>
@@ -486,10 +486,7 @@
           </tr></thead>
           <tbody>
             ${rows.map(p => {
-              const img = (p.image_urls && p.image_urls[0]) || "";
-              const thumb = img
-                ? `<img src="${ctx.esc(img)}" alt="" class="vo-thumb" />`
-                : `<div class="vo-thumb vo-thumb-empty">—</div>`;
+              const thumb = `<div class="vo-thumb vo-thumb-empty">—</div>`;
               return `<tr>
                 <td>${thumb}</td>
                 <td><strong>${ctx.esc(p.our_product_id)}</strong></td>

@@ -2,7 +2,6 @@ from __future__ import annotations
 """Split from app/services/pdf_documents.py."""
 """Order receipts and vendor document PDFs."""
 
-import urllib.request
 from datetime import datetime, timezone
 from decimal import Decimal
 from io import BytesIO
@@ -14,11 +13,11 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
-from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from app.services.company_info import company_lines
 
-from app.services.pdf_parts.common import _code_pair, _fetch_image, _header, _ist_fmt, _safe, add_page_number
+from app.services.pdf_parts.common import _code_pair, _header, _ist_fmt, _safe, add_page_number
 
 def render_customer_return_pdf(
     *,
@@ -59,14 +58,11 @@ def render_customer_return_pdf(
     story.append(Paragraph("<br/>".join(info), ParagraphStyle("info", parent=styles["Normal"], fontSize=9, spaceAfter=12, leading=13)))
 
     # Table with bill column
-    head = ["", "Code", "Bill", "Qty", "Sold (Rs.)", "Amount (Rs.)"]
-    col_widths = [1.4 * cm, 3.2 * cm, 3.2 * cm, 1.2 * cm, 2.4 * cm, 2.6 * cm]
+    head = ["Code", "Bill", "Qty", "Sold (Rs.)", "Amount (Rs.)"]
+    col_widths = [3.2 * cm, 4.6 * cm, 1.2 * cm, 2.4 * cm, 2.6 * cm]
     data: list[list[Any]] = [head]
     for ln in lines:
-        cid = int(ln.get("catalog_product_id") or 0)
-        img = _fetch_image(image_urls.get(cid) or "", 1.2 * cm, 1.2 * cm) or ""
         data.append([
-            img,
             _safe(ln.get("our_product_id"), 28),
             _safe(ln.get("bill_number"), 28),
             str(int(ln.get("quantity") or 0)),
@@ -74,7 +70,7 @@ def render_customer_return_pdf(
             _safe(ln.get("line_total")),
         ])
     if len(data) < 2:
-        data.append(["", "-", "—", "", "", ""])
+        data.append(["-", "—", "", "", ""])
     table = Table(data, colWidths=col_widths, repeatRows=1)
     style_cmds = [
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
@@ -85,8 +81,8 @@ def render_customer_return_pdf(
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("TOPPADDING", (0, 0), (-1, -1), 7),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
-        ("ALIGN", (3, 1), (3, -1), "CENTER"),
-        ("ALIGN", (4, 1), (-1, -1), "RIGHT"),
+        ("ALIGN", (2, 1), (2, -1), "CENTER"),
+        ("ALIGN", (3, 1), (-1, -1), "RIGHT"),
         ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#cbd5e1")),
     ]
     for i in range(1, len(data)):
@@ -181,19 +177,16 @@ def _items_table(
     show_amounts: bool = True,
     amount_label: str = "Amount (Rs.)",
 ) -> Table:
-    head = ["", "Code", "Description", "Qty"]
+    head = ["Code", "Description", "Qty"]
     if show_amounts:
         head += ["Rate (Rs.)", amount_label]
-    col_widths = [1.5 * cm, 2.2 * cm, 6.0 * cm, 1.0 * cm]
+    col_widths = [2.2 * cm, 7.5 * cm, 1.0 * cm]
     if show_amounts:
         col_widths += [2.0 * cm, 2.5 * cm]
     data: list[list[Any]] = [head]
     for i, ln in enumerate(lines):
-        cid = int(ln.get("catalog_product_id") or 0)
-        img = _fetch_image(image_urls.get(cid) or "", 1.3 * cm, 1.3 * cm) or ""
         qty = int(ln.get("quantity") or 0)
         row: list[Any] = [
-            img,
             _safe(ln.get("our_product_id"), 24),
             _safe(ln.get("name") or ln.get("our_product_id"), 56),
             str(qty),
@@ -210,12 +203,12 @@ def _items_table(
             per = int(addon.get("quantity") or 1)
             aq = per * max(qty, 1)
             atxt = f"  + {_safe(addon.get('name') or addon.get('our_product_id'), 40)} × {aq} {_safe(addon.get('unit') or 'pc', 8)} (included)"
-            sub: list[Any] = ["", "", atxt, ""]
+            sub: list[Any] = ["", atxt, ""]
             if show_amounts:
                 sub += ["", ""]
             data.append(sub)
     if len(data) < 2:
-        placeholder = ["", "-", "No line items", ""] + (["", ""] if show_amounts else [])
+        placeholder = ["-", "No line items", ""] + (["", ""] if show_amounts else [])
         data.append(placeholder)
     table = Table(data, colWidths=col_widths, repeatRows=1)
     style = [
@@ -229,8 +222,8 @@ def _items_table(
     ]
     if show_amounts:
         style += [
-            ("ALIGN", (4, 1), (-1, -1), "RIGHT"),
-            ("ALIGN", (3, 1), (3, -1), "CENTER"),
+            ("ALIGN", (3, 1), (-1, -1), "RIGHT"),
+            ("ALIGN", (2, 1), (2, -1), "CENTER"),
         ]
     table.setStyle(TableStyle(style))
     return table
@@ -239,15 +232,12 @@ def _vendor_order_table(
     lines: List[Dict[str, Any]],
     image_urls: Dict[int, str | None],
 ) -> Table:
-    head = ["", "Code", "Description", "Qty", "Rate (Rs.)", "Amount (Rs.)"]
-    col_widths = [1.4 * cm, 2.4 * cm, 5.8 * cm, 1.0 * cm, 2.0 * cm, 2.4 * cm]
+    head = ["Code", "Description", "Qty", "Rate (Rs.)", "Amount (Rs.)"]
+    col_widths = [2.4 * cm, 7.2 * cm, 1.0 * cm, 2.0 * cm, 2.4 * cm]
     data: list[list[Any]] = [head]
     for ln in lines:
-        cid = int(ln.get("catalog_product_id") or 0)
-        img = _fetch_image(image_urls.get(cid) or "", 1.2 * cm, 1.2 * cm) or ""
         qty = int(ln.get("quantity") or 0)
         data.append([
-            img,
             _code_pair(ln.get("vendor_product_id"), ln.get("our_product_id")),
             _safe(ln.get("name") or ln.get("vendor_product_id") or ln.get("our_product_id"), 48),
             str(qty),
@@ -255,7 +245,7 @@ def _vendor_order_table(
             _safe(ln.get("line_total")),
         ])
     if len(data) < 2:
-        data.append(["", "-", "No line items", "", "", ""])
+        data.append(["-", "No line items", "", "", ""])
     table = Table(data, colWidths=col_widths, repeatRows=1)
     style_cmds = [
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
@@ -267,8 +257,8 @@ def _vendor_order_table(
         ("TOPPADDING", (0, 0), (-1, -1), 7),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
         ("LEFTPADDING", (0, 0), (-1, -1), 4),
-        ("ALIGN", (3, 1), (3, -1), "CENTER"),
-        ("ALIGN", (4, 1), (-1, -1), "RIGHT"),
+        ("ALIGN", (2, 1), (2, -1), "CENTER"),
+        ("ALIGN", (3, 1), (-1, -1), "RIGHT"),
         ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#cbd5e1")),
         ("LINEBELOW", (0, 1), (-1, -2), 0.4, colors.HexColor("#e2e8f0")),
     ]

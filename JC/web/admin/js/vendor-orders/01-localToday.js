@@ -163,8 +163,7 @@
     return fmtPrice(n);
   }
 
-  function thumb(url, cls = "vo-thumb") {
-    if (url) return `<img src="${ctx.esc(url)}" alt="" class="${cls}" />`;
+  function thumb(_url, cls = "vo-thumb") {
     return `<div class="${cls} vo-thumb-empty">—</div>`;
   }
 

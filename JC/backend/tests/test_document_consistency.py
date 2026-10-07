@@ -631,8 +631,6 @@ def test_locked_customer_bill_pdf_keeps_card_party_and_product(db, monkeypatch):
 
     monkeypatch.setattr(doc_gen, "render_customer_bill_pdf", _capture_pdf)
     monkeypatch.setattr(doc_gen, "upload_bytes", lambda *a, **kw: None)
-    monkeypatch.setattr(doc_gen, "presigned_urls", lambda keys: [])
-
     doc_gen.generate_customer_bill_document(db, bill.id)
 
     assert captured["customer_name"] == "RENAMED-CUSTOMER"

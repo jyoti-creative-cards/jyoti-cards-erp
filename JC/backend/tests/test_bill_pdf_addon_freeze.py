@@ -42,7 +42,6 @@ def db():
 def _stub_pdf_and_storage(monkeypatch):
     monkeypatch.setattr(doc_gen, "render_customer_bill_pdf", lambda **kw: b"%PDF-fake%")
     monkeypatch.setattr(doc_gen, "upload_bytes", lambda *a, **kw: None)
-    monkeypatch.setattr(doc_gen, "presigned_urls", lambda keys: [])
 
 
 def _setup(db):
@@ -111,6 +110,19 @@ def test_print_reads_the_stored_pdf(db, monkeypatch):
 
     assert bill_pdf_bytes(db, bill.id) == b"%PDF-stored%"
     assert calls["n"] == 0
+
+
+def test_bill_pdf_is_text_only(db, monkeypatch):
+    bill, _prod, _addon = _setup(db)
+    seen = {}
+
+    def render(**kw):
+        seen.update(kw)
+        return b"%PDF-fake%"
+
+    monkeypatch.setattr(doc_gen, "render_customer_bill_pdf", render)
+    doc_gen.generate_customer_bill_document(db, bill.id)
+    assert not seen.get("item_image_urls")
 
 
 def test_regenerating_pdf_does_not_overwrite_frozen_empty_addon_snapshot(db):

@@ -34,8 +34,7 @@
     const amt = Number(dn._amount ?? dn.amount) || 0;
     return dn.note_type === "item" ? -amt : amt;
   }
-  function thumb(url) {
-    if (url) return `<img src="${ctx.esc(url)}" alt="" class="vo-thumb" />`;
+  function thumb(_url) {
     return `<div class="vo-thumb vo-thumb-empty">—</div>`;
   }
   function reservedByPartyTable(rows) {
@@ -79,8 +78,8 @@
         ? `<div class="alt-chip-row">${(p.alternatives || []).map(a => {
             const img = (a.image_urls && a.image_urls[0]) || "";
             const place = [a.vendor_name, a.vendor_city].filter(Boolean).join(" · ");
-            return `<button type="button" class="alt-chip" onclick="event.stopPropagation();Products.enlargeImage(decodeURIComponent('${encodeURIComponent(img || "")}'))">
-              ${img ? `<img src="${ctx.esc(img)}" alt="" />` : `<span class="alt-chip-empty"></span>`}
+            return `<button type="button" class="alt-chip">
+              <span class="alt-chip-empty"></span>
               <span class="alt-chip-body">
                 <strong>${ctx.esc(a.our_product_id)}</strong>
                 <span>${ctx.esc(place || "—")}</span>

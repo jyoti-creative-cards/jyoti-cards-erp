@@ -276,7 +276,7 @@ def list_vendor_products_for_order(
                 vendor_product_id=p.vendor_product_id,
                 buying_price=hide_cost(str(p.buying_price), auth),
                 unit=p.unit,
-                image_urls=presigned_urls(p.image_keys or []),
+                image_urls=[],
                 alternatives=[
                     {
                         "catalog_product_id": a.id,

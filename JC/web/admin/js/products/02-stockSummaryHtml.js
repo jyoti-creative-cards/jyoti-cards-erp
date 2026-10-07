@@ -125,15 +125,11 @@
   }
 
   function cardImage(it) {
-    const url = (it.image_urls || [])[0];
-    if (url) return `<img src="${ctx.esc(url)}" alt="" class="prod-card-img" />`;
     const initials = ctx.esc((it.our_product_id || "?").slice(0, 3).toUpperCase());
     return `<div class="prod-card-img prod-card-img-empty"><span>${initials}</span></div>`;
   }
 
   function listThumb(it) {
-    const url = (it.image_urls || [])[0];
-    if (url) return `<img src="${ctx.esc(url)}" alt="" class="prod-list-thumb" />`;
     return `<div class="prod-list-thumb prod-list-thumb-empty">${ctx.esc((it.our_product_id || "?").slice(0, 2).toUpperCase())}</div>`;
   }
 

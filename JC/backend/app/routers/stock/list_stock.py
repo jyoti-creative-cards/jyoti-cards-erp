@@ -187,8 +187,7 @@ def list_stock(
         vn = r["vendor_name"]
         city_name = r["vendor_city"]
         label = f"{vn} — {city_name}" if vn and city_name else (vn or "")
-        image_key = r["image_key"]
-        image_urls = [url] if image_key and (url := presigned_url(image_key)) else []
+        image_urls = []
         out.append(
             StockProductSummary(
                 catalog_product_id=int(r["catalog_product_id"]),
@@ -263,8 +262,7 @@ def _list_stock_sqlite(
         vn = vendor.business_name if vendor else ""
         city_name = city.name if city else None
         label = f"{vn} — {city_name}" if vn and city_name else (vn or "")
-        keys = [] if lite else ((product.image_keys or [])[:1])
-        image_urls = presigned_urls(keys) if keys else []
+        image_urls = []
         out.append(
             StockProductSummary(
                 catalog_product_id=product.id,
@@ -450,7 +448,6 @@ def browse_stock(
         vendor_name = vendor.business_name if vendor else ""
         city_name = city.name if city else None
         label = f"{vendor_name} — {city_name}" if vendor_name and city_name else (vendor_name or "")
-        keys = (product.image_keys or [])[:1]
         items.append(StockProductSummary(
             catalog_product_id=product.id,
             our_product_id=product.our_product_id,
@@ -477,7 +474,7 @@ def browse_stock(
                 auth,
             ),
             unit=product.unit,
-            image_urls=presigned_urls(keys) if keys else [],
+            image_urls=[],
             addon_count=int(addons or 0),
             alt_count=0,
         ))

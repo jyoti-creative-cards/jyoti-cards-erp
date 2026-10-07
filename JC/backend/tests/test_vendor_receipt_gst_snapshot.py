@@ -48,7 +48,6 @@ def captured(monkeypatch):
 
     monkeypatch.setattr(doc_gen, "render_vendor_receipt_pdf", _fake_render)
     monkeypatch.setattr(doc_gen, "upload_bytes", lambda *a, **kw: None)
-    monkeypatch.setattr(doc_gen, "presigned_urls", lambda keys: [])
     return calls
 
 

@@ -2,7 +2,6 @@ from __future__ import annotations
 """Split from app/services/pdf_documents.py."""
 """Order receipts and vendor document PDFs."""
 
-import urllib.request
 from datetime import datetime, timezone
 from decimal import Decimal
 from io import BytesIO
@@ -14,11 +13,11 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
-from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from app.services.company_info import company_lines
 
-from app.services.pdf_parts.common import _code_pair, _fetch_image, _header, _ist_fmt, _safe, add_page_number
+from app.services.pdf_parts.common import _code_pair, _header, _ist_fmt, _safe, add_page_number
 from app.services.pdf_parts.render_customer_return_pdf import _items_table, _totals_block, _vendor_order_table
 
 def render_vendor_receipt_pdf(
@@ -255,14 +254,11 @@ def _vendor_receipt_table(
     lines: List[Dict[str, Any]],
     image_urls: Dict[int, str | None],
 ) -> Table:
-    head = ["", "Code", "Description", "Recv", "Billed", "Rate (Rs.)", "Amount (Rs.)"]
-    col_widths = [1.2 * cm, 2.2 * cm, 4.8 * cm, 0.9 * cm, 0.9 * cm, 1.8 * cm, 2.2 * cm]
+    head = ["Code", "Description", "Recv", "Billed", "Rate (Rs.)", "Amount (Rs.)"]
+    col_widths = [2.2 * cm, 6.0 * cm, 0.9 * cm, 0.9 * cm, 1.8 * cm, 2.2 * cm]
     data: list[list[Any]] = [head]
     for ln in lines:
-        cid = int(ln.get("catalog_product_id") or 0)
-        img = _fetch_image(image_urls.get(cid) or "", 1.1 * cm, 1.1 * cm) or ""
         data.append([
-            img,
             _code_pair(ln.get("vendor_product_id"), ln.get("our_product_id")),
             _safe(ln.get("name") or ln.get("vendor_product_id") or ln.get("our_product_id"), 40),
             str(int(ln.get("quantity_received") or 0)),
@@ -271,11 +267,11 @@ def _vendor_receipt_table(
             _safe(ln.get("line_total")),
         ])
     if len(data) < 2:
-        data.append(["", "-", "No line items", "", "", "", ""])
+        data.append(["-", "No line items", "", "", "", ""])
     else:
         recv_sum = sum(int(ln.get("quantity_received") or 0) for ln in lines)
         billed_sum = sum(int(ln.get("quantity_billed") or 0) for ln in lines)
-        data.append(["", "", "Total quantity", str(recv_sum), str(billed_sum), "", ""])
+        data.append(["", "Total quantity", str(recv_sum), str(billed_sum), "", ""])
     table = Table(data, colWidths=col_widths, repeatRows=1)
     style_cmds = [
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
@@ -287,8 +283,8 @@ def _vendor_receipt_table(
         ("TOPPADDING", (0, 0), (-1, -1), 7),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
         ("LEFTPADDING", (0, 0), (-1, -1), 4),
-        ("ALIGN", (3, 1), (4, -1), "CENTER"),
-        ("ALIGN", (5, 1), (-1, -1), "RIGHT"),
+        ("ALIGN", (2, 1), (3, -1), "CENTER"),
+        ("ALIGN", (4, 1), (-1, -1), "RIGHT"),
         ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#cbd5e1")),
         ("LINEBELOW", (0, 1), (-1, -2), 0.4, colors.HexColor("#e2e8f0")),
     ]

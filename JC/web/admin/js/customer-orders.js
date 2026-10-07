@@ -326,8 +326,7 @@ const CustomerOrders = (() => {
     return "₹" + n.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
   }
 
-  function thumb(url) {
-    if (url) return `<img src="${ctx.esc(url)}" alt="" class="vo-thumb" />`;
+  function thumb(_url) {
     return `<div class="vo-thumb vo-thumb-empty">—</div>`;
   }
 

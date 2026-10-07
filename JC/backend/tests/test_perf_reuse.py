@@ -102,7 +102,6 @@ def test_vendor_placement_pdf_is_stored_once_per_viewer(db, monkeypatch):
 
     monkeypatch.setattr(doc_gen, "render_vendor_placement_pdf", fake_render)
     monkeypatch.setattr(doc_gen, "upload_bytes", lambda *a, **k: None)
-    monkeypatch.setattr(doc_gen, "presigned_urls", lambda keys: [])
     placement = _placement(db)
     placement.document_key = "JCC/vendor/Press/orders/placement_1.pdf"
     db.commit()
@@ -111,6 +110,7 @@ def test_vendor_placement_pdf_is_stored_once_per_viewer(db, monkeypatch):
     assert safe.endswith("_safe.pdf")
     assert len(calls) == 1
     assert calls[0]["lines"][0]["unit_price"] == HIDDEN
+    assert calls[0]["image_urls"] == {}
 
     again = doc_jobs.placement_pdf_key(db, placement.id, STAFF)
     assert again == safe
@@ -150,3 +150,46 @@ def test_stock_page_does_not_return_the_whole_list(db):
     low = browse_stock(db, ADMIN, stock_status="negative_stock", limit=100)
     assert low.total == 1
     assert low.counts.all == 3
+
+
+def test_document_pdfs_do_not_download_photos(monkeypatch):
+    def boom(*_a, **_k):
+        raise AssertionError("photo download")
+
+    monkeypatch.setattr("urllib.request.urlopen", boom)
+    from app.services.pdf_documents import (
+        render_customer_order_pdf,
+        render_customer_return_pdf,
+        render_vendor_placement_pdf,
+        render_vendor_receipt_pdf,
+    )
+
+    line = {
+        "catalog_product_id": 1,
+        "our_product_id": "CARD1",
+        "vendor_product_id": "V1",
+        "name": "CARD1",
+        "quantity": 2,
+        "unit_price": "10",
+        "line_total": "20",
+        "quantity_received": 2,
+        "quantity_billed": 2,
+        "bill_number": "B1",
+        "addons": [],
+    }
+    urls = {1: "https://example.invalid/photo.jpg"}
+    pdfs = [
+        render_customer_order_pdf(placement_id=1, customer_name="A", lines=[line], image_urls=urls),
+        render_vendor_placement_pdf(
+            placement_id=1, vendor_name="V", lines=[line], image_urls=urls, placed_by="Admin",
+        ),
+        render_vendor_receipt_pdf(
+            receipt_id=1, vendor_name="V", bill_number="B1", lines=[line], image_urls=urls,
+            total_billed="20", net_payable="20", received_by="Admin",
+        ),
+        render_customer_return_pdf(
+            return_id=1, return_number="R1", customer_name="A", lines=[line], image_urls=urls,
+            calculated_amount="20", credit_amount="20", created_by="Admin",
+        ),
+    ]
+    assert all(pdf.startswith(b"%PDF") for pdf in pdfs)

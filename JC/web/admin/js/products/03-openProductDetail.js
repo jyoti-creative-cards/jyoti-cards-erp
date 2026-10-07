@@ -102,8 +102,8 @@
             const place = [a.alternative_vendor_name || a.vendor_name, a.alternative_vendor_city || a.vendor_city].filter(Boolean).join(" · ");
             const altId = a.alternative_our_product_id || a.our_product_id;
             const altPid = a.alternative_product_id || a.catalog_product_id || a.id;
-            return `<button type="button" class="alt-chip" onclick="event.stopPropagation();${altPid ? `Products.openProductDetail(${altPid}, 'alts')` : `Products.enlargeImage(decodeURIComponent('${encodeURIComponent(img || "")}'))`}">
-              ${img ? `<img src="${ctx.esc(img)}" alt="" />` : `<span class="alt-chip-empty"></span>`}
+            return `<button type="button" class="alt-chip" onclick="event.stopPropagation();${altPid ? `Products.openProductDetail(${altPid}, 'alts')` : ""}">
+              <span class="alt-chip-empty"></span>
               <span class="alt-chip-body">
                 <strong>${ctx.esc(altId)}</strong>
                 <span>${ctx.esc(place || "—")}</span>
@@ -123,7 +123,7 @@
             const sku = l.addon_our_product_id || l.our_product_id;
             const name = l.addon_name || l.name || "Add-on";
             return `<div class="alt-chip is-static">
-              ${img ? `<img src="${ctx.esc(img)}" alt="" onclick="Products.enlargeImage(decodeURIComponent('${encodeURIComponent(img)}'))" style="cursor:zoom-in;" />` : `<span class="alt-chip-empty"></span>`}
+              <span class="alt-chip-empty"></span>
               <span class="alt-chip-body">
                 <strong>${ctx.esc(sku)}</strong>
                 <span>${ctx.esc(name)} · qty ${l.quantity}</span>
@@ -299,7 +299,7 @@
       if (a) {
         const img = (a.image_urls && a.image_urls[0]) || "";
         return `<div class="alts-slot filled">
-          ${img ? `<img src="${ctx.esc(img)}" alt="" onclick="Products.enlargeImage(decodeURIComponent('${encodeURIComponent(img)}'))" />` : `<div class="alts-slot-ph"></div>`}
+          <div class="alts-slot-ph"></div>
           <strong>${ctx.esc(a.our_product_id)}</strong>
           <span>${ctx.esc(a.vendor_name || "—")}${a.vendor_city ? ` · ${ctx.esc(a.vendor_city)}` : ""}</span>
           <span class="alts-slot-price">${fmtPrice(a.buying_price)}${a.selling_price ? ` / ${fmtPrice(a.selling_price)}` : ""}</span>
@@ -315,7 +315,7 @@
     const img = (p.image_urls && p.image_urls[0]) || "";
     return `<div class="alts-row" data-product-id="${p.id}">
       <div class="alts-slot main">
-        ${img ? `<img src="${ctx.esc(img)}" alt="" onclick="Products.enlargeImage(decodeURIComponent('${encodeURIComponent(img)}'))" />` : `<div class="alts-slot-ph"></div>`}
+        <div class="alts-slot-ph"></div>
         <strong>${ctx.esc(p.our_product_id)}</strong>
         <span>${ctx.esc(p.vendor_name || "—")}${p.vendor_city ? ` · ${ctx.esc(p.vendor_city)}` : ""}</span>
         <span class="alts-slot-price">Buy ${fmtPrice(p.buying_price)}${p.selling_price ? ` · Sell ${fmtPrice(p.selling_price)}` : ""}</span>
@@ -365,7 +365,7 @@
           ${hits.length ? hits.map(s => {
             const img = (s.image_urls && s.image_urls[0]) || "";
             return `<button type="button" class="alts-picker-item" onclick="Products.addAlternative(${altsPickerForId}, '${ctx.esc(s.our_product_id).replace(/'/g, "\\'")}')">
-              ${img ? `<img src="${ctx.esc(img)}" alt="" />` : `<div class="alts-slot-ph sm"></div>`}
+              <div class="alts-slot-ph sm"></div>
               <div class="alts-picker-meta">
                 <strong>${ctx.esc(s.our_product_id)}</strong>
                 <span>${ctx.esc(s.vendor_name || "—")} · Stock ${s.quantity_on_hand ?? 0}</span>

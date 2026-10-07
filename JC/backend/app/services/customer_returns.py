@@ -16,7 +16,7 @@ from app.models.customer_return import CustomerReturn, CustomerReturnLine
 from app.services.addon_stock import deduct_addons_for_product
 from app.services.ar_ledger import post_credit_note_entry
 from app.services.stock_receipt import add_stock
-from app.services.storage import customer_folder_slug, customer_return_key, presigned_urls, storage_configured, upload_bytes
+from app.services.storage import customer_folder_slug, customer_return_key, storage_configured, upload_bytes
 
 
 def _d(v) -> Decimal:
@@ -373,7 +373,6 @@ def generate_customer_return_document(db: Session, return_id: int) -> str | None
     }
 
     pdf_lines = []
-    image_urls: dict[int, str | None] = {}
     order_ids: list[str] = []
     for ln in lines:
         bill = bills.get(ln.bill_id)
@@ -381,8 +380,6 @@ def generate_customer_return_document(db: Session, return_id: int) -> str | None
             order_ids.append(bill.bill_number)
         card = card_by_cid.get(ln.catalog_product_id) or {}
         sku = card.get("our_product_id") or ln.our_product_id
-        urls = presigned_urls(card.get("image_keys") or [])
-        image_urls[ln.catalog_product_id] = urls[0] if urls else None
         pdf_lines.append(
             {
                 "catalog_product_id": ln.catalog_product_id,
@@ -404,7 +401,7 @@ def generate_customer_return_document(db: Session, return_id: int) -> str | None
         customer_address=party.get("address") if party else customer.address,
         customer_city=city_name,
         lines=pdf_lines,
-        image_urls=image_urls,
+        image_urls={},
         calculated_amount=format(_d(ret.calculated_amount), "f"),
         credit_amount=format(_d(ret.credit_amount), "f"),
         notes=ret.notes,

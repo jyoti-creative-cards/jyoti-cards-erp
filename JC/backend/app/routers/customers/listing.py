@@ -147,6 +147,39 @@ def quick_search_customers(
         for r in rows[:8]
     ]
 
+@router.get("/sticker-prints")
+def list_customer_sticker_prints(
+    q: str = Query("", max_length=80),
+    limit: int = Query(40, ge=1, le=100),
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_any_permission("customers.read", "finance.write")),
+) -> list[dict]:
+    from app.services.sticker_labels import list_sticker_prints, print_payload
+
+    text = q if isinstance(q, str) else ""
+    cap = limit if isinstance(limit, int) else 40
+    return [print_payload(row) for row in list_sticker_prints(db, text, cap)]
+
+@router.post("/{customer_id}/sticker-prints")
+def post_customer_sticker_print(
+    customer_id: int,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_any_permission("customers.read", "finance.write")),
+) -> dict:
+    """Record one A5 print and return the Hindi lines plus the English print time."""
+    from app.services.sticker_labels import print_payload, record_sticker_print
+
+    row = db.get(Customer, customer_id)
+    if row is None or row.deleted_at is not None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="customer not found")
+    city_name = None
+    if row.city_id:
+        city = db.get(City, row.city_id)
+        if city is not None and city.deleted_at is None:
+            city_name = city.name
+    saved = record_sticker_print(db, row, city_name, auth.actor_name)
+    return print_payload(saved)
+
 @router.get("/{customer_id}/sticker")
 def get_customer_sticker(
     customer_id: int,

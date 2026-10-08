@@ -102,7 +102,7 @@ def init_db() -> None:
         StockBalance, StockLedger, StockReceipt, StockReceiptLine,
         DebitNote, VendorApAccount, ApLedgerEntry, ManualLoss,
         CustomerReturn, CustomerReturnLine,
-        StickerLabel,
+        StickerLabel, StickerPrint,
     )
 
     try:

@@ -225,33 +225,34 @@ def test_album_without_a_buying_price_still_posts(db):
     assert db.get(Expense, saved.expense_id).amount == Decimal("6.00")
 
 
-def test_missing_rate_and_oversell_blocked(db):
+def test_consumption_allows_missing_price_and_zero_stock(db):
     vendor = _vendor(db)
-    bare = _product(db, vendor, "NORATE", buying=None, stock=5)
-    with pytest.raises(HTTPException) as missing:
-        post_journal(
-            db,
-            JournalIn(
-                journal_date=today_ist(),
-                kind="consumption",
-                lines=[JournalLineIn(catalog_product_id=bare.id, quantity=1)],
-            ),
-            AUTH,
-        )
-    assert missing.value.status_code == 400
+    bare = _product(db, vendor, "NORATE", buying=None, stock=0)
+    saved = post_journal(
+        db,
+        JournalIn(
+            journal_date=today_ist(),
+            kind="consumption",
+            lines=[JournalLineIn(catalog_product_id=bare.id, quantity=2)],
+        ),
+        AUTH,
+    )
+    assert Decimal(saved.total_cost) == Decimal("0.00")
+    assert any("NORATE" in w for w in saved.warnings)
+    assert _hand(db, bare.id) == -2
     priced = _product(db, vendor, "LOW", buying=Decimal("2.00"), stock=3)
-    with pytest.raises(HTTPException) as over:
-        post_journal(
-            db,
-            JournalIn(
-                journal_date=today_ist(),
-                kind="consumption",
-                lines=[JournalLineIn(catalog_product_id=priced.id, quantity=9)],
-            ),
-            AUTH,
-        )
-    assert over.value.status_code == 400
-    assert _hand(db, priced.id) == 3
+    over = post_journal(
+        db,
+        JournalIn(
+            journal_date=today_ist(),
+            kind="consumption",
+            album="Album 1",
+            copies=9,
+        ),
+        AUTH,
+    )
+    assert any(ln.our_product_id == "LOW" for ln in over.lines)
+    assert _hand(db, priced.id) == -6
 
 
 def test_void_restores_stock_and_drops_expense(db):

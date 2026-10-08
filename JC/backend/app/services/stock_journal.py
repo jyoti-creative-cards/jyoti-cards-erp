@@ -182,7 +182,11 @@ def resolve_lines(db: Session, body: JournalIn) -> tuple[list[dict], list[str], 
         elif body.lines:
             for ln in body.lines:
                 product = _product(db, ln.catalog_product_id)
-                rate = _buying_rate(product, ln.rate, required=True)
+                rate = _buying_rate(product, ln.rate, required=False)
+                if ln.rate is None and (product.buying_price is None or Decimal(str(product.buying_price)) <= 0):
+                    warnings.append(
+                        f"{product.our_product_id} has no buying price. Its quantity is still taken. Its cost on this expense is zero."
+                    )
                 drafted.append({
                     "product": product,
                     "quantity_delta": -int(ln.quantity),
@@ -216,10 +220,14 @@ def resolve_lines(db: Session, body: JournalIn) -> tuple[list[dict], list[str], 
             continue
         have = _on_hand(db, int(row["product"].id))
         row["on_hand"] = have
-        if have < need:
+        if have < need and body.kind != "consumption":
             raise HTTPException(
                 400,
                 f"Not enough stock of {row['product'].our_product_id}: have {have}, journal needs {need}.",
+            )
+        if have < need:
+            warnings.append(
+                f"{row['product'].our_product_id} has {have} in stock. This still takes {need}."
             )
     return lines, warnings, total
 
@@ -265,7 +273,7 @@ def post_journal(db: Session, body: JournalIn, auth: AuthContext) -> JournalOut:
         )
         have = int(bal.quantity_on_hand) if bal else 0
         need = -int(row["quantity_delta"])
-        if have < need:
+        if body.kind != "consumption" and have < need:
             raise HTTPException(
                 400,
                 f"Not enough stock of {row['product'].our_product_id}: have {have}, journal needs {need}.",

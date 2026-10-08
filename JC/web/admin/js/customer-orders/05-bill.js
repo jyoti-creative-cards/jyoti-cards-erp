@@ -269,8 +269,12 @@
       transportMode = bill.transport_mode || (bill.freight_agent_id ? "bus" : (Number(bill.freight_charges) > 0 ? "transport" : "self_pickup"));
       transportReceiptNumber = bill.transport_receipt_number || "";
       packagingCharges = bill.packaging_charges != null ? String(bill.packaging_charges) : "";
-      additionalCharges = (bill.additional_charges || []).filter(c => String(c.name || "").trim().toLowerCase() !== "name plate").length
-        ? bill.additional_charges.filter(c => String(c.name || "").trim().toLowerCase() !== "name plate").map(c => ({ name: c.name || "", amount: String(c.amount || "") }))
+      const keptCharges = (bill.additional_charges || []).filter(c => {
+        const n = String(c.name || "").trim().toLowerCase().replace(/[_-]/g, " ");
+        return !n.includes("name plate") && !n.includes("initial plate");
+      });
+      additionalCharges = keptCharges.length
+        ? keptCharges.map(c => ({ name: c.name || "", amount: String(c.amount || "") }))
         : [{ name: "", amount: "" }];
       billSeriesId = bill.bill_series_id != null ? String(bill.bill_series_id) : "";
       editBillNumber = bill.bill_number || "";

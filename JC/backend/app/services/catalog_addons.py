@@ -17,12 +17,18 @@ def is_name_plate(our_product_id: str | None, name: str | None) -> bool:
     return "name plate" in _plate_label(our_product_id, name)
 
 
+def is_initial_plate(our_product_id: str | None, name: str | None) -> bool:
+    return "initial plate" in _plate_label(our_product_id, name)
+
+
 def addon_sell_price(addon: AddonProduct) -> Decimal:
     raw = getattr(addon, "selling_price", None)
     if raw is not None and Decimal(str(raw)) > 0:
         return Decimal(str(raw)).quantize(Decimal("0.01"))
     if is_name_plate(addon.our_product_id, addon.name):
         return Decimal("2.00")
+    if is_initial_plate(addon.our_product_id, addon.name):
+        return Decimal("3.00")
     return Decimal("0.00")
 
 
@@ -235,7 +241,21 @@ def _row_sell_price(row: dict) -> Decimal:
             pass
     if is_name_plate(row.get("our_product_id"), row.get("name")):
         return Decimal("2")
+    if is_initial_plate(row.get("our_product_id"), row.get("name")):
+        return Decimal("3")
     return Decimal("0")
+
+
+def _charge_name(row: dict) -> str:
+    if is_name_plate(row.get("our_product_id"), row.get("name")):
+        return "Name Plate"
+    if is_initial_plate(row.get("our_product_id"), row.get("name")):
+        return "Initial Plate"
+    return str(row.get("name") or row.get("our_product_id") or "Add-on").strip() or "Add-on"
+
+
+def _auto_addon_charge(name: str | None) -> bool:
+    return is_name_plate(name, None) or is_initial_plate(name, None)
 
 
 def merge_priced_addon_charges(
@@ -243,12 +263,12 @@ def merge_priced_addon_charges(
     addons_by_product: dict[int, list],
     bill_items: list[dict],
 ) -> list[dict]:
-    """Name Plate (and any priced add-on) is part of the bill total, not a second ledger line."""
+    """Priced add-ons are part of the bill total, each under its own name."""
     extra = [
         ac for ac in (additional or [])
-        if isinstance(ac, dict) and str(ac.get("name") or "").strip().lower() != "name plate"
+        if isinstance(ac, dict) and not _auto_addon_charge(ac.get("name"))
     ]
-    total = Decimal("0")
+    totals: dict[str, Decimal] = {}
     for item in bill_items:
         cid = int(item.get("catalog_product_id") or 0)
         qty = int(item.get("quantity") or 0)
@@ -261,7 +281,9 @@ def merge_priced_addon_charges(
             if price <= 0:
                 continue
             per = int(addon.get("quantity") or 1)
-            total += price * per * qty
-    if total > 0:
-        extra.append({"name": "Name Plate", "amount": format(total.quantize(Decimal("0.01")), "f")})
+            label = _charge_name(addon)
+            totals[label] = totals.get(label, Decimal("0")) + price * per * qty
+    for label, total in totals.items():
+        if total > 0:
+            extra.append({"name": label, "amount": format(total.quantize(Decimal("0.01")), "f")})
     return extra

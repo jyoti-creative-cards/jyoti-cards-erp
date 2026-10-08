@@ -172,12 +172,18 @@ def _migrate_addon_stock() -> None:
 
 
 def _migrate_addon_selling_price() -> None:
-    """Selling price on add-ons. Every add-on stays 0 except Name Plate, which is ₹2."""
+    """Selling price on add-ons. Name Plate stays ₹2. Initial Plate stays ₹3."""
     name_plate = """
         UPDATE jc_addon_products
         SET selling_price = 2
         WHERE lower(replace(replace(coalesce(our_product_id, ''), '_', ' '), '-', ' ')) LIKE '%name plate%'
            OR lower(replace(replace(coalesce(name, ''), '_', ' '), '-', ' ')) LIKE '%name plate%'
+    """
+    initial_plate = """
+        UPDATE jc_addon_products
+        SET selling_price = 3
+        WHERE lower(replace(replace(coalesce(our_product_id, ''), '_', ' '), '-', ' ')) LIKE '%initial plate%'
+           OR lower(replace(replace(coalesce(name, ''), '_', ' '), '-', ' ')) LIKE '%initial plate%'
     """
     with engine.begin() as conn:
         if _is_sqlite:
@@ -189,6 +195,7 @@ def _migrate_addon_selling_price() -> None:
                 critical=False,
             )
         _exec_sql(conn, name_plate, critical=False)
+        _exec_sql(conn, initial_plate, critical=False)
 
 
 def _migrate_legacy_staff_permissions() -> None:

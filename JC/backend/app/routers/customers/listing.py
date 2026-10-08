@@ -147,12 +147,53 @@ def quick_search_customers(
         for r in rows[:8]
     ]
 
+def search_sticker_parties(db: Session, q: str) -> list[Customer]:
+    """Party-number prefix only. A typed 3 must not match a name or a phone."""
+    text = (q or "").strip()
+    if not text.isdigit():
+        return []
+    number = sa_cast(Customer.party_number, SAString)
+    return (
+        db.query(Customer)
+        .filter(
+            Customer.is_active.is_(True),
+            Customer.deleted_at.is_(None),
+            Customer.party_number.isnot(None),
+            number.like(f"{text}%"),
+        )
+        .order_by(Customer.party_number.asc())
+        .limit(8)
+        .all()
+    )
+
+
+@router.get("/sticker-search")
+def sticker_party_search(
+    q: str = Query("", max_length=20),
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_any_permission("stickers.print", "customers.read", "finance.write")),
+) -> list[dict]:
+    rows = search_sticker_parties(db, q if isinstance(q, str) else "")
+    city_ids = sorted({r.city_id for r in rows if r.city_id})
+    cities = {c.id: c.name for c in (db.query(City).filter(City.id.in_(city_ids)).all() if city_ids else [])}
+    return [
+        {
+            "id": r.id,
+            "business_name": r.business_name,
+            "city_name": cities.get(r.city_id),
+            "phone": r.phone,
+            "party_number": r.party_number,
+        }
+        for r in rows
+    ]
+
+
 @router.get("/sticker-prints")
 def list_customer_sticker_prints(
     q: str = Query("", max_length=80),
     limit: int = Query(40, ge=1, le=100),
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(require_any_permission("customers.read", "finance.write")),
+    auth: AuthContext = Depends(require_any_permission("stickers.print", "customers.read", "finance.write")),
 ) -> list[dict]:
     from app.services.sticker_labels import list_sticker_prints, print_payload
 
@@ -164,7 +205,7 @@ def list_customer_sticker_prints(
 def post_customer_sticker_print(
     customer_id: int,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(require_any_permission("customers.read", "finance.write")),
+    auth: AuthContext = Depends(require_any_permission("stickers.print", "customers.read", "finance.write")),
 ) -> dict:
     """Record one A5 print and return the Hindi lines plus the English print time."""
     from app.services.sticker_labels import print_payload, record_sticker_print
@@ -184,7 +225,7 @@ def post_customer_sticker_print(
 def get_customer_sticker(
     customer_id: int,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(require_any_permission("customers.read", "finance.write")),
+    auth: AuthContext = Depends(require_any_permission("stickers.print", "customers.read", "finance.write")),
 ) -> dict:
     """Hindi name and city for the A5 sticker. The phone stays as stored."""
     from app.services.sticker_labels import label_for_customer

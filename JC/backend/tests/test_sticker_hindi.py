@@ -11,6 +11,7 @@ from app.db.session import Base
 from app.deps import AuthContext
 from app.models.city import City
 from app.models.customer import Customer
+from app.models.staff import Staff
 from app.models.sticker_label import StickerLabel
 from app.models.sticker_print import StickerPrint
 from app.routers.customers.listing import get_customer_sticker, list_customer_sticker_prints, post_customer_sticker_print
@@ -112,3 +113,35 @@ def test_print_is_recorded_with_english_time(db):
     assert len(rows) == 2
     assert rows[0]["party_number"] == 6004
     assert rows[0]["business_name"] == "Shri Natraj Studio"
+
+
+def test_sticker_search_matches_party_number_only(db):
+    from app.routers.customers.listing import search_sticker_parties
+
+    db.add_all([
+        Customer(business_name="Exact Three", phone="9100000001", password_hash="x", party_number=3),
+        Customer(business_name="Thirty", phone="9100000002", password_hash="x", party_number=30),
+        Customer(business_name="3 Shop", phone="3000000003", password_hash="x", party_number=14),
+    ])
+    db.commit()
+    assert [c.party_number for c in search_sticker_parties(db, "3")] == [3, 30]
+    assert search_sticker_parties(db, "shop") == []
+    assert search_sticker_parties(db, "3000000003") == []
+
+
+def test_staff_signs_in_by_name_for_sticker_only(db):
+    from app.routers.auth import staff_login
+    from app.schemas.staff import StaffLoginRequest
+    from app.services.passwords import hash_password
+
+    db.add(Staff(
+        name="print_sticker",
+        phone="9800000001",
+        password_hash=hash_password("desk-pass"),
+        permissions_json='["stickers.print"]',
+        legacy_order_perms_migrated=True,
+    ))
+    db.commit()
+    out = staff_login(StaffLoginRequest(phone="Print_Sticker", password="desk-pass"), db)
+    assert out.staff.permissions == ["stickers.print"]
+    assert out.access_token

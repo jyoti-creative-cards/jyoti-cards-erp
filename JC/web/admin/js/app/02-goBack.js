@@ -68,6 +68,11 @@
       return;
     }
     const resolved = resolveViewName(name);
+    if (stickerDesk() && resolved !== "more") {
+      if (currentViewName !== "more") showView("more", { replace: true });
+      try { Sticker.open(); } catch (e) { /* sticker script */ }
+      return;
+    }
     if (!opts.replace && currentViewName && currentViewName !== resolved) {
       viewStack.push(currentViewName);
       if (viewStack.length > 40) viewStack.shift();

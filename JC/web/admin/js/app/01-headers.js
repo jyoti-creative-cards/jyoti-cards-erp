@@ -7,6 +7,9 @@
 
   function isAdmin() { return authMode === "admin"; }
   function can(perm) { return isAdmin() || permissions.has(perm); }
+  function stickerDesk() {
+    return !isAdmin() && permissions.size === 1 && permissions.has("stickers.print");
+  }
   function canWrite(resource) { return can(resource + ".write"); }
   function canRead(resource) { return can(resource + ".read"); }
 
@@ -16,10 +19,15 @@
     const showBuying = canRead("vendor_orders");
     const showSelling = canRead("customer_orders");
     const showReturns = canRead("returns");
-    document.getElementById("nav-today")?.classList.toggle("hidden", false);
-    document.getElementById("nav-people")?.classList.toggle("hidden", !showPeople);
-    document.getElementById("nav-products")?.classList.toggle("hidden", !showProducts);
-    document.getElementById("nav-money")?.classList.toggle("hidden", !(isAdmin() || can("finance.write") || canRead("ar") || canRead("ap")));
+    const desk = stickerDesk();
+    const moreTitle = document.querySelector("#more-hub .ui-hub-title");
+    const moreSub = document.querySelector("#more-hub .ui-hub-sub");
+    if (moreTitle) moreTitle.textContent = desk ? "Print sticker" : "More";
+    if (moreSub) moreSub.textContent = desk ? "Search a party number and print." : "History, reports, setup, and safety — when you need them.";
+    document.getElementById("nav-today")?.classList.toggle("hidden", desk);
+    document.getElementById("nav-people")?.classList.toggle("hidden", desk || !showPeople);
+    document.getElementById("nav-products")?.classList.toggle("hidden", desk || !showProducts);
+    document.getElementById("nav-money")?.classList.toggle("hidden", desk || !(isAdmin() || can("finance.write") || canRead("ar") || canRead("ap")));
     document.getElementById("nav-more")?.classList.toggle("hidden", false);
     document.getElementById("more-tile-buying")?.classList.toggle("hidden", !showBuying);
     document.getElementById("more-tile-selling")?.classList.toggle("hidden", !showSelling);
@@ -344,6 +352,11 @@
       try { FreightAgentsSetup.init(sharedCtx()); } catch (e) { console.error("FreightAgentsSetup init failed", e); }
       try { DocShare.init(sharedCtx()); } catch (e) { console.error("DocShare init failed", e); }
       applyNavPermissions();
+      if (stickerDesk()) {
+        showView("more");
+        try { Sticker.open(); } catch (e) { /* sticker script */ }
+        return;
+      }
       showView("today");
       try {
         await refreshAll();
@@ -405,9 +418,9 @@
   }
 
   async function staffLogin() {
-    const phone = (document.getElementById("staff-phone-input").value || "").replace(/\D/g, "");
+    const phone = (document.getElementById("staff-phone-input").value || "").trim();
     const password = document.getElementById("staff-password-input").value.trim();
-    if (phone.length !== 10) return toast("Phone must be 10 digits", "error");
+    if (!phone) return toast("Enter mobile or name", "error");
     try {
       const res = await fetch(`${API}/auth/staff/login`, {
         method: "POST",

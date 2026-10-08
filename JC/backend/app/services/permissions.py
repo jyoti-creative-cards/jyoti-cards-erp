@@ -20,6 +20,7 @@ PERMISSION_GROUPS = [
     ("Stock", [("stock.read", "View stock"), ("stock.write", "Receive, edit & bill stock (stock adjustment and selling-price edits are always owner/admin-only)")]),
     ("Costs", [("costs.read", "See our buying price / cost & margins")]),
     ("Finance", [("finance.write", "Record vendor/customer payments & add expenses — no totals or reports")]),
+    ("Print sticker", [("stickers.print", "Print party stickers only")]),
     ("Accounts Receivable", [
         ("ar.read", "See customer outstanding, ledger & statements"),
         ("ar.write", "Collect customer payments with full figures"),

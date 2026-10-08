@@ -46,7 +46,7 @@ const Sticker = (() => {
         </div>
         <div class="modal-body">
           <label class="label">Party number
-            <input id="sticker-q" class="input" type="search" autocomplete="off" placeholder="Type the party number" oninput="Sticker.onType(this.value)" />
+            <input id="sticker-q" class="input" type="search" inputmode="numeric" autocomplete="off" placeholder="Party number only" oninput="Sticker.onType(this.value)" />
           </label>
           <div id="sticker-results"></div>
           <p id="sticker-picked" class="fin-panel-sub" style="margin:12px 0 0;"></p>
@@ -73,7 +73,7 @@ const Sticker = (() => {
     const box = document.getElementById("sticker-results");
     if (box) box.innerHTML = "";
     const note = document.getElementById("sticker-picked");
-    if (note) note.textContent = "Type a party number. Pick the party. Then print.";
+    if (note) note.textContent = "Type the party number. Pick the party. Then print.";
     const btn = document.getElementById("sticker-print");
     if (btn) btn.disabled = true;
     loadPrints("");
@@ -97,6 +97,11 @@ const Sticker = (() => {
       loadPrints("");
       return;
     }
+    if (!/^\d+$/.test(q)) {
+      const box = document.getElementById("sticker-results");
+      if (box) box.innerHTML = `<p class="fin-panel-sub" style="margin:8px 0 0;">Type the party number.</p>`;
+      return;
+    }
     timer = setTimeout(() => { search(q); loadPrints(q); }, 180);
   }
 
@@ -105,7 +110,7 @@ const Sticker = (() => {
     const box = document.getElementById("sticker-results");
     if (!box) return;
     try {
-      const res = await fetch(`${apiBase()}/customers/quick-search?q=${encodeURIComponent(q)}`, { headers: headers() });
+      const res = await fetch(`${apiBase()}/customers/sticker-search?q=${encodeURIComponent(q)}`, { headers: headers() });
       if (!res.ok) throw new Error("Could not search parties");
       const rows = await res.json();
       if (lastQuery !== q) return;
@@ -165,19 +170,36 @@ const Sticker = (() => {
     const html = `<!DOCTYPE html><html lang="hi"><head><meta charset="utf-8"><title>Sticker</title>
       <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@500;700&display=swap">
       <style>
-        @page { size: A5; margin: 14mm; }
-        html, body { margin: 0; padding: 0; }
-        body { color: #111; }
-        .time, .phone { font-family: Helvetica, Arial, sans-serif; }
+        @page { size: A5 portrait; margin: 8mm; }
+        html, body { margin: 0; padding: 0; height: 100%; }
+        body {
+          color: #111;
+          min-height: 190mm;
+          box-sizing: border-box;
+          display: flex;
+          flex-direction: column;
+          justify-content: space-evenly;
+          padding: 6mm 4mm 14mm;
+        }
+        .phone { font-family: Helvetica, Arial, sans-serif; }
         .name, .city { font-family: "Noto Sans Devanagari", "Kohinoor Devanagari", "Nirmala UI", "Mangal", sans-serif; }
-        .time { font-size: 18px; margin: 0 0 28px; }
-        .name { font-size: 32px; font-weight: 700; margin: 0 0 16px; line-height: 1.35; }
-        .city, .phone { font-size: 24px; margin: 0 0 12px; line-height: 1.35; }
+        .name { font-size: 22mm; font-weight: 700; margin: 0; line-height: 1.15; }
+        .city { font-size: 16mm; margin: 0; line-height: 1.2; }
+        .phone { font-size: 14mm; margin: 0; letter-spacing: 0.4mm; }
+        .time {
+          position: fixed;
+          right: 8mm;
+          bottom: 6mm;
+          margin: 0;
+          font-size: 3.2mm;
+          color: #666;
+          font-family: Helvetica, Arial, sans-serif;
+        }
       </style></head><body>
-        <p class="time">${esc(label.printed_label || "")}</p>
         <p class="name" lang="hi">${esc(label.name_hi || "")}</p>
         <p class="city" lang="hi">${esc(label.city_hi || "")}</p>
         <p class="phone">${esc(label.phone || "")}</p>
+        <p class="time">${esc(label.printed_label || "")}</p>
       </body></html>`;
     w.document.open();
     w.document.write(html);

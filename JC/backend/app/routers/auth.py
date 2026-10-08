@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -90,15 +91,27 @@ def _staff_public(row: Staff) -> StaffPublic:
 
 @router.post("/staff/login", response_model=StaffLoginResponse)
 def staff_login(body: StaffLoginRequest, db: Session = Depends(get_db)) -> StaffLoginResponse:
-    import re
-    digits = re.sub(r"\D+", "", body.phone.strip())
-    if len(digits) != 10:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="invalid phone")
-    lock_key = f"staff_login:{digits}"
+    raw = (body.phone or "").strip()
+    digits = re.sub(r"\D+", "", raw)
+    by_name = bool(re.search(r"[A-Za-z]", raw))
+    if by_name:
+        lock_key = f"staff_login:name:{raw.lower()}"
+    else:
+        if len(digits) != 10:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="invalid phone")
+        lock_key = f"staff_login:{digits}"
     wait = seconds_until_unlocked(lock_key)
     if wait > 0:
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, detail=f"too many attempts — try again in {int(wait // 60) + 1} min")
-    row = db.query(Staff).filter(Staff.phone == digits, Staff.is_active.is_(True)).one_or_none()
+    if by_name:
+        rows = db.query(Staff).filter(
+            func.lower(Staff.name) == raw.lower(),
+            Staff.is_active.is_(True),
+            Staff.deleted_at.is_(None),
+        ).all()
+        row = rows[0] if len(rows) == 1 else None
+    else:
+        row = db.query(Staff).filter(Staff.phone == digits, Staff.is_active.is_(True), Staff.deleted_at.is_(None)).one_or_none()
     if row is None or not verify_password(body.password, row.password_hash):
         record_failure(lock_key)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="wrong phone or password")

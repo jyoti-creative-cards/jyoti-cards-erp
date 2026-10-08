@@ -299,8 +299,59 @@
     } catch (e) { ctx.toast(e.message || "PDF not available", "error"); }
     finally { ctx.hideLoading?.(); }
   }
+  let stockLedgerKind = "all";
+  let stockHideVoids = false;
+  let stockLedgerRows = [];
+
+  function stockMoveBucket(e) {
+    const t = String(e.entry_type || "").toLowerCase();
+    const ref = String(e.reference_type || "").toLowerCase();
+    if (t.includes("void") || t.includes("restore")) return "void";
+    if (ref === "stock_receipt" || t === "received") return "purchase";
+    if (ref === "customer_placement" || ref === "customer_bill" || t === "reserved" || t === "sold") return "sales";
+    return "other";
+  }
+
+  function visibleStockRows(rows) {
+    let list = rows || [];
+    if (stockHideVoids) {
+      const voided = new Set();
+      for (const e of list) {
+        if (stockMoveBucket(e) === "void" && e.reference_id) voided.add(`${e.reference_type}:${e.reference_id}`);
+      }
+      list = list.filter(e => {
+        if (stockMoveBucket(e) === "void") return false;
+        if (e.reference_id && voided.has(`${e.reference_type}:${e.reference_id}`)) return false;
+        return true;
+      });
+    }
+    if (stockLedgerKind === "purchase" || stockLedgerKind === "sales" || stockLedgerKind === "other") {
+      list = list.filter(e => stockMoveBucket(e) === stockLedgerKind);
+    }
+    return list;
+  }
+
+  function setLedgerKind(kind) {
+    stockLedgerKind = kind || "all";
+    repaintStockLedger();
+  }
+
+  function setHideStockVoids(on) {
+    stockHideVoids = !!on;
+    repaintStockLedger();
+  }
+
+  function repaintStockLedger() {
+    const host = document.getElementById("stock-ledger-block");
+    if (!host) return;
+    host.outerHTML = ledgerTableHtml(stockLedgerRows);
+  }
+
   function ledgerTableHtml(rows) {
-    const body = (rows || []).length ? rows.map(e => {
+    stockLedgerRows = rows || [];
+    const shown = visibleStockRows(stockLedgerRows);
+    const chip = (id, label) => `<button type="button" class="btn btn-sm ${stockLedgerKind === id ? "btn-primary" : "btn-secondary"}" onclick="Stock.setLedgerKind('${id}')">${label}</button>`;
+    const body = shown.length ? shown.map(e => {
       const when = ctx.fmtDay?.(e.display_date || e.created_at) || "—";
       const qty = `${e.quantity_delta > 0 ? "+" : ""}${e.quantity_delta}`;
       const kind = e.voucher_kind || "";
@@ -318,10 +369,22 @@
         <td>${e.balance_after}</td>
         <td><span class="badge badge-blue">${ctx.esc(e.entry_type || "")}</span></td>
       </tr>`;
-    }).join("") : `<tr><td colspan="6" style="color:var(--muted);">No movements yet</td></tr>`;
-    return `<div class="table-wrap"><table class="data history-table"><thead><tr>
-      <th>Date</th><th>Party</th><th>Qty</th><th>Bill</th><th>Balance</th><th>Type</th>
-    </tr></thead><tbody>${body}</tbody></table></div>`;
+    }).join("") : `<tr><td colspan="6" style="color:var(--muted);">No movements for this filter</td></tr>`;
+    return `<div id="stock-ledger-block">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 10px;">
+        ${chip("all", "All")}
+        ${chip("purchase", "Purchase")}
+        ${chip("sales", "Sales")}
+        ${chip("other", "Other")}
+        <label style="display:inline-flex;gap:6px;align-items:center;margin-left:4px;font-size:13px;">
+          <input type="checkbox" ${stockHideVoids ? "checked" : ""} onchange="Stock.setHideStockVoids(this.checked)" />
+          Hide void entries
+        </label>
+      </div>
+      <div class="table-wrap"><table class="data history-table"><thead><tr>
+        <th>Date</th><th>Party</th><th>Qty</th><th>Bill</th><th>Balance</th><th>Type</th>
+      </tr></thead><tbody>${body}</tbody></table></div>
+    </div>`;
   }
   function toastNoBill() {
     ctx.toast("No bill yet for this item and party", "error");

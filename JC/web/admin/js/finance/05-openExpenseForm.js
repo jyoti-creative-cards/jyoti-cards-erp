@@ -442,7 +442,7 @@
     if (!freightLedger.length) {
       el.innerHTML = HubUI.emptyState({
         title: "No ledger entries yet",
-        sub: "Mark parcels picked under Customer orders → Dispatch. Settle / advance payments here.",
+        sub: "Bus freight is added when the bill is saved. Transport charges stay on the customer bill.",
         ctaHtml: `<button class="btn btn-secondary" onclick="App.showView('selling');CustomerOrders.goToDispatch()">Open Dispatch</button>`,
       });
       return;

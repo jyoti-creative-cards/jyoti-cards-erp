@@ -1195,10 +1195,10 @@ const Reports = (() => {
       return;
     }
     if (d.party_type === "product") {
-      const rows = realLedgerEntries(d.entries || []);
-      body.innerHTML = voidFilterBar() + (Stock.ledgerTableHtml
+      const rows = d.entries || [];
+      body.innerHTML = Stock.ledgerTableHtml
         ? `<p style="font-size:12px;color:var(--muted);margin:0 0 8px;">Click a row to open that bill.</p>${Stock.ledgerTableHtml(rows)}`
-        : empty("No stock moves", "No ledger lines for this product."));
+        : empty("No stock moves", "No ledger lines for this product.");
       return;
     }
     const entries = d.party_type === "expense" ? (d.entries || []) : realLedgerEntries(d.entries || []);

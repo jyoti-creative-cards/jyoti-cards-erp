@@ -210,3 +210,79 @@ def test_stock_wise_opening_in_and_out():
     assert row["outward"] == 5
     assert row["closing"] == 45
     db.close()
+
+
+def test_voided_bill_stock_uses_bill_date_not_order_or_entry_day():
+    from app.models.customer_order import CustomerOrder, CustomerOrderPlacement
+
+    db = _db()
+    vendor = Vendor(business_name="Paper House", phone="9000000007")
+    db.add(vendor)
+    db.flush()
+    prod = CatalogProduct(
+        our_product_id="2165", vendor_id=vendor.id, vendor_product_id="V2165",
+        buying_price=Decimal("10"), selling_price=Decimal("20"),
+    )
+    db.add(prod)
+    db.flush()
+    customer = Customer(business_name="Giriraj Cards", phone="9000000008", password_hash="x")
+    db.add(customer)
+    db.flush()
+    order = CustomerOrder(customer_id=customer.id, bucket="open", status="open", is_open=True)
+    db.add(order)
+    db.flush()
+    decoy = CustomerOrderPlacement(
+        id=480,
+        customer_order_id=order.id,
+        status="billed",
+        placed_at=datetime(2026, 9, 18, 10, 52, tzinfo=timezone.utc),
+    )
+    real = CustomerOrderPlacement(
+        customer_order_id=order.id,
+        status="open",
+        placed_at=datetime(2026, 10, 8, 9, 54, tzinfo=timezone.utc),
+    )
+    db.add_all([decoy, real])
+    db.flush()
+    bill = CustomerBill(
+        id=480,
+        customer_id=customer.id,
+        bill_number="A431",
+        subtotal_inclusive=Decimal("5000"),
+        discount_amount=Decimal("0"),
+        taxable_value=Decimal("5000"),
+        gst_amount=Decimal("0"),
+        grand_total=Decimal("5375"),
+        created_by_type="admin",
+        created_by_name="Admin",
+        bill_date=date(2026, 10, 1),
+        created_at=datetime(2026, 10, 8, 10, 4, tzinfo=timezone.utc),
+        cancelled_at=datetime(2026, 10, 8, 10, 7, tzinfo=timezone.utc),
+        deleted_at=datetime(2026, 10, 8, 10, 7, tzinfo=timezone.utc),
+    )
+    db.add(bill)
+    db.flush()
+    db.add(CustomerBillLine(
+        bill_id=bill.id, catalog_product_id=prod.id, our_product_id="2165",
+        quantity_shipped=250, unit_price=Decimal("20"), line_total=Decimal("5000"),
+    ))
+    db.add(StockLedger(
+        catalog_product_id=prod.id, entry_type="reserved", quantity_delta=-250, balance_after=0,
+        reference_type="customer_placement", reference_id=real.id, party="Giriraj Cards",
+        notes="Customer order reserved 250",
+        created_at=datetime(2026, 10, 8, 9, 54, tzinfo=timezone.utc),
+    ))
+    db.add(StockLedger(
+        catalog_product_id=prod.id, entry_type="unreserved", quantity_delta=250, balance_after=250,
+        reference_type="customer_bill", reference_id=bill.id, party="Giriraj Cards",
+        notes="Bill A431 cancelled — stock released",
+        created_at=datetime(2026, 10, 8, 10, 7, tzinfo=timezone.utc),
+    ))
+    db.commit()
+    rows = annotate_stock_ledger(db, db.query(StockLedger).order_by(StockLedger.id.asc()).all())
+    reserved, released = rows
+    assert reserved["display_date"] == date(2026, 10, 1)
+    assert reserved["bill_number"] == "A431"
+    assert released["display_date"] == date(2026, 10, 1)
+    assert released["bill_number"] == "A431"
+    db.close()

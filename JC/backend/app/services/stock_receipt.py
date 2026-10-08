@@ -325,8 +325,6 @@ def _bills_for_reservations(db: Session, entries: list) -> dict[int, object]:
         .filter(
             CustomerBill.customer_id.in_(customer_ids),
             CustomerBillLine.catalog_product_id.in_(product_ids),
-            CustomerBill.deleted_at.is_(None),
-            CustomerBill.cancelled_at.is_(None),
         )
         .all()
     )
@@ -341,20 +339,45 @@ def _bills_for_reservations(db: Session, entries: list) -> dict[int, object]:
             return value.replace(tzinfo=timezone.utc)
         return value
 
+    def _live(bill) -> bool:
+        return bill.cancelled_at is None and bill.deleted_at is None
+
+    def _pick(bills, created_ts, *, voided: bool):
+        pool = []
+        for bill in bills:
+            if voided:
+                ended = _ts(bill.cancelled_at or bill.deleted_at)
+                bill_ts = _ts(bill.created_at)
+                if created_ts is None or ended is None or bill_ts is None:
+                    continue
+                if created_ts <= ended and bill_ts >= created_ts:
+                    pool.append(bill)
+            else:
+                bill_ts = _ts(bill.created_at)
+                if created_ts is not None and bill_ts is not None and bill_ts >= created_ts:
+                    pool.append(bill)
+        if not pool and not voided:
+            pool = list(bills)
+        if not pool:
+            return None
+        pool.sort(key=lambda b: _ts(b.created_at) or datetime.min.replace(tzinfo=timezone.utc))
+        if voided or (created_ts is not None and _ts(pool[0].created_at) and _ts(pool[0].created_at) >= created_ts):
+            return pool[0]
+        return pool[-1]
+
     out: dict[int, object] = {}
     for eid, cid, pid, created in keys:
         bills = by_pair.get((cid, pid)) or []
         if not bills:
             continue
         created_ts = _ts(created)
-        after = []
-        for bill in bills:
-            bill_ts = _ts(bill.created_at)
-            if created_ts is not None and bill_ts is not None and bill_ts >= created_ts:
-                after.append(bill)
-        pool = after or bills
-        pool.sort(key=lambda b: _ts(b.created_at) or datetime.min.replace(tzinfo=timezone.utc))
-        out[eid] = pool[0] if after else pool[-1]
+        live = [b for b in bills if _live(b)]
+        voided = [b for b in bills if not _live(b)]
+        chosen = _pick(live, created_ts, voided=False) if live else None
+        if chosen is None:
+            chosen = _pick(voided, created_ts, voided=True)
+        if chosen is not None:
+            out[eid] = chosen
     return out
 
 

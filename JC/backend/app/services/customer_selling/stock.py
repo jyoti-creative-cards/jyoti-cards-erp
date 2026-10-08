@@ -150,7 +150,7 @@ def reserve_stock_many(
             ledger_row.created_at = when
         db.add(ledger_row)
 
-def restore_stock(db: Session, *, catalog_product_id: int, our_product_id: str, quantity: int, reference_id: int, party: str, notes: str, when: datetime | None = None, only_addon_ids: list[int] | None = None) -> None:
+def restore_stock(db: Session, *, catalog_product_id: int, our_product_id: str, quantity: int, reference_id: int, party: str, notes: str, when: datetime | None = None, only_addon_ids: list[int] | None = None, reference_type: str = "customer_placement") -> None:
     if quantity <= 0:
         return
     add_stock(
@@ -159,7 +159,7 @@ def restore_stock(db: Session, *, catalog_product_id: int, our_product_id: str, 
         our_product_id=our_product_id,
         quantity=quantity,
         entry_type="unreserved",
-        reference_type="customer_placement",
+        reference_type=reference_type,
         reference_id=reference_id,
         party=party,
         notes=notes,
@@ -169,7 +169,7 @@ def restore_stock(db: Session, *, catalog_product_id: int, our_product_id: str, 
         db,
         catalog_product_id=catalog_product_id,
         units=-quantity,
-        reference_type="customer_placement",
+        reference_type=reference_type,
         reference_id=reference_id,
         party=party,
         note=notes,

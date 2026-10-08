@@ -1946,13 +1946,14 @@ const Stock = (() => {
     finally { ctx.hideLoading?.(); }
   }
   let stockLedgerKind = "all";
-  let stockHideVoids = false;
+  let stockHideVoids = true;
   let stockLedgerRows = [];
 
   function stockMoveBucket(e) {
     const t = String(e.entry_type || "").toLowerCase();
     const ref = String(e.reference_type || "").toLowerCase();
-    if (t.includes("void") || t.includes("restore")) return "void";
+    const notes = String(e.notes || "").toLowerCase();
+    if (t.includes("void") || t.includes("restore") || notes.includes("cancelled") || notes.includes("voided")) return "void";
     if (ref === "stock_receipt" || t === "received") return "purchase";
     if (ref === "customer_placement" || ref === "customer_bill" || t === "reserved" || t === "sold") return "sales";
     return "other";

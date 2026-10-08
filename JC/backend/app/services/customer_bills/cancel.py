@@ -182,6 +182,7 @@ def cancel_customer_bill(
             our_product_id=ln.our_product_id,
             quantity=qty,
             reference_id=bill.id,
+            reference_type="customer_bill",
             party=customer_name,
             notes=f"Bill {bill.bill_number} cancelled — stock released",
             only_addon_ids=kept_addon_ids_for_customer_product(db, bill.customer_id, ln.catalog_product_id),

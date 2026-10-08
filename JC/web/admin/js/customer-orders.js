@@ -298,7 +298,7 @@ const CustomerOrders = (() => {
       const total = per * scale;
       const label = a.name || a.our_product_id || "Add-on";
       const price = Number(a.selling_price);
-      const priceBit = price > 0 ? ` · ₹${price}` : "";
+      const priceBit = price > 0 ? ` · ₹${price} × ${total} = ₹${price * total}` : "";
       return `<div class="co-addon-row">+ ${ctx.esc(a.our_product_id || "")} · ${ctx.esc(label)} × ${total}${priceBit}</div>`;
     }).join("")}</div>`;
   }
@@ -1991,6 +1991,21 @@ const CustomerOrders = (() => {
     const lineRows = (tot.lines || []).map(ln => {
       const disc = Number(ln.line_discount || 0);
       const discPct = ln.item_discount_percent ? ` (${ln.item_discount_percent}%)` : "";
+      const src = processLines.find(p => String(p.our_product_id) === String(ln.our_product_id)) || {};
+      const addonRows = (src.addons || ln.addons || []).map(a => {
+        const per = Number(a.quantity) || 1;
+        const qty = per * (Number(ln.quantity) || 0);
+        const price = Number(a.selling_price) || 0;
+        const amount = price > 0 ? price * qty : 0;
+        return `<tr>
+          <td style="padding-left:16px;color:var(--muted);">+ ${ctx.esc(a.name || a.our_product_id || "Add-on")}</td>
+          <td>${qty}</td>
+          <td>${price > 0 ? fmtPrice(price) : "—"}</td>
+          <td>—</td>
+          <td>${price > 0 ? fmtPrice(price) : "—"}</td>
+          <td>${price > 0 ? fmtPrice(amount) : "—"}</td>
+        </tr>`;
+      }).join("");
       return `<tr>
         <td><strong>${ctx.esc(ln.our_product_id)}</strong></td>
         <td>${ln.quantity}</td>
@@ -1998,7 +2013,7 @@ const CustomerOrders = (() => {
         <td>${disc > 0 ? `${discPct.trim() || "—"}` : "—"}</td>
         <td>${fmtPrice(ln.net_rate || ln.effective_price)}</td>
         <td>${fmtPrice(ln.line_total)}</td>
-      </tr>`;
+      </tr>${addonRows}`;
     }).join("");
     const totalQty = (tot.lines || []).reduce((s, ln) => s + (Number(ln.quantity) || 0), 0);
     const totalLineAmount = (tot.lines || []).reduce((s, ln) => s + (Number(ln.line_total) || 0), 0);

@@ -107,8 +107,8 @@ def _build_detail(db: Session, order: VendorOrder, *, auth: AuthContext, open_on
                 placed_at=p.placed_at,
                 display_date=view.get("display_date") or p.placed_at,
                 display_name=view.get("display_name"),
-                placed_by_name=p.placed_by_name,
-                placed_by_type=p.placed_by_type,
+                placed_by_name=p.placed_by_name or "",
+                placed_by_type=p.placed_by_type or "",
                 color_index=color_map[p.id],
                 line_count=len(plines),
                 total_quantity=sum(ln.quantity for ln in plines),
@@ -179,7 +179,7 @@ def _build_detail(db: Session, order: VendorOrder, *, auth: AuthContext, open_on
             )
 
     aggregated_lines = []
-    for v in sorted(agg.values(), key=lambda x: x["our_product_id"].lower()):
+    for v in sorted(agg.values(), key=lambda x: (x.get("our_product_id") or "").lower()):
         if order.bucket == "placed":
             pid = v["catalog_product_id"]
             v["total_placed"] = placed_map.get(pid, v["total_quantity"])
@@ -270,7 +270,7 @@ def update_line(
         changes.append(f"product {line.our_product_id}→{prod.our_product_id}")
         line.catalog_product_id = prod.id
         line.our_product_id = prod.our_product_id
-        line.buying_price = prod.buying_price
+        line.buying_price = prod.buying_price if prod.buying_price is not None else Decimal("0")
 
     if not changes:
         return _build_detail(db, order, auth=auth)
@@ -362,7 +362,7 @@ def create_placement(
                 our_product_id=prod.our_product_id,
                 quantity=ln.quantity,
                 quantity_remaining=ln.quantity,
-                buying_price=prod.buying_price,
+                buying_price=prod.buying_price if prod.buying_price is not None else Decimal("0"),
             )
         )
 

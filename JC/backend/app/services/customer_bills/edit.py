@@ -1,7 +1,7 @@
 from __future__ import annotations
 """Split from app/services/customer_bill_process.py."""
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
@@ -17,7 +17,11 @@ from app.models.stock import StockBalance
 from app.models.freight_agent import FreightAgent
 from app.services.ar_ledger import post_bill_entry, update_bill_ledger_amount
 from app.services.bill_series_alloc import allocate_bill_number, resolve_bill_number
-from app.services.catalog_addons import billing_addons_for_products, merge_priced_addon_charges
+from app.services.catalog_addons import (
+    apply_billing_addons_to_totals,
+    billing_addons_for_products,
+    merge_priced_addon_charges,
+)
 from app.services.credit_limit import assert_credit_allows_bill, credit_status
 from app.services.customer_bill_math import assert_discount_xor, compute_bill_totals
 from app.services.document_present import freeze_card
@@ -151,6 +155,7 @@ def _prepare_edit_bill_totals(
         additional_charges=additional_charges,
     )
     totals = stamp_transport_on_totals(totals, t, agent_name=agent_name)
+    totals = apply_billing_addons_to_totals(totals, addon_for_bill, bill_items)
     return {
         "bill": bill,
         "customer_id": customer_id,
@@ -225,6 +230,7 @@ def edit_customer_bill(
     transport_mode: Optional[str] = None,
     transport_receipt_number: Optional[str] = None,
     freight_charges_raw: object = None,
+    bill_date: date | None = None,
 ) -> CustomerBill:
     """Edit an existing bill (add/remove/change qty) and sync customer order qty."""
     prep = _prepare_edit_bill_totals(
@@ -335,6 +341,15 @@ def edit_customer_bill(
     bill.grand_total = new_grand
     bill.totals_json = totals
     bill.document_key = None  # regenerate PDF on next download
+    ledger_value_date = None
+    ledger_created_at = None
+    if bill_date is not None:
+        from app.services.biz_date import resolve_biz_dt, resolve_invoice_date
+
+        invoice_day = resolve_invoice_date(bill_date)
+        bill.bill_date = invoice_day
+        ledger_value_date = invoice_day
+        ledger_created_at = resolve_biz_dt(bill_date)
     _persist_totals_addons(db, bill)
 
     # Freight assignment: pending parcels can change agent; picked only amount sync.
@@ -354,6 +369,8 @@ def edit_customer_bill(
         bill_id=bill.id,
         amount=new_grand,
         description=f"Bill {bill.bill_number} (edited) — ₹{new_grand}",
+        value_date=ledger_value_date,
+        created_at=ledger_created_at,
     )
     freeze_card(db, "customer_bill", bill)
     response_cache.invalidate("stock:")

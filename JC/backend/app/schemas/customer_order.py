@@ -196,6 +196,7 @@ class EditBillIn(BaseModel):
     packaging_charges: Optional[str] = None
     additional_charges: List[AdditionalChargeIn] = []
     narration: Optional[str] = None
+    bill_date: Optional[date] = None
     force_credit_override: bool = False
 
 

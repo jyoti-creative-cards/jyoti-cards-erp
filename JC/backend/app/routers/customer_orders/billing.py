@@ -374,6 +374,7 @@ def update_bill_endpoint(
             transport_mode=body.transport_mode,
             transport_receipt_number=body.transport_receipt_number,
             freight_charges_raw=body.freight_charges,
+            bill_date=body.bill_date,
         )
     except HTTPException:
         raise

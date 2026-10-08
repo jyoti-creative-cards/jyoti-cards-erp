@@ -152,7 +152,7 @@ def update_open_line(
         changes.append(f"product {row.our_product_id}→{prod.our_product_id}")
         row.catalog_product_id = prod.id
         row.our_product_id = prod.our_product_id
-        row.buying_price = prod.buying_price
+        row.buying_price = prod.buying_price if prod.buying_price is not None else Decimal("0")
     if changes:
         log_from_auth(
             db, auth, action="update_open", entity_type="vendor_order", entity_id=row.vendor_id,

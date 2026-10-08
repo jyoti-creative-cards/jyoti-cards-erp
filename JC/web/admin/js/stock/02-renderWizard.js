@@ -23,7 +23,7 @@
       // way; this used to fall through to the bill-editing form/labels instead
       // of the plain receive-quantities one, demanding a bill number/amount for
       // a receipt that was never billed.
-      const isRecvEdit = editReceiptType === "vendor_receive" || editReceiptType === "offline_vendor";
+      const isRecvEdit = editReceiptType === "vendor_receive" || editReceiptType === "offline_vendor" || editReceiptType === "vendor_order";
       const isBillEdit = editReceiptType === "vendor_bill";
       setStockWizardChrome(
         isRecvEdit ? "Edit Receive" : "Edit Vendor Bill",

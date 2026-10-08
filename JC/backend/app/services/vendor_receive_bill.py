@@ -110,7 +110,7 @@ def receive_vendor_goods(
         if not prod or prod.vendor_id != body.vendor_id:
             raise HTTPException(400, f"invalid product {ln.catalog_product_id} for vendor")
         recv_qty = int(ln.quantity_received or 0)
-        total_actual_value += prod.buying_price * recv_qty
+        total_actual_value += (prod.buying_price or Decimal("0")) * recv_qty
         db.add(
             StockReceiptLine(
                 receipt_id=receipt.id,
@@ -119,7 +119,7 @@ def receive_vendor_goods(
                 quantity_received=recv_qty,
                 quantity_billed=0,
                 billed_amount=Decimal("0"),
-                buying_price=prod.buying_price,
+                buying_price=prod.buying_price if prod.buying_price is not None else Decimal("0"),
             )
         )
         add_stock(
@@ -343,7 +343,7 @@ def preview_bill_deviations(
         )
         if dn:
             prod = products.get(ln.catalog_product_id)
-            expected_raw = Decimal(int(ln.quantity_received or 0)) * ln.buying_price
+            expected_raw = Decimal(int(ln.quantity_received or 0)) * (ln.buying_price or Decimal("0"))
             if bq != int(ln.quantity_received or 0) and raw_amt == (ln.buying_price * bq):
                 reason = f"billed qty {bq} vs received {ln.quantity_received}"
             elif raw_amt != expected_raw:

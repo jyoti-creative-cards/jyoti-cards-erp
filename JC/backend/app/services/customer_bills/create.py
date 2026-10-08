@@ -17,7 +17,11 @@ from app.models.stock import StockBalance
 from app.models.freight_agent import FreightAgent
 from app.services.ar_ledger import post_bill_entry, update_bill_ledger_amount
 from app.services.bill_series_alloc import allocate_bill_number, resolve_bill_number
-from app.services.catalog_addons import billing_addons_for_products, merge_priced_addon_charges
+from app.services.catalog_addons import (
+    apply_billing_addons_to_totals,
+    billing_addons_for_products,
+    merge_priced_addon_charges,
+)
 from app.services.credit_limit import assert_credit_allows_bill, credit_status
 from app.services.customer_bill_math import assert_discount_xor, compute_bill_totals
 from app.services.document_present import freeze_card
@@ -127,6 +131,7 @@ def process_customer_bill(
         additional_charges=additional_charges,
     )
     totals = stamp_transport_on_totals(totals, t, agent_name=agent_name)
+    totals = apply_billing_addons_to_totals(totals, addon_map, bill_items)
     grand_check = Decimal(str(totals.get("rounded_grand_total") or totals["grand_total"]))
     assert_credit_allows_bill(db, customer_id, grand_check, force=force_credit_override)
 

@@ -528,7 +528,7 @@ const Stock = (() => {
       // way; this used to fall through to the bill-editing form/labels instead
       // of the plain receive-quantities one, demanding a bill number/amount for
       // a receipt that was never billed.
-      const isRecvEdit = editReceiptType === "vendor_receive" || editReceiptType === "offline_vendor";
+      const isRecvEdit = editReceiptType === "vendor_receive" || editReceiptType === "offline_vendor" || editReceiptType === "vendor_order";
       const isBillEdit = editReceiptType === "vendor_bill";
       setStockWizardChrome(
         isRecvEdit ? "Edit Receive" : "Edit Vendor Bill",
@@ -1732,7 +1732,7 @@ const Stock = (() => {
     const isEdit = wizardMode === "edit_receipt" && editReceiptId;
     const isOffline = wizardMode === "offline_vendor";
     const isReceive = wizardMode === "receive_goods" || isOffline
-      || (isEdit && (editReceiptType === "vendor_receive" || editReceiptType === "offline_vendor"));
+      || (isEdit && (editReceiptType === "vendor_receive" || editReceiptType === "offline_vendor" || editReceiptType === "vendor_order"));
     const isBill = wizardMode === "bill_received" || (isEdit && editReceiptType === "vendor_bill");
     const isNewBill = isBill && !isEdit;
     const active = isReceive
@@ -2134,7 +2134,7 @@ const Stock = (() => {
       }
       document.getElementById("stock-wizard")?.classList.remove("hidden");
       document.querySelector("#stock-wizard .modal-header h3").textContent =
-        (editReceiptType === "vendor_receive" || editReceiptType === "offline_vendor") ? "Edit Receive" : "Edit Vendor Bill";
+        (editReceiptType === "vendor_receive" || editReceiptType === "offline_vendor" || editReceiptType === "vendor_order") ? "Edit Receive" : "Edit Vendor Bill";
       await renderWizard();
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }

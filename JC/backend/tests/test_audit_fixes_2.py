@@ -37,7 +37,7 @@ from app.models.vendor import Vendor
 from app.schemas.debit_note import DebitNoteIn
 from app.services.ap_ledger import get_or_create_ap_account
 from app.services.ar_ledger import get_or_create_ar_account
-from app.services.customer_bill_process import process_customer_bill
+from app.services.customer_bill_process import edit_customer_bill, process_customer_bill
 from app.services.customer_order_flow import confirm_received_order, create_received_placement
 from app.services.customer_returns import create_customer_return
 from app.services.debit_notes import create_debit_note
@@ -173,6 +173,61 @@ def test_real_time_customer_bill_ar_entry_still_uses_now(db):
 
     ar_row = db.query(ArLedgerEntry).filter(ArLedgerEntry.bill_id == bill.id, ArLedgerEntry.entry_type == "bill").one()
     assert before <= _naive(ar_row.created_at) <= after
+
+
+def test_edit_saved_bill_can_change_bill_date(db):
+    customer, prod, _ = _setup(db)
+    create_received_placement(
+        db, customer_id=customer.id, customer_name=customer.business_name,
+        lines=[{"catalog_product_id": prod.id, "quantity": 5}],
+    )
+    confirm_received_order(db, customer.id)
+    series = _bill_series(db)
+    bill = process_customer_bill(
+        db,
+        customer_id=customer.id,
+        customer_name=customer.business_name,
+        lines_in=[{"catalog_product_id": prod.id, "quantity_to_ship": 5}],
+        overall_discount_percent=None,
+        gst_enabled=False,
+        gst_rate_percent=Decimal("0"),
+        freight_agent_id=None,
+        freight_charges=None,
+        packaging_charges=None,
+        additional_charges=None,
+        bill_series_id=series.id,
+        narration=None,
+        actor_type="admin",
+        actor_id=1,
+        actor_name="Test",
+        transport_mode="self_pickup",
+    )
+    db.flush()
+    new_day = date.today() - timedelta(days=4)
+    edit_customer_bill(
+        db,
+        bill_id=bill.id,
+        lines_in=[{"catalog_product_id": prod.id, "quantity": 5}],
+        overall_discount_percent=None,
+        gst_enabled=False,
+        gst_rate_percent=Decimal("0"),
+        freight_agent_id=None,
+        freight_charges=None,
+        packaging_charges=None,
+        additional_charges=None,
+        narration=None,
+        actor_type="admin",
+        actor_id=1,
+        actor_name="Test",
+        transport_mode="self_pickup",
+        bill_date=new_day,
+    )
+    db.flush()
+    db.refresh(bill)
+    assert bill.bill_date == new_day
+    ar_row = db.query(ArLedgerEntry).filter(ArLedgerEntry.bill_id == bill.id, ArLedgerEntry.entry_type == "bill").one()
+    assert ar_row.value_date == new_day
+    assert _naive(ar_row.created_at).date() == new_day
 
 
 # ---------------------------------------------------------------------------

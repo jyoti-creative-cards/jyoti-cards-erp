@@ -105,10 +105,16 @@ def attach_addons_to_totals(db: Session, totals: dict | None) -> dict:
             cid = int(sku_map.get(str(row["our_product_id"])) or 0)
             if cid:
                 row["catalog_product_id"] = cid
+        # An explicit list — including [] — is the order's choice. A removed
+        # Name Plate must stay off the bill. Only lines that never stored a
+        # snapshot (no "addons" key) fall back to the live catalog.
+        if "addons" in row and isinstance(row.get("addons"), list):
+            enriched.append(row)
+            continue
         live = addon_map.get(cid) if cid else None
         if live:
             row["addons"] = live
-        elif not row.get("addons"):
+        else:
             row["addons"] = []
         enriched.append(row)
     return {**totals, "lines": enriched}
@@ -136,6 +142,34 @@ def addon_snapshots_map(
             _addon_row(addon, link.quantity, with_images=with_images)
         )
     return grouped
+
+
+def apply_billing_addons_to_totals(totals: dict | None, addon_map: dict, bill_items: list[dict]) -> dict:
+    """Stamp the order's kept add-ons onto totals lines before they are saved.
+
+    Empty list means the order removed every add-on. That must win over the
+    live catalog links, which attach_addons_to_totals would otherwise copy on.
+    """
+    if not isinstance(totals, dict):
+        return {}
+    by_sku: dict[str, int] = {}
+    for item in bill_items:
+        sku = item.get("our_product_id")
+        if sku and item.get("catalog_product_id"):
+            by_sku[str(sku)] = int(item["catalog_product_id"])
+    lines = []
+    for ln in totals.get("lines") or []:
+        if not isinstance(ln, dict):
+            continue
+        row = dict(ln)
+        cid = int(row.get("catalog_product_id") or 0)
+        if not cid:
+            cid = by_sku.get(str(row.get("our_product_id") or ""), 0)
+        if cid:
+            row["catalog_product_id"] = cid
+            row["addons"] = list(addon_map.get(int(cid)) or [])
+        lines.append(row)
+    return {**totals, "lines": lines}
 
 
 def priced_addons_by_product(db: Session, catalog_product_ids: list[int]) -> dict[int, list[dict]]:

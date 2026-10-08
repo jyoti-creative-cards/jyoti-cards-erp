@@ -75,10 +75,12 @@ def append_or_create_portal_placement(
                 quantity=int(quantity),
                 quantity_billed=0,
                 unit_price=unit_price,
-                addons_json=addons or None,
+                addons_json=addons if addons is not None else None,
                 status="active",
             )
         )
+        from app.services.catalog_addons import kept_addon_ids
+
         reserve_stock(
             db,
             catalog_product_id=prod.id,
@@ -86,6 +88,7 @@ def append_or_create_portal_placement(
             quantity=int(quantity),
             reference_id=placement.id,
             party=customer_name,
+            only_addon_ids=kept_addon_ids(addons) if addons is not None else None,
         )
         # CustomerOpenLine is populated at confirm time — see confirm_received_order.
 

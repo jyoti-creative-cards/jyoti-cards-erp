@@ -48,6 +48,8 @@ def update_bill_ledger_amount(
     bill_id: int,
     amount: Decimal,
     description: str,
+    value_date: Optional[date] = None,
+    created_at: Optional[datetime] = None,
 ) -> Optional[ArLedgerEntry]:
     """Rewrite the AR bill entry amount after a bill edit."""
     entry = (
@@ -60,6 +62,10 @@ def update_bill_ledger_amount(
         return None
     entry.amount = as_signed_increase(amount)
     entry.description = description
+    if value_date is not None:
+        entry.value_date = value_date
+    if created_at is not None:
+        entry.created_at = created_at
     db.flush()
     return entry
 

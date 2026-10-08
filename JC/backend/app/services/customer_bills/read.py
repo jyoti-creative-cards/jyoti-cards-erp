@@ -17,7 +17,7 @@ from app.models.stock import StockBalance
 from app.models.freight_agent import FreightAgent
 from app.services.ar_ledger import post_bill_entry, update_bill_ledger_amount
 from app.services.bill_series_alloc import allocate_bill_number, resolve_bill_number
-from app.services.catalog_addons import addon_snapshots_map, attach_addons_to_totals
+from app.services.catalog_addons import billing_addons_for_products
 from app.services.credit_limit import assert_credit_allows_bill, credit_status
 from app.services.customer_bill_math import assert_discount_xor, compute_bill_totals
 from app.services.document_present import freeze_card
@@ -56,7 +56,7 @@ def get_process_lines(db: Session, customer_id: int) -> dict:
     if product_ids:
         for bal in db.query(StockBalance).filter(StockBalance.catalog_product_id.in_(product_ids)).all():
             bal_map[int(bal.catalog_product_id)] = int(bal.quantity_on_hand or 0)
-    addon_map = addon_snapshots_map(db, product_ids, with_images=False) if product_ids else {}
+    addon_map = billing_addons_for_products(db, customer_id, product_ids) if product_ids else {}
     from app.services.document_present import live_product_names
     names = live_product_names(db, product_ids)
 

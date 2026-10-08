@@ -31,7 +31,7 @@ def _refresh_expected_bill(db: Session, receipt: StockReceipt) -> None:
     if not vendor:
         return
     lines = db.query(StockReceiptLine).filter(StockReceiptLine.receipt_id == receipt.id).all()
-    total_actual_value = sum((ln.buying_price * ln.quantity_received for ln in lines), Decimal("0"))
+    total_actual_value = sum(((ln.buying_price or Decimal("0")) * ln.quantity_received for ln in lines), Decimal("0"))
     bill_total, extra_cash = compute_bill_totals(
         total_actual_value=total_actual_value,
         billing_pct=vendor.billing_pct, additional_charge=vendor.additional_charge,
@@ -77,7 +77,7 @@ def _receipt_snapshot(db: Session, receipt: StockReceipt) -> dict:
                 "our_product_id": ln.our_product_id,
                 "quantity_received": ln.quantity_received,
                 "quantity_billed": ln.quantity_billed,
-                "billed_amount": format(ln.billed_amount, "f"),
+                "billed_amount": format(ln.billed_amount, "f") if ln.billed_amount is not None else None,
             }
             for ln in lines
         ],
@@ -162,7 +162,7 @@ def _replace_receipt_lines(db: Session, receipt: StockReceipt, lines: list, *, r
                 quantity_received=recv,
                 quantity_billed=billed,
                 billed_amount=(ln.billed_amount or Decimal("0")).quantize(Decimal("0.01")),
-                buying_price=prod.buying_price,
+                buying_price=prod.buying_price if prod.buying_price is not None else Decimal("0"),
             )
         )
 
@@ -258,7 +258,7 @@ def _edit_receive(db: Session, auth: AuthContext, receipt: StockReceipt, body: V
                     quantity_remaining=new_recv - already_billed,
                     quantity_billed=already_billed,
                     billed_amount=Decimal("0"),
-                    buying_price=prod.buying_price,
+                    buying_price=prod.buying_price if prod.buying_price is not None else Decimal("0"),
                 )
             )
 
@@ -316,7 +316,7 @@ def _edit_bill(db: Session, auth: AuthContext, receipt: StockReceipt, body: Vend
         # Raw (pre-billing_pct) line value — defaults to qty x our catalog rate, but the
         # vendor's actual paper-bill rate/amount can override it per line.
         raw_amt = billed_amt_in.get(ln.catalog_product_id)
-        raw_amt = raw_amt if raw_amt is not None else (ln.buying_price * bq)
+        raw_amt = raw_amt if raw_amt is not None else ((ln.buying_price or Decimal("0")) * bq)
         normalized.append((ln, bq, raw_amt))
     if not any(bq > 0 for _, bq, _ in normalized):
         raise HTTPException(400, "enter billed quantity on at least one row")

@@ -48,7 +48,7 @@
       if (freightCharges.trim() !== "") body.freight_charges = String(freightCharges);
     }
     if (packagingCharges.trim()) body.packaging_charges = String(packagingCharges);
-    if (!editBillId && billDate) body.bill_date = billDate;
+    if (billDate) body.bill_date = billDate;
     return body;
   }
 
@@ -278,6 +278,7 @@
         : [{ name: "", amount: "" }];
       billSeriesId = bill.bill_series_id != null ? String(bill.bill_series_id) : "";
       editBillNumber = bill.bill_number || "";
+      billDate = bill.bill_date ? String(bill.bill_date).slice(0, 10) : localToday();
       customerNotes = "";
       narration = bill.narration || "";
       billEditSearch = "";
@@ -604,11 +605,9 @@
             <p style="font-size:12px;color:var(--muted);margin:4px 0 0;">Auto-assigned from series when bill is created.</p>
           </div>
         `}
-        ${editBillId ? "" : `
-          <label class="label">Bill date</label>
-          <input type="date" class="input" style="width:100%;max-width:220px;margin-bottom:4px;" value="${ctx.esc(billDate || localToday())}" onchange="CustomerOrders.setBillDate(this.value)" />
-          <p style="font-size:12px;color:var(--muted);margin:0 0 16px;">Use the day the bill actually happened (backdate OK).</p>
-        `}
+        <label class="label">Bill date</label>
+        <input type="date" class="input" style="width:100%;max-width:220px;margin-bottom:4px;" value="${ctx.esc(billDate || localToday())}" onchange="CustomerOrders.setBillDate(this.value)" />
+        <p style="font-size:12px;color:var(--muted);margin:0 0 16px;">Use the day the bill actually happened (backdate OK).</p>
         <label class="label">Your narration</label>
         <textarea class="input" rows="4" style="width:100%;" placeholder="Staff note for the bill…" oninput="CustomerOrders.setNarration(this.value)">${ctx.esc(narration)}</textarea>
         <p style="font-size:12px;color:var(--muted);margin-top:8px;">This goes on the bill. Separate from the customer note above.</p>`;
@@ -669,7 +668,7 @@
         ${ctx.reviewRow("Customer", processContext?.customer_name)}
         ${processContext?.city_name ? ctx.reviewRow("City", processContext.city_name) : ""}
         ${!editBillId ? ctx.reviewRow("Bill number", nextBillNumberFromSeries() || "auto") : ""}
-        ${!editBillId ? ctx.reviewRow("Bill date", billDate || localToday()) : ""}
+        ${ctx.reviewRow("Bill date", billDate || localToday())}
         ${ctx.reviewRow("Lines shipping", shipCount)}
         ${ctx.reviewRow("Transport", modeLabel)}
         ${transportMode === "bus" && agentName ? ctx.reviewRow("Freight agent", agentName) : ""}

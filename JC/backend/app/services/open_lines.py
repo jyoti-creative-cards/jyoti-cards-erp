@@ -30,7 +30,7 @@ def _get_or_create_open(
     if row:
         if row.status != "open":
             row.status = "open"
-        row.buying_price = prod.buying_price
+        row.buying_price = prod.buying_price if prod.buying_price is not None else Decimal("0")
         row.our_product_id = prod.our_product_id
         return row
     from sqlalchemy.exc import IntegrityError
@@ -40,7 +40,7 @@ def _get_or_create_open(
         catalog_product_id=catalog_product_id,
         our_product_id=prod.our_product_id,
         quantity=0,
-        buying_price=prod.buying_price,
+        buying_price=prod.buying_price if prod.buying_price is not None else Decimal("0"),
         status="open",
     )
     if as_of is not None:

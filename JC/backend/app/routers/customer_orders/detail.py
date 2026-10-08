@@ -268,7 +268,7 @@ def get_customer_order_detail(
         ):
             lines_by_placement[ln.placement_id].append(ln)
             all_line_cids.append(int(ln.catalog_product_id))
-            if not ln.addons_json:
+            if ln.addons_json is None:
                 missing_addon_cids.append(int(ln.catalog_product_id))
     live_addons = addon_snapshots_map(db, missing_addon_cids, with_images=False) if missing_addon_cids else {}
     from app.services.document_present import live_product_names
@@ -302,7 +302,7 @@ def get_customer_order_detail(
                         unit_price=format(ln.unit_price, "f"),
                         status=ln.status,
                         cancel_reason=ln.cancel_reason,
-                        addons=list(ln.addons_json or live_addons.get(int(ln.catalog_product_id), [])),
+                        addons=list(ln.addons_json) if isinstance(ln.addons_json, list) else list(live_addons.get(int(ln.catalog_product_id), [])),
                         marking=marking_by_cid.get(int(ln.catalog_product_id)),
                     )
                     for ln in lines
@@ -342,7 +342,7 @@ def get_customer_order_detail(
             totals_lines = (b.totals_json or {}).get("lines") if isinstance(b.totals_json, dict) else None
             if isinstance(totals_lines, list):
                 for tl in totals_lines:
-                    if isinstance(tl, dict) and tl.get("catalog_product_id") and tl.get("addons"):
+                    if isinstance(tl, dict) and tl.get("catalog_product_id") and isinstance(tl.get("addons"), list):
                         addon_by_cid[int(tl["catalog_product_id"])] = list(tl["addons"])
             missing = [ln.catalog_product_id for ln in blines if int(ln.catalog_product_id) not in addon_by_cid]
             missing_ids.extend(int(x) for x in missing)

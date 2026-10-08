@@ -257,6 +257,7 @@ def test_open_order_uses_live_addons_and_price(db):
             "quantity": 5,
             "unit": "box",
             "image_url": None,
+            "selling_price": "0.00",
         }
     ]
     assert view["lines"][0]["unit_price"] == "25"

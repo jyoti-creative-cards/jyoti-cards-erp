@@ -358,6 +358,22 @@ def _bills_for_reservations(db: Session, entries: list) -> dict[int, object]:
     return out
 
 
+def _biz_day(value):
+    """Calendar day in India. A bill date stays that date. A timestamp becomes its IST day."""
+    from datetime import date as date_cls
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        dt = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return dt.astimezone(ZoneInfo("Asia/Kolkata")).date()
+    if isinstance(value, date_cls):
+        return value
+    return None
+
+
 def annotate_stock_ledger(db: Session, entries: list) -> list[dict]:
     """Party, bill number, and which voucher a stock line opens."""
     reservation_bills = _bills_for_reservations(db, entries)
@@ -375,6 +391,18 @@ def annotate_stock_ledger(db: Session, entries: list) -> list[dict]:
     if return_ids:
         from app.models.customer_return import CustomerReturn
         returns = {r.id: r for r in db.query(CustomerReturn).filter(CustomerReturn.id.in_(return_ids)).all()}
+    journal_ids = {e.reference_id for e in entries if e.reference_type == "stock_journal" and e.reference_id}
+    placement_ids = {e.reference_id for e in entries if e.reference_type == "customer_placement" and e.reference_id}
+    journals = {}
+    placements = {}
+    if journal_ids:
+        from app.models.stock_journal import StockJournal
+        journals = {j.id: j for j in db.query(StockJournal).filter(StockJournal.id.in_(journal_ids)).all()}
+    if placement_ids:
+        from app.models.customer_order import CustomerOrderPlacement
+        placements = {
+            p.id: p for p in db.query(CustomerOrderPlacement).filter(CustomerOrderPlacement.id.in_(placement_ids)).all()
+        }
     out = []
     for e in entries:
         bill_number = None
@@ -402,6 +430,31 @@ def annotate_stock_ledger(db: Session, entries: list) -> list[dict]:
                 bill_number = matched.bill_number
                 voucher_kind = "customer_bill"
                 voucher_id = matched.id
+        display = _biz_day(e.created_at)
+        if e.reference_type == "customer_bill" and e.reference_id:
+            bill = bills.get(e.reference_id)
+            if bill is not None:
+                display = bill.bill_date or _biz_day(bill.created_at)
+        elif e.reference_type == "stock_receipt" and e.reference_id:
+            receipt = receipts.get(e.reference_id)
+            if receipt is not None:
+                display = _biz_day(receipt.billed_at or receipt.received_at)
+        elif e.reference_type == "stock_journal" and e.reference_id:
+            journal = journals.get(e.reference_id)
+            if journal is not None:
+                display = journal.journal_date
+        elif e.reference_type == "customer_placement":
+            matched = reservation_bills.get(e.id)
+            if matched is not None and matched.bill_date:
+                display = matched.bill_date
+            else:
+                placement = placements.get(e.reference_id)
+                if placement is not None:
+                    display = _biz_day(placement.placed_at)
+        elif e.reference_type == "customer_return" and e.reference_id:
+            ret = returns.get(e.reference_id)
+            if ret is not None:
+                display = _biz_day(ret.created_at)
         out.append({
             "id": e.id,
             "entry_type": e.entry_type,
@@ -415,5 +468,6 @@ def annotate_stock_ledger(db: Session, entries: list) -> list[dict]:
             "bill_number": bill_number,
             "voucher_kind": voucher_kind,
             "voucher_id": voucher_id,
+            "display_date": display,
         })
     return out

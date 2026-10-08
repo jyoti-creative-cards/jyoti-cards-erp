@@ -93,6 +93,7 @@
       lines: offlineLines.filter(l => Number(l.quantity) > 0).map(l => ({
         catalog_product_id: l.catalog_product_id,
         quantity: Number(l.quantity),
+        skip_addon_ids: l.skip_addon_ids || [],
       })),
       narration: (offlineNotes || "").trim() || null,
       placed_on: offlinePlacedOn || localToday(),
@@ -126,7 +127,29 @@
   }
 
   function offlineCartTotal() {
-    return offlineLines.reduce((s, l) => s + (Number(l.selling_price) || 0) * (Number(l.quantity) || 0), 0);
+    return offlineLines.reduce((s, l) => {
+      let n = (Number(l.selling_price) || 0) * (Number(l.quantity) || 0);
+      const skipped = new Set(l.skip_addon_ids || []);
+      for (const a of l.priced_addons || []) {
+        if (skipped.has(a.addon_product_id)) continue;
+        n += (Number(a.selling_price) || 0) * (Number(a.quantity) || 1) * (Number(l.quantity) || 0);
+      }
+      return s + n;
+    }, 0);
+  }
+
+  function pricedAddonHtml(p, line) {
+    const addons = (line && line.priced_addons) || p.priced_addons || [];
+    if (!addons.length || !line) return "";
+    const skipped = new Set(line.skip_addon_ids || []);
+    return addons.map(a => {
+      const id = a.addon_product_id;
+      const price = Number(a.selling_price) || 0;
+      if (skipped.has(id)) {
+        return `<div class="co-addon-row" onclick="event.stopPropagation()">Name Plate removed · <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();CustomerOrders.skipOfflineAddon(${p.catalog_product_id}, ${id})">Add back</button></div>`;
+      }
+      return `<div class="co-addon-row" onclick="event.stopPropagation()">+ ${ctx.esc(a.name || a.our_product_id || "Name Plate")} · ₹${price} each <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();CustomerOrders.skipOfflineAddon(${p.catalog_product_id}, ${id})">Remove</button></div>`;
+    }).join("");
   }
 
   function renderOfflineWizard() {
@@ -160,7 +183,7 @@
         </div>
         <div class="vo-wiz-search-wrap">
           <span class="vo-wiz-search-icon" aria-hidden="true">⌕</span>
-          <input id="co-offline-cust-search" class="input vo-wiz-search" type="search" placeholder="Search customer, city, phone…" value="${ctx.esc(offlineCustomerSearch)}" oninput="CustomerOrders.onOfflineCustomerSearch(this.value)" autocomplete="off" />
+          <input id="co-offline-cust-search" class="input vo-wiz-search" type="search" placeholder="Search customer, city, phone, alias…" value="${ctx.esc(offlineCustomerSearch)}" oninput="CustomerOrders.onOfflineCustomerSearch(this.value)" autocomplete="off" />
           ${offlineCustomerSearch ? `<button type="button" class="vo-wiz-search-clear" onclick="CustomerOrders.onOfflineCustomerSearch('')">×</button>` : ""}
         </div>
         ${selected ? `<div class="vo-wiz-selected-banner">
@@ -265,6 +288,7 @@
                     <strong>${ctx.esc(p.our_product_id)}${p.year_group ? ` <span class="prod-year-pill">${ctx.esc(p.year_group)}</span>` : ""}</strong>
                     <span class="vo-wiz-product-sub">${p.category ? ctx.esc(p.category) : "Product"}${p.year_group ? ` · ${ctx.esc(p.year_group)}` : ""}${p.vendor_name ? ` · ${ctx.esc(p.vendor_name)}` : ""}</span>
                     <span class="vo-wiz-product-price">${fmtPrice(p.selling_price)} · Stock ${p.quantity_on_hand ?? 0}</span>
+                    ${pricedAddonHtml(p, line)}
                   </div>
                 </div>
                 <div class="vo-wiz-qty" onclick="event.stopPropagation()">
@@ -444,6 +468,8 @@
           min_qty: 0,
           selling_price: p.selling_price,
           quantity_on_hand: p.quantity_on_hand,
+          priced_addons: p.priced_addons || [],
+          skip_addon_ids: [],
         });
       }
     } else {
@@ -455,6 +481,17 @@
       offlineLines = offlineLines.filter(l => l.catalog_product_id !== catalogProductId);
     }
     if (checked) focusQtyProductId = catalogProductId;
+    renderOfflineWizard();
+  }
+
+  function skipOfflineAddon(catalogProductId, addonId) {
+    const line = offlineLines.find(l => l.catalog_product_id === catalogProductId);
+    if (!line) return;
+    const id = Number(addonId);
+    const skipped = new Set(line.skip_addon_ids || []);
+    if (skipped.has(id)) skipped.delete(id);
+    else skipped.add(id);
+    line.skip_addon_ids = [...skipped];
     renderOfflineWizard();
   }
 
@@ -476,6 +513,8 @@
         min_qty: 0,
         selling_price: p.selling_price,
         quantity_on_hand: p.quantity_on_hand,
+        priced_addons: p.priced_addons || [],
+        skip_addon_ids: [],
       });
     }
     const mid = document.querySelector("#co-offline-footer .vo-wiz-footer-mid");

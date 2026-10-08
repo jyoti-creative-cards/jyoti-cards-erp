@@ -297,7 +297,7 @@
       message: "Marks paid / done. Moves to Closed with your note.",
       rows: [
         ["Bill", ctx.esc(placement.display_name || placement.bill_number || `Shipment #${placementId}`)],
-        ["Placed", ctx.fmtDate(placement.display_date || placement.value_date || placement.created_at)],
+        ["Placed", ctx.fmtDay(placement.display_date || placement.value_date || placement.created_at)],
         ["Lines", lines.join(", ") || `${placement.line_count} items`],
       ],
       confirmLabel: "Close shipment",
@@ -385,7 +385,7 @@
       message: "Clears Open for these items. Placed record stays. History goes to Cancelled.",
       rows: [
         ["Placement", placement ? `#${placement.color_index + 1}` : String(placementId)],
-        ["Placed", placement ? ctx.fmtDate(placement.display_date || placement.value_date || placement.created_at) : "—"],
+        ["Placed", placement ? ctx.fmtDay(placement.display_date || placement.value_date || placement.created_at) : "—"],
         ...lineRows.map(([prod, detail]) => ["Product", `${prod} — ${detail}`]),
       ],
       confirmLabel: "Cancel Order",

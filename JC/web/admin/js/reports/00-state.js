@@ -31,12 +31,14 @@ const Reports = (() => {
     today: [
       { id: "daybook", label: "Daybook" },
       { id: "sales-book", label: "Sales book" },
+      { id: "day-bills", label: "Day bills" },
       { id: "receipt-book", label: "Receipt book" },
       { id: "purchases", label: "Purchase bills" },
       { id: "payments", label: "Payments" },
     ],
     books: [
       { id: "sales-book", label: "Sales book" },
+      { id: "day-bills", label: "Day bills" },
       { id: "receipt-book", label: "Receipt book" },
       { id: "daybook", label: "Daybook" },
       { id: "ledgers", label: "Ledgers" },

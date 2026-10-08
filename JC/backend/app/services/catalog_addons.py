@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
 from sqlalchemy.orm import Session
 
 from app.models.addon_product import AddonProduct
@@ -7,10 +9,28 @@ from app.models.catalog_addon_link import CatalogAddonLink
 from app.services.storage import presigned_urls
 
 
+def _plate_label(our_product_id: str | None, name: str | None) -> str:
+    return f"{our_product_id or ''} {name or ''}".lower().replace("_", " ").replace("-", " ")
+
+
+def is_name_plate(our_product_id: str | None, name: str | None) -> bool:
+    return "name plate" in _plate_label(our_product_id, name)
+
+
+def addon_sell_price(addon: AddonProduct) -> Decimal:
+    raw = getattr(addon, "selling_price", None)
+    if raw is not None and Decimal(str(raw)) > 0:
+        return Decimal(str(raw)).quantize(Decimal("0.01"))
+    if is_name_plate(addon.our_product_id, addon.name):
+        return Decimal("2.00")
+    return Decimal("0.00")
+
+
 def _addon_row(addon: AddonProduct, qty: int, *, with_images: bool) -> dict:
     img = None
     if with_images:
         img = (presigned_urls(addon.image_keys or []) or [None])[0]
+    price = addon_sell_price(addon)
     return {
         "addon_product_id": addon.id,
         "our_product_id": addon.our_product_id,
@@ -18,6 +38,7 @@ def _addon_row(addon: AddonProduct, qty: int, *, with_images: bool) -> dict:
         "quantity": int(qty or 1),
         "unit": addon.unit or "pc",
         "image_url": img,
+        "selling_price": format(price, "f"),
     }
 
 
@@ -109,3 +130,138 @@ def addon_snapshots_map(
             _addon_row(addon, link.quantity, with_images=with_images)
         )
     return grouped
+
+
+def priced_addons_by_product(db: Session, catalog_product_ids: list[int]) -> dict[int, list[dict]]:
+    snaps = addon_snapshots_map(db, catalog_product_ids)
+    out: dict[int, list[dict]] = {}
+    for pid, rows in snaps.items():
+        priced = [r for r in rows if Decimal(str(r.get("selling_price") or "0")) > 0]
+        if priced:
+            out[int(pid)] = priced
+    return out
+
+
+def kept_addon_ids(addons_json) -> list[int] | None:
+    """None means the line never stored a snapshot (move every linked add-on).
+    A list is the exact set that stayed on the order, including an empty list."""
+    if addons_json is None or not isinstance(addons_json, list):
+        return None
+    return [
+        int(a["addon_product_id"])
+        for a in addons_json
+        if isinstance(a, dict) and a.get("addon_product_id")
+    ]
+
+
+def kept_addon_ids_for_customer_product(db: Session, customer_id: int, catalog_product_id: int) -> list[int] | None:
+    from app.models.customer_order import CustomerOrder, CustomerOrderLine, CustomerOrderPlacement
+
+    line = (
+        db.query(CustomerOrderLine)
+        .join(CustomerOrderPlacement, CustomerOrderPlacement.id == CustomerOrderLine.placement_id)
+        .join(CustomerOrder, CustomerOrder.id == CustomerOrderPlacement.customer_order_id)
+        .filter(
+            CustomerOrder.customer_id == customer_id,
+            CustomerOrderLine.catalog_product_id == catalog_product_id,
+            CustomerOrderLine.addons_json.isnot(None),
+            CustomerOrderPlacement.deleted_at.is_(None),
+        )
+        .order_by(CustomerOrderLine.id.desc())
+        .first()
+    )
+    if line is None:
+        return None
+    return kept_addon_ids(line.addons_json)
+
+
+def billing_addons_for_products(
+    db: Session,
+    customer_id: int,
+    product_ids: list[int],
+    placement_id: int | None = None,
+) -> dict[int, list]:
+    """Add-ons that stay on this bill. A removed Name Plate is absent from the order line."""
+    live = addon_snapshots_map(db, product_ids)
+    chosen: dict[int, list] = {}
+    if placement_id and product_ids:
+        from app.models.customer_order import CustomerOrderLine
+
+        for ln in (
+            db.query(CustomerOrderLine)
+            .filter(
+                CustomerOrderLine.placement_id == placement_id,
+                CustomerOrderLine.catalog_product_id.in_(product_ids),
+                CustomerOrderLine.addons_json.isnot(None),
+            )
+            .all()
+        ):
+            chosen[int(ln.catalog_product_id)] = list(ln.addons_json or [])
+    if product_ids:
+        from app.models.customer_order import CustomerOrder, CustomerOrderLine, CustomerOrderPlacement
+
+        rows = (
+            db.query(CustomerOrderLine)
+            .join(CustomerOrderPlacement, CustomerOrderPlacement.id == CustomerOrderLine.placement_id)
+            .join(CustomerOrder, CustomerOrder.id == CustomerOrderPlacement.customer_order_id)
+            .filter(
+                CustomerOrder.customer_id == customer_id,
+                CustomerOrderLine.catalog_product_id.in_(product_ids),
+                CustomerOrderLine.quantity > CustomerOrderLine.quantity_billed,
+                CustomerOrderLine.addons_json.isnot(None),
+                CustomerOrderPlacement.deleted_at.is_(None),
+            )
+            .order_by(CustomerOrderLine.id.desc())
+            .all()
+        )
+        for ln in rows:
+            cid = int(ln.catalog_product_id)
+            if cid not in chosen:
+                chosen[cid] = list(ln.addons_json or [])
+    out: dict[int, list] = {}
+    for pid in product_ids:
+        out[int(pid)] = chosen.get(int(pid), live.get(int(pid)) or [])
+    return out
+
+
+def _row_sell_price(row: dict) -> Decimal:
+    raw = row.get("selling_price")
+    if raw is not None and str(raw).strip() != "":
+        try:
+            price = Decimal(str(raw))
+            if price > 0:
+                return price
+        except Exception:
+            pass
+    if is_name_plate(row.get("our_product_id"), row.get("name")):
+        return Decimal("2")
+    return Decimal("0")
+
+
+def merge_priced_addon_charges(
+    additional: list | None,
+    addons_by_product: dict[int, list],
+    bill_items: list[dict],
+) -> list[dict]:
+    """Name Plate (and any priced add-on) is part of the bill total, not a second ledger line."""
+    extra = [
+        ac for ac in (additional or [])
+        if isinstance(ac, dict) and str(ac.get("name") or "").strip().lower() != "name plate"
+    ]
+    total = Decimal("0")
+    for item in bill_items:
+        cid = int(item.get("catalog_product_id") or 0)
+        qty = int(item.get("quantity") or 0)
+        if qty <= 0:
+            continue
+        for addon in addons_by_product.get(cid) or []:
+            if not isinstance(addon, dict):
+                continue
+            price = _row_sell_price(addon)
+            if price <= 0:
+                continue
+            per = int(addon.get("quantity") or 1)
+            total += price * per * qty
+    if total > 0:
+        extra.append({"name": "Name Plate", "amount": format(total.quantize(Decimal("0.01")), "f")})
+    return extra

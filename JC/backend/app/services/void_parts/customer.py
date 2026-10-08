@@ -181,6 +181,8 @@ def void_customer_return(db: Session, auth: AuthContext, return_id: int, reason:
                 party=label,
                 notes="Return voided" + (f" — {reason_txt}" if reason_txt else ""),
             )
+            from app.services.catalog_addons import kept_addon_ids_for_customer_product
+
             deduct_addons_for_product(
                 db,
                 catalog_product_id=ln.catalog_product_id,
@@ -189,6 +191,7 @@ def void_customer_return(db: Session, auth: AuthContext, return_id: int, reason:
                 reference_id=ret.id,
                 party=label,
                 note="Return voided" + (f" — {reason_txt}" if reason_txt else ""),
+                only_addon_ids=kept_addon_ids_for_customer_product(db, ret.customer_id, ln.catalog_product_id),
             )
 
     (
@@ -233,6 +236,8 @@ def restore_customer_return(db: Session, auth: AuthContext, return_id: int) -> d
                 party=label,
                 notes="Return restored from recycle bin",
             )
+            from app.services.catalog_addons import kept_addon_ids_for_customer_product
+
             deduct_addons_for_product(
                 db,
                 catalog_product_id=ln.catalog_product_id,
@@ -241,6 +246,7 @@ def restore_customer_return(db: Session, auth: AuthContext, return_id: int) -> d
                 reference_id=ret.id,
                 party=label,
                 note="Return restored from recycle bin",
+                only_addon_ids=kept_addon_ids_for_customer_product(db, ret.customer_id, ln.catalog_product_id),
             )
 
     (

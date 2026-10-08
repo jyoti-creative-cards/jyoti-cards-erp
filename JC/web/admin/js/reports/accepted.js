@@ -31,12 +31,14 @@ const Reports = (() => {
     today: [
       { id: "daybook", label: "Daybook" },
       { id: "sales-book", label: "Sales book" },
+      { id: "day-bills", label: "Day bills" },
       { id: "receipt-book", label: "Receipt book" },
       { id: "purchases", label: "Purchase bills" },
       { id: "payments", label: "Payments" },
     ],
     books: [
       { id: "sales-book", label: "Sales book" },
+      { id: "day-bills", label: "Day bills" },
       { id: "receipt-book", label: "Receipt book" },
       { id: "daybook", label: "Daybook" },
       { id: "ledgers", label: "Ledgers" },
@@ -161,6 +163,11 @@ const Reports = (() => {
     showQuestions = false;
     chip = c;
     hubSearch = "";
+    if (c === "day-bills") {
+      const day = fromDate || today();
+      fromDate = day;
+      toDate = day;
+    }
     renderChrome();
     loadChip();
   }
@@ -262,6 +269,15 @@ const Reports = (() => {
     // either (only the expenses per-category *detail* screen honors a range) — all
     // four used to render a fully interactive date-preset/From-To picker that
     // silently did nothing when touched.
+    if (chip === "day-bills") {
+      const day = fromDate || today();
+      el.innerHTML = `<div class="rep-filters">
+        <label class="label">Date<input type="date" class="input" id="rep-day" value="${ctx.esc(day)}" onchange="Reports.onDayBillChange()" /></label>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.setDayBillToday()">Today</button>
+        ${reportActionButtons()}
+      </div>`;
+      return;
+    }
     const noDates = chip === "valuation" || chip === "ageing" || chip === "low"
       || (chip === "ledgers" && ["products", "staff", "routes", "freight", "customers", "vendors", "expenses"].includes(ledgerKind));
     if (noDates) {
@@ -356,9 +372,10 @@ const Reports = (() => {
     if (!slot) return;
     const caret = (typeof OrdersUI !== "undefined" && OrdersUI.captureSearchCaret)
       ? OrdersUI.captureSearchCaret("reports-hub-search") : null;
-    const searchable = ["sales", "sales-book", "receipt-book", "daybook", "purchases", "payments", "ledgers", "ageing", "customer-sales", "vendor-purchases", "item-sales", "item-purchases", "stock-wise", "valuation", "movers", "low", "returns", "debit-notes", "gst-sales", "gst-purchases", "cashbook", "expense-cat"].includes(chip);
+    const searchable = ["sales", "sales-book", "day-bills", "receipt-book", "daybook", "purchases", "payments", "ledgers", "ageing", "customer-sales", "vendor-purchases", "item-sales", "item-purchases", "stock-wise", "valuation", "movers", "low", "returns", "debit-notes", "gst-sales", "gst-purchases", "cashbook", "expense-cat"].includes(chip);
     if (!searchable) { slot.innerHTML = ""; return; }
-    const ph = chip === "ledgers"
+    const ph = chip === "day-bills" ? "Search bill, party, city…"
+      : chip === "ledgers"
       ? (ledgerKind === "staff" ? "Search staff…" : ledgerKind === "products" ? "Search products…" : ledgerKind === "customers" || ledgerKind === "vendors" ? "Search name, person, city…" : "Search…")
       : chip.includes("item") || chip === "stock-wise" || chip === "valuation" || chip === "movers" || chip === "low" ? "Search product…"
         : chip === "ageing" ? "Search name, person, city…"
@@ -376,6 +393,20 @@ const Reports = (() => {
     if (p === "custom") { datePreset = "custom"; renderDateBar(); return; }
     applyDatePreset(p, true);
     renderDateBar();
+  }
+  function onDayBillChange() {
+    const day = document.getElementById("rep-day")?.value || today();
+    fromDate = day;
+    toDate = day;
+    datePreset = "custom";
+    loadChip();
+  }
+  function setDayBillToday() {
+    fromDate = today();
+    toDate = today();
+    datePreset = "today";
+    renderDateBar();
+    loadChip();
   }
   function onRangeChange() {
     fromDate = document.getElementById("rep-from")?.value || "";
@@ -424,6 +455,7 @@ const Reports = (() => {
     try {
       if (chip === "daybook") await renderDaybook(body);
       else if (chip === "sales" || chip === "sales-book") await renderDocList(body, "sales", "Sales book");
+      else if (chip === "day-bills") await renderDayBills(body);
       else if (chip === "receipt-book") await renderReceiptBook(body);
       else if (chip === "purchases") await renderDocList(body, "purchases", "Purchase bills");
       else if (chip === "payments") await renderPayments(body);
@@ -565,6 +597,32 @@ const Reports = (() => {
         </tr>`).join("")}
         <tr><td colspan="3"><strong>Total</strong></td><td><strong>${fmtPrice(total)}</strong></td></tr>
       </tbody></table></div>` : empty("No documents", "Widen the date range or clear search.")}`;
+  }
+
+  async function renderDayBills(body) {
+    const day = fromDate || today();
+    const data = await ctx.api(`/reports/day-bills?day=${encodeURIComponent(day)}`, {}, 0);
+    let items = (data.items || []).filter(it => matchSearch(it.doc_number, it.party_label, it.city_name, it.party_number));
+    const live = items.filter(it => it.status !== "cancelled");
+    const total = live.reduce((s, it) => s + (Number(it.amount) || 0), 0);
+    body.innerHTML = `
+      <div class="fin-hub-strip" style="margin-bottom:16px;">
+        <div class="fin-stat"><span class="fin-stat-label">Bills</span><strong>${live.length}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">Amount</span><strong>${fmtPrice(total)}</strong></div>
+        ${data.cancelled_count ? `<div class="fin-stat"><span class="fin-stat-label">Cancelled</span><strong>${data.cancelled_count}</strong></div>` : ""}
+      </div>
+      ${items.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
+        <th>Bill</th><th>Party</th><th>City</th><th>Amount</th><th></th>
+      </tr></thead><tbody>
+        ${items.map(it => `<tr class="clickable" onclick="Reports.openDoc('sales_bill', ${it.id})">
+          <td><strong>${ctx.esc(it.doc_number || "—")}</strong></td>
+          <td>${it.party_number ? `<span style="color:var(--muted);">#${ctx.esc(it.party_number)}</span> ` : ""}${ctx.esc(it.party_label || "—")}</td>
+          <td>${ctx.esc(it.city_name || "—")}</td>
+          <td>${it.status === "cancelled" ? `<s>${fmtPrice(it.amount)}</s>` : fmtPrice(it.amount)}</td>
+          <td>${it.status === "cancelled" ? `<span class="badge badge-gray">Cancelled</span>` : ""}</td>
+        </tr>`).join("")}
+        <tr><td colspan="3"><strong>Total</strong></td><td><strong>${fmtPrice(total)}</strong></td><td></td></tr>
+      </tbody></table></div>` : empty("No bills", "No customer bills on this date.")}`;
   }
 
   async function renderReceiptBook(body) {
@@ -1200,7 +1258,7 @@ const Reports = (() => {
 
   return {
     init, showHub, setMode, setChip, setLedgerKind, setAgeingSide, setHubSearch, pickQuestion,
-    setDatePreset, onRangeChange, onThresholdChange,
+    setDatePreset, onRangeChange, onDayBillChange, setDayBillToday, onThresholdChange,
     openLedger, openStaffLedger, openExpenseLedger, addExpenseHead, addExpenseSubhead, openCashLedger, backFromLedger, openDoc,
     shareDaybook, waDaybook, shareAgeing, waAgeing, exportExcel,
     printCurrent, exportCurrentExcel, setHideVoids,

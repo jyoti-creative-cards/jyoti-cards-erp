@@ -47,6 +47,7 @@ class StockProductSummary(BaseModel):
     image_urls: List[str] = []
     addon_count: int = 0
     alt_count: int = 0
+    priced_addons: List[dict] = []
 
 
 class StockBrowseCounts(BaseModel):
@@ -78,6 +79,7 @@ class StockLedgerEntry(BaseModel):
     bill_number: Optional[str] = None
     voucher_kind: Optional[str] = None
     voucher_id: Optional[int] = None
+    display_date: Optional[date] = None
 
 
 class ReservedByPartyRow(BaseModel):

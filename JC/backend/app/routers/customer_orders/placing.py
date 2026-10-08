@@ -191,7 +191,14 @@ def replace_placement_endpoint(
         replace_received_placement(
             db,
             placement_id=placement_id,
-            lines=[{"catalog_product_id": ln.catalog_product_id, "quantity": ln.quantity} for ln in body.lines],
+            lines=[
+                {
+                    "catalog_product_id": ln.catalog_product_id,
+                    "quantity": ln.quantity,
+                    "skip_addon_ids": list(ln.skip_addon_ids or []),
+                }
+                for ln in body.lines
+            ],
             customer_notes=(body.narration or "").strip() or None,
             customer_name=customer.business_name,
             allow_negative_stock=True,  # admin offline edit may oversell
@@ -425,7 +432,14 @@ def create_offline_customer_order(
             db,
             customer_id=customer_id,
             customer_name=customer.business_name,
-            lines=[{"catalog_product_id": ln.catalog_product_id, "quantity": ln.quantity} for ln in body.lines],
+            lines=[
+                {
+                    "catalog_product_id": ln.catalog_product_id,
+                    "quantity": ln.quantity,
+                    "skip_addon_ids": list(ln.skip_addon_ids or []),
+                }
+                for ln in body.lines
+            ],
             customer_notes=(body.narration or "").strip() or "Order placed by admin (phone)",
             placed_on=body.placed_on,
             allow_negative_stock=True,  # offline admin may oversell; portal stays strict

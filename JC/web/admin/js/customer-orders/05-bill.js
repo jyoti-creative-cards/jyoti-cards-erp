@@ -269,8 +269,8 @@
       transportMode = bill.transport_mode || (bill.freight_agent_id ? "bus" : (Number(bill.freight_charges) > 0 ? "transport" : "self_pickup"));
       transportReceiptNumber = bill.transport_receipt_number || "";
       packagingCharges = bill.packaging_charges != null ? String(bill.packaging_charges) : "";
-      additionalCharges = (bill.additional_charges || []).length
-        ? bill.additional_charges.map(c => ({ name: c.name || "", amount: String(c.amount || "") }))
+      additionalCharges = (bill.additional_charges || []).filter(c => String(c.name || "").trim().toLowerCase() !== "name plate").length
+        ? bill.additional_charges.filter(c => String(c.name || "").trim().toLowerCase() !== "name plate").map(c => ({ name: c.name || "", amount: String(c.amount || "") }))
         : [{ name: "", amount: "" }];
       billSeriesId = bill.bill_series_id != null ? String(bill.bill_series_id) : "";
       editBillNumber = bill.bill_number || "";
@@ -533,11 +533,11 @@
             ${freightAgents.map(a => `<option value="${a.id}" ${String(a.id) === freightAgentId ? "selected" : ""}>${ctx.esc(a.name)} (due ${fmtPrice(a.balance_due)})</option>`).join("")}
           </select>
           <label class="label">Freight charges (₹)</label>
-          <input class="input" style="width:100%;max-width:220px;" value="${ctx.esc(freightCharges)}" oninput="CustomerOrders.setFreightCharges(this.value)" />`;
+          <input id="co-freight-amount" class="input" style="width:100%;max-width:220px;" value="${ctx.esc(freightCharges)}" oninput="CustomerOrders.setFreightCharges(this.value)" />`;
       } else if (transportMode === "transport") {
         extra = `
           <label class="label">Transport charges (₹)</label>
-          <input class="input" style="width:100%;max-width:220px;margin-bottom:12px;" value="${ctx.esc(freightCharges)}" oninput="CustomerOrders.setFreightCharges(this.value)" />
+          <input id="co-freight-amount" class="input" style="width:100%;max-width:220px;margin-bottom:12px;" value="${ctx.esc(freightCharges)}" oninput="CustomerOrders.setFreightCharges(this.value)" />
           <label class="label">Receipt number <span style="font-weight:400;color:var(--muted);">(optional)</span></label>
           <input class="input" style="width:100%;max-width:280px;" placeholder="If you have it" value="${ctx.esc(transportReceiptNumber)}" oninput="CustomerOrders.setTransportReceipt(this.value)" />`;
       } else if (transportMode === "self_pickup") {
@@ -741,6 +741,12 @@
       if (!freightAgentId) freightAgentId = defaultFreightAgentId();
     }
     renderProcessWizard();
+    if (v === "bus" || v === "transport") {
+      requestAnimationFrame(() => {
+        const el = document.getElementById("co-freight-amount");
+        if (el) { el.focus(); el.select(); }
+      });
+    }
   }
   function setTransportReceipt(v) { transportReceiptNumber = v; }
   function setPackagingCharges(v) { packagingCharges = v; }

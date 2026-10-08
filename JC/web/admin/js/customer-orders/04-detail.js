@@ -43,7 +43,8 @@
       const m1 = o.marker_1 ? ` <span class="badge badge-blue" style="font-size:10px;vertical-align:middle;">${ctx.esc(o.marker_1)}</span>` : "";
       const m2 = o.marker_2 ? ` <span class="badge badge-amber" style="font-size:10px;vertical-align:middle;">${ctx.esc(o.marker_2)}</span>` : "";
       const pt = (o.payment_type === "CASH" && !_m1u.includes("CASH")) ? ` <span class="badge badge-amber" style="font-size:10px;vertical-align:middle;">CASH</span>` : "";
-      title.innerHTML = pn + ctx.esc(o.customer_name) + m1 + m2 + pt;
+      const city = o.city_name ? ` <span style="color:var(--muted);font-weight:600;">· ${ctx.esc(o.city_name)}</span>` : "";
+      title.innerHTML = pn + ctx.esc(o.customer_name) + city + m1 + m2 + pt;
     }
     if (sub) {
       sub.textContent = currentBucket === "received" ? "Review order, edit if needed, then Confirm →"
@@ -136,7 +137,7 @@
         const receiptBit = b.transport_receipt_number ? ` · Rcpt ${ctx.esc(b.transport_receipt_number)}` : "";
         return HubUI.partyCard({
           title: b.display_name || `Bill ${b.bill_number}`,
-          meta: `${fmtPrice(b.grand_total)} · ${ctx.fmtDate(b.display_date)}${modeLbl ? ` · ${modeLbl}` : ""}${chargeBit}${receiptBit}${b.status && b.status !== "open" ? ` · ${ctx.esc(b.status)}` : ""}${b.narration ? `<div style="margin-top:2px;">${ctx.esc(b.narration)}</div>` : ""}`,
+          meta: `${fmtPrice(b.grand_total)} · ${ctx.fmtDay(b.display_date || b.bill_date)}${modeLbl ? ` · ${modeLbl}` : ""}${chargeBit}${receiptBit}${(b.additional_charges || []).filter(c => Number(c.amount) > 0).map(c => ` · ${ctx.esc(c.name)} ${fmtPrice(c.amount)}`).join("")}${b.status && b.status !== "open" ? ` · ${ctx.esc(b.status)}` : ""}${b.narration ? `<div style="margin-top:2px;">${ctx.esc(b.narration)}</div>` : ""}`,
           pillHtml: "",
           primaryLabel: canEditBill ? "Edit" : "Print",
           primaryOnclick: canEditBill
@@ -192,7 +193,7 @@
         if (ctx.isAdmin?.()) more.push({ label: "Void (recycle bin)", onclick: `CustomerOrders.voidPlacement(${p.id})`, danger: true });
         return HubUI.partyCard({
           title: p.display_name || `Order #${p.id}`,
-          meta: `${ctx.fmtDate(p.display_date)}${p.customer_notes ? ` · ${ctx.esc(p.customer_notes)}` : ""}${p.cancel_reason ? `<div style="color:var(--danger);margin-top:2px;">Cancelled: ${ctx.esc(p.cancel_reason)}</div>` : ""}`,
+          meta: `${ctx.fmtDay(p.display_date)}${p.customer_notes ? ` · ${ctx.esc(p.customer_notes)}` : ""}${p.cancel_reason ? `<div style="color:var(--danger);margin-top:2px;">Cancelled: ${ctx.esc(p.cancel_reason)}</div>` : ""}`,
           pillHtml: p.cancel_reason ? HubUI.pill("Cancelled", "danger") : "",
           primaryLabel: canEdit ? "Edit" : null,
           primaryOnclick: canEdit ? `CustomerOrders.openEditPlacement(${p.id})` : "",
@@ -225,7 +226,7 @@
       </tbody></table>`;
       return HubUI.partyCard({
         title: p.display_name || `Placement #${p.id}`,
-        meta: `${ctx.fmtDate(p.display_date)}${p.customer_notes ? ` · ${ctx.esc(p.customer_notes)}` : ""}${p.cancel_reason ? `<div style="color:var(--danger);margin-top:2px;">Cancelled: ${ctx.esc(p.cancel_reason)}</div>` : ""}`,
+        meta: `${ctx.fmtDay(p.display_date)}${p.customer_notes ? ` · ${ctx.esc(p.customer_notes)}` : ""}${p.cancel_reason ? `<div style="color:var(--danger);margin-top:2px;">Cancelled: ${ctx.esc(p.cancel_reason)}</div>` : ""}`,
         pillHtml: currentBucket === "cancelled" || p.cancel_reason || p.status === "cancelled"
           ? HubUI.pill("Cancelled", "danger")
           : HubUI.pill(currentBucket === "closed" || p.status === "closed" ? "Closed" : "History", "muted"),
@@ -358,6 +359,14 @@
           min_qty: Number(ln.quantity_billed) || 0,
           selling_price: ln.unit_price ?? stock?.selling_price,
           quantity_on_hand: stock?.quantity_on_hand,
+          priced_addons: (ln.addons || []).filter(a => Number(a.selling_price) > 0).map(a => ({
+            addon_product_id: a.addon_product_id,
+            name: a.name || a.our_product_id,
+            our_product_id: a.our_product_id,
+            selling_price: a.selling_price,
+            quantity: a.quantity || 1,
+          })),
+          skip_addon_ids: [],
         };
       });
       document.getElementById("co-offline-wizard")?.classList.remove("hidden");

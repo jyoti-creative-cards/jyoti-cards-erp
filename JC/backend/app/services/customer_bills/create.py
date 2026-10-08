@@ -17,7 +17,7 @@ from app.models.stock import StockBalance
 from app.models.freight_agent import FreightAgent
 from app.services.ar_ledger import post_bill_entry, update_bill_ledger_amount
 from app.services.bill_series_alloc import allocate_bill_number, resolve_bill_number
-from app.services.catalog_addons import addon_snapshots_map, attach_addons_to_totals
+from app.services.catalog_addons import billing_addons_for_products, merge_priced_addon_charges
 from app.services.credit_limit import assert_credit_allows_bill, credit_status
 from app.services.customer_bill_math import assert_discount_xor, compute_bill_totals
 from app.services.document_present import freeze_card
@@ -111,6 +111,11 @@ def process_customer_bill(
             if "override_price" in ov or "discount_percent" in ov:
                 item_overrides.append(ov)
 
+    addon_map = billing_addons_for_products(
+        db, customer_id, [int(x["catalog_product_id"]) for x in bill_items]
+    )
+    additional_charges = merge_priced_addon_charges(additional_charges, addon_map, bill_items)
+
     totals = compute_bill_totals(
         bill_items,
         gst_enabled=gst_enabled,
@@ -191,7 +196,6 @@ def process_customer_bill(
     db.flush()
 
     line_totals = {int(ln["catalog_product_id"]): ln for ln in ship_lines}
-    addon_map = addon_snapshots_map(db, [int(x["catalog_product_id"]) for x in bill_items])
     billed_qty: dict[int, int] = {}
     for bl in totals.get("lines") or []:
         sku = bl.get("our_product_id")
@@ -222,7 +226,7 @@ def process_customer_bill(
                 quantity=qty,
                 quantity_billed=qty,
                 unit_price=Decimal(str(match["unit_price"])),
-                addons_json=addon_map.get(cid) or None,
+                addons_json=addon_map.get(cid) if addon_map.get(cid) is not None else None,
                 status="billed",
             )
         )
@@ -236,8 +240,11 @@ def process_customer_bill(
 
     _apply_billed_qtys_to_received(db, customer_id, billed_qty)
 
-    # Freight dues post only when agent picks the parcel (Selling → Dispatch → Picked).
-    # Bill still stores freight_agent_id + freight_charges for assignment.
+    from app.services.freight_parcels import ensure_bill_freight_charge
+
+    ensure_bill_freight_charge(
+        db, bill, customer_name=customer_name, actor_name=actor_name,
+    )
 
     post_bill_entry(
         db,

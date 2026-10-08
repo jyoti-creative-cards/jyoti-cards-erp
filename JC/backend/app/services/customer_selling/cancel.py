@@ -69,6 +69,8 @@ def cancel_customer_placement(
     for ln, unbilled, billed in cancellable:
         # NB: only "received" (not yet confirmed) placements reach here — CustomerOpenLine
         # rows are created at confirm time, so there's nothing on that table to unwind.
+        from app.services.catalog_addons import kept_addon_ids
+
         restore_stock(
             db,
             catalog_product_id=ln.catalog_product_id,
@@ -77,6 +79,7 @@ def cancel_customer_placement(
             reference_id=placement.id,
             party=customer_name,
             notes=f"Cancelled placement open: {reason}",
+            only_addon_ids=kept_addon_ids(ln.addons_json),
         )
 
         if billed > 0:

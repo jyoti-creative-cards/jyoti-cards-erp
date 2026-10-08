@@ -30,7 +30,7 @@
           <div class="vo-hub-main">
             ${hubChevron(pOpen)}
             <div>
-              <div class="vo-hub-title" style="font-size:14px;">${ctx.esc(p.display_name || `Placement #${p.id}`)} · ${ctx.fmtDate(p.display_date)}</div>
+              <div class="vo-hub-title" style="font-size:14px;">${ctx.esc(p.display_name || `Placement #${p.id}`)} · ${ctx.fmtDay(p.display_date)}</div>
               <div class="vo-hub-meta">${p.line_count} lines · ${p.total_quantity || "—"} qty</div>
               ${noteChip(p.cancel_reason, "cancel")}
             </div>
@@ -364,7 +364,7 @@
           const lines = linesForPlacement(p.id);
           return HubUI.partyCard({
             title: p.display_name || (p.order_receipt_number ? `Receipt ${p.order_receipt_number}` : `Receive #${p.id}`),
-            meta: `${lines.length} products · ${p.total_quantity || 0} qty · ${ctx.fmtDate(p.display_date)}${p.notes ? ` · ${ctx.esc(p.notes)}` : ""}`,
+            meta: `${lines.length} products · ${p.total_quantity || 0} qty · ${ctx.fmtDay(p.display_date)}${p.notes ? ` · ${ctx.esc(p.notes)}` : ""}`,
             primaryLabel: canWrite && p.receipt_id ? "Edit" : null,
             primaryOnclick: `Stock.openEditReceipt(${p.receipt_id})`,
             open: !!lines.length,
@@ -396,7 +396,7 @@
           const closed = !!p.closed_at;
           return HubUI.partyCard({
             title: p.display_name || p.bill_number || `Bill #${p.id}`,
-            meta: `${placementBadge(p.color_index)} ${lines.length} products · ${totalRecv} received · ${ctx.fmtDate(p.display_date)}${p.net_payable != null ? ` · Net ${fmtPrice(p.net_payable)}` : ""}${closed && p.close_reason ? noteChip(p.close_reason, "close") : ""}`,
+            meta: `${placementBadge(p.color_index)} ${lines.length} products · ${totalRecv} received · ${ctx.fmtDay(p.display_date)}${p.net_payable != null ? ` · Net ${fmtPrice(p.net_payable)}` : ""}${closed && p.close_reason ? noteChip(p.close_reason, "close") : ""}`,
             pillHtml: closed ? HubUI.pill("Closed", "muted") : HubUI.pill("Open", "info"),
             primaryLabel: canWrite && !closed ? "Close" : null,
             primaryOnclick: `VendorOrders.closeBilledPlacement(${p.id})`,
@@ -433,7 +433,7 @@
         const expanded = expandedPlacementId === p.id;
         const cancelled = !!p.cancel_reason || p.status === "cancelled" || isCancelled;
         return HubUI.partyCard({
-          title: `${isCancelled ? "Cancelled" : "Placement"} · ${ctx.fmtDate(p.display_date)}`,
+          title: `${isCancelled ? "Cancelled" : "Placement"} · ${ctx.fmtDay(p.display_date)}`,
           meta: `${placementBadge(p.color_index)} ${p.line_count} lines · ${p.total_quantity || "—"} qty${showWho ? ` · ${ctx.esc(p.placed_by_name)}` : ""}${p.cancel_reason ? noteChip(p.cancel_reason, "cancel") : ""}`,
           pillHtml: cancelled ? HubUI.pill("Cancelled", "danger") : HubUI.pill("Placed", "muted"),
           primaryLabel: canWrite && isPlaced && !cancelled ? "Receive" : null,

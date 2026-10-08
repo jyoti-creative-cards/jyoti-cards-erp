@@ -215,13 +215,13 @@ const BillSeries = (() => {
       <div class="card table-wrap">
         <h3 style="margin:0 0 12px;padding:16px 16px 0;font-size:16px;">Bills in this series (${bills.length})</h3>
         <table class="data"><thead><tr>
-          <th>Bill #</th><th>Customer</th><th>Amount</th><th>Created</th><th>By</th>
+          <th>Bill #</th><th>Customer</th><th>Amount</th><th>Bill date</th><th>By</th>
         </tr></thead><tbody>
           ${bills.map(b => `<tr class="clickable" onclick="BillSeries.openBill(${b.id})">
             <td><strong style="font-family:monospace;">${ctx.esc(b.bill_number)}</strong></td>
             <td>${ctx.esc(b.customer_name)}</td>
             <td>${fmtPrice(b.grand_total)}</td>
-            <td style="font-size:12px;color:var(--muted);">${ctx.fmtDate(b.created_at)}${b.bill_date ? ` · Bill ${ctx.fmtDay(b.bill_date)}` : ""}</td>
+            <td style="font-size:12px;color:var(--muted);">${ctx.fmtDay(b.bill_date || b.created_at)}</td>
             <td style="font-size:12px;">${ctx.esc(b.created_by_name)}</td>
           </tr>`).join("")}
           ${!bills.length ? `<tr><td colspan="5" style="text-align:center;padding:32px;color:var(--muted);">No bills issued from this series yet.</td></tr>` : ""}
@@ -250,8 +250,8 @@ const BillSeries = (() => {
       <div><span class="ledger-meta-label">Customer</span> ${ctx.esc(bill.customer_name)}</div>
       <div><span class="ledger-meta-label">Series</span> ${ctx.esc(bill.bill_series_name || "—")}</div>
       <div><span class="ledger-meta-label">Grand total</span> ${fmtPrice(bill.grand_total)}</div>
+      <div><span class="ledger-meta-label">Bill date</span> ${ctx.fmtDay(bill.bill_date || bill.created_at)}</div>
       <div><span class="ledger-meta-label">Entered</span> ${ctx.fmtDate(bill.created_at)} by ${ctx.esc(bill.created_by_name)}</div>
-      ${bill.bill_date ? `<div><span class="ledger-meta-label">Bill date</span> ${ctx.fmtDay(bill.bill_date)}</div>` : ""}
       ${bill.placement_id ? `<div><span class="ledger-meta-label">Order placement</span> #${bill.placement_id}${bill.placement_at ? ` · ${new Date(bill.placement_at).toLocaleString()}` : ""}</div>` : ""}
       ${bill.narration ? `<div><span class="ledger-meta-label">Narration</span> ${ctx.esc(bill.narration)}</div>` : ""}`;
     const table = `<table class="data"><thead><tr><th>Product</th><th>Qty</th><th>Rate</th><th>Total</th><th>Status</th></tr></thead><tbody>${lines}</tbody></table>`;

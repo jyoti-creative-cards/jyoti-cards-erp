@@ -167,3 +167,51 @@ def list_payments(db: Session, from_date: Optional[date] = None, to_date: Option
 
     out.sort(key=lambda x: x.get("created_at") or "", reverse=True)
     return out[:500]
+
+
+def list_day_bills(db: Session, day: date) -> dict:
+    """Customer bills whose bill date is this day. No documents, no ledger rows."""
+    rows = (
+        db.query(CustomerBill, Customer.business_name, Customer.party_number, City.name)
+        .join(Customer, Customer.id == CustomerBill.customer_id)
+        .outerjoin(City, City.id == Customer.city_id)
+        .filter(
+            CustomerBill.deleted_at.is_(None),
+            CustomerBill.bill_date == day,
+        )
+        .order_by(CustomerBill.id.asc())
+        .all()
+    )
+    items = []
+    total = Decimal("0")
+    live = 0
+    cancelled = 0
+    for bill, name, party_number, city in rows:
+        is_cancelled = bill.cancelled_at is not None
+        amount = bill.grand_total or Decimal("0")
+        if is_cancelled:
+            cancelled += 1
+        else:
+            live += 1
+            total += amount
+        items.append(
+            {
+                "id": bill.id,
+                "doc_type": "sales_bill",
+                "doc_number": bill.bill_number,
+                "party_id": bill.customer_id,
+                "party_number": party_number,
+                "party_label": name or f"Customer #{bill.customer_id}",
+                "city_name": city,
+                "amount": format(amount, "f"),
+                "date": day.isoformat(),
+                "status": "cancelled" if is_cancelled else "open",
+            }
+        )
+    return {
+        "day": day.isoformat(),
+        "count": live,
+        "cancelled_count": cancelled,
+        "amount_total": format(total, "f"),
+        "items": items,
+    }

@@ -162,6 +162,17 @@ def serialize_customer_bill(
         ],
     )
 
+def _party_fields(db: Session, customer: Customer) -> dict:
+    city = db.get(City, customer.city_id) if customer.city_id else None
+    return {
+        "party_number": customer.party_number,
+        "marker_1": customer.marker_1,
+        "marker_2": customer.marker_2,
+        "payment_type": customer.payment_type,
+        "city_name": city.name if city else None,
+    }
+
+
 @router.get("/customer/{customer_id}", response_model=CustomerOrderDetail)
 def get_customer_order_detail(
     customer_id: int,
@@ -174,7 +185,7 @@ def get_customer_order_detail(
         raise HTTPException(404, "customer not found")
 
     if bucket == "open":
-        from app.services.catalog_addons import addon_snapshots_map
+        from app.services.catalog_addons import billing_addons_for_products
 
         open_lines = (
             db.query(CustomerOpenLine)
@@ -182,8 +193,8 @@ def get_customer_order_detail(
             .order_by(CustomerOpenLine.our_product_id.asc())
             .all()
         )
-        addon_map = addon_snapshots_map(
-            db, [r.catalog_product_id for r in open_lines], with_images=False
+        addon_map = billing_addons_for_products(
+            db, customer_id, [r.catalog_product_id for r in open_lines]
         ) if open_lines else {}
         product_ids = [r.catalog_product_id for r in open_lines]
         products = {
@@ -222,6 +233,7 @@ def get_customer_order_detail(
             customer_name=customer.business_name,
             bucket="open",
             open_lines=lines_out,
+            **_party_fields(db, customer),
         )
 
     order = (
@@ -230,7 +242,10 @@ def get_customer_order_detail(
         .first()
     )
     if not order:
-        return CustomerOrderDetail(id=0, customer_id=customer_id, customer_name=customer.business_name, bucket=bucket)
+        return CustomerOrderDetail(
+            id=0, customer_id=customer_id, customer_name=customer.business_name, bucket=bucket,
+            **_party_fields(db, customer),
+        )
 
     placements = (
         db.query(CustomerOrderPlacement)
@@ -356,6 +371,7 @@ def get_customer_order_detail(
         bucket=bucket,
         placements=pl_out,
         bills=bills_out,
+        **_party_fields(db, customer),
     )
 
 @router.get("/bills/{bill_id}", response_model=CustomerBillOut)

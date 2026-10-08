@@ -67,6 +67,29 @@ def test_fresh_pending_parcel_shows_in_today_dispatch_queue(db):
     assert any(r["bill_id"] == bill.id for r in today_rows)
 
 
+def test_bus_bill_posts_agent_charge_before_pickup(db):
+    from app.models.freight_agent import FreightAgent
+    from app.services.freight_parcels import charge_for_bill, ensure_bill_freight_charge
+
+    agent = FreightAgent(name="Vishnu Parcel")
+    db.add(agent)
+    db.flush()
+    bill = _bill(db, transport_mode="bus")
+    bill.freight_agent_id = agent.id
+    bill.freight_charges = Decimal("40")
+    db.flush()
+
+    ensure_bill_freight_charge(db, bill, customer_name="Freight Party", actor_name="Test")
+    entry = charge_for_bill(db, bill.id)
+    assert entry is not None
+    assert entry.freight_agent_id == agent.id
+    assert entry.amount == Decimal("40")
+
+    ensure_bill_freight_charge(db, bill, customer_name="Freight Party", actor_name="Test")
+    again = charge_for_bill(db, bill.id)
+    assert again.id == entry.id
+
+
 def test_picked_parcel_from_yesterday_is_correctly_scoped_out_of_today(db):
     """Sanity check: "picked" (historical/completed) is day-scoped the same way as
     "pending" — both use CustomerBill.created_at now."""

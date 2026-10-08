@@ -1,4 +1,4 @@
-"""Freight parcels — bills assigned to an agent, dues only after pick."""
+"""Freight parcels. The agent ledger gets the charge when the bill is saved."""
 
 from __future__ import annotations
 
@@ -37,6 +37,46 @@ def remove_charge_for_bill(db: Session, bill_id: int) -> None:
     db.delete(entry)
     db.flush()
     recompute_balance_due(db, agent_id)
+
+
+def ensure_bill_freight_charge(
+    db: Session,
+    bill: CustomerBill,
+    *,
+    customer_name: str,
+    actor_name: str,
+) -> None:
+    """Keep one agent charge in step with the bill. Bus + agent + amount posts it.
+    Transport and self-pickup do not. The customer ledger stays the one bill total."""
+    mode = bill.transport_mode or ("bus" if bill.freight_agent_id else "self_pickup")
+    amt = (bill.freight_charges or Decimal("0")).quantize(Decimal("0.01"))
+    if mode != "bus" or not bill.freight_agent_id or amt <= 0:
+        if charge_for_bill(db, bill.id):
+            remove_charge_for_bill(db, bill.id)
+        return
+    entry = charge_for_bill(db, bill.id)
+    if entry and entry.freight_agent_id != bill.freight_agent_id:
+        remove_charge_for_bill(db, bill.id)
+        entry = None
+    party = customer_name or f"Bill {bill.bill_number}"
+    if entry:
+        if mag(entry.amount) != amt or (entry.notes or "") != party:
+            entry.amount = as_signed_increase(amt)
+            entry.notes = party
+            db.flush()
+            recompute_balance_due(db, entry.freight_agent_id)
+        return
+    agent = db.get(FreightAgent, bill.freight_agent_id)
+    if not agent:
+        return
+    post_freight_charge(
+        db,
+        agent_id=agent.id,
+        amount=amt,
+        customer_bill_id=bill.id,
+        notes=party,
+        actor_name=actor_name,
+    )
 
 
 def sync_bill_freight_on_edit(
@@ -95,12 +135,11 @@ def sync_bill_freight_on_edit(
                 )
         return
 
-    # Pending — free to reassign / clear
+    # Pending — the charge was posted at bill save, so edit updates it.
     bill.freight_agent_id = new_agent
     bill.freight_charges = freight_charges
-    # Should not have a charge while pending; clean if orphaned
-    if charge_for_bill(db, bill.id):
-        remove_charge_for_bill(db, bill.id)
+    bill.transport_mode = "bus" if new_agent else (bill.transport_mode or "self_pickup")
+    ensure_bill_freight_charge(db, bill, customer_name=customer_name, actor_name=actor_name)
 
 
 def pick_parcel(db: Session, *, bill_id: int, actor_name: str) -> CustomerBill:
@@ -173,9 +212,9 @@ def reassign_parcel(
     bill.freight_agent_id = freight_agent_id
     if freight_charges is not None:
         bill.freight_charges = freight_charges
-    # Clear orphan charge if any
-    if charge_for_bill(db, bill.id):
-        remove_charge_for_bill(db, bill.id)
+    customer = db.get(Customer, bill.customer_id)
+    party = (customer.business_name if customer else None) or f"Bill {bill.bill_number}"
+    ensure_bill_freight_charge(db, bill, customer_name=party, actor_name="reassign")
     db.flush()
     return bill
 

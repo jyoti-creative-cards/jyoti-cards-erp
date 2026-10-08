@@ -314,7 +314,7 @@
     </tr></thead><tbody>
       ${receipts.map(r => `<tr>
         <td><strong>${ctx.esc(r.order_receipt_number || `#${r.receipt_id}`)}</strong></td>
-        <td class="vo-muted">${ctx.fmtDate(r.display_date || r.value_date || r.created_at) || "—"}</td>
+        <td class="vo-muted">${ctx.fmtDay(r.display_date || r.value_date || r.created_at) || "—"}</td>
         <td>${r.line_count}</td>
         <td><strong>${r.total_quantity}</strong></td>
         <td>${r.expected_bill_amount != null ? fmtPrice(r.expected_bill_amount) : "—"}${r.expected_extra_cash ? ` <span class="vo-muted">+ ${fmtPrice(r.expected_extra_cash)}</span>` : ""}</td>
@@ -379,7 +379,7 @@
             ${hubChevron(pOpen)}
             ${placementBadge(p.color_index)}
             <div>
-              <div class="vo-hub-title" style="font-size:14px;">${ctx.esc(p.display_name || `Placement #${p.id}`)} · ${ctx.fmtDate(p.display_date)}</div>
+              <div class="vo-hub-title" style="font-size:14px;">${ctx.esc(p.display_name || `Placement #${p.id}`)} · ${ctx.fmtDay(p.display_date)}</div>
               <div class="vo-hub-meta">${p.line_count} lines · ${p.total_quantity || "—"} qty${cancelled ? " · cancelled" : ""}</div>
               ${cancelled ? noteChip(p.cancel_reason, "cancel") : ""}
             </div>
@@ -451,7 +451,7 @@
             ${hubChevron(pOpen)}
             <div>
               <div class="vo-hub-title" style="font-size:14px;">${ctx.esc(p.display_name || p.bill_number || `Bill #${p.id}`)}${closed ? ` <span class="vo-pill-muted">Closed</span>` : ""}</div>
-              <div class="vo-hub-meta">${p.line_count} lines · ${ctx.fmtDate(p.display_date)}
+              <div class="vo-hub-meta">${p.line_count} lines · ${ctx.fmtDay(p.display_date)}
                 ${p.net_payable != null ? ` · Net ${fmtPrice(p.net_payable)}` : ""}</div>
               ${closed && p.close_reason ? noteChip(p.close_reason, "close") : ""}
             </div>

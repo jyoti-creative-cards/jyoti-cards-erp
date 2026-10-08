@@ -23,6 +23,7 @@ class AddonProduct(Base):
     category: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
     unit: Mapped[str] = mapped_column(String(50), nullable=False)
     buying_price: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    selling_price: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0, server_default="0")
     image_keys: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     quantity_on_hand: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     low_stock_threshold: Mapped[int] = mapped_column(Integer, nullable=False, default=5, server_default="5")

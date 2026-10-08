@@ -200,6 +200,8 @@ def _apply_bill_qty_delta_to_order(
             open_row.status = "open"
             _apply_billed_to_received_lines(db, customer_id, catalog_product_id, take_from_open)
         if grow > 0:
+            from app.services.catalog_addons import kept_addon_ids_for_customer_product
+
             reserve_stock(
                 db,
                 catalog_product_id=catalog_product_id,
@@ -207,6 +209,7 @@ def _apply_bill_qty_delta_to_order(
                 quantity=grow,
                 reference_id=bill_placement_id or catalog_product_id,
                 party=customer_name,
+                only_addon_ids=kept_addon_ids_for_customer_product(db, customer_id, catalog_product_id),
             )
             _grow_received_for_bill_delta(
                 db, customer_id, catalog_product_id, grow, unit_price, customer_name
@@ -218,6 +221,8 @@ def _apply_bill_qty_delta_to_order(
             open_row.status = "open"
     else:
         take = -delta
+        from app.services.catalog_addons import kept_addon_ids_for_customer_product
+
         restore_stock(
             db,
             catalog_product_id=catalog_product_id,
@@ -226,6 +231,7 @@ def _apply_bill_qty_delta_to_order(
             reference_id=bill_placement_id or catalog_product_id,
             party=customer_name,
             notes=f"Bill edit reduce {take}",
+            only_addon_ids=kept_addon_ids_for_customer_product(db, customer_id, catalog_product_id),
         )
         _shrink_received_for_bill_delta(db, customer_id, catalog_product_id, take)
         if open_row:

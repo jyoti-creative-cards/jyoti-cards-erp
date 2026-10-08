@@ -219,7 +219,9 @@
       const per = Number(a.quantity) || 1;
       const total = per * scale;
       const label = a.name || a.our_product_id || "Add-on";
-      return `<div class="co-addon-row">+ ${ctx.esc(a.our_product_id || "")} · ${ctx.esc(label)} × ${total}</div>`;
+      const price = Number(a.selling_price);
+      const priceBit = price > 0 ? ` · ₹${price}` : "";
+      return `<div class="co-addon-row">+ ${ctx.esc(a.our_product_id || "")} · ${ctx.esc(label)} × ${total}${priceBit}</div>`;
     }).join("")}</div>`;
   }
 

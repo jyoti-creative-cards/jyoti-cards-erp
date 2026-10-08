@@ -41,6 +41,8 @@ def cancel_open_line(db: Session, line_id: int, reason: str, customer_name: str)
     qty = row.quantity_open
     if qty <= 0:
         raise HTTPException(400, "nothing to cancel")
+    from app.services.catalog_addons import kept_addon_ids_for_customer_product
+
     restore_stock(
         db,
         catalog_product_id=row.catalog_product_id,
@@ -49,6 +51,7 @@ def cancel_open_line(db: Session, line_id: int, reason: str, customer_name: str)
         reference_id=line_id,
         party=customer_name,
         notes=f"Cancelled open: {reason}",
+        only_addon_ids=kept_addon_ids_for_customer_product(db, row.customer_id, row.catalog_product_id),
     )
     row.quantity_open = 0
     row.quantity_received = max(row.quantity_billed, row.quantity_received - qty)
@@ -171,6 +174,8 @@ def cancel_customer_bill(
         # Release the stock this bill line held — whether it came from a portal
         # reservation (at order time) or an offline sale (at bill time), the deal is
         # off: give the units back to on-hand.
+        from app.services.catalog_addons import kept_addon_ids_for_customer_product
+
         restore_stock(
             db,
             catalog_product_id=ln.catalog_product_id,
@@ -179,6 +184,7 @@ def cancel_customer_bill(
             reference_id=bill.id,
             party=customer_name,
             notes=f"Bill {bill.bill_number} cancelled — stock released",
+            only_addon_ids=kept_addon_ids_for_customer_product(db, bill.customer_id, ln.catalog_product_id),
         )
 
         # Drop the qty from the customer's outstanding order (do not reopen it — see

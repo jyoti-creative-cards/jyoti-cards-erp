@@ -203,6 +203,8 @@ def create_customer_return(
         # Returned goods bring their linked add-ons back into stock too — same
         # choke point (reserve_stock/restore_stock) applies this on placement
         # cancel; returns went through add_stock directly and skipped it.
+        from app.services.catalog_addons import kept_addon_ids_for_customer_product
+
         deduct_addons_for_product(
             db,
             catalog_product_id=p["catalog_product_id"],
@@ -211,6 +213,7 @@ def create_customer_return(
             reference_id=ret.id,
             party=customer.business_name,
             note=f"Return {ret.return_number}",
+            only_addon_ids=kept_addon_ids_for_customer_product(db, customer_id, p["catalog_product_id"]),
         )
 
     post_credit_note_entry(

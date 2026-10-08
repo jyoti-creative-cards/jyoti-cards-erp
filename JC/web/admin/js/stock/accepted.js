@@ -1942,7 +1942,7 @@ const Stock = (() => {
   }
   function ledgerTableHtml(rows) {
     const body = (rows || []).length ? rows.map(e => {
-      const when = e.created_at ? new Date(e.created_at).toLocaleString() : "—";
+      const when = ctx.fmtDay?.(e.display_date || e.created_at) || "—";
       const qty = `${e.quantity_delta > 0 ? "+" : ""}${e.quantity_delta}`;
       const kind = e.voucher_kind || "";
       const vid = Number(e.voucher_id) || 0;
@@ -1978,7 +1978,7 @@ const Stock = (() => {
     ctx.showLoading?.();
     try {
       const d = await ctx.api(`/stock/ledger/${ledgerId}`, {}, 0);
-      renderReceiptDetail("Stock movement", d.entry_type, d.quantity_delta, d.balance_after, d.created_at, d.notes, d.receipt);
+      renderReceiptDetail("Stock movement", d.entry_type, d.quantity_delta, d.balance_after, d.display_date || d.created_at, d.notes, d.receipt);
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
   }
@@ -2085,8 +2085,7 @@ const Stock = (() => {
       entryType ? ctx.reviewRow("Type", entryType) : "",
       qtyDelta != null ? ctx.reviewRow("Quantity", (qtyDelta > 0 ? "+" : "") + qtyDelta) : "",
       balanceAfter != null ? ctx.reviewRow("Balance after", balanceAfter) : "",
-      // Movement rows keep event time; receipt screens prefer display_date.
-      ctx.reviewRow("Date", ctx.fmtDate(entryType === "receipt" ? (receipt?.display_date || when) : when)),
+      ctx.reviewRow("Date", ctx.fmtDay(entryType === "receipt" ? (receipt?.display_date || when) : when)),
       notes ? ctx.reviewRow("Notes", notes) : "",
       receipt?.display_name ? ctx.reviewRow("Label", receipt.display_name) : "",
       receipt?.order_receipt_number ? ctx.reviewRow("Order receipt #", receipt.order_receipt_number) : "",

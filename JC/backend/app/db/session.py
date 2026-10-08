@@ -167,6 +167,27 @@ def _migrate_addon_stock() -> None:
         else:
             _exec_sql(conn, "ALTER TABLE jc_addon_products ADD COLUMN IF NOT EXISTS quantity_on_hand INTEGER NOT NULL DEFAULT 0", critical=False)
             _exec_sql(conn, "ALTER TABLE jc_addon_products ADD COLUMN IF NOT EXISTS low_stock_threshold INTEGER NOT NULL DEFAULT 5", critical=False)
+    _migrate_addon_selling_price()
+
+
+def _migrate_addon_selling_price() -> None:
+    """Selling price on add-ons. Every add-on stays 0 except Name Plate, which is ₹2."""
+    name_plate = """
+        UPDATE jc_addon_products
+        SET selling_price = 2
+        WHERE lower(replace(replace(coalesce(our_product_id, ''), '_', ' '), '-', ' ')) LIKE '%name plate%'
+           OR lower(replace(replace(coalesce(name, ''), '_', ' '), '-', ' ')) LIKE '%name plate%'
+    """
+    with engine.begin() as conn:
+        if _is_sqlite:
+            _exec_sql(conn, "ALTER TABLE jc_addon_products ADD COLUMN selling_price NUMERIC(14,2) DEFAULT 0", critical=False)
+        else:
+            _exec_sql(
+                conn,
+                "ALTER TABLE jc_addon_products ADD COLUMN IF NOT EXISTS selling_price NUMERIC(14,2) NOT NULL DEFAULT 0",
+                critical=False,
+            )
+        _exec_sql(conn, name_plate, critical=False)
 
 
 def _migrate_legacy_staff_permissions() -> None:

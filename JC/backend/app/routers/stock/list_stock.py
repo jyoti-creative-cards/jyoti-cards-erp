@@ -65,6 +65,17 @@ from app.services.void_service import void_receipt
 
 from app.routers.stock.router import router
 
+
+def _attach_priced_addons(db: Session, rows: list) -> None:
+    if not rows:
+        return
+    from app.services.catalog_addons import priced_addons_by_product
+
+    priced = priced_addons_by_product(db, [int(r.catalog_product_id) for r in rows])
+    for row in rows:
+        row.priced_addons = priced.get(int(row.catalog_product_id), [])
+
+
 @router.get("/products", response_model=List[StockProductSummary])
 def list_stock(
     db: Session = Depends(get_db),
@@ -76,7 +87,7 @@ def list_stock(
 ):
     yg = (year_group or "").replace("\x00", "").strip()
     cache_key = (
-        f"stock:products:v4:{(search or '').replace(chr(0), '')}:{yg}:{int(lite)}:"
+        f"stock:products:v5:{(search or '').replace(chr(0), '')}:{yg}:{int(lite)}:"
         f"lim={limit or 0}:cost={int(can_see_cost(auth))}"
     )
     cached = response_cache.get(cache_key)
@@ -86,6 +97,8 @@ def list_stock(
     search_clean_early = (search or "").replace("\x00", "").strip()
     if db.get_bind().dialect.name == "sqlite":
         out = _list_stock_sqlite(db, search_clean_early, yg, lite, limit, auth)
+        if lite:
+            _attach_priced_addons(db, out)
         response_cache.set(cache_key, out, 25.0)
         return out
 
@@ -217,6 +230,8 @@ def list_stock(
                 alt_count=int(r["alt_count"] or 0),
             )
         )
+    if lite:
+        _attach_priced_addons(db, out)
     response_cache.set(cache_key, out, 25.0)
     return out
 

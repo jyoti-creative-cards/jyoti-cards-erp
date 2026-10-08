@@ -13,6 +13,7 @@ class AddonSnapOut(BaseModel):
     quantity: int = 1
     unit: Optional[str] = "pc"
     image_url: Optional[str] = None
+    selling_price: Optional[str] = None
 
 
 class CustomerOrderLineOut(BaseModel):
@@ -132,6 +133,11 @@ class CustomerOrderDetail(BaseModel):
     placements: List[CustomerPlacementOut] = []
     open_lines: List[CustomerOpenLineOut] = []
     bills: List[CustomerBillOut] = []
+    party_number: Optional[int] = None
+    marker_1: Optional[str] = None
+    marker_2: Optional[str] = None
+    payment_type: Optional[str] = None
+    city_name: Optional[str] = None
 
 
 class CancelRequest(BaseModel):
@@ -228,6 +234,7 @@ class OfflineLineIn(BaseModel):
     catalog_product_id: int
     quantity: int = Field(..., ge=1)
     discount_percent: Optional[float] = None
+    skip_addon_ids: List[int] = []
 
 
 class OfflineCustomerOrderIn(BaseModel):

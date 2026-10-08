@@ -62,6 +62,7 @@ def deduct_addons_for_product(
     party: str | None = None,
     note: str | None = None,
     when: datetime | None = None,
+    only_addon_ids: list[int] | None = None,
 ) -> None:
     """Apply add-on stock movement for `units` of a catalog product being reserved
     (units > 0 shrinks add-on stock) or restored (units < 0 grows it back), based on
@@ -73,7 +74,10 @@ def deduct_addons_for_product(
     if not links:
         return
     entry_type = "customer_order" if units > 0 else "customer_order_restore"
+    allowed = set(only_addon_ids) if only_addon_ids is not None else None
     for link in links:
+        if allowed is not None and int(link.addon_product_id) not in allowed:
+            continue
         # A recycle-binned add-on should be inert, the same way the manual
         # adjust-stock/receive-stock endpoints already 404 on it (`not row.is_active`).
         # Without this check, every order/cancel/return on a product still linked to a

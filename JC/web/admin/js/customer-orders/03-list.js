@@ -127,7 +127,8 @@
       + (o.marker_2 ? ` <span class="badge badge-amber" style="font-size:9px;padding:1px 4px;">${ctx.esc(o.marker_2)}</span>` : "")
       + (o.payment_type === "CASH" && !_m1Upper.includes("CASH") ? ` <span class="badge badge-amber" style="font-size:9px;padding:1px 4px;">CASH</span>` : "");
 
-    const timeStr = o.updated_at ? (ctx.timeAgo?.(o.updated_at) || "") : "";
+    const when = o.display_date || o.updated_at;
+    const timeStr = when ? (ctx.fmtDay?.(when) || "") : "";
     const bucketCls = { received: "ord-order-card--received", open: "ord-order-card--open", billed: "ord-order-card--billed", closed: "ord-order-card--closed", cancelled: "ord-order-card--cancelled" }[currentBucket] || "";
 
     const avatarLetter = ctx.esc((o.customer_name || "?").slice(0, 1).toUpperCase());

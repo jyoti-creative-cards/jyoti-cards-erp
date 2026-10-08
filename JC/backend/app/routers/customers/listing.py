@@ -138,6 +138,8 @@ def quick_search_customers(
             "city_name": cities.get(r.city_id),
             "phone": r.phone,
             "party_number": r.party_number,
+            "person_name": r.person_name,
+            "alias": r.alias,
             "marker_1": r.marker_1,
             "marker_2": r.marker_2,
             "payment_type": r.payment_type,

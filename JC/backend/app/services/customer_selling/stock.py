@@ -23,6 +23,7 @@ def reserve_stock(
     party: str,
     allow_negative: bool = False,
     when: datetime | None = None,
+    only_addon_ids: list[int] | None = None,
 ) -> None:
     reserve_stock_many(
         db,
@@ -35,6 +36,7 @@ def reserve_stock(
         party=party,
         allow_negative=allow_negative,
         when=when,
+        only_addons={catalog_product_id: only_addon_ids} if only_addon_ids is not None else None,
     )
 
 
@@ -46,6 +48,7 @@ def reserve_stock_many(
     party: str,
     allow_negative: bool = False,
     when: datetime | None = None,
+    only_addons: dict[int, list[int]] | None = None,
 ) -> None:
     """Reserve several products in one lock, one ledger write, one add-on pass."""
     from app.models.addon_product import AddonProduct
@@ -122,6 +125,9 @@ def reserve_stock_many(
     from app.models.addon_stock_ledger import AddonStockLedger
 
     for link in links:
+        if only_addons is not None and int(link.catalog_product_id) in only_addons:
+            if int(link.addon_product_id) not in set(only_addons[int(link.catalog_product_id)] or []):
+                continue
         addon = addons.get(int(link.addon_product_id))
         if not addon or not addon.is_active or addon.deleted_at:
             continue
@@ -144,7 +150,7 @@ def reserve_stock_many(
             ledger_row.created_at = when
         db.add(ledger_row)
 
-def restore_stock(db: Session, *, catalog_product_id: int, our_product_id: str, quantity: int, reference_id: int, party: str, notes: str, when: datetime | None = None) -> None:
+def restore_stock(db: Session, *, catalog_product_id: int, our_product_id: str, quantity: int, reference_id: int, party: str, notes: str, when: datetime | None = None, only_addon_ids: list[int] | None = None) -> None:
     if quantity <= 0:
         return
     add_stock(
@@ -168,5 +174,6 @@ def restore_stock(db: Session, *, catalog_product_id: int, our_product_id: str, 
         party=party,
         note=notes,
         when=when,
+        only_addon_ids=only_addon_ids,
     )
 

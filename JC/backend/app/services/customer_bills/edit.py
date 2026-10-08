@@ -17,7 +17,7 @@ from app.models.stock import StockBalance
 from app.models.freight_agent import FreightAgent
 from app.services.ar_ledger import post_bill_entry, update_bill_ledger_amount
 from app.services.bill_series_alloc import allocate_bill_number, resolve_bill_number
-from app.services.catalog_addons import addon_snapshots_map, attach_addons_to_totals
+from app.services.catalog_addons import billing_addons_for_products, merge_priced_addon_charges
 from app.services.credit_limit import assert_credit_allows_bill, credit_status
 from app.services.customer_bill_math import assert_discount_xor, compute_bill_totals
 from app.services.document_present import freeze_card
@@ -132,6 +132,14 @@ def _prepare_edit_bill_totals(
             if "override_price" in ov or "discount_percent" in ov:
                 item_overrides.append(ov)
 
+    addon_for_bill = billing_addons_for_products(
+        db,
+        customer_id,
+        [int(x["catalog_product_id"]) for x in bill_items],
+        placement_id=bill.placement_id,
+    )
+    additional_charges = merge_priced_addon_charges(additional_charges, addon_for_bill, bill_items)
+
     totals = compute_bill_totals(
         bill_items,
         gst_enabled=gst_enabled,
@@ -157,6 +165,7 @@ def _prepare_edit_bill_totals(
         "freight_agent_id": freight_agent_id,
         "freight_charges": freight_charges,
         "transport": t,
+        "additional_charges": additional_charges,
     }
 
 def preview_edit_customer_bill(
@@ -316,7 +325,7 @@ def edit_customer_bill(
     bill.gst_rate_percent = gst_rate_percent
     bill.discount_percent = overall_discount_percent if use_overall else None
     bill.packaging_charges = packaging_charges
-    bill.additional_charges = additional_charges
+    bill.additional_charges = prep["additional_charges"]
     bill.transport_mode = t["transport_mode"]
     bill.transport_receipt_number = t["transport_receipt_number"]
     bill.subtotal_inclusive = Decimal(str(totals["subtotal_inclusive"]))

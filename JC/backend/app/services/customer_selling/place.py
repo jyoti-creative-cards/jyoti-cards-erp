@@ -140,7 +140,7 @@ def create_received_placement(
     Portal must keep allow_negative_stock=False.
     """
     from app.services.biz_date import resolve_biz_dt
-    from app.services.catalog_addons import addon_snapshots_map
+    from app.services.catalog_addons import addon_snapshots_map, kept_addon_ids
 
     when = resolve_biz_dt(placed_on)
     wanted: list[tuple[int, int, object]] = []
@@ -173,13 +173,16 @@ def create_received_placement(
             raise ValueError(f"sell price not set for {prod.our_product_id}")
         addons = raw.get("addons_json")
         if addons is None:
-            addons = addon_map.get(prod.id) or None
+            addons = list(addon_map.get(prod.id) or [])
+        skip = {int(x) for x in (raw.get("skip_addon_ids") or [])}
+        if skip:
+            addons = [a for a in addons if int(a.get("addon_product_id") or 0) not in skip]
         cleaned.append(
             {
                 "prod": prod,
                 "quantity": qty,
                 "unit_price": unit_price,
-                "addons_json": addons or None,
+                "addons_json": addons,
             }
         )
 
@@ -240,6 +243,10 @@ def create_received_placement(
         party=customer_name,
         allow_negative=allow_negative_stock,
         when=when,
+        only_addons={
+            int(item["prod"].id): kept_addon_ids(item["addons_json"]) or []
+            for item in cleaned
+        },
     )
 
     # CustomerOpenLine (the "Confirmed" bucket tally used for billing) is only populated

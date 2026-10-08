@@ -16,6 +16,15 @@ from app.services.ap_ledger import build_ap_ledger, vendor_ap_totals, _vendor_la
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 
+@router.get("/day-bills")
+def day_bills_report(
+    day: date = Query(..., description="Bill date, YYYY-MM-DD"),
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    return svc.list_day_bills(db, day)
+
+
 @router.get("/sales")
 def sales_report(
     from_date: Optional[date] = Query(None),

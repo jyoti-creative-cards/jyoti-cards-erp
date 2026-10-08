@@ -355,13 +355,31 @@ def list_customer_orders(
 
         sources_by_order_id = _sources_for_received_many(db, received_ids)
         customers_by_id = {c.id: c for c in db.query(Customer).filter(Customer.id.in_(cids)).all()}
+        city_ids = {c.city_id for c in customers_by_id.values() if c.city_id}
+        cities = {c.id: c.name for c in (db.query(City).filter(City.id.in_(city_ids)).all() if city_ids else [])}
         touched_by_cid = {int(r[0]): r[3] for r in rows}
+        placed_by_cid: dict[int, object] = {}
+        if received_ids:
+            order_cid = {o.id: o.customer_id for o in received_rows}
+            for oid, placed in (
+                db.query(CustomerOrderPlacement.customer_order_id, func.max(CustomerOrderPlacement.placed_at))
+                .filter(
+                    CustomerOrderPlacement.customer_order_id.in_(received_ids),
+                    CustomerOrderPlacement.deleted_at.is_(None),
+                )
+                .group_by(CustomerOrderPlacement.customer_order_id)
+                .all()
+            ):
+                cid_for_order = order_cid.get(oid)
+                if cid_for_order is not None:
+                    placed_by_cid[cid_for_order] = placed
 
         out: list[CustomerOrderSummary] = []
         for customer_id, total_qty, line_count, _touched in rows:
             cid = int(customer_id)
             received = received_by_cid.get(cid)
             cust_obj = customers_by_id.get(cid)
+            touched = touched_by_cid.get(cid) or (received.updated_at if received else datetime.now(timezone.utc))
             out.append(
                 CustomerOrderSummary(
                     id=received.id if received else 0,
@@ -371,13 +389,14 @@ def list_customer_orders(
                     placement_count=0,
                     line_count=int(line_count or 0),
                     total_quantity=int(total_qty or 0),
-                    updated_at=touched_by_cid.get(cid) or (received.updated_at if received else datetime.now(timezone.utc)),
-                    display_date=touched_by_cid.get(cid) or (received.updated_at if received else datetime.now(timezone.utc)),
+                    updated_at=touched,
+                    display_date=placed_by_cid.get(cid) or touched,
                     sources=sources_by_order_id.get(received.id, []) if received else [],
                     party_number=getattr(cust_obj, "party_number", None) if cust_obj else None,
                     marker_1=getattr(cust_obj, "marker_1", None) if cust_obj else None,
                     marker_2=getattr(cust_obj, "marker_2", None) if cust_obj else None,
                     payment_type=getattr(cust_obj, "payment_type", None) if cust_obj else None,
+                    city_name=cities.get(cust_obj.city_id) if cust_obj and cust_obj.city_id else None,
                 )
             )
         out.sort(key=lambda x: _sort_business_date(x.display_date), reverse=True)
@@ -462,16 +481,19 @@ def list_customer_orders(
         # noticeably hung the UI once dozens of customers had unclosed bills sitting
         # here (this bucket is auto-opened right after every new bill save).
         bill_cids = [int(cid) for cid, _, _ in bill_rows]
-        names_by_cid = {
-            c.id: c.business_name for c in db.query(Customer).filter(Customer.id.in_(bill_cids)).all()
+        customers_by_id = {
+            c.id: c for c in db.query(Customer).filter(Customer.id.in_(bill_cids)).all()
         } if bill_cids else {}
+        city_ids = {c.city_id for c in customers_by_id.values() if c.city_id}
+        cities = {c.id: c.name for c in (db.query(City).filter(City.id.in_(city_ids)).all() if city_ids else [])}
         out = []
         for cid, cnt, display_date in bill_rows:
+            cust_obj = customers_by_id.get(int(cid))
             out.append(
                 CustomerOrderSummary(
                     id=0,
                     customer_id=int(cid),
-                    customer_name=names_by_cid.get(int(cid), f"Customer #{int(cid)}"),
+                    customer_name=cust_obj.business_name if cust_obj else f"Customer #{int(cid)}",
                     bucket="billed",
                     placement_count=int(cnt or 0),
                     bill_count=int(cnt or 0),
@@ -480,6 +502,11 @@ def list_customer_orders(
                     updated_at=display_date or today_ist(),
                     display_date=display_date or today_ist(),
                     sources=[],
+                    party_number=getattr(cust_obj, "party_number", None) if cust_obj else None,
+                    marker_1=getattr(cust_obj, "marker_1", None) if cust_obj else None,
+                    marker_2=getattr(cust_obj, "marker_2", None) if cust_obj else None,
+                    payment_type=getattr(cust_obj, "payment_type", None) if cust_obj else None,
+                    city_name=cities.get(cust_obj.city_id) if cust_obj and cust_obj.city_id else None,
                 )
             )
         return _filter_by_product(out)

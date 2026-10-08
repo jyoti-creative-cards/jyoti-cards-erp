@@ -168,9 +168,9 @@ def test_album_name_uses_parent_category_not_one_series(db):
         ),
         AUTH,
     )
-    assert {ln.our_product_id for ln in saved.lines} == {"1042", "4385"}
+    assert {ln.our_product_id for ln in saved.lines} == {"1042", "4385", "2071"}
     assert _hand(db, series_only.id) == 10
-    assert _hand(db, second_only.id) == 10
+    assert _hand(db, second_only.id) == 9
     assert _hand(db, other_album.id) == 10
 
     with pytest.raises(HTTPException) as bare:
@@ -180,6 +180,31 @@ def test_album_name_uses_parent_category_not_one_series(db):
         )
     assert bare.value.status_code == 400
     assert "ALBUM NO. 01" in bare.value.detail
+
+
+def test_item_in_two_albums_is_on_both_expenses(db):
+    vendor = _vendor(db)
+    only_two = _product(db, vendor, "5162", category="ALBUM NO. 02", buying=Decimal("10.00"), stock=5)
+    shared = _product(db, vendor, "5470", category="ALBUM NO. 02", buying=Decimal("4.00"), stock=5)
+    only_four = _product(db, vendor, "7501", category="ALBUM NO. 04", buying=Decimal("6.00"), stock=5)
+    shared.second_category = "ALBUM NO. 04"
+    db.commit()
+
+    album_two = post_journal(
+        db,
+        JournalIn(journal_date=today_ist(), kind="consumption", album="Album 2", copies=1),
+        AUTH,
+    )
+    album_four = post_journal(
+        db,
+        JournalIn(journal_date=today_ist(), kind="consumption", album="ALBUM NO. 04", copies=1),
+        AUTH,
+    )
+    assert {ln.our_product_id for ln in album_two.lines} == {"5162", "5470"}
+    assert {ln.our_product_id for ln in album_four.lines} == {"5470", "7501"}
+    assert _hand(db, only_two.id) == 4
+    assert _hand(db, only_four.id) == 4
+    assert _hand(db, shared.id) == 3
 
 
 def test_missing_rate_and_oversell_blocked(db):

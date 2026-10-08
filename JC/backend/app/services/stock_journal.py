@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from fastapi import HTTPException
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.deps import AuthContext
@@ -81,13 +81,15 @@ def _album_products(db: Session, name: str) -> list[CatalogProduct]:
         CatalogProduct.is_active.is_(True),
         CatalogProduct.deleted_at.is_(None),
     )
-    # Parent category only. Series (1000, 4000, …) is a subgroup inside the album,
-    # and second category is the other album on a shared design. Neither replaces the parent.
+    # Parent album, including a design that also sits in another album.
+    # Series (1000, 4000, …) is a subgroup and is not an album on its own.
+    cat = func.lower(CatalogProduct.category)
+    sec = func.lower(func.coalesce(CatalogProduct.second_category, ""))
     if needles:
-        cond = func.lower(CatalogProduct.category).in_(needles)
+        cond = or_(cat.in_(needles), sec.in_(needles))
     else:
         needle = typed.lower()
-        cond = func.lower(CatalogProduct.category) == needle
+        cond = or_(cat == needle, sec == needle)
     rows = (
         db.query(CatalogProduct)
         .filter(*active, cond)

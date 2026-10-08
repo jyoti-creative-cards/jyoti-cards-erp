@@ -26,6 +26,7 @@ from app.models.accounts_receivable import CustomerArAccount, ArLedgerEntry
 from app.models.customer_return import CustomerReturn, CustomerReturnLine
 from app.models.manual_loss import ManualLoss
 from app.models.payment_mode import PaymentMode
+from app.models.sticker_label import StickerLabel
 
 __all__ = [
     "ActivityLog", "AddonProduct", "AddonStockLedger", "CatalogAddonLink", "CatalogAlternative",
@@ -37,4 +38,5 @@ __all__ = [
     "StockBalance", "StockLedger", "StockReceipt", "StockReceiptLine",
     "StockJournal", "StockJournalLine",
     "DebitNote", "VendorApAccount", "ApLedgerEntry",
+    "StickerLabel",
 ]

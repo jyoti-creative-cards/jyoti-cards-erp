@@ -147,6 +147,31 @@ def quick_search_customers(
         for r in rows[:8]
     ]
 
+@router.get("/{customer_id}/sticker")
+def get_customer_sticker(
+    customer_id: int,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_any_permission("customers.read", "finance.write")),
+) -> dict:
+    """Hindi name and city for the A5 sticker. The phone stays as stored."""
+    from app.services.sticker_labels import label_for_customer
+
+    row = db.get(Customer, customer_id)
+    if row is None or row.deleted_at is not None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="customer not found")
+    city_name = None
+    if row.city_id:
+        city = db.get(City, row.city_id)
+        if city is not None and city.deleted_at is None:
+            city_name = city.name
+    label = label_for_customer(db, row, city_name)
+    return {
+        "customer_id": row.id,
+        "name_hi": label.name_hi,
+        "city_hi": label.city_hi,
+        "phone": row.phone,
+    }
+
 @router.get("/{customer_id}", response_model=CustomerPublic)
 def get_customer(
     customer_id: int,

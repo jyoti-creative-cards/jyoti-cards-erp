@@ -147,34 +147,56 @@ const Sticker = (() => {
     });
   }
 
+  async function hindiLabel() {
+    const res = await fetch(`${apiBase()}/customers/${picked.id}/sticker`, { headers: headers() });
+    if (!res.ok) throw new Error("Could not load the Hindi name");
+    return res.json();
+  }
+
   function print() {
     if (!picked) return;
-    const when = printTime();
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Sticker</title>
-      <style>
-        @page { size: A5; margin: 14mm; }
-        html, body { margin: 0; padding: 0; }
-        body { font-family: Helvetica, Arial, sans-serif; color: #111; }
-        .time { font-size: 16px; margin: 0 0 28px; }
-        .name { font-size: 32px; font-weight: 700; margin: 0 0 16px; line-height: 1.2; }
-        .city, .phone { font-size: 24px; margin: 0 0 12px; }
-      </style></head><body>
-        <p class="time">${esc(when)}</p>
-        <p class="name">${esc(picked.business_name || "")}</p>
-        <p class="city">${esc(picked.city_name || "")}</p>
-        <p class="phone">${esc(picked.phone || "")}</p>
-      </body></html>`;
-    const w = window.open("", "_blank");
-    if (!w) {
-      const note = document.getElementById("sticker-picked");
-      if (note) note.textContent = "Allow pop-ups to print.";
-      return;
-    }
-    w.document.open();
-    w.document.write(html);
-    w.document.close();
-    w.focus();
-    setTimeout(() => { try { w.print(); } catch (e) { /* browser print dialog */ } }, 200);
+    const note = document.getElementById("sticker-picked");
+    hindiLabel().then((label) => {
+      const when = printTime();
+      const html = `<!DOCTYPE html><html lang="hi"><head><meta charset="utf-8"><title>Sticker</title>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@500;700&display=swap">
+        <style>
+          @page { size: A5; margin: 14mm; }
+          html, body { margin: 0; padding: 0; }
+          body { color: #111; }
+          .time, .phone { font-family: Helvetica, Arial, sans-serif; }
+          .name, .city { font-family: "Noto Sans Devanagari", "Kohinoor Devanagari", "Nirmala UI", "Mangal", sans-serif; }
+          .time { font-size: 16px; margin: 0 0 28px; }
+          .name { font-size: 32px; font-weight: 700; margin: 0 0 16px; line-height: 1.35; }
+          .city, .phone { font-size: 24px; margin: 0 0 12px; line-height: 1.35; }
+        </style></head><body>
+          <p class="time">${esc(when)}</p>
+          <p class="name" lang="hi">${esc(label.name_hi || "")}</p>
+          <p class="city" lang="hi">${esc(label.city_hi || "")}</p>
+          <p class="phone">${esc(label.phone || "")}</p>
+        </body></html>`;
+      const w = window.open("", "_blank");
+      if (!w) {
+        if (note) note.textContent = "Allow pop-ups to print.";
+        return;
+      }
+      w.document.open();
+      w.document.write(html);
+      w.document.close();
+      w.focus();
+      const go = () => { try { w.print(); } catch (e) { /* browser print dialog */ } };
+      let started = false;
+      const once = () => { if (started) return; started = true; go(); };
+      const fonts = w.document.fonts;
+      if (fonts && fonts.ready) {
+        const timer = setTimeout(once, 2000);
+        fonts.ready.then(() => { clearTimeout(timer); once(); });
+      } else {
+        setTimeout(once, 300);
+      }
+    }).catch((e) => {
+      if (note) note.textContent = e.message || "Could not load the Hindi name";
+    });
   }
 
   return { open, close, onType, pick, print };

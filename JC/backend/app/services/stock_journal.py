@@ -167,7 +167,12 @@ def resolve_lines(db: Session, body: JournalIn) -> tuple[list[dict], list[str], 
             copies = int(body.copies)
             drafted = []
             for product in products:
-                rate = _buying_rate(product, None, required=True)
+                missing_price = product.buying_price is None or Decimal(str(product.buying_price)) <= 0
+                rate = _buying_rate(product, None, required=False)
+                if missing_price:
+                    warnings.append(
+                        f"{product.our_product_id} has no buying price. Its quantity is still taken. Its cost on this expense is zero."
+                    )
                 drafted.append({
                     "product": product,
                     "quantity_delta": -copies,
@@ -365,6 +370,32 @@ def post_journal(db: Session, body: JournalIn, auth: AuthContext) -> JournalOut:
     )
 
 
+def _hands(db: Session, product_ids) -> dict[int, int]:
+    ids = {int(pid) for pid in product_ids if pid}
+    if not ids:
+        return {}
+    rows = (
+        db.query(StockBalance)
+        .filter(StockBalance.catalog_product_id.in_(ids))
+        .all()
+    )
+    return {int(row.catalog_product_id): int(row.quantity_on_hand or 0) for row in rows}
+
+
+def _lines_out(rows, hands: dict[int, int]) -> list[JournalLineOut]:
+    return [
+        JournalLineOut(
+            catalog_product_id=ln.catalog_product_id,
+            our_product_id=ln.our_product_id,
+            quantity_delta=ln.quantity_delta,
+            rate=format(ln.rate, "f"),
+            amount=format(ln.amount, "f"),
+            on_hand=hands.get(int(ln.catalog_product_id), 0),
+        )
+        for ln in rows
+    ]
+
+
 def _journal_out(db: Session, journal: StockJournal, warnings: list[str] | None = None) -> JournalOut:
     rows = (
         db.query(StockJournalLine)
@@ -372,17 +403,7 @@ def _journal_out(db: Session, journal: StockJournal, warnings: list[str] | None 
         .order_by(StockJournalLine.id.asc())
         .all()
     )
-    lines = [
-        JournalLineOut(
-            catalog_product_id=ln.catalog_product_id,
-            our_product_id=ln.our_product_id,
-            quantity_delta=ln.quantity_delta,
-            rate=format(ln.rate, "f"),
-            amount=format(ln.amount, "f"),
-            on_hand=_on_hand(db, ln.catalog_product_id),
-        )
-        for ln in rows
-    ]
+    lines = _lines_out(rows, _hands(db, [ln.catalog_product_id for ln in rows]))
     return JournalOut(
         id=journal.id,
         journal_date=journal.journal_date,
@@ -406,7 +427,36 @@ def list_journals(db: Session, from_date=None, to_date=None) -> list[JournalOut]
     if to_date is not None:
         q = q.filter(StockJournal.journal_date <= to_date)
     rows = q.order_by(StockJournal.journal_date.desc(), StockJournal.id.desc()).all()
-    return [_journal_out(db, row) for row in rows]
+    journal_ids = [row.id for row in rows]
+    line_rows = (
+        db.query(StockJournalLine)
+        .filter(StockJournalLine.journal_id.in_(journal_ids))
+        .order_by(StockJournalLine.id.asc())
+        .all()
+        if journal_ids else []
+    )
+    grouped: dict[int, list] = {}
+    for ln in line_rows:
+        grouped.setdefault(int(ln.journal_id), []).append(ln)
+    hands = _hands(db, [ln.catalog_product_id for ln in line_rows])
+    out = []
+    for journal in rows:
+        lines = _lines_out(grouped.get(int(journal.id), []), hands)
+        out.append(JournalOut(
+            id=journal.id,
+            journal_date=journal.journal_date,
+            kind=journal.kind,
+            narration=journal.narration,
+            expense_category=journal.expense_category,
+            expense_id=journal.expense_id,
+            total_cost=format(journal.total_cost, "f"),
+            created_by_name=journal.created_by_name,
+            voided_at=journal.voided_at,
+            void_reason=journal.void_reason,
+            lines=lines,
+            warnings=[],
+        ))
+    return out
 
 
 def get_journal(db: Session, journal_id: int) -> JournalOut:

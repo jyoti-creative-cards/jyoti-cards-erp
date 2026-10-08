@@ -207,6 +207,24 @@ def test_item_in_two_albums_is_on_both_expenses(db):
     assert _hand(db, shared.id) == 3
 
 
+def test_album_without_a_buying_price_still_posts(db):
+    vendor = _vendor(db)
+    priced = _product(db, vendor, "7501", category="ALBUM NO. 04", buying=Decimal("6.00"), stock=4)
+    bare = _product(db, vendor, "7556", category="ALBUM NO. 04", buying=Decimal("0.00"), stock=4)
+    saved = post_journal(
+        db,
+        JournalIn(journal_date=today_ist(), kind="consumption", album="Album 4", copies=1),
+        AUTH,
+    )
+    assert {ln.our_product_id for ln in saved.lines} == {"7501", "7556"}
+    bare_line = next(ln for ln in saved.lines if ln.our_product_id == "7556")
+    assert Decimal(bare_line.amount) == Decimal("0.00")
+    assert any("7556" in w for w in saved.warnings)
+    assert _hand(db, priced.id) == 3
+    assert _hand(db, bare.id) == 3
+    assert db.get(Expense, saved.expense_id).amount == Decimal("6.00")
+
+
 def test_missing_rate_and_oversell_blocked(db):
     vendor = _vendor(db)
     bare = _product(db, vendor, "NORATE", buying=None, stock=5)

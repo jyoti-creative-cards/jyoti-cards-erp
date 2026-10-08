@@ -212,6 +212,7 @@
     if (!journalForm) journalForm = blankJournalForm();
     const el = document.getElementById("finance-journal-body");
     if (!el) return;
+    renderJournal();
     try {
       journalCategories = await ctx.api("/catalog/categories", {}, 0) || [];
     } catch (_) {
@@ -288,6 +289,7 @@
         ${preview ? `
           ${(preview.warnings || []).map(w => `<p style="margin:0;color:#b45309;font-size:13px;">${ctx.esc(w)}</p>`).join("")}
           <p style="margin:0;font-size:13px;">Cost ${fmtPrice(preview.total_cost)} · ${preview.lines.length} item(s) · ${journalPieces(preview)} total pieces</p>
+          ${(preview.warnings || []).map(w => `<p style="margin:0;font-size:13px;color:#92400e;">${ctx.esc(w)}</p>`).join("")}
           <div style="display:flex;gap:8px;">
             <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.printJournalPreview()">Print</button>
             <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.exportJournalExcel()">Excel</button>

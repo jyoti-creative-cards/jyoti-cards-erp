@@ -230,6 +230,58 @@ def test_edit_saved_bill_can_change_bill_date(db):
     assert _naive(ar_row.created_at).date() == new_day
 
 
+def test_edit_bill_can_raise_qty_when_stock_is_already_short(db):
+    """A bill correction must save even when on-hand is already below the extra qty."""
+    customer, prod, _ = _setup(db, on_hand=5)
+    create_received_placement(
+        db, customer_id=customer.id, customer_name=customer.business_name,
+        lines=[{"catalog_product_id": prod.id, "quantity": 5}],
+    )
+    confirm_received_order(db, customer.id)
+    bill = process_customer_bill(
+        db,
+        customer_id=customer.id,
+        customer_name=customer.business_name,
+        lines_in=[{"catalog_product_id": prod.id, "quantity_to_ship": 5}],
+        overall_discount_percent=None,
+        gst_enabled=False,
+        gst_rate_percent=Decimal("0"),
+        freight_agent_id=None,
+        freight_charges=None,
+        packaging_charges=None,
+        additional_charges=None,
+        bill_series_id=_bill_series(db).id,
+        narration=None,
+        actor_type="admin",
+        actor_id=1,
+        actor_name="Test",
+        transport_mode="self_pickup",
+    )
+    db.flush()
+    edit_customer_bill(
+        db,
+        bill_id=bill.id,
+        lines_in=[{"catalog_product_id": prod.id, "quantity": 8}],
+        overall_discount_percent=None,
+        gst_enabled=False,
+        gst_rate_percent=Decimal("0"),
+        freight_agent_id=None,
+        freight_charges=None,
+        packaging_charges=None,
+        additional_charges=None,
+        narration=None,
+        actor_type="admin",
+        actor_id=1,
+        actor_name="Test",
+        transport_mode="self_pickup",
+    )
+    db.flush()
+    line = db.query(CustomerBillLine).filter(CustomerBillLine.bill_id == bill.id).one()
+    assert int(line.quantity_shipped) == 8
+    bal = db.query(StockBalance).filter(StockBalance.catalog_product_id == prod.id).one()
+    assert int(bal.quantity_on_hand) == -3
+
+
 # ---------------------------------------------------------------------------
 # 2. Backdated vendor bill → debit note (+ its AP row, + its item-DN stock ledger row)
 #    should carry the bill's business date instead of "now".

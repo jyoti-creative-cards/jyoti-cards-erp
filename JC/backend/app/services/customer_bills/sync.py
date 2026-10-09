@@ -209,6 +209,7 @@ def _apply_bill_qty_delta_to_order(
                 quantity=grow,
                 reference_id=bill_placement_id or catalog_product_id,
                 party=customer_name,
+                allow_negative=True,
                 only_addon_ids=kept_addon_ids_for_customer_product(db, customer_id, catalog_product_id),
             )
             _grow_received_for_bill_delta(

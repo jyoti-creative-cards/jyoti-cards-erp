@@ -34,6 +34,19 @@ def _normalize_phone(raw: str) -> str:
     return digits
 
 
+def _billing_terms(row: Vendor) -> VendorBillingTerms:
+    return VendorBillingTerms(
+        billing_pct=float(row.billing_pct if row.billing_pct is not None else 100),
+        additional_charge=float(row.additional_charge if row.additional_charge is not None else 0),
+        additional_charge_label=row.additional_charge_label or "Additional charge",
+        discount_pct=float(row.discount_pct if row.discount_pct is not None else 0),
+        gst_included=True if row.gst_included is None else bool(row.gst_included),
+        gst_rate_pct=float(row.gst_rate_pct if row.gst_rate_pct is not None else 18),
+        cash_discount_equals_gst=bool(row.cash_discount_equals_gst),
+        billing_notes=row.billing_notes,
+    )
+
+
 def _to_public(row: Vendor, db: Session, include_history: bool = False) -> VendorPublic:
     city_name = None
     if row.city_id:
@@ -41,7 +54,7 @@ def _to_public(row: Vendor, db: Session, include_history: bool = False) -> Vendo
         city_name = city.name if city else None
     history = []
     if include_history:
-        history = [{"change_summary": h.change_summary, "valid_from": h.valid_from.isoformat(), "snapshot_json": h.snapshot_json} for h in list_entity_history(db, "vendor", row.id)]
+        history = [{"change_summary": h.change_summary, "valid_from": h.valid_from.isoformat() if h.valid_from else "", "snapshot_json": h.snapshot_json} for h in list_entity_history(db, "vendor", row.id)]
     from app.services.ap_ledger import get_opening_balance
 
     opening = get_opening_balance(db, row.id)
@@ -60,12 +73,7 @@ def _to_public(row: Vendor, db: Session, include_history: bool = False) -> Vendo
         is_active=row.is_active,
         opening_balance_due=format(opening.amount, "f") if opening else None,
         opening_balance_as_on=opening.value_date.isoformat() if opening and opening.value_date else None,
-        billing_terms=VendorBillingTerms(
-            billing_pct=float(row.billing_pct), additional_charge=float(row.additional_charge),
-            additional_charge_label=row.additional_charge_label, discount_pct=float(row.discount_pct),
-            gst_included=row.gst_included, gst_rate_pct=float(row.gst_rate_pct),
-            cash_discount_equals_gst=row.cash_discount_equals_gst, billing_notes=row.billing_notes,
-        ),
+        billing_terms=_billing_terms(row),
         created_at=row.created_at,
         updated_at=row.updated_at,
         deleted_at=row.deleted_at,
@@ -139,12 +147,7 @@ def list_vendors(
                 gst_number=r.gst_number,
                 vendor_number=r.vendor_number,
                 is_active=r.is_active,
-                billing_terms=VendorBillingTerms(
-                    billing_pct=float(r.billing_pct), additional_charge=float(r.additional_charge),
-                    additional_charge_label=r.additional_charge_label, discount_pct=float(r.discount_pct),
-                    gst_included=r.gst_included, gst_rate_pct=float(r.gst_rate_pct),
-                    cash_discount_equals_gst=r.cash_discount_equals_gst, billing_notes=r.billing_notes,
-                ),
+                billing_terms=_billing_terms(r),
                 created_at=r.created_at,
                 updated_at=r.updated_at,
                 deleted_at=r.deleted_at,

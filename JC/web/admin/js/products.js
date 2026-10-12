@@ -982,6 +982,7 @@ const Products = (() => {
         : `<div class="stock-price-row"><span class="prod-price-missing">Not set</span>
             ${ctx.isAdmin?.() ? `<button class="btn btn-primary btn-sm" onclick="Stock.setSellingPrice(${id}, '')">Set sell price</button>` : ""}</div>`;
 
+      if (Stock.setLedgerKind) Stock.setLedgerKind("all");
       const ledgerRows = Stock.ledgerTableHtml ? Stock.ledgerTableHtml(stock?.ledger) : "";
       const reservedByPartyHtml = Stock.reservedByPartyTable ? Stock.reservedByPartyTable(stock?.reserved_by_party) : "";
 

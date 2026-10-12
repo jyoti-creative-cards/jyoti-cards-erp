@@ -309,7 +309,8 @@
     const notes = String(e.notes || "").toLowerCase();
     if (t.includes("void") || t.includes("restore") || notes.includes("cancelled") || notes.includes("voided")) return "void";
     if (ref === "stock_receipt" || t === "received") return "purchase";
-    if (ref === "customer_placement" || ref === "customer_bill" || t === "reserved" || t === "sold") return "sales";
+    if (ref === "customer_placement" || ref === "customer_bill" || ref === "customer_return"
+        || t === "reserved" || t === "sold" || t === "customer_order" || t === "customer_return") return "sales";
     return "other";
   }
 
@@ -329,7 +330,31 @@
     if (stockLedgerKind === "purchase" || stockLedgerKind === "sales" || stockLedgerKind === "other") {
       list = list.filter(e => stockMoveBucket(e) === stockLedgerKind);
     }
+    list = [...list].sort((a, b) => {
+      const da = ledgerDay(a);
+      const db = ledgerDay(b);
+      if (da !== db) return da < db ? -1 : 1;
+      return (Number(a.id) || 0) - (Number(b.id) || 0);
+    });
     return list;
+  }
+
+  function ledgerDay(e) {
+    const raw = e?.display_date || e?.created_at || "";
+    const m = String(raw).match(/(\d{4}-\d{2}-\d{2})/);
+    return m ? m[1] : "";
+  }
+
+  function stockPieceTotals(rows) {
+    let purchase = 0;
+    let sales = 0;
+    for (const e of rows || []) {
+      const qty = Math.abs(Number(e.quantity_delta) || 0);
+      const bucket = stockMoveBucket(e);
+      if (bucket === "purchase") purchase += qty;
+      else if (bucket === "sales") sales += qty;
+    }
+    return { purchase, sales };
   }
 
   function setLedgerKind(kind) {
@@ -350,6 +375,10 @@
 
   function ledgerTableHtml(rows) {
     stockLedgerRows = rows || [];
+    const savedKind = stockLedgerKind;
+    stockLedgerKind = "all";
+    const totals = stockPieceTotals(visibleStockRows(stockLedgerRows));
+    stockLedgerKind = savedKind;
     const shown = visibleStockRows(stockLedgerRows);
     const chip = (id, label) => `<button type="button" class="btn btn-sm ${stockLedgerKind === id ? "btn-primary" : "btn-secondary"}" onclick="Stock.setLedgerKind('${id}')">${label}</button>`;
     const body = shown.length ? shown.map(e => {
@@ -374,14 +403,15 @@
     return `<div id="stock-ledger-block">
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 10px;">
         ${chip("all", "All")}
-        ${chip("purchase", "Purchase")}
-        ${chip("sales", "Sales")}
+        ${chip("purchase", "Purchase only")}
+        ${chip("sales", "Sale only")}
         ${chip("other", "Other")}
         <label style="display:inline-flex;gap:6px;align-items:center;margin-left:4px;font-size:13px;">
           <input type="checkbox" ${stockHideVoids ? "checked" : ""} onchange="Stock.setHideStockVoids(this.checked)" />
           Hide void entries
         </label>
       </div>
+      <p style="margin:0 0 8px;font-size:13px;"><strong>Purchase total ${totals.purchase}</strong> · <strong>Sale total ${totals.sales}</strong></p>
       <div class="table-wrap"><table class="data history-table"><thead><tr>
         <th>Date</th><th>Party</th><th>Qty</th><th>Bill</th><th>Balance</th><th>Type</th>
       </tr></thead><tbody>${body}</tbody></table></div>

@@ -47,7 +47,7 @@ def search_journal_products(
         rows = (
             base.filter(*active, or_(cat.in_(parent), sec.in_(parent)))
             .order_by(CatalogProduct.our_product_id.asc(), CatalogProduct.id.asc())
-            .limit(200)
+            .limit(2000)
             .all()
         )
     else:
@@ -69,7 +69,7 @@ def search_journal_products(
                 ),
             )
             .order_by(CatalogProduct.our_product_id.asc(), CatalogProduct.id.asc())
-            .limit(200 if category_hit else 8)
+            .limit(2000 if category_hit else 8)
             .all()
         )
     out = []

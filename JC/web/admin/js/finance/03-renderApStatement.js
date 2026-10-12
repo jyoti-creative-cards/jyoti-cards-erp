@@ -1,5 +1,18 @@
   function renderApStatement() {
-    const bills = newestFirst(apDetail.bills);
+    const rawBills = apDetail.bills || [];
+    const chrono = [...rawBills].sort((a, b) => {
+      const da = entryDay(a);
+      const db = entryDay(b);
+      if (da !== db) return da < db ? -1 : 1;
+      return (Number(a.receipt_id) || 0) - (Number(b.receipt_id) || 0);
+    });
+    let run = 0;
+    const running = new Map();
+    for (const b of chrono) {
+      run += Number(b.net_payable ?? b.bill_amount ?? 0) || 0;
+      running.set(b.receipt_id, Math.round(run * 100) / 100);
+    }
+    const bills = newestFirst(rawBills);
     if (!bills.length) return OrdersUI.emptyState({ title: "No bills yet", sub: "Bills appear after you receive/bill vendor stock." });
     return `<div class="fin-stmt">${bills.map(b => {
       const open = expandedBillId === b.receipt_id;
@@ -14,6 +27,7 @@
             <span>Bill ${fmtPrice(b.bill_amount)}</span>
             <span class="fin-muted">DN ${fmtPrice(b.debit_note_total)}</span>
             <strong>Net ${fmtPrice(b.net_payable)}</strong>
+            <strong>Bal ${fmtPrice(running.get(b.receipt_id))}</strong>
           </div>
         </button>
         ${open ? `<div class="fin-bill-body">

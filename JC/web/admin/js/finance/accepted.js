@@ -1021,7 +1021,20 @@ const Finance = (() => {
   }
 
   function renderApStatement() {
-    const bills = newestFirst(apDetail.bills);
+    const rawBills = apDetail.bills || [];
+    const chrono = [...rawBills].sort((a, b) => {
+      const da = entryDay(a);
+      const db = entryDay(b);
+      if (da !== db) return da < db ? -1 : 1;
+      return (Number(a.receipt_id) || 0) - (Number(b.receipt_id) || 0);
+    });
+    let run = 0;
+    const running = new Map();
+    for (const b of chrono) {
+      run += Number(b.net_payable ?? b.bill_amount ?? 0) || 0;
+      running.set(b.receipt_id, Math.round(run * 100) / 100);
+    }
+    const bills = newestFirst(rawBills);
     if (!bills.length) return OrdersUI.emptyState({ title: "No bills yet", sub: "Bills appear after you receive/bill vendor stock." });
     return `<div class="fin-stmt">${bills.map(b => {
       const open = expandedBillId === b.receipt_id;
@@ -1036,6 +1049,7 @@ const Finance = (() => {
             <span>Bill ${fmtPrice(b.bill_amount)}</span>
             <span class="fin-muted">DN ${fmtPrice(b.debit_note_total)}</span>
             <strong>Net ${fmtPrice(b.net_payable)}</strong>
+            <strong>Bal ${fmtPrice(running.get(b.receipt_id))}</strong>
           </div>
         </button>
         ${open ? `<div class="fin-bill-body">
@@ -1595,31 +1609,41 @@ const Finance = (() => {
     return false;
   }
 
-  function liveMoneyEntries(entries) {
+  function visibleMoneyEntries(entries) {
     const list = entries || [];
     if (!realEntriesOnly) return list;
     const reversed = new Set();
     for (const e of list) {
       if (e.reverses_entry_id) reversed.add(e.reverses_entry_id);
     }
-    const kept = list.filter(e => !moneyEntryIsVoid(e) && !reversed.has(e.id));
-    const chrono = [...kept].sort((a, b) => {
-      const da = String(a.value_date || a.created_at || "");
-      const db = String(b.value_date || b.created_at || "");
+    return list.filter(e => !moneyEntryIsVoid(e) && !reversed.has(e.id));
+  }
+
+  function stampRunningBalance(entries) {
+    const chrono = [...(entries || [])].sort((a, b) => {
+      const da = entryDay(a);
+      const db = entryDay(b);
       if (da !== db) return da < db ? -1 : 1;
       return (Number(a.id) || 0) - (Number(b.id) || 0);
     });
     let run = 0;
     const stamped = new Map();
     for (const e of chrono) {
-      run += Number(e.signed_amount ?? e.amount ?? 0);
-      stamped.set(e.id, Math.round(run * 100) / 100);
+      const signed = Number(e.signed_amount);
+      run += Number.isFinite(signed) ? signed : (Number(e.amount) || 0);
+      if (e.id != null) stamped.set(e.id, Math.round(run * 100) / 100);
     }
-    return kept.map(e => stamped.has(e.id) ? { ...e, running_balance: stamped.get(e.id) } : e);
+    return (entries || []).map(e => stamped.has(e.id) ? { ...e, running_balance: stamped.get(e.id) } : e);
+  }
+
+  function liveMoneyEntries(entries) {
+    return stampRunningBalance(visibleMoneyEntries(entries));
   }
 
   function renderArStatement() {
-    const bills = newestFirst(liveMoneyEntries(arDetail.entries).filter(e => e.entry_type === "bill" || e.entry_type === "credit_note" || e.entry_type === "opening_balance"));
+    const bills = newestFirst(stampRunningBalance(
+      visibleMoneyEntries(arDetail.entries).filter(e => e.entry_type === "bill" || e.entry_type === "credit_note" || e.entry_type === "opening_balance")
+    ));
     if (!bills.length) return OrdersUI.emptyState({ title: "No bills yet", sub: "Bills appear after you process customer orders." });
     return `<div class="card table-wrap"><table class="data"><thead><tr>
       <th>When</th><th>Type</th><th>Description</th><th>Amount</th><th>Balance</th>
@@ -2875,11 +2899,12 @@ const Finance = (() => {
       body.quantity = Number(f.quantity) || null;
     } else {
       body.expense_category = (f.expense_category || "Sample catalogues").trim();
-      if (f.consume_mode === "album") {
+      const readyLines = (f.lines || []).filter(l => Number(l.quantity) > 0);
+      if (f.consume_mode === "album" && !readyLines.length) {
         body.album = (f.album || "").trim();
         body.copies = Number(f.copies) || null;
       } else {
-        body.lines = (f.lines || []).map(l => ({
+        body.lines = readyLines.map(l => ({
           catalog_product_id: l.catalog_product_id,
           quantity: Number(l.quantity) || 0,
           rate: l.rate !== "" && l.rate != null ? l.rate : null,
@@ -2945,13 +2970,26 @@ const Finance = (() => {
           </div>
           ${f.consume_mode === "album" ? `
             <label>Category
-              <select class="input" onchange="Finance.setJournalField('album', this.value)">
+              <select class="input" onchange="Finance.loadAlbumLines(this.value)">
                 <option value="">— Select category —</option>
                 ${(journalCategories || []).map(c => `<option value="${ctx.esc(c)}" ${f.album === c ? "selected" : ""}>${ctx.esc(c)}</option>`).join("")}
               </select>
             </label>
-            <label>Quantity <input class="input" type="number" min="1" value="${ctx.esc(f.copies)}" oninput="Finance.setJournalField('copies', this.value)" /></label>
-            <p style="margin:0;font-size:12px;color:var(--muted);">Every item in this category loses this quantity. The expense is each item's buying price times that quantity, added up.</p>
+            <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;">
+              <label>Default qty <input class="input" type="number" min="1" value="${ctx.esc(f.copies)}" oninput="Finance.setJournalField('copies', this.value)" /></label>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.applyJournalQtyAll()">Apply to all</button>
+            </div>
+            <p style="margin:0;font-size:12px;color:var(--muted);">Every item in this album is listed. Change any quantity (some can be 250). Add the same item again if it should be doubled. Apply to all fills every row with the default qty.</p>
+            ${(f.lines || []).length ? `<p style="margin:0;font-size:13px;">${f.lines.length} item(s)</p>` : ""}
+            ${(f.lines || []).map((l, i) => `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <strong>${ctx.esc(l.our_product_id)}</strong>
+              <span style="color:var(--muted);font-size:12px;">stock ${l.on_hand ?? 0}</span>
+              <input class="input" style="width:90px;" type="number" min="1" value="${ctx.esc(l.quantity)}" oninput="Finance.setJournalLine(${i}, 'quantity', this.value)" />
+              <input class="input" style="width:110px;" placeholder="Rate" value="${ctx.esc(l.rate ?? "")}" oninput="Finance.setJournalLine(${i}, 'rate', this.value)" />
+              <button type="button" class="btn btn-ghost btn-sm" onclick="Finance.removeJournalLine(${i})">Remove</button>
+            </div>`).join("")}
+            <label>Add extra item <input class="input" id="fj-line" value="${ctx.esc(f.line_q)}" placeholder="Item number or name — same item can be added again" oninput="Finance.searchJournalProduct('line', this.value)" /></label>
+            <div id="fj-hits-line" style="display:flex;flex-direction:column;gap:4px;">${hitList(journalHits.line, "line")}</div>
           ` : `
             <label>Search item <input class="input" id="fj-line" value="${ctx.esc(f.line_q)}" placeholder="Item number or name" oninput="Finance.searchJournalProduct('line', this.value)" /></label>
             <p style="margin:0;font-size:12px;color:var(--muted);">Tap a result to add it. Add as many items as you need, then set each quantity. One expense covers all of them.</p>
@@ -3069,6 +3107,7 @@ const Finance = (() => {
     if (!journalForm) journalForm = blankJournalForm();
     journalForm.consume_mode = mode;
     journalForm.preview = null;
+    if (mode === "album") journalForm.lines = [];
     renderJournal();
   }
 
@@ -3076,6 +3115,48 @@ const Finance = (() => {
     if (!journalForm) journalForm = blankJournalForm();
     journalForm[key] = value;
     journalForm.preview = null;
+  }
+
+  function applyJournalQtyAll() {
+    if (!journalForm) return;
+    const qty = Math.max(1, parseInt(journalForm.copies, 10) || 1);
+    journalForm.copies = String(qty);
+    for (const line of journalForm.lines || []) line.quantity = qty;
+    journalForm.preview = null;
+    renderJournal();
+  }
+
+  async function loadAlbumLines(name) {
+    if (!journalForm) journalForm = blankJournalForm();
+    const album = (name || "").trim();
+    journalForm.album = album;
+    journalForm.preview = null;
+    journalForm.lines = [];
+    journalHits.line = [];
+    if (!album) {
+      renderJournal();
+      return;
+    }
+    journalForm.busy = true;
+    renderJournal();
+    try {
+      const rows = await ctx.api(`/stock-journals/products?q=${encodeURIComponent(album)}`, {}, 0) || [];
+      const qty = Math.max(1, parseInt(journalForm.copies, 10) || 1);
+      journalForm.lines = rows.map(p => ({
+        catalog_product_id: p.catalog_product_id,
+        our_product_id: p.our_product_id,
+        quantity: qty,
+        rate: p.buying_price || "",
+        on_hand: p.quantity_on_hand,
+      }));
+      if (!rows.length) ctx.toast("No items in this album", "error");
+    } catch (e) {
+      journalForm.lines = [];
+      ctx.toast(e.message, "error");
+    } finally {
+      journalForm.busy = false;
+      renderJournal();
+    }
   }
 
   function setJournalLine(i, key, value) {
@@ -3138,11 +3219,14 @@ const Finance = (() => {
       journalForm.to_id = id;
       journalForm.to_label = p.our_product_id;
       journalForm.to_q = p.our_product_id;
-    } else if (!journalForm.lines.some(l => l.catalog_product_id === id)) {
+    } else {
+      const qty = journalForm.consume_mode === "album"
+        ? Math.max(1, parseInt(journalForm.copies, 10) || 1)
+        : 1;
       journalForm.lines.push({
         catalog_product_id: id,
         our_product_id: p.our_product_id,
-        quantity: 1,
+        quantity: qty,
         rate: p.buying_price || "",
         on_hand: p.quantity_on_hand,
       });
@@ -3216,6 +3300,7 @@ const Finance = (() => {
     setArOpeningBalance, setApOpeningBalance, saveArOpeningBalance, saveApOpeningBalance,
     openExpenseForm, onExpenseHeadChange, addExpenseHead, addExpenseSubhead, editExpense, saveExpenseEdit, closeExpenseForm, submitExpense, deleteExpense, onExpenseFilterChange, clearExpenseFilters,
     setJournalKind, setJournalMode, setJournalField, setJournalLine, removeJournalLine, searchJournalProduct,
+    loadAlbumLines, applyJournalQtyAll,
     pickJournalProduct, previewJournal, printJournalPreview, exportJournalExcel, saveJournal, voidJournal,
     editApPayment, saveApPaymentEdit, editArPayment, saveArPaymentEdit,
     openLossForm, closeLossForm, submitLoss, deleteLoss,

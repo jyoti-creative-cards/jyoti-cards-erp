@@ -11,6 +11,7 @@
     setArOpeningBalance, setApOpeningBalance, saveArOpeningBalance, saveApOpeningBalance,
     openExpenseForm, onExpenseHeadChange, addExpenseHead, addExpenseSubhead, editExpense, saveExpenseEdit, closeExpenseForm, submitExpense, deleteExpense, onExpenseFilterChange, clearExpenseFilters,
     setJournalKind, setJournalMode, setJournalField, setJournalLine, removeJournalLine, searchJournalProduct,
+    loadAlbumLines, applyJournalQtyAll,
     pickJournalProduct, previewJournal, printJournalPreview, exportJournalExcel, saveJournal, voidJournal,
     editApPayment, saveApPaymentEdit, editArPayment, saveArPaymentEdit,
     openLossForm, closeLossForm, submitLoss, deleteLoss,

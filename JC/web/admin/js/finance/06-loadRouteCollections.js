@@ -192,11 +192,12 @@
       body.quantity = Number(f.quantity) || null;
     } else {
       body.expense_category = (f.expense_category || "Sample catalogues").trim();
-      if (f.consume_mode === "album") {
+      const readyLines = (f.lines || []).filter(l => Number(l.quantity) > 0);
+      if (f.consume_mode === "album" && !readyLines.length) {
         body.album = (f.album || "").trim();
         body.copies = Number(f.copies) || null;
       } else {
-        body.lines = (f.lines || []).map(l => ({
+        body.lines = readyLines.map(l => ({
           catalog_product_id: l.catalog_product_id,
           quantity: Number(l.quantity) || 0,
           rate: l.rate !== "" && l.rate != null ? l.rate : null,
@@ -262,13 +263,26 @@
           </div>
           ${f.consume_mode === "album" ? `
             <label>Category
-              <select class="input" onchange="Finance.setJournalField('album', this.value)">
+              <select class="input" onchange="Finance.loadAlbumLines(this.value)">
                 <option value="">— Select category —</option>
                 ${(journalCategories || []).map(c => `<option value="${ctx.esc(c)}" ${f.album === c ? "selected" : ""}>${ctx.esc(c)}</option>`).join("")}
               </select>
             </label>
-            <label>Quantity <input class="input" type="number" min="1" value="${ctx.esc(f.copies)}" oninput="Finance.setJournalField('copies', this.value)" /></label>
-            <p style="margin:0;font-size:12px;color:var(--muted);">Every item in this category loses this quantity. The expense is each item's buying price times that quantity, added up.</p>
+            <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;">
+              <label>Default qty <input class="input" type="number" min="1" value="${ctx.esc(f.copies)}" oninput="Finance.setJournalField('copies', this.value)" /></label>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.applyJournalQtyAll()">Apply to all</button>
+            </div>
+            <p style="margin:0;font-size:12px;color:var(--muted);">Every item in this album is listed. Change any quantity (some can be 250). Add the same item again if it should be doubled. Apply to all fills every row with the default qty.</p>
+            ${(f.lines || []).length ? `<p style="margin:0;font-size:13px;">${f.lines.length} item(s)</p>` : ""}
+            ${(f.lines || []).map((l, i) => `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <strong>${ctx.esc(l.our_product_id)}</strong>
+              <span style="color:var(--muted);font-size:12px;">stock ${l.on_hand ?? 0}</span>
+              <input class="input" style="width:90px;" type="number" min="1" value="${ctx.esc(l.quantity)}" oninput="Finance.setJournalLine(${i}, 'quantity', this.value)" />
+              <input class="input" style="width:110px;" placeholder="Rate" value="${ctx.esc(l.rate ?? "")}" oninput="Finance.setJournalLine(${i}, 'rate', this.value)" />
+              <button type="button" class="btn btn-ghost btn-sm" onclick="Finance.removeJournalLine(${i})">Remove</button>
+            </div>`).join("")}
+            <label>Add extra item <input class="input" id="fj-line" value="${ctx.esc(f.line_q)}" placeholder="Item number or name — same item can be added again" oninput="Finance.searchJournalProduct('line', this.value)" /></label>
+            <div id="fj-hits-line" style="display:flex;flex-direction:column;gap:4px;">${hitList(journalHits.line, "line")}</div>
           ` : `
             <label>Search item <input class="input" id="fj-line" value="${ctx.esc(f.line_q)}" placeholder="Item number or name" oninput="Finance.searchJournalProduct('line', this.value)" /></label>
             <p style="margin:0;font-size:12px;color:var(--muted);">Tap a result to add it. Add as many items as you need, then set each quantity. One expense covers all of them.</p>
@@ -386,6 +400,7 @@
     if (!journalForm) journalForm = blankJournalForm();
     journalForm.consume_mode = mode;
     journalForm.preview = null;
+    if (mode === "album") journalForm.lines = [];
     renderJournal();
   }
 
@@ -393,6 +408,48 @@
     if (!journalForm) journalForm = blankJournalForm();
     journalForm[key] = value;
     journalForm.preview = null;
+  }
+
+  function applyJournalQtyAll() {
+    if (!journalForm) return;
+    const qty = Math.max(1, parseInt(journalForm.copies, 10) || 1);
+    journalForm.copies = String(qty);
+    for (const line of journalForm.lines || []) line.quantity = qty;
+    journalForm.preview = null;
+    renderJournal();
+  }
+
+  async function loadAlbumLines(name) {
+    if (!journalForm) journalForm = blankJournalForm();
+    const album = (name || "").trim();
+    journalForm.album = album;
+    journalForm.preview = null;
+    journalForm.lines = [];
+    journalHits.line = [];
+    if (!album) {
+      renderJournal();
+      return;
+    }
+    journalForm.busy = true;
+    renderJournal();
+    try {
+      const rows = await ctx.api(`/stock-journals/products?q=${encodeURIComponent(album)}`, {}, 0) || [];
+      const qty = Math.max(1, parseInt(journalForm.copies, 10) || 1);
+      journalForm.lines = rows.map(p => ({
+        catalog_product_id: p.catalog_product_id,
+        our_product_id: p.our_product_id,
+        quantity: qty,
+        rate: p.buying_price || "",
+        on_hand: p.quantity_on_hand,
+      }));
+      if (!rows.length) ctx.toast("No items in this album", "error");
+    } catch (e) {
+      journalForm.lines = [];
+      ctx.toast(e.message, "error");
+    } finally {
+      journalForm.busy = false;
+      renderJournal();
+    }
   }
 
   function setJournalLine(i, key, value) {
@@ -455,11 +512,14 @@
       journalForm.to_id = id;
       journalForm.to_label = p.our_product_id;
       journalForm.to_q = p.our_product_id;
-    } else if (!journalForm.lines.some(l => l.catalog_product_id === id)) {
+    } else {
+      const qty = journalForm.consume_mode === "album"
+        ? Math.max(1, parseInt(journalForm.copies, 10) || 1)
+        : 1;
       journalForm.lines.push({
         catalog_product_id: id,
         our_product_id: p.our_product_id,
-        quantity: 1,
+        quantity: qty,
         rate: p.buying_price || "",
         on_hand: p.quantity_on_hand,
       });

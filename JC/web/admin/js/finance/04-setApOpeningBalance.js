@@ -58,31 +58,41 @@
     return false;
   }
 
-  function liveMoneyEntries(entries) {
+  function visibleMoneyEntries(entries) {
     const list = entries || [];
     if (!realEntriesOnly) return list;
     const reversed = new Set();
     for (const e of list) {
       if (e.reverses_entry_id) reversed.add(e.reverses_entry_id);
     }
-    const kept = list.filter(e => !moneyEntryIsVoid(e) && !reversed.has(e.id));
-    const chrono = [...kept].sort((a, b) => {
-      const da = String(a.value_date || a.created_at || "");
-      const db = String(b.value_date || b.created_at || "");
+    return list.filter(e => !moneyEntryIsVoid(e) && !reversed.has(e.id));
+  }
+
+  function stampRunningBalance(entries) {
+    const chrono = [...(entries || [])].sort((a, b) => {
+      const da = entryDay(a);
+      const db = entryDay(b);
       if (da !== db) return da < db ? -1 : 1;
       return (Number(a.id) || 0) - (Number(b.id) || 0);
     });
     let run = 0;
     const stamped = new Map();
     for (const e of chrono) {
-      run += Number(e.signed_amount ?? e.amount ?? 0);
-      stamped.set(e.id, Math.round(run * 100) / 100);
+      const signed = Number(e.signed_amount);
+      run += Number.isFinite(signed) ? signed : (Number(e.amount) || 0);
+      if (e.id != null) stamped.set(e.id, Math.round(run * 100) / 100);
     }
-    return kept.map(e => stamped.has(e.id) ? { ...e, running_balance: stamped.get(e.id) } : e);
+    return (entries || []).map(e => stamped.has(e.id) ? { ...e, running_balance: stamped.get(e.id) } : e);
+  }
+
+  function liveMoneyEntries(entries) {
+    return stampRunningBalance(visibleMoneyEntries(entries));
   }
 
   function renderArStatement() {
-    const bills = newestFirst(liveMoneyEntries(arDetail.entries).filter(e => e.entry_type === "bill" || e.entry_type === "credit_note" || e.entry_type === "opening_balance"));
+    const bills = newestFirst(stampRunningBalance(
+      visibleMoneyEntries(arDetail.entries).filter(e => e.entry_type === "bill" || e.entry_type === "credit_note" || e.entry_type === "opening_balance")
+    ));
     if (!bills.length) return OrdersUI.emptyState({ title: "No bills yet", sub: "Bills appear after you process customer orders." });
     return `<div class="card table-wrap"><table class="data"><thead><tr>
       <th>When</th><th>Type</th><th>Description</th><th>Amount</th><th>Balance</th>

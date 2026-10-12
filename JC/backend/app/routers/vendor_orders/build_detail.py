@@ -172,8 +172,8 @@ def _build_detail(db: Session, order: VendorOrder, *, auth: AuthContext, open_on
                     billed_amount=format(ln.billed_amount, "f") if ln.billed_amount is not None else None,
                     buying_price=hide_cost(str(ln.buying_price), auth),
                     placed_at=p.placed_at,
-                    placed_by_name=p.placed_by_name,
-                    placed_by_type=p.placed_by_type,
+                    placed_by_name=p.placed_by_name or "",
+                    placed_by_type=p.placed_by_type or "",
                     placement_color_index=color_map[p.id],
                 )
             )

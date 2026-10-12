@@ -52,3 +52,26 @@ def test_raising_placed_qty_without_a_buying_price(db):
     open_row = db.query(VendorOpenLine).filter(VendorOpenLine.catalog_product_id == prod.id).one()
     assert open_row.quantity == 5
     assert open_row.buying_price == Decimal("0")
+
+
+def test_edit_line_when_placer_name_is_blank(db):
+    vendor = Vendor(business_name="Press", phone="9998887602")
+    db.add(vendor)
+    db.flush()
+    prod = CatalogProduct(
+        our_product_id="7557", vendor_id=vendor.id, vendor_product_id="VP7557",
+        buying_price=Decimal("1"), selling_price=Decimal("5"),
+    )
+    db.add(prod)
+    db.commit()
+    detail = create_placement(
+        PlacementCreate(vendor_id=vendor.id, lines=[VendorOrderLineIn(catalog_product_id=prod.id, quantity=2)]),
+        db,
+        AuthContext(actor_type="admin", actor_id=1, actor_name=""),
+    )
+    line_id = detail.aggregated_lines[0].breakdown[0].line_id
+    assert detail.aggregated_lines[0].breakdown[0].placed_by_name == ""
+    updated = update_line(line_id, VendorOrderLineUpdate(quantity=4), db, AUTH)
+    row = updated.aggregated_lines[0].breakdown[0]
+    assert row.quantity == 4
+    assert row.placed_by_name == ""

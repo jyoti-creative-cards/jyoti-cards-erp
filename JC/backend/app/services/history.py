@@ -47,6 +47,14 @@ def row_snapshot(row: Any, fields: tuple[str, ...]) -> dict:
     return out
 
 
+def _fit_summary(text: Optional[str], limit: int = 500) -> Optional[str]:
+    if text is None or len(text) <= limit:
+        return text
+    if limit <= 3:
+        return text[:limit]
+    return text[: limit - 3] + "..."
+
+
 def record_entity_history(
     db: Session,
     entity_type: str,
@@ -54,6 +62,9 @@ def record_entity_history(
     snapshot: dict,
     change_summary: Optional[str] = None,
 ) -> None:
+    # jc_entity_history.change_summary is varchar(500). A long receipt edit
+    # (many lines) used to abort the whole save with a database 500.
+    change_summary = _fit_summary(change_summary)
     now = datetime.now(timezone.utc)
     prev = (
         db.query(EntityHistory)

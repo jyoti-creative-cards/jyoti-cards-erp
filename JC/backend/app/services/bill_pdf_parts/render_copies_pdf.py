@@ -73,6 +73,7 @@ def render_copies_pdf(
     customer_address: str | None = None,
     customer_city: str | None = None,
     customer_party_number: int | str | None = None,
+    payment_type: str | None = None,
     totals: Dict[str, Any],
     generated_at: datetime | None = None,
     printed_at: datetime | None = None,
@@ -120,6 +121,7 @@ def render_copies_pdf(
         customer_party_number=customer_party_number,
         order_at=order_created_at,
         order_by=order_by,
+        payment_type=payment_type,
     )
     pages = _paginate(running, closing, len(photos), table_top)
 
@@ -137,6 +139,7 @@ def render_copies_pdf(
         customer_party_number=customer_party_number,
         order_at=order_created_at,
         order_by=order_by,
+        payment_type=payment_type,
     )
     buf = BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
@@ -178,9 +181,14 @@ def _running_and_closing(
     charges: list[dict] = []
 
     freight = _dec(totals.get("freight_charges"))
-    if freight > 0:
-        receipt = _txt(totals.get("transport_receipt_number"), 24)
-        label = "Transport Charges" + (f" ({receipt})" if receipt else "")
+    mode = str(totals.get("transport_mode") or "").strip().lower()
+    if freight > 0 and mode != "self_pickup":
+        if mode == "transport":
+            receipt = _txt(totals.get("transport_receipt_number"), 24)
+            label = "Transport Charges" + (f" ({receipt})" if receipt else "")
+        else:
+            agent = _txt(totals.get("freight_agent_name"), 28)
+            label = "Freight Charges" + (f" ({agent})" if agent else "")
         charges.append({"kind": "charge", "label": label, "amount": freight})
 
     packaging = _dec(totals.get("packaging_charges"))
@@ -277,6 +285,7 @@ def render_customer_bill_pdf(
     customer_address: str | None = None,
     customer_city: str | None = None,
     customer_party_number: int | str | None = None,
+    payment_type: str | None = None,
     totals: Dict[str, Any],
     generated_at: datetime | None = None,
     printed_at: datetime | None = None,
@@ -302,6 +311,7 @@ def render_customer_bill_pdf(
         customer_address=customer_address,
         customer_city=customer_city,
         customer_party_number=customer_party_number,
+        payment_type=payment_type,
         totals=totals,
         generated_at=generated_at,
         printed_at=printed_at,

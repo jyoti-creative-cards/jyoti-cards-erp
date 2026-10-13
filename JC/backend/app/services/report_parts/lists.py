@@ -19,7 +19,10 @@ from app.services.biz_date import ist_day_bounds_utc, ist_range_bounds_utc
 from app.services.report_parts.bounds import _batch_labels, _customer_labels, _payment_in_ist_range, _range_bounds, _vendor_labels
 
 def list_sales(db: Session, from_date: Optional[date] = None, to_date: Optional[date] = None) -> list[dict]:
-    q = db.query(CustomerBill).filter(CustomerBill.deleted_at.is_(None))
+    q = db.query(CustomerBill).filter(
+        CustomerBill.deleted_at.is_(None),
+        CustomerBill.cancelled_at.is_(None),
+    )
     if from_date is not None or to_date is not None:
         start, end = _range_bounds(from_date, to_date)
         bill_parts = []

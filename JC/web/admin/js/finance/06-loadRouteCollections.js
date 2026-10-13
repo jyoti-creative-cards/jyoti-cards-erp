@@ -273,7 +273,6 @@
               <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.applyJournalQtyAll()">Apply to all</button>
             </div>
             <p style="margin:0;font-size:12px;color:var(--muted);">Every item in this album is listed. Change any quantity (some can be 250). Add the same item again if it should be doubled. Apply to all fills every row with the default qty.</p>
-            ${(f.lines || []).length ? `<p style="margin:0;font-size:13px;">${f.lines.length} item(s)</p>` : ""}
             ${(f.lines || []).map((l, i) => `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
               <strong>${ctx.esc(l.our_product_id)}</strong>
               <span style="color:var(--muted);font-size:12px;">stock ${l.on_hand ?? 0}</span>
@@ -281,6 +280,7 @@
               <input class="input" style="width:110px;" placeholder="Rate" value="${ctx.esc(l.rate ?? "")}" oninput="Finance.setJournalLine(${i}, 'rate', this.value)" />
               <button type="button" class="btn btn-ghost btn-sm" onclick="Finance.removeJournalLine(${i})">Remove</button>
             </div>`).join("")}
+            ${(f.lines || []).length ? `<p style="margin:0;font-size:13px;"><strong>${journalTotalLine(draftLineTotals(f.lines))}</strong></p>` : ""}
             <label>Add extra item <input class="input" id="fj-line" value="${ctx.esc(f.line_q)}" placeholder="Item number or name — same item can be added again" oninput="Finance.searchJournalProduct('line', this.value)" /></label>
             <div id="fj-hits-line" style="display:flex;flex-direction:column;gap:4px;">${hitList(journalHits.line, "line")}</div>
           ` : `
@@ -294,6 +294,7 @@
               <input class="input" style="width:110px;" placeholder="Rate" value="${ctx.esc(l.rate ?? "")}" oninput="Finance.setJournalLine(${i}, 'rate', this.value)" />
               <button type="button" class="btn btn-ghost btn-sm" onclick="Finance.removeJournalLine(${i})">Remove</button>
             </div>`).join("")}
+            ${(f.lines || []).length ? `<p style="margin:0;font-size:13px;"><strong>${journalTotalLine(draftLineTotals(f.lines))}</strong></p>` : ""}
           `}
         `}
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
@@ -302,7 +303,7 @@
         </div>
         ${preview ? `
           ${(preview.warnings || []).map(w => `<p style="margin:0;color:#b45309;font-size:13px;">${ctx.esc(w)}</p>`).join("")}
-          <p style="margin:0;font-size:13px;">Cost ${fmtPrice(preview.total_cost)} · ${preview.lines.length} item(s) · ${journalPieces(preview)} total pieces</p>
+          <p style="margin:0;font-size:13px;">${journalTotalLine(journalTotals(preview))}</p>
           ${(preview.warnings || []).map(w => `<p style="margin:0;font-size:13px;color:#92400e;">${ctx.esc(w)}</p>`).join("")}
           <div style="display:flex;gap:8px;">
             <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.printJournalPreview()">Print</button>
@@ -316,6 +317,7 @@
               <td>${fmtPrice(l.amount)}</td>
               <td>${l.on_hand}</td>
             </tr>`).join("")}
+            ${journalTotalRow(journalTotals(preview))}
           </tbody></table>
         ` : ""}
       </div>
@@ -333,13 +335,45 @@
   }
 
   function journalPieces(preview) {
-    return (preview?.lines || []).reduce((sum, line) => sum + Math.abs(Number(line.quantity_delta) || 0), 0);
+    return journalTotals(preview).qty;
+  }
+
+  function journalTotals(preview) {
+    const lines = preview?.lines || [];
+    const qty = lines.reduce((sum, line) => sum + Math.abs(Number(line.quantity_delta) || 0), 0);
+    const amount = lines.reduce((sum, line) => sum + (Number(line.amount) || 0), 0);
+    return { items: lines.length, qty, amount: amount || Number(preview?.total_cost) || 0 };
+  }
+
+  function draftLineTotals(lines) {
+    const rows = lines || [];
+    const qty = rows.reduce((sum, line) => sum + Math.abs(Number(line.quantity) || 0), 0);
+    const amount = rows.reduce((sum, line) => {
+      const q = Number(line.quantity) || 0;
+      const rate = Number(line.rate);
+      return sum + (Number.isFinite(rate) ? q * rate : 0);
+    }, 0);
+    return { items: rows.length, qty, amount };
+  }
+
+  function journalTotalLine(t) {
+    return `Total · ${t.items} item(s) · Qty ${t.qty} · Amount ${fmtPrice(t.amount)}`;
+  }
+
+  function journalTotalRow(t) {
+    return `<tr>
+      <td><strong>Total · ${t.items} item(s)</strong></td>
+      <td><strong>${t.qty}</strong></td>
+      <td></td>
+      <td><strong>${fmtPrice(t.amount)}</strong></td>
+      <td></td>
+    </tr>`;
   }
 
   function printJournalPreview() {
     const preview = journalForm?.preview;
     if (!preview) return;
-    const pieces = journalPieces(preview);
+    const totals = journalTotals(preview);
     const rows = (preview.lines || []).map(l => `<tr>
       <td>${ctx.esc(l.our_product_id)}</td>
       <td>${ctx.esc(String(l.quantity_delta))}</td>
@@ -352,8 +386,9 @@
       <style>body{font-family:sans-serif;font-size:12px;color:#111}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:4px 6px;text-align:left}h1{font-size:16px}</style>
       </head><body>
       <h1>${ctx.esc(title)}</h1>
-      <p>Cost ${ctx.esc(String(preview.total_cost))} · ${(preview.lines || []).length} items · ${pieces} total pieces</p>
-      <table><thead><tr><th>Item</th><th>Qty</th><th>Rate</th><th>Amount</th><th>On hand</th></tr></thead><tbody>${rows}</tbody></table>
+      <p>${ctx.esc(journalTotalLine(totals))}</p>
+      <table><thead><tr><th>Item</th><th>Qty</th><th>Rate</th><th>Amount</th><th>On hand</th></tr></thead>
+      <tbody>${rows}${journalTotalRow(totals)}</tbody></table>
       </body></html>`;
     const w = window.open("", "_blank");
     if (!w) return ctx.toast("Allow pop-ups to print", "error");
@@ -367,19 +402,20 @@
   function exportJournalExcel() {
     const preview = journalForm?.preview;
     if (!preview) return;
-    const pieces = journalPieces(preview);
+    const totals = journalTotals(preview);
     const cell = (v) => ctx.esc(v == null ? "" : String(v));
     const rows = (preview.lines || []).map(l => `<tr>
       <td>${cell(l.our_product_id)}</td><td>${cell(l.quantity_delta)}</td><td>${cell(l.rate)}</td>
       <td>${cell(l.amount)}</td><td>${cell(l.on_hand)}</td></tr>`).join("");
     const html = `<html><head><meta charset="utf-8"></head><body>
       <table>
-        <tr><td>Items</td><td>${(preview.lines || []).length}</td></tr>
-        <tr><td>Total pieces</td><td>${pieces}</td></tr>
-        <tr><td>Total cost</td><td>${cell(preview.total_cost)}</td></tr>
+        <tr><td>Items</td><td>${totals.items}</td></tr>
+        <tr><td>Total qty</td><td>${totals.qty}</td></tr>
+        <tr><td>Total amount</td><td>${cell(totals.amount)}</td></tr>
         <tr></tr>
         <tr><th>Item</th><th>Qty</th><th>Rate</th><th>Amount</th><th>On hand</th></tr>
         ${rows}
+        <tr><td>Total · ${totals.items} item(s)</td><td>${totals.qty}</td><td></td><td>${cell(totals.amount)}</td><td></td></tr>
       </table></body></html>`;
     const blob = new Blob([html], { type: "application/vnd.ms-excel" });
     const a = document.createElement("a");

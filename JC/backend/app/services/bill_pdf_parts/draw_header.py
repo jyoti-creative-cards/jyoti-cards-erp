@@ -76,6 +76,7 @@ def _draw_header(
     customer_party_number: object,
     order_at: datetime | None = None,
     order_by: str | None = None,
+    payment_type: str | None = None,
 ) -> float:
     """Draw the Tally header. Returns the table-top y measured from the top of the page."""
     if show_printed and printed is not None:
@@ -125,6 +126,11 @@ def _draw_header(
         party_lines.append(("", ", ".join(addr_bits), False))
     if customer_party_number not in (None, ""):
         party_lines.append(("", f"No. ({customer_party_number})", False))
+    pay = _txt(payment_type, 12).upper()
+    if pay == "CASH":
+        party_lines.append(("", "Cash", True))
+    elif pay == "CREDIT":
+        party_lines.append(("", "Credit", True))
 
     top = 116.0
     for prefix, text, bold in party_lines:

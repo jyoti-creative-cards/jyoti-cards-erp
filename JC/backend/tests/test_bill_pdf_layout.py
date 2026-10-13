@@ -65,6 +65,7 @@ def _render(n: int, *, gst: bool) -> bytes:
         customer_address="12 Market Road, Near Bus Stand, Ward 4",
         customer_city="JODHPUR",
         customer_party_number=42,
+        payment_type="CREDIT",
         totals=_totals(n, gst=gst),
         narration="Send by evening bus",
         customer_notes="Call before dispatch",
@@ -129,3 +130,27 @@ def test_every_bill_is_original_and_duplicate():
     assert "25.00" in text
     assert "270.00" not in text
     assert "750.00" not in text
+    assert text.count("Credit") == 2
+    assert "Freight Charges" in text
+    assert "Transport Charges" not in text
+
+
+def test_transport_mode_prints_transport_charges():
+    totals = _totals(1, gst=False)
+    totals["transport_mode"] = "transport"
+    totals["freight_agent_name"] = ""
+    totals["transport_receipt_number"] = "TR-19"
+    pdf = render_customer_bill_pdf(
+        bill_id=19,
+        order_id=19,
+        bill_number="EST-19",
+        customer_name="Sharma Gift House",
+        customer_company=None,
+        payment_type="CASH",
+        totals=totals,
+    )
+    text = _pdf_text(pdf)
+    assert "Transport Charges" in text
+    assert "TR-19" in text
+    assert "Freight Charges" not in text
+    assert text.count("Cash") == 2

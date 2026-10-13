@@ -98,6 +98,10 @@ def test_pdf_addon_qty_scales_with_line():
     assert _addon_qty({"per_unit": 1, "quantity": 1}, 800) == 800
     assert _money("113") == "113.00"
     assert _money("81360") == "81,360.00"
+    assert _money("270.00", whole=True) == "270"
+    assert _money("270.40", whole=True) == "270.40"
+    assert _money("270.50", whole=True) == "270.50"
+    assert _money("81360.20", whole=True) == "81,360.20"
 
 
 def test_overall_percent_fills_line_net_rate():

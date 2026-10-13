@@ -1892,7 +1892,6 @@ const CustomerOrders = (() => {
     }
 
     if (processStep === 2) {
-      const modeBtn = (id, label) => `<button type="button" class="btn ${transportMode === id ? "btn-primary" : "btn-secondary"}" style="flex:1;min-width:120px;" onclick="CustomerOrders.setTransportMode('${id}')">${label}</button>`;
       let extra = "";
       if (transportMode === "bus") {
         extra = `
@@ -1913,12 +1912,13 @@ const CustomerOrders = (() => {
         extra = `<p style="font-size:13px;color:var(--muted);margin:0;">Customer picks up. No agent or charges.</p>`;
       }
       bodyEl.innerHTML = `
-        <p style="margin:0 0 12px;color:var(--muted);font-size:14px;">Mode of transport</p>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
-          ${modeBtn("bus", "Bus")}
-          ${modeBtn("transport", "Transport")}
-          ${modeBtn("self_pickup", "Self-pickup")}
-        </div>
+        <label class="label">Mode of transport</label>
+        <select class="input" style="width:100%;max-width:320px;margin-bottom:16px;" onchange="CustomerOrders.setTransportMode(this.value)">
+          <option value="" ${transportMode ? "" : "selected"}>— Select —</option>
+          <option value="bus" ${transportMode === "bus" ? "selected" : ""}>Bus</option>
+          <option value="transport" ${transportMode === "transport" ? "selected" : ""}>Transport</option>
+          <option value="self_pickup" ${transportMode === "self_pickup" ? "selected" : ""}>Self-pickup</option>
+        </select>
         ${extra}`;
       footerEl.innerHTML = `
         <button class="btn btn-secondary" onclick="CustomerOrders.processBack()">← Back</button>
@@ -2296,7 +2296,7 @@ const CustomerOrders = (() => {
   }
 
   function showCreateMenu() {
-    openOfflineWizard(detailCustomerId || null);
+    openOfflineWizard();
   }
 
   async function openCloseBatch(customerId) {
@@ -2332,7 +2332,8 @@ const CustomerOrders = (() => {
   }
 
   async function openOfflineWizard(presetCustomerId) {
-    const cid = presetCustomerId != null ? presetCustomerId : detailCustomerId;
+    const hasPreset = arguments.length > 0 && presetCustomerId != null && presetCustomerId !== "";
+    const cid = hasPreset ? presetCustomerId : null;
     offlineEditPlacementId = null;
     offlineStep = 1;
     offlineCustomerId = cid || null;
@@ -2370,12 +2371,6 @@ const CustomerOrders = (() => {
   function onOfflineCustomerSearch(val) {
     offlineCustomerSearch = val || "";
     renderOfflineWizard();
-    setTimeout(() => {
-      const el = document.getElementById("co-offline-cust-search");
-      if (!el) return;
-      el.focus();
-      try { el.setSelectionRange(el.value.length, el.value.length); } catch (_) {}
-    }, 0);
     clearTimeout(offlineCustomerTimer);
     const q = (offlineCustomerSearch || "").trim();
     if (q.length < 1) {
@@ -2490,6 +2485,8 @@ const CustomerOrders = (() => {
     const bodyEl = document.getElementById("co-offline-body");
     const footerEl = document.getElementById("co-offline-footer");
     if (!stepsEl || !bodyEl || !footerEl) return;
+    const custBox = document.getElementById("co-offline-cust-search");
+    const custCaret = custBox && document.activeElement === custBox ? custBox.selectionStart : null;
 
     const editing = !!offlineEditPlacementId;
     const labels = editing ? ["Products", "Review"] : ["Customer", "Products", "Review"];
@@ -2516,7 +2513,7 @@ const CustomerOrders = (() => {
         </div>
         <div class="vo-wiz-search-wrap">
           <span class="vo-wiz-search-icon" aria-hidden="true">⌕</span>
-          <input id="co-offline-cust-search" class="input vo-wiz-search" type="search" placeholder="Search customer, city, phone, alias…" value="${ctx.esc(offlineCustomerSearch)}" oninput="CustomerOrders.onOfflineCustomerSearch(this.value)" autocomplete="off" />
+          <input id="co-offline-cust-search" class="input vo-wiz-search" type="text" placeholder="Search customer, city, phone, alias…" value="${ctx.esc(offlineCustomerSearch)}" oninput="CustomerOrders.onOfflineCustomerSearch(this.value)" autocomplete="off" spellcheck="false" />
           ${offlineCustomerSearch ? `<button type="button" class="vo-wiz-search-clear" onclick="CustomerOrders.onOfflineCustomerSearch('')">×</button>` : ""}
         </div>
         ${selected ? `<div class="vo-wiz-selected-banner">
@@ -2565,7 +2562,15 @@ const CustomerOrders = (() => {
       footerEl.innerHTML = `
         <button class="btn btn-secondary" onclick="CustomerOrders.closeOfflineWizard()">Cancel</button>
         <button class="btn btn-primary" ${offlineCustomerId ? "" : "disabled"} onclick="CustomerOrders.offlineNext()">Next →</button>`;
-      setTimeout(() => document.getElementById("co-offline-cust-search")?.focus(), 30);
+      const custInput = document.getElementById("co-offline-cust-search");
+      if (custInput) {
+        if (typeof custCaret === "number") {
+          custInput.focus();
+          try { custInput.setSelectionRange(custCaret, custCaret); } catch (_) {}
+        } else if (!offlineCustomerId) {
+          custInput.focus();
+        }
+      }
       return;
     }
 

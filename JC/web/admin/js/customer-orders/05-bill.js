@@ -528,7 +528,6 @@
     }
 
     if (processStep === 2) {
-      const modeBtn = (id, label) => `<button type="button" class="btn ${transportMode === id ? "btn-primary" : "btn-secondary"}" style="flex:1;min-width:120px;" onclick="CustomerOrders.setTransportMode('${id}')">${label}</button>`;
       let extra = "";
       if (transportMode === "bus") {
         extra = `
@@ -549,12 +548,13 @@
         extra = `<p style="font-size:13px;color:var(--muted);margin:0;">Customer picks up. No agent or charges.</p>`;
       }
       bodyEl.innerHTML = `
-        <p style="margin:0 0 12px;color:var(--muted);font-size:14px;">Mode of transport</p>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
-          ${modeBtn("bus", "Bus")}
-          ${modeBtn("transport", "Transport")}
-          ${modeBtn("self_pickup", "Self-pickup")}
-        </div>
+        <label class="label">Mode of transport</label>
+        <select class="input" style="width:100%;max-width:320px;margin-bottom:16px;" onchange="CustomerOrders.setTransportMode(this.value)">
+          <option value="" ${transportMode ? "" : "selected"}>— Select —</option>
+          <option value="bus" ${transportMode === "bus" ? "selected" : ""}>Bus</option>
+          <option value="transport" ${transportMode === "transport" ? "selected" : ""}>Transport</option>
+          <option value="self_pickup" ${transportMode === "self_pickup" ? "selected" : ""}>Self-pickup</option>
+        </select>
         ${extra}`;
       footerEl.innerHTML = `
         <button class="btn btn-secondary" onclick="CustomerOrders.processBack()">← Back</button>

@@ -73,7 +73,7 @@ def _draw_charge(c: canvas.Canvas, row: dict, top: float) -> None:
         c.setStrokeColorRGB(0, 0, 0)
         c.setLineWidth(0.6)
         c.line(COLS[7] + 2, _y(top), RIGHT - 3, _y(top))
-        _draw_amount(c, top, _money(row["amount"]), bold=False)
+        _draw_amount(c, top, _money(row["amount"], whole=True), bold=False)
         return
     if row["kind"] == "less":
         c.setFont("Helvetica-Oblique", 8)
@@ -83,19 +83,19 @@ def _draw_charge(c: canvas.Canvas, row: dict, top: float) -> None:
         if row.get("pct"):
             c.setFont("Helvetica-Oblique", 9)
             c.drawCentredString((COLS[6] + COLS[7]) / 2, _y(top + 10), f"(-){row['pct']} %")
-        _draw_amount(c, top, f"(-){_money(row['amount'])}")
+        _draw_amount(c, top, f"(-){_money(row['amount'], whole=True)}")
         return
     if row["kind"] == "round":
         c.setFont("Helvetica-BoldOblique", 9)
         c.drawRightString(COLS[2] - 6, _y(top + 10), "Round Off")
-        _draw_amount(c, top, _money(row["amount"]))
+        _draw_amount(c, top, _money(row["amount"], whole=True))
         return
     c.setFont("Helvetica-BoldOblique", 9)
     label = row["label"]
     size = _fit(c, label, "Helvetica-BoldOblique", 9, COLS[2] - COLS[1] - 10)
     c.setFont("Helvetica-BoldOblique", size)
     c.drawRightString(COLS[2] - 6, _y(top + 10), label)
-    _draw_amount(c, top, _money(row["amount"]))
+    _draw_amount(c, top, _money(row["amount"], whole=True))
 
 def _draw_footer(
     c: canvas.Canvas,
@@ -173,7 +173,7 @@ def _draw_item(c: canvas.Canvas, row: dict, top: float, *, show_disc: bool) -> N
         if show_disc and row["disc"]:
             c.drawCentredString((COLS[6] + COLS[7]) / 2, _y(top + 10), row["disc"])
         shown = row["gross"] if not show_disc and row["gross"] is not None else row["amount"]
-        _draw_amount(c, top, _money(shown))
+        _draw_amount(c, top, _money(shown, whole=True))
 
 def _draw_photos(c: canvas.Canvas, photos: list[dict], top: float, height: float) -> None:
     n = len(photos)
@@ -225,7 +225,7 @@ def _draw_total(c: canvas.Canvas, top: float, qty: Decimal, grand: object) -> No
     c.setFont("Helvetica-Bold", 8)
     c.drawString(COLS[3] + 8, _y(top + 11), _qty_text(qty))
     c.setFont("Helvetica-Bold", 9)
-    c.drawRightString(RIGHT - 6, _y(top + 11), f"Rs. {_money(grand)}")
+    c.drawRightString(RIGHT - 6, _y(top + 11), f"Rs. {_money(grand, whole=True)}")
 
 def _draw_verticals(c: canvas.Canvas, y0: float, y1: float, *, outer_only: bool = False) -> None:
     c.setStrokeColorRGB(0, 0, 0)
@@ -268,8 +268,8 @@ def _inr_words(amount: object) -> str:
         words += f" and {_two_digits(paise)} paise"
     return f"INR {words} Only"
 
-def _money(v: object) -> str:
-    """Indian grouping, 2 decimals. Fits rate cells without US-style overflow."""
+def _money(v: object, *, whole: bool = False) -> str:
+    """Indian grouping. Amount column drops a trailing .00 and keeps any other paise."""
     try:
         d = Decimal(str(v)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     except Exception:
@@ -277,6 +277,8 @@ def _money(v: object) -> str:
     neg = d < 0
     d = abs(d)
     rupees, paise = format(d, "f").split(".")
+    if whole and paise == "00":
+        paise = None
     if len(rupees) <= 3:
         grouped = rupees
     else:
@@ -287,7 +289,7 @@ def _money(v: object) -> str:
             chunks.append(rest[-2:])
             rest = rest[:-2]
         grouped = ",".join(reversed(chunks)) + "," + last3
-    out = f"{grouped}.{paise}"
+    out = grouped if paise is None else f"{grouped}.{paise}"
     return f"-{out}" if neg else out
 
 def _photo_height(n: int) -> float:

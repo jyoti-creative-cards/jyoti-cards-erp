@@ -1,5 +1,6 @@
   async function openOfflineWizard(presetCustomerId) {
-    const cid = presetCustomerId != null ? presetCustomerId : detailCustomerId;
+    const hasPreset = arguments.length > 0 && presetCustomerId != null && presetCustomerId !== "";
+    const cid = hasPreset ? presetCustomerId : null;
     offlineEditPlacementId = null;
     offlineStep = 1;
     offlineCustomerId = cid || null;
@@ -37,12 +38,6 @@
   function onOfflineCustomerSearch(val) {
     offlineCustomerSearch = val || "";
     renderOfflineWizard();
-    setTimeout(() => {
-      const el = document.getElementById("co-offline-cust-search");
-      if (!el) return;
-      el.focus();
-      try { el.setSelectionRange(el.value.length, el.value.length); } catch (_) {}
-    }, 0);
     clearTimeout(offlineCustomerTimer);
     const q = (offlineCustomerSearch || "").trim();
     if (q.length < 1) {
@@ -157,6 +152,8 @@
     const bodyEl = document.getElementById("co-offline-body");
     const footerEl = document.getElementById("co-offline-footer");
     if (!stepsEl || !bodyEl || !footerEl) return;
+    const custBox = document.getElementById("co-offline-cust-search");
+    const custCaret = custBox && document.activeElement === custBox ? custBox.selectionStart : null;
 
     const editing = !!offlineEditPlacementId;
     const labels = editing ? ["Products", "Review"] : ["Customer", "Products", "Review"];
@@ -183,7 +180,7 @@
         </div>
         <div class="vo-wiz-search-wrap">
           <span class="vo-wiz-search-icon" aria-hidden="true">⌕</span>
-          <input id="co-offline-cust-search" class="input vo-wiz-search" type="search" placeholder="Search customer, city, phone, alias…" value="${ctx.esc(offlineCustomerSearch)}" oninput="CustomerOrders.onOfflineCustomerSearch(this.value)" autocomplete="off" />
+          <input id="co-offline-cust-search" class="input vo-wiz-search" type="text" placeholder="Search customer, city, phone, alias…" value="${ctx.esc(offlineCustomerSearch)}" oninput="CustomerOrders.onOfflineCustomerSearch(this.value)" autocomplete="off" spellcheck="false" />
           ${offlineCustomerSearch ? `<button type="button" class="vo-wiz-search-clear" onclick="CustomerOrders.onOfflineCustomerSearch('')">×</button>` : ""}
         </div>
         ${selected ? `<div class="vo-wiz-selected-banner">
@@ -232,7 +229,15 @@
       footerEl.innerHTML = `
         <button class="btn btn-secondary" onclick="CustomerOrders.closeOfflineWizard()">Cancel</button>
         <button class="btn btn-primary" ${offlineCustomerId ? "" : "disabled"} onclick="CustomerOrders.offlineNext()">Next →</button>`;
-      setTimeout(() => document.getElementById("co-offline-cust-search")?.focus(), 30);
+      const custInput = document.getElementById("co-offline-cust-search");
+      if (custInput) {
+        if (typeof custCaret === "number") {
+          custInput.focus();
+          try { custInput.setSelectionRange(custCaret, custCaret); } catch (_) {}
+        } else if (!offlineCustomerId) {
+          custInput.focus();
+        }
+      }
       return;
     }
 

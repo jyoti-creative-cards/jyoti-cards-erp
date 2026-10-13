@@ -126,3 +126,6 @@ def test_every_bill_is_original_and_duplicate():
     assert "TRIPLICATE" not in text
     assert "12 pcs" in text
     assert "12.00 pcs" not in text
+    assert "25.00" in text
+    assert "270.00" not in text
+    assert "750.00" not in text

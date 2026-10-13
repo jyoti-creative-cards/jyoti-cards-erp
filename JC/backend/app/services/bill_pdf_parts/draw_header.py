@@ -21,7 +21,6 @@ from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
 from app.services.biz_date import to_ist
-from app.services.company_info import COMPANY_NAME
 from app.services.customer_bill_math import fmt_discount_pct
 from app.services.pdf_documents import _safe
 
@@ -107,7 +106,7 @@ def _draw_header(
         c.drawRightString(RIGHT, _y(66), by)
 
     c.setFont("Helvetica-Bold", 9)
-    c.drawCentredString(PAGE_W / 2, _y(82), COMPANY_NAME)
+    c.drawCentredString(PAGE_W / 2, _y(82), "Order Estimate")
     title = "INVOICE" if page_no <= 1 else f"INVOICE(Page  {page_no})"
     c.setFont("Helvetica-Bold", 11)
     c.drawCentredString(PAGE_W / 2, _y(98), title)

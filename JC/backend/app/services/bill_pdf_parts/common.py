@@ -21,7 +21,6 @@ from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
 from app.services.biz_date import to_ist
-from app.services.company_info import COMPANY_NAME
 from app.services.customer_bill_math import fmt_discount_pct
 from app.services.pdf_documents import _safe
 
@@ -141,10 +140,6 @@ def _draw_footer(
             c.drawString(LEFT, _y(y), line)
             y += 11
 
-        for_line = f"for {COMPANY_NAME}"
-        size = _fit(c, for_line, "Helvetica-Bold", 9, 180)
-        c.setFont("Helvetica-Bold", size)
-        c.drawRightString(RIGHT, _y(742), for_line)
         c.setFont("Helvetica", 8)
         c.drawString(288, _y(786), "Prepared by")
         c.drawString(372, _y(786), "Verified by")

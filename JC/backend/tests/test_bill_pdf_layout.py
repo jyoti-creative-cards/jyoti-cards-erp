@@ -120,6 +120,9 @@ def test_every_bill_is_original_and_duplicate():
     text = _pdf_text(_render(1, gst=False))
     assert text.count("ORIGINAL") == 1
     assert text.count("DUPLICATE") == 1
+    assert text.count("Order Estimate") == 2
+    assert "JYOTI CREATIVE" not in text
+    assert "Jyoti Creative" not in text
     assert "TRIPLICATE" not in text
     assert "12 pcs" in text
     assert "12.00 pcs" not in text

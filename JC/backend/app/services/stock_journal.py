@@ -157,6 +157,19 @@ def resolve_lines(db: Session, body: JournalIn) -> tuple[list[dict], list[str], 
             "amount": _q(dst_rate * qty),
         })
         total = Decimal("0.00")
+    elif body.kind == "direct_out":
+        if not body.lines:
+            raise HTTPException(400, "Add the items and quantities to take out.")
+        for ln in body.lines:
+            product = _product(db, ln.catalog_product_id)
+            rate = _buying_rate(product, ln.rate, required=False)
+            drafted.append({
+                "product": product,
+                "quantity_delta": -int(ln.quantity),
+                "rate": rate,
+                "amount": _q(rate * int(ln.quantity)),
+            })
+        total = _q(sum((row["amount"] for row in drafted), Decimal("0")))
     else:
         if body.album and body.lines:
             raise HTTPException(400, "Use either an album or item lines, not both.")
@@ -220,7 +233,7 @@ def resolve_lines(db: Session, body: JournalIn) -> tuple[list[dict], list[str], 
             continue
         have = _on_hand(db, int(row["product"].id))
         row["on_hand"] = have
-        if have < need and body.kind != "consumption":
+        if have < need and body.kind == "transfer":
             raise HTTPException(
                 400,
                 f"Not enough stock of {row['product'].our_product_id}: have {have}, journal needs {need}.",
@@ -273,7 +286,7 @@ def post_journal(db: Session, body: JournalIn, auth: AuthContext) -> JournalOut:
         )
         have = int(bal.quantity_on_hand) if bal else 0
         need = -int(row["quantity_delta"])
-        if body.kind != "consumption" and have < need:
+        if body.kind == "transfer" and have < need:
             raise HTTPException(
                 400,
                 f"Not enough stock of {row['product'].our_product_id}: have {have}, journal needs {need}.",
@@ -286,7 +299,8 @@ def post_journal(db: Session, body: JournalIn, auth: AuthContext) -> JournalOut:
         expense_category=(
             (body.expense_category or "").strip().lower() or None
             if body.kind == "transfer"
-            else (body.expense_category or "sample catalogues").strip().lower() or "sample catalogues"
+            else (body.expense_category or ("direct out" if body.kind == "direct_out" else "sample catalogues")).strip().lower()
+            or ("direct out" if body.kind == "direct_out" else "sample catalogues")
         ),
         total_cost=total,
         created_by_name=auth.actor_name or "Admin",
@@ -333,8 +347,9 @@ def post_journal(db: Session, body: JournalIn, auth: AuthContext) -> JournalOut:
             )
         )
 
-    if body.kind == "consumption":
-        category = (body.expense_category or "sample catalogues").strip().lower() or "sample catalogues"
+    if body.kind in ("consumption", "direct_out"):
+        fallback = "direct out" if body.kind == "direct_out" else "sample catalogues"
+        category = (body.expense_category or fallback).strip().lower() or fallback
         expense = Expense(
             expense_date=body.journal_date,
             category=category,
@@ -525,3 +540,54 @@ def void_journal(db: Session, journal_id: int, reason: str, auth: AuthContext) -
     response_cache.invalidate("stock")
     response_cache.invalidate("ledger")
     return _journal_out(db, journal)
+
+
+_KIND_LABEL = {
+    "transfer": "Move to new item",
+    "consumption": "Sampling",
+    "direct_out": "Direct out",
+}
+
+
+def list_journal_report(db: Session, from_date, to_date, kind: str | None):
+    """One row per journal line. Voided journals stay out."""
+    from datetime import date as date_cls
+
+    q = db.query(StockJournal).filter(StockJournal.voided_at.is_(None))
+    chosen = (kind or "all").strip().lower()
+    if chosen and chosen != "all":
+        if chosen not in _KIND_LABEL:
+            raise HTTPException(400, "Unknown journal type")
+        q = q.filter(StockJournal.kind == chosen)
+    if isinstance(from_date, date_cls):
+        q = q.filter(StockJournal.journal_date >= from_date)
+    if isinstance(to_date, date_cls):
+        q = q.filter(StockJournal.journal_date <= to_date)
+    journals = q.order_by(StockJournal.journal_date.desc(), StockJournal.id.desc()).all()
+    if not journals:
+        return {"items": []}
+    by_id = {j.id: j for j in journals}
+    lines = (
+        db.query(StockJournalLine)
+        .filter(StockJournalLine.journal_id.in_(list(by_id)))
+        .order_by(StockJournalLine.id.asc())
+        .all()
+    )
+    items = []
+    for ln in lines:
+        journal = by_id[ln.journal_id]
+        items.append({
+            "id": journal.id,
+            "date": journal.journal_date.isoformat(),
+            "kind": journal.kind,
+            "kind_label": _KIND_LABEL.get(journal.kind, journal.kind),
+            "item": ln.our_product_id,
+            "qty": abs(int(ln.quantity_delta)),
+            "signed_qty": int(ln.quantity_delta),
+            "rate": format(ln.rate or 0, "f"),
+            "amount": format(ln.amount or 0, "f"),
+            "reason": journal.narration or "",
+            "by": journal.created_by_name or "",
+        })
+    items.sort(key=lambda row: (row["date"], row["id"], row["item"]), reverse=True)
+    return {"items": items}

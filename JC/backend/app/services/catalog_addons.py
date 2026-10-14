@@ -215,6 +215,65 @@ def kept_addon_ids_for_customer_product(db: Session, customer_id: int, catalog_p
     return kept_addon_ids(line.addons_json)
 
 
+def latest_order_addon_lists(db: Session, customer_id: int, product_ids: list[int]) -> dict[int, list]:
+    """The add-on list last saved on an order line.
+
+    A list, including [], is the order's choice. Products that never stored
+    a list are absent, so a legacy bill can keep what it already has.
+    """
+    if not product_ids:
+        return {}
+    from app.models.customer_order import CustomerOrder, CustomerOrderLine, CustomerOrderPlacement
+
+    rows = (
+        db.query(CustomerOrderLine)
+        .join(CustomerOrderPlacement, CustomerOrderPlacement.id == CustomerOrderLine.placement_id)
+        .join(CustomerOrder, CustomerOrder.id == CustomerOrderPlacement.customer_order_id)
+        .filter(
+            CustomerOrder.customer_id == customer_id,
+            CustomerOrderLine.catalog_product_id.in_(product_ids),
+            CustomerOrderLine.addons_json.isnot(None),
+            CustomerOrderPlacement.deleted_at.is_(None),
+        )
+        .order_by(CustomerOrderLine.id.desc())
+        .all()
+    )
+    chosen: dict[int, list] = {}
+    for ln in rows:
+        cid = int(ln.catalog_product_id)
+        if cid not in chosen:
+            chosen[cid] = list(ln.addons_json or [])
+    return chosen
+
+
+def apply_order_addons_to_totals(db: Session, customer_id: int, totals: dict | None) -> dict:
+    """Print and stored bill lines follow the order, not the live catalog links."""
+    if not isinstance(totals, dict):
+        return {}
+    lines = totals.get("lines")
+    if not isinstance(lines, list):
+        return totals
+    ids = [
+        int(ln.get("catalog_product_id") or 0)
+        for ln in lines
+        if isinstance(ln, dict) and ln.get("catalog_product_id")
+    ]
+    kept = latest_order_addon_lists(db, customer_id, ids)
+    if not kept:
+        return totals
+    replaced = []
+    for ln in lines:
+        if not isinstance(ln, dict):
+            replaced.append(ln)
+            continue
+        row = dict(ln)
+        cid = int(row.get("catalog_product_id") or 0)
+        if cid in kept:
+            row["addons"] = kept[cid]
+        replaced.append(row)
+    return {**totals, "lines": replaced}
+
+
 def billing_addons_for_products(
     db: Session,
     customer_id: int,

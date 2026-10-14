@@ -241,6 +241,7 @@ def _summaries_batch(db: Session, orders: list[CustomerOrder]) -> list[CustomerO
                 total_quantity=total,
                 updated_at=display_date,
                 display_date=display_date,
+                sort_at=order.updated_at,
                 sources=sources.get(order.id, []) if order.bucket == "received" else [],
                 party_number=getattr(cust, "party_number", None) if cust else None,
                 marker_1=getattr(cust, "marker_1", None) if cust else None,
@@ -283,6 +284,7 @@ def _summary(db: Session, order: CustomerOrder) -> CustomerOrderSummary:
         total_quantity=total,
         updated_at=display_date,
         display_date=display_date,
+        sort_at=order.updated_at,
         sources=sources,
         party_number=getattr(cust, "party_number", None) if cust else None,
         marker_1=getattr(cust, "marker_1", None) if cust else None,
@@ -391,6 +393,7 @@ def list_customer_orders(
                     total_quantity=int(total_qty or 0),
                     updated_at=touched,
                     display_date=placed_by_cid.get(cid) or touched,
+                    sort_at=touched if isinstance(touched, datetime) else None,
                     sources=sources_by_order_id.get(received.id, []) if received else [],
                     party_number=getattr(cust_obj, "party_number", None) if cust_obj else None,
                     marker_1=getattr(cust_obj, "marker_1", None) if cust_obj else None,
@@ -454,6 +457,8 @@ def list_customer_orders(
             display_date = by_id.get(summary.id) or summary.updated_at
             summary.updated_at = display_date
             summary.display_date = display_date
+            if isinstance(display_date, datetime):
+                summary.sort_at = display_date
         return _filter_by_product(out)
 
     if bucket == "billed":
@@ -473,24 +478,25 @@ def list_customer_orders(
         bill_rows = []
         for cid, bills in grouped.items():
             dated = [b.bill_date for b in bills if b.bill_date is not None]
+            created = [b.created_at for b in bills if b.created_at is not None]
             if dated:
                 display = max(dated)
             else:
-                created = [b.created_at for b in bills if b.created_at is not None]
                 display = max(created) if created else None
-            bill_rows.append((cid, bills, display or today_ist()))
-        bill_rows.sort(key=lambda row: _sort_business_date(row[2]), reverse=True)
+            newest = max(created) if created else None
+            bill_rows.append((cid, bills, display or today_ist(), newest))
+        bill_rows.sort(key=lambda row: _sort_business_date(row[3] or row[2]), reverse=True)
         # Batch the customer-name lookup — was one query PER customer (N+1), which
         # noticeably hung the UI once dozens of customers had unclosed bills sitting
         # here (this bucket is auto-opened right after every new bill save).
-        bill_cids = [int(cid) for cid, _, _ in bill_rows]
+        bill_cids = [int(cid) for cid, _, _, _ in bill_rows]
         customers_by_id = {
             c.id: c for c in db.query(Customer).filter(Customer.id.in_(bill_cids)).all()
         } if bill_cids else {}
         city_ids = {c.city_id for c in customers_by_id.values() if c.city_id}
         cities = {c.id: c.name for c in (db.query(City).filter(City.id.in_(city_ids)).all() if city_ids else [])}
         out = []
-        for cid, bills, display_date in bill_rows:
+        for cid, bills, display_date, newest in bill_rows:
             cust_obj = customers_by_id.get(int(cid))
             chips = [
                 {"bill_number": b.bill_number, "grand_total": format(b.grand_total or 0, "f")}
@@ -511,6 +517,7 @@ def list_customer_orders(
                     total_quantity=0,
                     updated_at=display_date or today_ist(),
                     display_date=display_date or today_ist(),
+                    sort_at=newest if isinstance(newest, datetime) else None,
                     sources=[],
                     party_number=getattr(cust_obj, "party_number", None) if cust_obj else None,
                     marker_1=getattr(cust_obj, "marker_1", None) if cust_obj else None,

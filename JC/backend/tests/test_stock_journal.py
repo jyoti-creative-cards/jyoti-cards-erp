@@ -19,7 +19,7 @@ from app.models.vendor import Vendor
 from app.schemas.stock_journal import JournalIn, JournalLineIn
 from app.services.biz_date import today_ist
 from app.services.reports import daybook
-from app.services.stock_journal import post_journal, preview_journal, void_journal
+from app.services.stock_journal import list_journal_report, post_journal, preview_journal, void_journal
 from app.services.stock_receipt import add_stock
 
 import app.models  # noqa: F401 — register journal tables on Base.metadata
@@ -273,3 +273,25 @@ def test_void_restores_stock_and_drops_expense(db):
     assert db.query(Expense).filter(Expense.reference == f"journal:{saved.id}").count() == 0
     book = daybook(db, day=today_ist())
     assert Decimal(book["totals"]["cash_out"]) == 0
+
+
+def test_direct_out_reduces_stock_without_a_reason(db):
+    vendor = _vendor(db)
+    item = _product(db, vendor, "SCR 01", buying=Decimal("1.00"), stock=20)
+    saved = post_journal(
+        db,
+        JournalIn(
+            journal_date=today_ist(),
+            kind="direct_out",
+            narration=None,
+            lines=[JournalLineIn(catalog_product_id=item.id, quantity=8)],
+        ),
+        AUTH,
+    )
+    assert saved.kind == "direct_out"
+    assert _hand(db, item.id) == 12
+    report = list_journal_report(db, today_ist(), today_ist(), "direct_out")
+    assert report["items"][0]["item"] == "SCR 01"
+    assert report["items"][0]["qty"] == 8
+    assert report["items"][0]["reason"] == ""
+    assert list_journal_report(db, today_ist(), today_ist(), "transfer")["items"] == []

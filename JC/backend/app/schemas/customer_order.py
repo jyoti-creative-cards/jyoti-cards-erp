@@ -78,6 +78,7 @@ class CustomerOrderSummary(BaseModel):
     total_quantity: int
     updated_at: Union[date, datetime]
     display_date: Optional[Union[date, datetime]] = None
+    sort_at: Optional[datetime] = None
     sources: List[str] = []  # portal | phone — intake channels on open received placements
     party_number: Optional[int] = None
     marker_1: Optional[str] = None

@@ -15,7 +15,7 @@ class JournalLineIn(BaseModel):
 
 class JournalIn(BaseModel):
     journal_date: date
-    kind: Literal["transfer", "consumption"]
+    kind: Literal["transfer", "consumption", "direct_out"]
     narration: Optional[str] = None
     expense_category: Optional[str] = None
     from_product_id: Optional[int] = None

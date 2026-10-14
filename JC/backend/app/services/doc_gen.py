@@ -274,8 +274,11 @@ def generate_customer_bill_document(db: Session, bill_id: int) -> str | None:
     _lines = totals.get("lines")
     if isinstance(_lines, list) and any(isinstance(ln, dict) and "addons" not in ln for ln in _lines):
         totals = attach_addons_to_totals(db, totals)
-        bill.totals_json = totals
-        flag_modified(bill, "totals_json")
+    from app.services.catalog_addons import apply_order_addons_to_totals
+
+    totals = apply_order_addons_to_totals(db, bill.customer_id, totals)
+    bill.totals_json = totals
+    flag_modified(bill, "totals_json")
     blines = db.query(CustomerBillLine).filter(CustomerBillLine.bill_id == bill.id).all()
     line_pcts = {
         int(ln.catalog_product_id): ln.discount_percent

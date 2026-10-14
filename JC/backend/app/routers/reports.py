@@ -140,6 +140,19 @@ def ageing_ap(
     return data
 
 
+@router.get("/stock/journals")
+def stock_journal_report(
+    from_date: Optional[date] = Query(None),
+    to_date: Optional[date] = Query(None),
+    kind: str = Query("all"),
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    from app.services.stock_journal import list_journal_report
+
+    return list_journal_report(db, from_date, to_date, kind)
+
+
 @router.get("/stock/billed-items")
 def billed_items_report(
     from_date: Optional[date] = Query(None),

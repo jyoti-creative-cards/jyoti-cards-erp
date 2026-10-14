@@ -15,6 +15,7 @@ from app.models.customer_order import CustomerOpenLine, CustomerOrder, CustomerO
 from app.models.vendor import Vendor
 from app.services.catalog_addons import (
     apply_billing_addons_to_totals,
+    apply_order_addons_to_totals,
     attach_addons_to_totals,
     billing_addons_for_products,
     merge_priced_addon_charges,
@@ -148,3 +149,14 @@ def test_removed_free_addon_stays_off_the_bill(db):
     )
     saved = attach_addons_to_totals(db, totals)
     assert [a["addon_product_id"] for a in saved["lines"][0]["addons"]] == [plate.id]
+    both = {
+        "lines": [{
+            "catalog_product_id": prod.id,
+            "addons": [
+                {"addon_product_id": flower.id, "name": "FLOWER"},
+                {"addon_product_id": plate.id, "name": "NAME PLATE LEDGER"},
+            ],
+        }],
+    }
+    printed = apply_order_addons_to_totals(db, customer.id, both)
+    assert [a["addon_product_id"] for a in printed["lines"][0]["addons"]] == [plate.id]

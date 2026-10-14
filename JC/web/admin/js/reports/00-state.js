@@ -19,6 +19,7 @@ const Reports = (() => {
   let hideVoids = true;
   let backLabel = "Back";
   let ageingSide = "ar";
+  let journalReportKind = "all";
 
   const MODES = [
     { id: "today", label: "Today" },
@@ -51,6 +52,7 @@ const Reports = (() => {
     stock: [
       { id: "stock-wise", label: "Stock wise" },
       { id: "item-outward", label: "Items sold" },
+      { id: "stock-journal", label: "Stock journal" },
       { id: "valuation", label: "Valuation" },
       { id: "movers", label: "Fast / slow" },
       { id: "low", label: "Low stock" },

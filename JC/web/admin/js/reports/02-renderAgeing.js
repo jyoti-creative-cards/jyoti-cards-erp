@@ -100,6 +100,49 @@
     })).sort((a, b) => b.bills - a.bills || String(a.label).localeCompare(String(b.label)));
   }
 
+  function setJournalReportKind(kind) {
+    journalReportKind = ["all", "transfer", "consumption", "direct_out"].includes(kind) ? kind : "all";
+    loadChip();
+  }
+
+  async function renderStockJournal(body) {
+    const data = await ctx.api(`/reports/stock/journals${rangeQs({ kind: journalReportKind })}`, {}, 0);
+    const q = hubSearch.trim().toLowerCase();
+    const items = (data.items || []).filter(it => {
+      if (!q) return true;
+      return [it.item, it.kind_label, it.reason, it.by].join(" ").toLowerCase().includes(q);
+    });
+    const kinds = [
+      ["all", "All"],
+      ["transfer", "Move to new item"],
+      ["consumption", "Sampling"],
+      ["direct_out", "Direct out"],
+    ];
+    const kindBar = kinds.map(([id, label]) =>
+      `<button type="button" class="btn btn-sm ${journalReportKind === id ? "btn-primary" : "btn-secondary"}" onclick="Reports.setJournalReportKind('${id}')">${label}</button>`
+    ).join(" ");
+    const period = outwardPeriodLabel();
+    const qty = items.reduce((s, it) => s + (Number(it.qty) || 0), 0);
+    const amount = items.reduce((s, it) => s + (Number(it.amount) || 0), 0);
+    body.innerHTML = `
+      <h2 class="report-print-title" style="position:absolute;left:-9999px;">Stock journal · ${ctx.esc(period)}</h2>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px;">${kindBar}</div>
+      <p class="fin-panel-sub" style="margin:0 0 12px;">${ctx.esc(period)} · ${items.length} line${items.length === 1 ? "" : "s"} · Qty ${qty} · ${fmtPrice(amount)}</p>
+      ${items.length ? `<div class="card table-wrap"><table class="data"><caption style="caption-side:top;text-align:left;font-weight:600;padding:8px 0;">Stock journal · ${ctx.esc(period)}</caption><thead><tr>
+        <th>Date</th><th>Type</th><th>Item</th><th>Qty</th><th>Rate</th><th>Amount</th><th>Reason</th>
+      </tr></thead><tbody>
+        ${items.map(it => `<tr>
+          <td>${ctx.esc(fmtReportDay(it.date))}</td>
+          <td>${ctx.esc(it.kind_label || it.kind)}</td>
+          <td><strong>${ctx.esc(it.item)}</strong></td>
+          <td>${it.signed_qty < 0 ? "−" : ""}${it.qty}</td>
+          <td>${fmtPrice(it.rate)}</td>
+          <td>${fmtPrice(it.amount)}</td>
+          <td>${ctx.esc(it.reason || "")}</td>
+        </tr>`).join("")}
+      </tbody></table></div>` : empty("No journal lines", "Widen the dates, or pick another type.")}`;
+  }
+
   async function renderItemOutward(body) {
     const data = await ctx.api(`/reports/stock/billed-items${rangeQs()}`, {}, 0);
     const matched = (data.items || []).filter(it => matchSearch(it.label));

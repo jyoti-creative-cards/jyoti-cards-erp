@@ -440,7 +440,13 @@
         : (Number(ln.net_rate) || Number(calcNetFromDisc(ln.unit_price, ln.discount_percent || 0)) || 0);
       amount += q * rate;
     }
-    return { qty, amount };
+    let extra = 0;
+    if ((transportMode === "bus" || transportMode === "transport") && String(freightCharges || "").trim() !== "") {
+      extra += Number(freightCharges) || 0;
+    }
+    if (String(packagingCharges || "").trim() !== "") extra += Number(packagingCharges) || 0;
+    for (const c of additionalCharges || []) extra += Number(c.amount) || 0;
+    return { qty, amount: amount + extra };
   }
 
   function reviewChargeRows(tot, chargeLabel) {
@@ -765,7 +771,7 @@
     return hit ? String(hit.id) : "";
   }
   function setFreightAgent(v) { freightAgentId = v; }
-  function setFreightCharges(v) { freightCharges = v; }
+  function setFreightCharges(v) { freightCharges = v; renderWizardTotalsBar(); }
   function setTransportMode(v) {
     transportMode = v;
     if (v === "self_pickup") {
@@ -787,7 +793,7 @@
     }
   }
   function setTransportReceipt(v) { transportReceiptNumber = v; }
-  function setPackagingCharges(v) { packagingCharges = v; }
+  function setPackagingCharges(v) { packagingCharges = v; renderWizardTotalsBar(); }
   function setGst(v) { gstEnabled = v; renderProcessWizard(); }
   function setGstRate(v) { gstRate = v; }
   function setBillSeries(v) {
@@ -802,7 +808,7 @@
   function setNarration(v) { narration = v; }
   function setEditBillNumber(v) { editBillNumber = v || ""; }
   function setBillDate(v) { billDate = v || localToday(); }
-  function setAddCharge(i, field, val) { if (additionalCharges[i]) additionalCharges[i][field] = val; }
+  function setAddCharge(i, field, val) { if (additionalCharges[i]) additionalCharges[i][field] = val; renderWizardTotalsBar(); }
   function addChargeRow() { additionalCharges.push({ name: "", amount: "" }); renderProcessWizard(); }
 
   async function processNext() {

@@ -299,7 +299,7 @@
     if (!slot) return;
     const caret = (typeof OrdersUI !== "undefined" && OrdersUI.captureSearchCaret)
       ? OrdersUI.captureSearchCaret("reports-hub-search") : null;
-    const searchable = ["sales", "sales-book", "day-bills", "receipt-book", "daybook", "purchases", "payments", "ledgers", "ageing", "customer-sales", "vendor-purchases", "item-sales", "item-purchases", "stock-wise", "item-outward", "valuation", "movers", "low", "returns", "debit-notes", "gst-sales", "gst-purchases", "cashbook", "expense-cat"].includes(chip);
+    const searchable = ["sales", "sales-book", "day-bills", "receipt-book", "daybook", "purchases", "payments", "ledgers", "ageing", "customer-sales", "vendor-purchases", "item-sales", "item-purchases", "stock-wise", "item-outward", "stock-journal", "valuation", "movers", "low", "returns", "debit-notes", "gst-sales", "gst-purchases", "cashbook", "expense-cat"].includes(chip);
     if (!searchable) { slot.innerHTML = ""; return; }
     const ph = chip === "day-bills" ? "Search bill, party, city…"
       : chip === "ledgers"
@@ -394,6 +394,7 @@
       else if (chip === "item-purchases") await renderItemAgg(body, "item-purchases");
       else if (chip === "stock-wise") await renderStockWise(body);
       else if (chip === "item-outward") await renderItemOutward(body);
+      else if (chip === "stock-journal") await renderStockJournal(body);
       else if (chip === "valuation") await renderValuation(body);
       else if (chip === "movers") await renderMovers(body);
       else if (chip === "low") await renderLow(body);

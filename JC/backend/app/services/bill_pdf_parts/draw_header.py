@@ -81,6 +81,9 @@ def _draw_header(
     marker_2: str | None = None,
 ) -> float:
     """Draw the Tally header. Returns the table-top y measured from the top of the page."""
+    # Same corner on every printed bill, for the pin.
+    c.setFillColorRGB(0, 0, 0)
+    c.circle(PAGE_W - 28, PAGE_H - 28, 5, stroke=0, fill=1)
     if show_printed and printed is not None:
         c.setFont("Helvetica-Oblique", 8)
         c.drawRightString(RIGHT, _y(22), f"Printed on {_printed_token(printed)}")

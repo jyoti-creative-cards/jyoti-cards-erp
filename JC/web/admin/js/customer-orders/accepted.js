@@ -258,17 +258,27 @@ const CustomerOrders = (() => {
     else renderList();
   }
 
+  function hubTime(o) {
+    const raw = o.sort_at || o.updated_at || o.display_date || 0;
+    const t = new Date(raw).getTime();
+    return Number.isFinite(t) ? t : 0;
+  }
+
+  function sortHubOrders(list) {
+    const dir = hubSort === "oldest" ? 1 : -1;
+    return [...(list || [])].sort((a, b) => {
+      const ta = hubTime(a);
+      const tb = hubTime(b);
+      if (ta !== tb) return (ta - tb) * dir;
+      const ia = Number(a.id) || Number(a.customer_id) || 0;
+      const ib = Number(b.id) || Number(b.customer_id) || 0;
+      return (ia - ib) * dir;
+    });
+  }
+
   function filterHubOrders(list) {
     if (!hubSearch.trim()) {
-      // No search — sort by recency (toggle), not OrdersUI's default party_number
-      // order. party_number ordering is right for a customer directory, but wrong
-      // here: a just-created order could land anywhere in a long numeric list,
-      // making it look "missing" from the queue until you scroll to find it.
-      return [...(list || [])].sort((a, b) => {
-        const ta = new Date(a.updated_at || 0).getTime() || 0;
-        const tb = new Date(b.updated_at || 0).getTime() || 0;
-        return hubSort === "oldest" ? ta - tb : tb - ta;
-      });
+      return sortHubOrders(list);
     }
     // Hub rows only have customer_name — still token-match; rank by name starts-with
     const ranked = OrdersUI.filterAndRankParties(
@@ -278,7 +288,7 @@ const CustomerOrders = (() => {
       })),
       hubSearch,
     );
-    if (currentBucket !== "billed") return ranked;
+    if (currentBucket !== "billed") return sortHubOrders(ranked);
     const tokens = OrdersUI.partySearchTokens(hubSearch);
     const seen = new Set(ranked.map(o => o.customer_id));
     const billHits = (list || []).filter(o => {
@@ -289,7 +299,7 @@ const CustomerOrders = (() => {
         || (!/^\d+$/.test(t) && String(o.city_name || "").toLowerCase().includes(t))
         || (/^\d+$/.test(t) && String(o.party_number ?? "") === t));
     });
-    return [...ranked, ...billHits];
+    return sortHubOrders([...ranked, ...billHits]);
   }
 
   function billNumberMatches(billNumber, token) {
@@ -305,6 +315,7 @@ const CustomerOrders = (() => {
 
   function setHubSort(val) {
     hubSort = val === "oldest" ? "oldest" : "latest";
+    syncHubChrome();
     if (isDispatchBucket()) renderDispatchList();
     else renderList();
   }
@@ -1843,7 +1854,13 @@ const CustomerOrders = (() => {
         : (Number(ln.net_rate) || Number(calcNetFromDisc(ln.unit_price, ln.discount_percent || 0)) || 0);
       amount += q * rate;
     }
-    return { qty, amount };
+    let extra = 0;
+    if ((transportMode === "bus" || transportMode === "transport") && String(freightCharges || "").trim() !== "") {
+      extra += Number(freightCharges) || 0;
+    }
+    if (String(packagingCharges || "").trim() !== "") extra += Number(packagingCharges) || 0;
+    for (const c of additionalCharges || []) extra += Number(c.amount) || 0;
+    return { qty, amount: amount + extra };
   }
 
   function reviewChargeRows(tot, chargeLabel) {
@@ -2168,7 +2185,7 @@ const CustomerOrders = (() => {
     return hit ? String(hit.id) : "";
   }
   function setFreightAgent(v) { freightAgentId = v; }
-  function setFreightCharges(v) { freightCharges = v; }
+  function setFreightCharges(v) { freightCharges = v; renderWizardTotalsBar(); }
   function setTransportMode(v) {
     transportMode = v;
     if (v === "self_pickup") {
@@ -2190,7 +2207,7 @@ const CustomerOrders = (() => {
     }
   }
   function setTransportReceipt(v) { transportReceiptNumber = v; }
-  function setPackagingCharges(v) { packagingCharges = v; }
+  function setPackagingCharges(v) { packagingCharges = v; renderWizardTotalsBar(); }
   function setGst(v) { gstEnabled = v; renderProcessWizard(); }
   function setGstRate(v) { gstRate = v; }
   function setBillSeries(v) {
@@ -2205,7 +2222,7 @@ const CustomerOrders = (() => {
   function setNarration(v) { narration = v; }
   function setEditBillNumber(v) { editBillNumber = v || ""; }
   function setBillDate(v) { billDate = v || localToday(); }
-  function setAddCharge(i, field, val) { if (additionalCharges[i]) additionalCharges[i][field] = val; }
+  function setAddCharge(i, field, val) { if (additionalCharges[i]) additionalCharges[i][field] = val; renderWizardTotalsBar(); }
   function addChargeRow() { additionalCharges.push({ name: "", amount: "" }); renderProcessWizard(); }
 
   async function processNext() {

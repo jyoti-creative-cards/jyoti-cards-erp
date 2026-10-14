@@ -94,7 +94,7 @@
   }
 
   function showCreateMenu() {
-    openOfflineWizard(detailCustomerId || null);
+    openOfflineWizard();
   }
 
   async function openCloseBatch(customerId) {

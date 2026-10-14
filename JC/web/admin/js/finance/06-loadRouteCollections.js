@@ -190,6 +190,13 @@
       body.from_product_id = f.from_id;
       body.to_product_id = f.to_id;
       body.quantity = Number(f.quantity) || null;
+    } else if (f.kind === "direct_out") {
+      body.expense_category = "direct out";
+      body.lines = (f.lines || []).filter(l => Number(l.quantity) > 0).map(l => ({
+        catalog_product_id: l.catalog_product_id,
+        quantity: Number(l.quantity) || 0,
+        rate: l.rate !== "" && l.rate != null ? l.rate : null,
+      }));
     } else {
       body.expense_category = (f.expense_category || "Sample catalogues").trim();
       const readyLines = (f.lines || []).filter(l => Number(l.quantity) > 0);
@@ -234,18 +241,32 @@
     const f = journalForm;
     const hitList = (hits, which) => hitButtons(hits, which);
     const transfer = f.kind === "transfer";
+    const direct = f.kind === "direct_out";
     const preview = f.preview;
     el.innerHTML = `
       <div class="card" style="padding:16px;display:grid;gap:12px;margin-bottom:16px;">
         <div style="display:flex;gap:16px;flex-wrap:wrap;">
           <label style="display:flex;gap:6px;align-items:center;"><input type="radio" name="fj-kind" ${transfer ? "checked" : ""} onchange="Finance.setJournalKind('transfer')" /> Move to new item</label>
-          <label style="display:flex;gap:6px;align-items:center;"><input type="radio" name="fj-kind" ${!transfer ? "checked" : ""} onchange="Finance.setJournalKind('consumption')" /> Sample catalogues</label>
+          <label style="display:flex;gap:6px;align-items:center;"><input type="radio" name="fj-kind" ${f.kind === "consumption" ? "checked" : ""} onchange="Finance.setJournalKind('consumption')" /> Sample catalogues</label>
+          <label style="display:flex;gap:6px;align-items:center;"><input type="radio" name="fj-kind" ${direct ? "checked" : ""} onchange="Finance.setJournalKind('direct_out')" /> Direct out</label>
         </div>
         <div style="display:flex;gap:12px;flex-wrap:wrap;">
           <label>Date <input class="input" type="date" value="${ctx.esc(f.journal_date)}" onchange="Finance.setJournalField('journal_date', this.value)" /></label>
-          <label style="flex:1;min-width:220px;">Note <input class="input" style="width:100%;" value="${ctx.esc(f.narration)}" oninput="Finance.setJournalField('narration', this.value)" placeholder="Why this journal" /></label>
+          <label style="flex:1;min-width:220px;">${direct ? "Reason (optional)" : "Note"} <input class="input" style="width:100%;" value="${ctx.esc(f.narration)}" oninput="Finance.setJournalField('narration', this.value)" placeholder="Why this journal" /></label>
         </div>
-        ${transfer ? `
+        ${direct ? `
+          <p style="margin:0;font-size:13px;color:var(--muted);">Quantity leaves stock. Use this for damaged goods. Reason is optional.</p>
+          <label>Search item <input class="input" id="fj-line" value="${ctx.esc(f.line_q)}" placeholder="Item number or name" oninput="Finance.searchJournalProduct('line', this.value)" /></label>
+          <div id="fj-hits-line" style="display:flex;flex-direction:column;gap:4px;">${hitList(journalHits.line, "line")}</div>
+          ${(f.lines || []).map((l, i) => `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <strong>${ctx.esc(l.our_product_id)}</strong>
+            <span style="color:var(--muted);font-size:12px;">stock ${l.on_hand ?? 0}</span>
+            <input class="input" style="width:90px;" type="number" min="1" value="${ctx.esc(l.quantity)}" oninput="Finance.setJournalLine(${i}, 'quantity', this.value)" />
+            <input class="input" style="width:110px;" placeholder="Rate" value="${ctx.esc(l.rate ?? "")}" oninput="Finance.setJournalLine(${i}, 'rate', this.value)" />
+            <button type="button" class="btn btn-ghost btn-sm" onclick="Finance.removeJournalLine(${i})">Remove</button>
+          </div>`).join("")}
+          ${(f.lines || []).length ? `<p style="margin:0;font-size:13px;"><strong>${journalTotalLine(draftLineTotals(f.lines))}</strong></p>` : ""}
+        ` : transfer ? `
           <div style="display:grid;gap:8px;">
             <label>Old item <input class="input" id="fj-from" value="${ctx.esc(f.from_q)}" placeholder="Item number" oninput="Finance.searchJournalProduct('from', this.value)" /></label>
             ${f.from_label ? `<p style="margin:0;font-size:13px;">Selected ${ctx.esc(f.from_label)}</p>` : ""}
@@ -325,7 +346,7 @@
         ${journals.length ? `<table class="data"><thead><tr><th>Date</th><th>Kind</th><th>Note</th><th>Cost</th><th></th></tr></thead><tbody>
           ${journals.map(j => `<tr>
             <td>${ctx.esc(j.journal_date)}</td>
-            <td>${j.kind === "transfer" ? "Move" : "Samples"}${j.voided_at ? " · voided" : ""}</td>
+            <td>${j.kind === "transfer" ? "Move" : j.kind === "direct_out" ? "Direct out" : "Samples"}${j.voided_at ? " · voided" : ""}</td>
             <td>${ctx.esc(j.narration || "—")}</td>
             <td>${fmtPrice(j.total_cost)}</td>
             <td>${j.voided_at ? "" : `<button class="btn btn-ghost btn-sm" onclick="Finance.voidJournal(${j.id})">Void</button>`}</td>
@@ -381,7 +402,7 @@
       <td>${ctx.esc(String(l.amount ?? ""))}</td>
       <td>${ctx.esc(String(l.on_hand ?? ""))}</td>
     </tr>`).join("");
-    const title = journalForm?.kind === "transfer" ? "Move to new item" : "Sample catalogue";
+    const title = journalForm?.kind === "transfer" ? "Move to new item" : journalForm?.kind === "direct_out" ? "Direct out" : "Sample catalogue";
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${ctx.esc(title)}</title>
       <style>body{font-family:sans-serif;font-size:12px;color:#111}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:4px 6px;text-align:left}h1{font-size:16px}</style>
       </head><body>
@@ -420,7 +441,7 @@
     const blob = new Blob([html], { type: "application/vnd.ms-excel" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = journalForm?.kind === "transfer" ? "move-to-new-item.xls" : "sample-catalogue.xls";
+    a.download = journalForm?.kind === "transfer" ? "move-to-new-item.xls" : journalForm?.kind === "direct_out" ? "direct-out.xls" : "sample-catalogue.xls";
     a.click();
     URL.revokeObjectURL(a.href);
   }
@@ -588,7 +609,7 @@
     ctx.showLoading?.();
     try {
       const saved = await ctx.api("/stock-journals", { method: "POST", body: JSON.stringify(journalBody()) }, 0);
-      ctx.toast(saved.kind === "consumption" ? "Sample cost recorded" : "Stock moved", "success");
+      ctx.toast(saved.kind === "consumption" ? "Sample cost recorded" : saved.kind === "direct_out" ? "Direct out recorded" : "Stock moved", "success");
       journalForm = blankJournalForm();
       journalHits = { from: [], to: [], line: [] };
       ctx.invalidateCache?.("/stock");

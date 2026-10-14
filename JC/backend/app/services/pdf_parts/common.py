@@ -130,6 +130,8 @@ def add_page_number(canvas, doc) -> None:
     visual cue; this makes page count/order obvious when printed or paged through.
     """
     canvas.saveState()
+    canvas.setFillColor(colors.black)
+    canvas.circle(doc.pagesize[0] - 28, doc.pagesize[1] - 28, 5, stroke=0, fill=1)
     canvas.setFont("Helvetica", 7.5)
     canvas.setFillColor(colors.HexColor("#94a3b8"))
     canvas.drawRightString(doc.pagesize[0] - 1.2 * cm, 0.8 * cm, f"Page {canvas.getPageNumber()}")

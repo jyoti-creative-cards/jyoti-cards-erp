@@ -75,6 +75,20 @@ def _cost_auth(show_cost: bool) -> AuthContext:
     return AuthContext("staff", None, "System", permissions)
 
 
+def bill_file_pdf_bytes(db: Session, bill_id: int) -> bytes | None:
+    """One copy for saving. Does not replace the stored print file."""
+    from app.models.customer_bill import CustomerBill
+
+    with _lock("bill", bill_id):
+        bill = db.get(CustomerBill, bill_id)
+        if not bill:
+            return None
+        generate_customer_bill_document(db, bill_id, copies=1, with_labels=False, persist=False)
+        fresh = getattr(bill, "_pdf_bytes", None)
+        db.commit()
+        return fresh
+
+
 def bill_pdf_bytes(db: Session, bill_id: int) -> bytes | None:
     from app.models.customer_bill import CustomerBill
 

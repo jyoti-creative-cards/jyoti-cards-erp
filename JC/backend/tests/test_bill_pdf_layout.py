@@ -140,6 +140,34 @@ def test_every_bill_is_original_and_duplicate():
     assert "Transport Charges" not in text
 
 
+def test_saved_copy_is_one_bill_without_copy_labels():
+    pdf = render_customer_bill_pdf(
+        bill_id=18,
+        order_id=18,
+        bill_number="EST-18",
+        customer_name="Sharma Gift House",
+        customer_company=None,
+        customer_city="JODHPUR",
+        customer_party_number=42,
+        payment_type="CASH",
+        totals=_totals(1, gst=False),
+        copies=1,
+        with_labels=False,
+    )
+    text = _pdf_text(pdf).replace("\\(", "(").replace("\\)", ")")
+    assert _pages(pdf) == 1
+    assert "ORIGINAL" not in text
+    assert "DUPLICATE" not in text
+    assert "Sharma Gift House, JODHPUR" in text
+
+
+def test_bill_download_name_is_number_and_party():
+    from app.routers.share import bill_download_name
+
+    assert bill_download_name("A649", "Sharma Gift House") == "A649_Sharma Gift House.pdf"
+    assert bill_download_name("A/1", "A:B") == "A 1_A B.pdf"
+
+
 def test_transport_mode_prints_transport_charges():
     totals = _totals(1, gst=False)
     totals["transport_mode"] = "transport"

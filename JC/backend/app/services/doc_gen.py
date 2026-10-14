@@ -251,7 +251,14 @@ def generate_customer_order_document(db: Session, placement_id: int) -> str | No
     return key
 
 
-def generate_customer_bill_document(db: Session, bill_id: int) -> str | None:
+def generate_customer_bill_document(
+    db: Session,
+    bill_id: int,
+    *,
+    copies: int = 2,
+    with_labels: bool = True,
+    persist: bool = True,
+) -> str | None:
     bill = db.get(CustomerBill, bill_id)
     if not bill:
         return None
@@ -393,7 +400,14 @@ def generate_customer_bill_document(db: Session, bill_id: int) -> str | None:
         order_created_at=order_at,
         order_by=order_by,
         outstanding=outstanding,
+        copies=copies,
+        with_labels=with_labels,
     )
+    if not persist:
+        bill._pdf_bytes = pdf
+        db.add(bill)
+        db.flush()
+        return None
     key = customer_bill_key(slug, bill.bill_number)
     # Print must not wait on storage. A refused upload (401 Payment Required)
     # used to throw away the PDF that was already built.

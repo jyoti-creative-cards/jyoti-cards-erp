@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from typing import Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
@@ -18,7 +20,7 @@ from app.models.customer_bill import CustomerBill
 from app.models.freight_agent import FreightAgent, FreightLedgerEntry
 from app.models.vendor import Vendor
 from app.services.activity import log_from_auth
-from app.services.doc_jobs import bill_pdf_bytes
+from app.services.doc_jobs import bill_file_pdf_bytes, bill_pdf_bytes
 from app.services.report_pdfs import (
     render_ageing_pdf,
     render_ap_statement_pdf,
@@ -30,17 +32,32 @@ from app.services.report_pdfs import (
 router = APIRouter(prefix="/share", tags=["share"])
 
 
+def bill_download_name(bill_number: str | None, party_name: str | None) -> str:
+    def clean(value: str | None) -> str:
+        text = re.sub(r'[\\/:*?"<>|\r\n]+', " ", value or "")
+        return re.sub(r"\s+", " ", text).strip()[:80]
+
+    number = clean(bill_number) or "bill"
+    party = clean(party_name)
+    stem = f"{number}_{party}" if party else number
+    return f"{stem}.pdf"
+
+
 def _pdf_response(data: bytes, filename: str) -> Response:
-    return Response(
-        content=data,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'inline; filename="{filename}"'},
-    )
+    safe = filename.replace('"', "").replace("\r", "").replace("\n", "")
+    ascii_name = safe.encode("ascii", "ignore").decode() or "bill.pdf"
+    headers = {
+        "Content-Disposition": (
+            f'inline; filename="{ascii_name}"; filename*=UTF-8\'\'{quote(safe)}'
+        ),
+    }
+    return Response(content=data, media_type="application/pdf", headers=headers)
 
 
 @router.get("/bills/{bill_id}/pdf")
 def bill_pdf(
     bill_id: int,
+    layout: str = Query("print"),
     db: Session = Depends(get_db),
     # Customer bill PDFs carry customer address/GST/outstanding — vendor_orders.read
     # was accepted here too, letting vendor-only staff pull arbitrary customer bill
@@ -50,11 +67,17 @@ def bill_pdf(
     bill = db.get(CustomerBill, bill_id)
     if not bill:
         raise HTTPException(404, "bill not found")
-    data = bill_pdf_bytes(db, bill_id)
+    customer = db.get(Customer, bill.customer_id)
+    party = customer.business_name if customer else ""
+    # Print is the stored original+duplicate. Saving a copy is one unlabeled bill.
+    if (layout or "print").strip().lower() == "file":
+        data = bill_file_pdf_bytes(db, bill_id)
+    else:
+        data = bill_pdf_bytes(db, bill_id)
     bill = db.get(CustomerBill, bill_id)
     if not data or not bill:
         raise HTTPException(500, "could not generate bill PDF")
-    return _pdf_response(data, f"{bill.bill_number}.pdf")
+    return _pdf_response(data, bill_download_name(bill.bill_number, party))
 
 
 @router.get("/statements/ar/{customer_id}/pdf")
@@ -191,7 +214,7 @@ def whatsapp_share(
         pdf = bill_pdf_bytes(db, bill.id) or b""
         if not pdf:
             raise HTTPException(500, "bill PDF missing")
-        filename = f"{bill.bill_number}.pdf"
+        filename = bill_download_name(bill.bill_number, cust.business_name if cust else "")
         caption = body.caption or f"Bill {bill.bill_number}"
     elif body.kind == "ar_statement":
         cust = db.get(Customer, body.id or 0)

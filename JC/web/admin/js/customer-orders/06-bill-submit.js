@@ -58,9 +58,9 @@
 
   async function openBillDoc(billId, print) {
     try {
-      await DocShare.openPdf(`/share/bills/${billId}/pdf`, {
+      await DocShare.openPdf(`/share/bills/${billId}/pdf?layout=${print ? "print" : "file"}`, {
         print: !!print,
-        filename: `bill_${billId}.pdf`,
+        filename: "bill.pdf",
       });
     } catch (e) {
       try {

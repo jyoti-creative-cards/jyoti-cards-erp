@@ -1589,7 +1589,8 @@ const CustomerOrders = (() => {
       transportReceiptNumber = "";
       packagingCharges = "";
       additionalCharges = [{ name: "", amount: "" }];
-      billSeriesId = billSeries.length ? String(billSeries[0].id) : "";
+      const actualSeries = billSeries.find(s => String(s.name || "").trim().toLowerCase() === "actual");
+      billSeriesId = String((actualSeries || billSeries[0] || {}).id || "");
       customerNotes = pctx.default_narration || "";
       narration = "";
       billDate = localToday();
@@ -2360,9 +2361,9 @@ const CustomerOrders = (() => {
 
   async function openBillDoc(billId, print) {
     try {
-      await DocShare.openPdf(`/share/bills/${billId}/pdf`, {
+      await DocShare.openPdf(`/share/bills/${billId}/pdf?layout=${print ? "print" : "file"}`, {
         print: !!print,
-        filename: `bill_${billId}.pdf`,
+        filename: "bill.pdf",
       });
     } catch (e) {
       try {

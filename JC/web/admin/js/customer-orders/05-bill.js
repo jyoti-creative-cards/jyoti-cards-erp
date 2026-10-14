@@ -169,7 +169,8 @@
       transportReceiptNumber = "";
       packagingCharges = "";
       additionalCharges = [{ name: "", amount: "" }];
-      billSeriesId = billSeries.length ? String(billSeries[0].id) : "";
+      const actualSeries = billSeries.find(s => String(s.name || "").trim().toLowerCase() === "actual");
+      billSeriesId = String((actualSeries || billSeries[0] || {}).id || "");
       customerNotes = pctx.default_narration || "";
       narration = "";
       billDate = localToday();

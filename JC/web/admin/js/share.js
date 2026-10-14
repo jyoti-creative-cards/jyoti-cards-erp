@@ -25,6 +25,8 @@ const DocShare = (() => {
     }
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
+    const headerName = filenameFromDisposition(res.headers.get("Content-Disposition"));
+    const saveName = headerName || filename;
     if (print) {
       const w = window.open(url, "_blank");
       if (w) {
@@ -34,7 +36,7 @@ const DocShare = (() => {
     } else {
       const a = document.createElement("a");
       a.href = url;
-      a.download = filename;
+      a.download = saveName;
       a.click();
     }
     setTimeout(() => URL.revokeObjectURL(url), 60000);
@@ -79,6 +81,16 @@ const DocShare = (() => {
         });
       });
     }, 0);
+  }
+
+  function filenameFromDisposition(header) {
+    if (!header) return "";
+    const star = /filename\*=(?:UTF-8'')?([^;]+)/i.exec(header);
+    if (star) {
+      try { return decodeURIComponent(star[1].trim().replace(/^"|"$/g, "")); } catch (_) {}
+    }
+    const plain = /filename="([^"]+)"/i.exec(header) || /filename=([^;]+)/i.exec(header);
+    return plain ? plain[1].trim().replace(/^"|"$/g, "") : "";
   }
 
   function pdfPath({ kind, id, day, side }) {

@@ -141,10 +141,12 @@ def item_wise_sales(db: Session, from_date: Optional[date], to_date: Optional[da
     return out
 
 def billed_item_outward(db: Session, from_date: Optional[date], to_date: Optional[date]) -> dict:
-    """Items with at least one live bill: bill count, qty sold, rate, and stock left."""
+    """Items with at least one live bill, one row per item per bill date."""
+    bill_day = func.coalesce(CustomerBill.bill_date, func.date(CustomerBill.created_at))
     q = (
         db.query(
             CustomerBillLine.catalog_product_id,
+            bill_day,
             func.max(CustomerBillLine.our_product_id),
             func.count(func.distinct(CustomerBill.id)),
             func.coalesce(func.sum(CustomerBillLine.quantity_shipped), 0),
@@ -170,7 +172,7 @@ def billed_item_outward(db: Session, from_date: Optional[date], to_date: Optiona
         if end is not None:
             created_parts.append(CustomerBill.created_at <= end)
         q = q.filter(or_(and_(*bill_parts), and_(*created_parts)))
-    rows = q.group_by(CustomerBillLine.catalog_product_id).all()
+    rows = q.group_by(CustomerBillLine.catalog_product_id, bill_day).all()
     ids = [int(pid) for pid, *_rest in rows if pid]
     products = {
         p.id: p for p in db.query(CatalogProduct).filter(CatalogProduct.id.in_(ids)).all()
@@ -180,7 +182,7 @@ def billed_item_outward(db: Session, from_date: Optional[date], to_date: Optiona
         for b in db.query(StockBalance).filter(StockBalance.catalog_product_id.in_(ids)).all()
     } if ids else {}
     items = []
-    for pid, line_name, bills, qty, value in rows:
+    for pid, day, line_name, bills, qty, value in rows:
         if not pid or int(bills or 0) < 1:
             continue
         product = products.get(int(pid))
@@ -190,18 +192,21 @@ def billed_item_outward(db: Session, from_date: Optional[date], to_date: Optiona
         on_hand = balances.get(int(pid), 0)
         buy = Decimal(str(product.buying_price or 0)) if product else Decimal("0")
         closing_value = (buy * Decimal(on_hand)).quantize(Decimal("0.01"))
+        day_s = day.isoformat() if hasattr(day, "isoformat") else str(day or "")[:10]
         items.append(
             {
                 "id": int(pid),
                 "label": (product.our_product_id if product else None) or line_name or f"#{pid}",
+                "date": day_s,
                 "bills": int(bills or 0),
                 "out_qty": qty_n,
+                "value": _fmt(value_d),
                 "rate": _fmt(rate),
                 "closing_qty": on_hand,
                 "closing_value": _fmt(closing_value),
             }
         )
-    items.sort(key=lambda row: (-row["bills"], row["label"]))
+    items.sort(key=lambda row: (row["date"], row["label"]))
     return {"items": items}
 
 def stock_movers(db: Session, from_date: Optional[date], to_date: Optional[date]) -> dict:

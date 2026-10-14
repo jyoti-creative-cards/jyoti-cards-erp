@@ -90,6 +90,7 @@ def test_billed_items_count_bills_qty_rate_and_closing():
         assert len(rows) == 1
         row = rows[0]
         assert row["label"] == "RX 07 ENVELOPE"
+        assert row["date"] == "2026-10-01"
         assert row["bills"] == 1
         assert row["out_qty"] == 100
         assert row["rate"] == "3.00"

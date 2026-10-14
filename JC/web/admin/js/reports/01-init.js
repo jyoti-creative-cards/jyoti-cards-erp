@@ -85,9 +85,6 @@
     showQuestions = false;
     chip = c;
     hubSearch = "";
-    if (c === "item-outward") {
-      applyDatePreset("all", false);
-    }
     if (c === "day-bills") {
       const day = fromDate || today();
       fromDate = day;
@@ -266,7 +263,12 @@
     const tables = reportTables(root);
     const chunk = tables.length ? tables.map(t => t.outerHTML).join("<br>") : (root?.innerHTML || "");
     if (!chunk.trim()) return ctx.toast?.("Nothing to print", "error");
-    const title = (document.querySelector("#reports-ledger-hero h1, #reports-ledger-hero .hub-title, #reports-hero h1")?.textContent || chip || "Report").trim();
+    const title = (
+      root?.querySelector(".report-print-title")?.textContent
+      || document.querySelector("#reports-ledger-hero h1, #reports-ledger-hero .hub-title, #reports-hero h1")?.textContent
+      || chip
+      || "Report"
+    ).trim();
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${ctx.esc(title)}</title>
       <style>body{font-family:sans-serif;font-size:12px;color:#111} h1{font-size:16px} table{border-collapse:collapse;width:100%;margin:0 0 16px} td,th{border:1px solid #ccc;padding:4px 6px;text-align:left;vertical-align:top} button,.btn{display:none}</style>
       </head><body><h1>${ctx.esc(title)}</h1>${chunk}</body></html>`;

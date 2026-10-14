@@ -164,9 +164,6 @@ const Reports = (() => {
     showQuestions = false;
     chip = c;
     hubSearch = "";
-    if (c === "item-outward") {
-      applyDatePreset("all", false);
-    }
     if (c === "day-bills") {
       const day = fromDate || today();
       fromDate = day;
@@ -345,7 +342,12 @@ const Reports = (() => {
     const tables = reportTables(root);
     const chunk = tables.length ? tables.map(t => t.outerHTML).join("<br>") : (root?.innerHTML || "");
     if (!chunk.trim()) return ctx.toast?.("Nothing to print", "error");
-    const title = (document.querySelector("#reports-ledger-hero h1, #reports-ledger-hero .hub-title, #reports-hero h1")?.textContent || chip || "Report").trim();
+    const title = (
+      root?.querySelector(".report-print-title")?.textContent
+      || document.querySelector("#reports-ledger-hero h1, #reports-ledger-hero .hub-title, #reports-hero h1")?.textContent
+      || chip
+      || "Report"
+    ).trim();
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${ctx.esc(title)}</title>
       <style>body{font-family:sans-serif;font-size:12px;color:#111} h1{font-size:16px} table{border-collapse:collapse;width:100%;margin:0 0 16px} td,th{border:1px solid #ccc;padding:4px 6px;text-align:left;vertical-align:top} button,.btn{display:none}</style>
       </head><body><h1>${ctx.esc(title)}</h1>${chunk}</body></html>`;
@@ -766,28 +768,76 @@ const Reports = (() => {
       </tbody></table></div>` : empty("No stock movement", "Widen the dates to see products.")}`;
   }
 
+  function outwardIsRange() {
+    return !!(fromDate && toDate && fromDate !== toDate);
+  }
+
+  function fmtReportDay(iso) {
+    const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return m ? `${m[3]}/${m[2]}/${m[1]}` : (iso || "");
+  }
+
+  function outwardPeriodLabel() {
+    if (fromDate && toDate && fromDate !== toDate) return `${fmtReportDay(fromDate)} to ${fmtReportDay(toDate)}`;
+    if (fromDate || toDate) return fmtReportDay(fromDate || toDate);
+    return "All dates";
+  }
+
+  function aggregateOutward(rows) {
+    const map = new Map();
+    for (const it of rows) {
+      const key = it.id;
+      const row = map.get(key) || {
+        id: it.id,
+        label: it.label,
+        bills: 0,
+        out_qty: 0,
+        value: 0,
+        closing_qty: it.closing_qty,
+        closing_value: it.closing_value,
+      };
+      row.bills += Number(it.bills) || 0;
+      row.out_qty += Number(it.out_qty) || 0;
+      row.value += Number(it.value) || 0;
+      map.set(key, row);
+    }
+    return [...map.values()].map(row => ({
+      ...row,
+      rate: row.out_qty ? row.value / row.out_qty : 0,
+    })).sort((a, b) => b.bills - a.bills || String(a.label).localeCompare(String(b.label)));
+  }
+
   async function renderItemOutward(body) {
     const data = await ctx.api(`/reports/stock/billed-items${rangeQs()}`, {}, 0);
-    const items = (data.items || []).filter(it => matchSearch(it.label));
+    const matched = (data.items || []).filter(it => matchSearch(it.label));
+    const showDate = outwardIsRange();
+    const items = showDate
+      ? [...matched].sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.label).localeCompare(String(b.label)))
+      : aggregateOutward(matched);
     const bills = items.reduce((s, it) => s + (Number(it.bills) || 0), 0);
     const outQty = items.reduce((s, it) => s + (Number(it.out_qty) || 0), 0);
-    const closingQty = items.reduce((s, it) => s + (Number(it.closing_qty) || 0), 0);
+    const closingQty = showDate
+      ? [...new Map(items.map(it => [it.id, Number(it.closing_qty) || 0])).values()].reduce((s, n) => s + n, 0)
+      : items.reduce((s, it) => s + (Number(it.closing_qty) || 0), 0);
+    const period = outwardPeriodLabel();
     body.innerHTML = `
       ${DocShare.toolbarHtml({
         printOnclick: "Reports.printCurrent()",
         excelOnclick: "Reports.exportCurrentExcel()",
       })}
-      <p class="fin-panel-sub" style="margin:0 0 12px;">Items with at least one bill. Outward is quantity sold and the average rate. Closing is stock on hand now, valued at buying price.</p>
+      <h2 class="report-print-title" style="position:absolute;left:-9999px;">Items sold · ${ctx.esc(period)}</h2>
+      <p class="fin-panel-sub" style="margin:0 0 12px;">${ctx.esc(period)}. Pick Today for one day, or From and To for a range. Closing is stock on hand now, valued at buying price.</p>
       <div class="fin-hub-strip" style="margin-bottom:16px;">
-        <div class="fin-stat"><span class="fin-stat-label">Items</span><strong>${items.length}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">Items</span><strong>${showDate ? new Set(items.map(it => it.id)).size : items.length}</strong></div>
         <div class="fin-stat"><span class="fin-stat-label">Bills</span><strong>${bills}</strong></div>
         <div class="fin-stat"><span class="fin-stat-label">Sold qty</span><strong>${outQty}</strong></div>
         <div class="fin-stat"><span class="fin-stat-label">Closing qty</span><strong>${closingQty}</strong></div>
       </div>
-      ${items.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
-        <th>Item</th><th>Bills</th><th>Out qty</th><th>Rate</th><th>Closing qty</th><th>Closing value</th>
+      ${items.length ? `<div class="card table-wrap"><table class="data"><caption style="caption-side:top;text-align:left;font-weight:700;padding:8px 12px;">Items sold · ${ctx.esc(period)}</caption><thead><tr>
+        ${showDate ? "<th>Date</th>" : ""}<th>Item</th><th>Bills</th><th>Out qty</th><th>Rate</th><th>Closing qty</th><th>Closing value</th>
       </tr></thead><tbody>
         ${items.map(it => `<tr class="clickable" onclick="Reports.openLedger('products', ${it.id})">
+          ${showDate ? `<td>${ctx.esc(fmtReportDay(it.date))}</td>` : ""}
           <td><strong>${ctx.esc(it.label)}</strong></td>
           <td>${it.bills}</td>
           <td>${it.out_qty}</td>

@@ -29,9 +29,9 @@ class AuthContext:
         return self.actor_type == "admin"
 
     def has(self, perm: str) -> bool:
-        if self.is_admin:
-            return True
-        return perm in self.permissions
+        # Every signed-in person has full access for now. Restrictions come back
+        # one account at a time when asked.
+        return True
 
     def require(self, perm: str) -> None:
         if not self.has(perm):
@@ -108,8 +108,7 @@ def require_all_permissions(*permissions: str) -> Callable:
 
 
 def require_admin(auth: AuthContext = Depends(get_auth_context)) -> AuthContext:
-    if not auth.is_admin:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="admin only")
+    # Staff and the admin key both pass. Who did it is still recorded on the activity log.
     return auth
 
 

@@ -379,6 +379,8 @@ def generate_customer_bill_document(db: Session, bill_id: int) -> str | None:
         customer_city=_card_or_live(view, party.get("city_name"), city_name),
         customer_party_number=_card_or_live(view, party.get("party_number"), customer.party_number),
         payment_type=party.get("payment_type") or customer.payment_type,
+        marker_1=party.get("marker_1") or customer.marker_1,
+        marker_2=party.get("marker_2") or customer.marker_2,
         totals=totals,
         generated_at=bill.created_at or datetime.now(timezone.utc),
         invoice_date=bill_invoice_date(bill),

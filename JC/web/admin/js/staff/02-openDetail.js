@@ -6,7 +6,7 @@
         <div class="review-grid" style="margin-bottom:20px;">
           ${ctx.reviewRow("Name", s.name)}
           ${ctx.reviewRow("Login ID", s.phone)}
-          ${ctx.reviewRow("Permissions", s.permissions.length ? s.permissions.join(", ") : "None")}
+          ${ctx.reviewRow("Access", "Full access")}
           ${ctx.reviewRow("Status", s.is_active ? "Active" : "Inactive")}
           ${ctx.reviewRow("Created", ctx.fmtDate(s.created_at))}
         </div>
@@ -88,28 +88,12 @@
     });
   }
 
-  function permCheckboxes(selected) {
-    const sel = new Set(selected || []);
-    const presets = `<div style="margin-bottom:14px;">
-      <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:8px;">Quick roles</div>
-      <div style="display:flex;flex-wrap:wrap;gap:6px;">
-        ${ROLE_PRESETS.map(r => `<button type="button" class="btn btn-secondary btn-sm" title="${ctx.esc(r.hint)}" onclick="StaffMgmt.applyRolePreset('${r.id}')">${ctx.esc(r.label)}</button>`).join("")}
-      </div>
-      <p style="margin:8px 0 0;font-size:12px;color:var(--muted);">Tap a role, then tick or untick anything. Staff is the everyday set. Vendor orders, buying price, and company totals stay off unless you tick them.</p>
-    </div>`;
-    const groups = permGroups.map(g => `
-      <div style="margin-bottom:12px;">
-        <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:6px;">${ctx.esc(g.label)}</div>
-        ${g.permissions.map(p => `<label style="display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:13px;">
-          <input type="checkbox" class="staff-perm-cb" value="${ctx.esc(p.key)}" ${sel.has(p.key) ? "checked" : ""} />
-          ${ctx.esc(p.label)}
-        </label>`).join("")}
-      </div>`).join("");
-    return presets + groups;
+  function permCheckboxes() {
+    return `<p style="margin:0;font-size:13px;">Full access, same as admin. No restrictions for now.</p>`;
   }
 
   function collectPerms() {
-    return Array.from(document.querySelectorAll(".staff-perm-cb:checked")).map(cb => cb.value);
+    return permGroups.flatMap(g => (g.permissions || []).map(p => p.key));
   }
 
   function openWizard() {

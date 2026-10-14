@@ -17,7 +17,7 @@ router = APIRouter(prefix="/activity", tags=["activity"])
 @router.get("", response_model=ActivityListResponse, dependencies=[Depends(require_admin)])
 def list_activity(
     db: Session = Depends(get_db),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     action: Optional[str] = Query(None),
     entity_type: Optional[str] = Query(None),

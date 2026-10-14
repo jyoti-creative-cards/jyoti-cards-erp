@@ -66,6 +66,8 @@ def _render(n: int, *, gst: bool) -> bytes:
         customer_city="JODHPUR",
         customer_party_number=42,
         payment_type="CREDIT",
+        marker_1="G",
+        marker_2="J",
         totals=_totals(n, gst=gst),
         narration="Send by evening bus",
         customer_notes="Call before dispatch",
@@ -131,6 +133,7 @@ def test_every_bill_is_original_and_duplicate():
     assert "270.00" not in text
     assert "750.00" not in text
     assert text.count("Credit") == 2
+    assert text.count("Sharma Gift House  G  J") == 2
     assert "Freight Charges" in text
     assert "Transport Charges" not in text
 

@@ -140,6 +140,16 @@ def ageing_ap(
     return data
 
 
+@router.get("/stock/billed-items")
+def billed_items_report(
+    from_date: Optional[date] = Query(None),
+    to_date: Optional[date] = Query(None),
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    return ext.billed_item_outward(db, from_date, to_date)
+
+
 @router.get("/stock/summary")
 def stock_summary(
     from_date: Optional[date] = Query(None),

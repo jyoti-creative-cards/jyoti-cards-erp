@@ -5,7 +5,7 @@
     return h;
   }
 
-  function isAdmin() { return authMode === "admin"; }
+  function isAdmin() { return authMode === "admin" || authMode === "staff"; }
   function can(perm) { return isAdmin() || permissions.has(perm); }
   function stickerDesk() {
     return !isAdmin() && permissions.size === 1 && permissions.has("stickers.print");

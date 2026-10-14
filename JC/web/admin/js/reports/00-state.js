@@ -50,6 +50,7 @@ const Reports = (() => {
     ],
     stock: [
       { id: "stock-wise", label: "Stock wise" },
+      { id: "item-outward", label: "Items sold" },
       { id: "valuation", label: "Valuation" },
       { id: "movers", label: "Fast / slow" },
       { id: "low", label: "Low stock" },

@@ -74,6 +74,8 @@ def render_copies_pdf(
     customer_city: str | None = None,
     customer_party_number: int | str | None = None,
     payment_type: str | None = None,
+    marker_1: str | None = None,
+    marker_2: str | None = None,
     totals: Dict[str, Any],
     generated_at: datetime | None = None,
     printed_at: datetime | None = None,
@@ -122,6 +124,8 @@ def render_copies_pdf(
         order_at=order_created_at,
         order_by=order_by,
         payment_type=payment_type,
+        marker_1=marker_1,
+        marker_2=marker_2,
     )
     pages = _paginate(running, closing, len(photos), table_top)
 
@@ -140,6 +144,8 @@ def render_copies_pdf(
         order_at=order_created_at,
         order_by=order_by,
         payment_type=payment_type,
+        marker_1=marker_1,
+        marker_2=marker_2,
     )
     buf = BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
@@ -286,6 +292,8 @@ def render_customer_bill_pdf(
     customer_city: str | None = None,
     customer_party_number: int | str | None = None,
     payment_type: str | None = None,
+    marker_1: str | None = None,
+    marker_2: str | None = None,
     totals: Dict[str, Any],
     generated_at: datetime | None = None,
     printed_at: datetime | None = None,
@@ -312,6 +320,8 @@ def render_customer_bill_pdf(
         customer_city=customer_city,
         customer_party_number=customer_party_number,
         payment_type=payment_type,
+        marker_1=marker_1,
+        marker_2=marker_2,
         totals=totals,
         generated_at=generated_at,
         printed_at=printed_at,

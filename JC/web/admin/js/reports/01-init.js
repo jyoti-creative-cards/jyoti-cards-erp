@@ -61,7 +61,7 @@
     body.innerHTML = HubUI.tileGrid([
       { letter: "T", tag: "Today", title: "What moved today?", desc: "Daybook · sales · purchases · payments", onclick: "Reports.pickQuestion('today','daybook')", className: "setup-tile-records" },
       { letter: "B", tag: "Books", title: "Who owes us / we owe?", desc: "Due age · ledgers", onclick: "Reports.pickQuestion('books','ageing')", className: "setup-tile-billing" },
-      { letter: "S", tag: "Stock", title: "What’s in stock?", desc: "Stock wise · valuation · low stock", onclick: "Reports.pickQuestion('stock','stock-wise')", className: "setup-tile-catalog" },
+      { letter: "S", tag: "Stock", title: "What’s in stock?", desc: "Stock wise · items sold · valuation", onclick: "Reports.pickQuestion('stock','stock-wise')", className: "setup-tile-catalog" },
       { letter: "P", tag: "Tax", title: "Profit & tax?", desc: "P&L · GST · cash book", onclick: "Reports.pickQuestion('tax','pnl')", className: "setup-tile-delivery" },
     ], { style: "margin-top:8px;" })
       + `<p class="fin-muted" style="margin-top:16px;">Or pick a mode above (Today / Books / Stock / Tax).</p>`;
@@ -85,6 +85,9 @@
     showQuestions = false;
     chip = c;
     hubSearch = "";
+    if (c === "item-outward") {
+      applyDatePreset("all", false);
+    }
     if (c === "day-bills") {
       const day = fromDate || today();
       fromDate = day;
@@ -294,7 +297,7 @@
     if (!slot) return;
     const caret = (typeof OrdersUI !== "undefined" && OrdersUI.captureSearchCaret)
       ? OrdersUI.captureSearchCaret("reports-hub-search") : null;
-    const searchable = ["sales", "sales-book", "day-bills", "receipt-book", "daybook", "purchases", "payments", "ledgers", "ageing", "customer-sales", "vendor-purchases", "item-sales", "item-purchases", "stock-wise", "valuation", "movers", "low", "returns", "debit-notes", "gst-sales", "gst-purchases", "cashbook", "expense-cat"].includes(chip);
+    const searchable = ["sales", "sales-book", "day-bills", "receipt-book", "daybook", "purchases", "payments", "ledgers", "ageing", "customer-sales", "vendor-purchases", "item-sales", "item-purchases", "stock-wise", "item-outward", "valuation", "movers", "low", "returns", "debit-notes", "gst-sales", "gst-purchases", "cashbook", "expense-cat"].includes(chip);
     if (!searchable) { slot.innerHTML = ""; return; }
     const ph = chip === "day-bills" ? "Search bill, party, city…"
       : chip === "ledgers"
@@ -388,6 +391,7 @@
       else if (chip === "item-sales") await renderItemAgg(body, "item-sales");
       else if (chip === "item-purchases") await renderItemAgg(body, "item-purchases");
       else if (chip === "stock-wise") await renderStockWise(body);
+      else if (chip === "item-outward") await renderItemOutward(body);
       else if (chip === "valuation") await renderValuation(body);
       else if (chip === "movers") await renderMovers(body);
       else if (chip === "low") await renderLow(body);

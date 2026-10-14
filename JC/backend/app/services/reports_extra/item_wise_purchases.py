@@ -7,7 +7,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import and_, case, func
+from sqlalchemy import and_, case, func, or_
 from sqlalchemy.orm import Session
 
 from app.models.accounts_payable import ApLedgerEntry
@@ -139,6 +139,70 @@ def item_wise_sales(db: Session, from_date: Optional[date], to_date: Optional[da
         )
     out.sort(key=lambda x: Decimal(x["value"]), reverse=True)
     return out
+
+def billed_item_outward(db: Session, from_date: Optional[date], to_date: Optional[date]) -> dict:
+    """Items with at least one live bill: bill count, qty sold, rate, and stock left."""
+    q = (
+        db.query(
+            CustomerBillLine.catalog_product_id,
+            func.max(CustomerBillLine.our_product_id),
+            func.count(func.distinct(CustomerBill.id)),
+            func.coalesce(func.sum(CustomerBillLine.quantity_shipped), 0),
+            func.coalesce(func.sum(CustomerBillLine.line_total), 0),
+        )
+        .join(CustomerBill, CustomerBill.id == CustomerBillLine.bill_id)
+        .filter(
+            CustomerBill.deleted_at.is_(None),
+            CustomerBill.cancelled_at.is_(None),
+            CustomerBillLine.quantity_shipped > 0,
+        )
+    )
+    if from_date is not None or to_date is not None:
+        start, end = _range_bounds(from_date, to_date)
+        bill_parts = []
+        if from_date is not None:
+            bill_parts.append(CustomerBill.bill_date >= from_date)
+        if to_date is not None:
+            bill_parts.append(CustomerBill.bill_date <= to_date)
+        created_parts = [CustomerBill.bill_date.is_(None)]
+        if start is not None:
+            created_parts.append(CustomerBill.created_at >= start)
+        if end is not None:
+            created_parts.append(CustomerBill.created_at <= end)
+        q = q.filter(or_(and_(*bill_parts), and_(*created_parts)))
+    rows = q.group_by(CustomerBillLine.catalog_product_id).all()
+    ids = [int(pid) for pid, *_rest in rows if pid]
+    products = {
+        p.id: p for p in db.query(CatalogProduct).filter(CatalogProduct.id.in_(ids)).all()
+    } if ids else {}
+    balances = {
+        b.catalog_product_id: int(b.quantity_on_hand or 0)
+        for b in db.query(StockBalance).filter(StockBalance.catalog_product_id.in_(ids)).all()
+    } if ids else {}
+    items = []
+    for pid, line_name, bills, qty, value in rows:
+        if not pid or int(bills or 0) < 1:
+            continue
+        product = products.get(int(pid))
+        qty_n = int(qty or 0)
+        value_d = Decimal(str(value or 0))
+        rate = (value_d / Decimal(qty_n)).quantize(Decimal("0.01")) if qty_n else Decimal("0.00")
+        on_hand = balances.get(int(pid), 0)
+        buy = Decimal(str(product.buying_price or 0)) if product else Decimal("0")
+        closing_value = (buy * Decimal(on_hand)).quantize(Decimal("0.01"))
+        items.append(
+            {
+                "id": int(pid),
+                "label": (product.our_product_id if product else None) or line_name or f"#{pid}",
+                "bills": int(bills or 0),
+                "out_qty": qty_n,
+                "rate": _fmt(rate),
+                "closing_qty": on_hand,
+                "closing_value": _fmt(closing_value),
+            }
+        )
+    items.sort(key=lambda row: (-row["bills"], row["label"]))
+    return {"items": items}
 
 def stock_movers(db: Session, from_date: Optional[date], to_date: Optional[date]) -> dict:
     sales = item_wise_sales(db, from_date, to_date)

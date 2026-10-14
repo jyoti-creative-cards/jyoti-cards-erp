@@ -61,6 +61,38 @@
       </tbody></table></div>` : empty("No stock movement", "Widen the dates to see products.")}`;
   }
 
+  async function renderItemOutward(body) {
+    const data = await ctx.api(`/reports/stock/billed-items${rangeQs()}`, {}, 0);
+    const items = (data.items || []).filter(it => matchSearch(it.label));
+    const bills = items.reduce((s, it) => s + (Number(it.bills) || 0), 0);
+    const outQty = items.reduce((s, it) => s + (Number(it.out_qty) || 0), 0);
+    const closingQty = items.reduce((s, it) => s + (Number(it.closing_qty) || 0), 0);
+    body.innerHTML = `
+      ${DocShare.toolbarHtml({
+        printOnclick: "Reports.printCurrent()",
+        excelOnclick: "Reports.exportCurrentExcel()",
+      })}
+      <p class="fin-panel-sub" style="margin:0 0 12px;">Items with at least one bill. Outward is quantity sold and the average rate. Closing is stock on hand now, valued at buying price.</p>
+      <div class="fin-hub-strip" style="margin-bottom:16px;">
+        <div class="fin-stat"><span class="fin-stat-label">Items</span><strong>${items.length}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">Bills</span><strong>${bills}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">Sold qty</span><strong>${outQty}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">Closing qty</span><strong>${closingQty}</strong></div>
+      </div>
+      ${items.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
+        <th>Item</th><th>Bills</th><th>Out qty</th><th>Rate</th><th>Closing qty</th><th>Closing value</th>
+      </tr></thead><tbody>
+        ${items.map(it => `<tr class="clickable" onclick="Reports.openLedger('products', ${it.id})">
+          <td><strong>${ctx.esc(it.label)}</strong></td>
+          <td>${it.bills}</td>
+          <td>${it.out_qty}</td>
+          <td>${fmtPrice(it.rate)}</td>
+          <td><strong>${it.closing_qty}</strong></td>
+          <td>${fmtPrice(it.closing_value)}</td>
+        </tr>`).join("")}
+      </tbody></table></div>` : empty("No billed items", "No item has a bill in these dates.")}`;
+  }
+
   async function renderValuation(body) {
     const data = await ctx.api(`/reports/stock/valuation`, {}, 0);
     const t = data.totals || {};

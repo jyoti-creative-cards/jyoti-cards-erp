@@ -51,6 +51,7 @@ const Reports = (() => {
     ],
     stock: [
       { id: "stock-wise", label: "Stock wise" },
+      { id: "item-outward", label: "Items sold" },
       { id: "valuation", label: "Valuation" },
       { id: "movers", label: "Fast / slow" },
       { id: "low", label: "Low stock" },
@@ -141,7 +142,7 @@ const Reports = (() => {
     body.innerHTML = HubUI.tileGrid([
       { letter: "T", tag: "Today", title: "What moved today?", desc: "Daybook · sales · purchases · payments", onclick: "Reports.pickQuestion('today','daybook')", className: "setup-tile-records" },
       { letter: "B", tag: "Books", title: "Who owes us / we owe?", desc: "Due age · ledgers", onclick: "Reports.pickQuestion('books','ageing')", className: "setup-tile-billing" },
-      { letter: "S", tag: "Stock", title: "What’s in stock?", desc: "Stock wise · valuation · low stock", onclick: "Reports.pickQuestion('stock','stock-wise')", className: "setup-tile-catalog" },
+      { letter: "S", tag: "Stock", title: "What’s in stock?", desc: "Stock wise · items sold · valuation", onclick: "Reports.pickQuestion('stock','stock-wise')", className: "setup-tile-catalog" },
       { letter: "P", tag: "Tax", title: "Profit & tax?", desc: "P&L · GST · cash book", onclick: "Reports.pickQuestion('tax','pnl')", className: "setup-tile-delivery" },
     ], { style: "margin-top:8px;" })
       + `<p class="fin-muted" style="margin-top:16px;">Or pick a mode above (Today / Books / Stock / Tax).</p>`;
@@ -165,6 +166,9 @@ const Reports = (() => {
     showQuestions = false;
     chip = c;
     hubSearch = "";
+    if (c === "item-outward") {
+      applyDatePreset("all", false);
+    }
     if (c === "day-bills") {
       const day = fromDate || today();
       fromDate = day;
@@ -374,7 +378,7 @@ const Reports = (() => {
     if (!slot) return;
     const caret = (typeof OrdersUI !== "undefined" && OrdersUI.captureSearchCaret)
       ? OrdersUI.captureSearchCaret("reports-hub-search") : null;
-    const searchable = ["sales", "sales-book", "day-bills", "receipt-book", "daybook", "purchases", "payments", "ledgers", "ageing", "customer-sales", "vendor-purchases", "item-sales", "item-purchases", "stock-wise", "valuation", "movers", "low", "returns", "debit-notes", "gst-sales", "gst-purchases", "cashbook", "expense-cat"].includes(chip);
+    const searchable = ["sales", "sales-book", "day-bills", "receipt-book", "daybook", "purchases", "payments", "ledgers", "ageing", "customer-sales", "vendor-purchases", "item-sales", "item-purchases", "stock-wise", "item-outward", "valuation", "movers", "low", "returns", "debit-notes", "gst-sales", "gst-purchases", "cashbook", "expense-cat"].includes(chip);
     if (!searchable) { slot.innerHTML = ""; return; }
     const ph = chip === "day-bills" ? "Search bill, party, city…"
       : chip === "ledgers"
@@ -468,6 +472,7 @@ const Reports = (() => {
       else if (chip === "item-sales") await renderItemAgg(body, "item-sales");
       else if (chip === "item-purchases") await renderItemAgg(body, "item-purchases");
       else if (chip === "stock-wise") await renderStockWise(body);
+      else if (chip === "item-outward") await renderItemOutward(body);
       else if (chip === "valuation") await renderValuation(body);
       else if (chip === "movers") await renderMovers(body);
       else if (chip === "low") await renderLow(body);
@@ -762,6 +767,38 @@ const Reports = (() => {
         </tr>`).join("")}
         <tr><td><strong>Total</strong></td><td><strong>${opening}</strong></td><td><strong>${inward}</strong></td><td><strong>${outward}</strong></td><td><strong>${closing}</strong></td></tr>
       </tbody></table></div>` : empty("No stock movement", "Widen the dates to see products.")}`;
+  }
+
+  async function renderItemOutward(body) {
+    const data = await ctx.api(`/reports/stock/billed-items${rangeQs()}`, {}, 0);
+    const items = (data.items || []).filter(it => matchSearch(it.label));
+    const bills = items.reduce((s, it) => s + (Number(it.bills) || 0), 0);
+    const outQty = items.reduce((s, it) => s + (Number(it.out_qty) || 0), 0);
+    const closingQty = items.reduce((s, it) => s + (Number(it.closing_qty) || 0), 0);
+    body.innerHTML = `
+      ${DocShare.toolbarHtml({
+        printOnclick: "Reports.printCurrent()",
+        excelOnclick: "Reports.exportCurrentExcel()",
+      })}
+      <p class="fin-panel-sub" style="margin:0 0 12px;">Items with at least one bill. Outward is quantity sold and the average rate. Closing is stock on hand now, valued at buying price.</p>
+      <div class="fin-hub-strip" style="margin-bottom:16px;">
+        <div class="fin-stat"><span class="fin-stat-label">Items</span><strong>${items.length}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">Bills</span><strong>${bills}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">Sold qty</span><strong>${outQty}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">Closing qty</span><strong>${closingQty}</strong></div>
+      </div>
+      ${items.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
+        <th>Item</th><th>Bills</th><th>Out qty</th><th>Rate</th><th>Closing qty</th><th>Closing value</th>
+      </tr></thead><tbody>
+        ${items.map(it => `<tr class="clickable" onclick="Reports.openLedger('products', ${it.id})">
+          <td><strong>${ctx.esc(it.label)}</strong></td>
+          <td>${it.bills}</td>
+          <td>${it.out_qty}</td>
+          <td>${fmtPrice(it.rate)}</td>
+          <td><strong>${it.closing_qty}</strong></td>
+          <td>${fmtPrice(it.closing_value)}</td>
+        </tr>`).join("")}
+      </tbody></table></div>` : empty("No billed items", "No item has a bill in these dates.")}`;
   }
 
   async function renderValuation(body) {

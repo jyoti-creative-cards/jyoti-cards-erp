@@ -77,6 +77,8 @@ def _draw_header(
     order_at: datetime | None = None,
     order_by: str | None = None,
     payment_type: str | None = None,
+    marker_1: str | None = None,
+    marker_2: str | None = None,
 ) -> float:
     """Draw the Tally header. Returns the table-top y measured from the top of the page."""
     if show_printed and printed is not None:
@@ -113,7 +115,10 @@ def _draw_header(
     c.drawCentredString(PAGE_W / 2, _y(98), title)
 
     party_lines: list[tuple[str, str, bool]] = []
-    name = _txt(customer_name, 90) or "Customer"
+    name = _txt(customer_name, 70) or "Customer"
+    marks = [m for m in (_txt(marker_1, 40), _txt(marker_2, 40)) if m]
+    if marks:
+        name = f"{name}  {'  '.join(marks)}"
     party_lines.append(("Party : ", name, True))
     phone = _txt(customer_phone, 40)
     if phone:

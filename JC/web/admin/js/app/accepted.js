@@ -42,7 +42,7 @@ const App = (() => {
     return h;
   }
 
-  function isAdmin() { return authMode === "admin"; }
+  function isAdmin() { return authMode === "admin" || authMode === "staff"; }
   function can(perm) { return isAdmin() || permissions.has(perm); }
   function stickerDesk() {
     return !isAdmin() && permissions.size === 1 && permissions.has("stickers.print");
@@ -974,7 +974,7 @@ const App = (() => {
     const whatFilter = document.getElementById(whatId)?.value.trim() || "";
     const whereFilter = document.getElementById(whereId)?.value.trim() || "";
     const dateFilter = document.getElementById(dateId)?.value || "";
-    const params = new URLSearchParams({ limit: String(opts.limit || 200), offset: "0" });
+    const params = new URLSearchParams({ limit: String(opts.limit || 500), offset: "0" });
     if (action) params.set("action", action);
     if (person === "admin") params.set("actor_name", "Admin");
     else if (person.startsWith("staff:")) params.set("actor_id", person.split(":")[1]);

@@ -31,6 +31,7 @@ from app.models.bill_series import BillSeries
 from app.models.catalog_product import CatalogProduct
 from app.models.customer import Customer
 from app.models.customer_bill import CustomerBillLine
+from app.models.customer_order import CustomerOpenLine, CustomerOrderLine
 from app.models.debit_note import DebitNote
 from app.models.stock import StockBalance, StockLedger, StockReceipt, StockReceiptLine
 from app.models.vendor import Vendor
@@ -477,3 +478,46 @@ def test_get_or_create_ar_account_survives_lost_race(db, monkeypatch):
     # Exactly one row exists — no duplicate, no crash.
     count = real_query(CustomerArAccount).filter(CustomerArAccount.customer_id == customer.id).count()
     assert count == 1
+
+
+def test_billing_one_order_leaves_the_other_confirmed(db):
+    customer, prod, _ = _setup(db, on_hand=100)
+    older = create_received_placement(
+        db, customer_id=customer.id, customer_name=customer.business_name,
+        lines=[{"catalog_product_id": prod.id, "quantity": 10}],
+        placed_on=date.today() - timedelta(days=2),
+    )
+    newer = create_received_placement(
+        db, customer_id=customer.id, customer_name=customer.business_name,
+        lines=[{"catalog_product_id": prod.id, "quantity": 4}],
+        placed_on=date.today() - timedelta(days=1),
+    )
+    confirm_received_order(db, customer.id)
+    series = _bill_series(db)
+    process_customer_bill(
+        db,
+        customer_id=customer.id,
+        customer_name=customer.business_name,
+        lines_in=[{"catalog_product_id": prod.id, "quantity_to_ship": 4}],
+        overall_discount_percent=None,
+        gst_enabled=False,
+        gst_rate_percent=Decimal("0"),
+        freight_agent_id=None,
+        freight_charges=None,
+        packaging_charges=None,
+        additional_charges=None,
+        bill_series_id=series.id,
+        narration=None,
+        actor_type="admin",
+        actor_id=1,
+        actor_name="Test",
+        transport_mode="self_pickup",
+        placement_ids=[newer.id],
+    )
+    db.flush()
+    older_line = db.query(CustomerOrderLine).filter(CustomerOrderLine.placement_id == older.id).one()
+    newer_line = db.query(CustomerOrderLine).filter(CustomerOrderLine.placement_id == newer.id).one()
+    open_row = db.query(CustomerOpenLine).filter(CustomerOpenLine.customer_id == customer.id).one()
+    assert newer_line.quantity_billed == 4
+    assert older_line.quantity_billed == 0
+    assert open_row.quantity_open == 10

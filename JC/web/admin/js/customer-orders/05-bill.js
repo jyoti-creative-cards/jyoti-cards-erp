@@ -49,6 +49,7 @@
     }
     if (packagingCharges.trim()) body.packaging_charges = String(packagingCharges);
     if (billDate) body.bill_date = billDate;
+    if (!editBillId && selectedPlacementIds.length) body.placement_ids = selectedPlacementIds.map(Number);
     return body;
   }
 
@@ -134,6 +135,8 @@
     if (!detailCustomerId) return;
     editBillId = null;
     processStep = 1;
+    billableOrders = [];
+    selectedPlacementIds = [];
     processBusy = false;
     previewTotals = null;
     forceCreditOverride = false;
@@ -147,6 +150,8 @@
       processContext = pctx;
       freightAgents = agents || [];
       billSeries = (series || []).filter(s => s.is_active && s.current_num < s.end_num);
+      billableOrders = pctx.orders || [];
+      selectedPlacementIds = billableOrders.map(o => Number(o.placement_id));
       processLines = (pctx.lines || []).map(l => ({
         ...l,
         quantity_to_ship: l.quantity_open,
@@ -175,6 +180,7 @@
       narration = "";
       billDate = localToday();
       billEditSearch = "";
+      processStep = billableOrders.length ? 0 : 1;
       document.getElementById("co-wizard")?.classList.remove("hidden");
       const title = document.getElementById("co-wizard-title");
       if (title) title.textContent = "Bill customer";
@@ -492,12 +498,49 @@
     if (!stepsEl || !bodyEl || !footerEl) return;
     renderWizardTotalsBar();
 
-    const labels = ["Lines", "Transport", "Charges", "Narration", "Review"];
+    const labels = editBillId
+      ? ["Lines", "Transport", "Charges", "Narration", "Review"]
+      : ["Orders", "Lines", "Transport", "Charges", "Narration", "Review"];
+    const stepOffset = editBillId ? 1 : 0;
     stepsEl.innerHTML = labels.map((l, i) => {
-      const n = i + 1;
+      const n = i + stepOffset;
       const cls = n === processStep ? "step active" : n < processStep ? "step done" : "step";
-      return `<div class="${cls}"><span class="step-num">${n}</span><span class="step-label">${l}</span></div>`;
+      return `<div class="${cls}"><span class="step-num">${i + 1}</span><span class="step-label">${l}</span></div>`;
     }).join("");
+
+    if (processStep === 0) {
+      const allOn = billableOrders.length > 0 && billableOrders.every(o => selectedPlacementIds.includes(Number(o.placement_id)));
+      bodyEl.innerHTML = `
+        <p style="margin:0 0 12px;color:var(--muted);font-size:14px;">Pick the orders to bill now. Anything you leave unticked stays in Confirmed.</p>
+        <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:14px;">
+          <input type="checkbox" ${allOn ? "checked" : ""} onchange="CustomerOrders.toggleAllBillOrders(this.checked)" /> Select all
+        </label>
+        <div style="display:flex;flex-direction:column;gap:12px;">
+          ${billableOrders.map(order => {
+            const on = selectedPlacementIds.includes(Number(order.placement_id));
+            const when = ctx.fmtDate ? ctx.fmtDate(order.placed_at) : "";
+            const who = order.order_source === "app"
+              ? "Portal"
+              : (order.placed_by_name ? ctx.esc(order.placed_by_name) : "Staff");
+            const rows = (order.lines || []).map(ln => `<tr>
+              <td><strong>${ctx.esc(ln.our_product_id)}</strong></td>
+              <td style="text-align:right;">${ln.quantity}</td>
+            </tr>`).join("");
+            return `<label style="display:block;border:1px solid var(--border);border-radius:10px;padding:12px;background:${on ? "#f8fafc" : "#fff"};">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                <input type="checkbox" ${on ? "checked" : ""} onchange="CustomerOrders.toggleBillOrder(${order.placement_id}, this.checked)" />
+                <strong>${ctx.esc(when || "Order")}</strong>
+                <span style="color:var(--muted);font-size:13px;">${who}</span>
+              </div>
+              <table class="data"><thead><tr><th>Item</th><th style="text-align:right;">Qty</th></tr></thead><tbody>${rows}</tbody></table>
+            </label>`;
+          }).join("")}
+        </div>`;
+      footerEl.innerHTML = `
+        <button class="btn btn-secondary" onclick="CustomerOrders.closeProcessWizard()">Cancel</button>
+        <button class="btn btn-primary" onclick="CustomerOrders.processNext()">Proceed →</button>`;
+      return;
+    }
 
     if (processStep === 1) {
       const lineDiscLocked = !discountEnabled || useOverallDiscount;
@@ -547,6 +590,7 @@
         ${addProd}`;
       footerEl.innerHTML = `
         <button class="btn btn-secondary" onclick="CustomerOrders.closeProcessWizard()">Cancel</button>
+        ${!editBillId && billableOrders.length ? `<button class="btn btn-secondary" onclick="CustomerOrders.processBack()">← Orders</button>` : ""}
         <button class="btn btn-primary" onclick="CustomerOrders.processNext()">Next →</button>`;
       return;
     }
@@ -826,7 +870,52 @@
   function setAddCharge(i, field, val) { if (additionalCharges[i]) additionalCharges[i][field] = val; renderWizardTotalsBar(); }
   function addChargeRow() { additionalCharges.push({ name: "", amount: "" }); renderProcessWizard(); }
 
+  function toggleBillOrder(id, checked) {
+    const n = Number(id);
+    if (checked) {
+      if (!selectedPlacementIds.includes(n)) selectedPlacementIds.push(n);
+    } else {
+      selectedPlacementIds = selectedPlacementIds.filter(x => x !== n);
+    }
+  }
+
+  function toggleAllBillOrders(checked) {
+    selectedPlacementIds = checked ? billableOrders.map(o => Number(o.placement_id)) : [];
+    renderProcessWizard();
+  }
+
+  function applySelectedOrders() {
+    const chosen = new Set(selectedPlacementIds.map(Number));
+    const qty = {};
+    for (const order of billableOrders) {
+      if (!chosen.has(Number(order.placement_id))) continue;
+      for (const ln of order.lines || []) {
+        const cid = Number(ln.catalog_product_id);
+        qty[cid] = (qty[cid] || 0) + Number(ln.quantity || 0);
+      }
+    }
+    processLines = (processContext?.lines || []).filter(l => qty[l.catalog_product_id] > 0).map(l => {
+      const q = Math.min(Number(l.quantity_open) || 0, qty[l.catalog_product_id] || 0);
+      return {
+        ...l,
+        quantity_open: q,
+        quantity_to_ship: q,
+        discount_percent: "",
+        net_rate: calcNetFromDisc(l.unit_price, 0),
+        discSource: "",
+      };
+    }).filter(l => l.quantity_open > 0);
+    return processLines.length > 0;
+  }
+
   async function processNext() {
+    if (processStep === 0) {
+      if (!selectedPlacementIds.length) return ctx.toast("Select at least one order", "error");
+      if (!applySelectedOrders()) return ctx.toast("Nothing left to bill on the selected orders", "error");
+      processStep = 1;
+      renderProcessWizard();
+      return;
+    }
     if (processStep === 1) {
       if (editBillId && processLines.some(l => !(Number(l.quantity_to_ship) > 0))) {
         return ctx.toast("Enter quantity for every item", "error");
@@ -877,6 +966,11 @@
   }
 
   function processBack() {
+    if (processStep === 1 && !editBillId && billableOrders.length) {
+      processStep = 0;
+      renderProcessWizard();
+      return;
+    }
     if (processStep > 1) { processStep -= 1; renderProcessWizard(); }
   }
 

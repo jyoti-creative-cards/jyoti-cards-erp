@@ -20,6 +20,8 @@ const CustomerOrders = (() => {
   let processStep = 1;
   let processContext = null;
   let processLines = [];
+  let billableOrders = [];
+  let selectedPlacementIds = [];
   let discountEnabled = false;
   let useOverallDiscount = false;
   let overallDiscount = "";

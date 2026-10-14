@@ -62,6 +62,7 @@ def process_customer_bill(
     transport_mode: Optional[str] = None,
     transport_receipt_number: Optional[str] = None,
     freight_charges_raw: object = None,
+    placement_ids: Optional[list[int]] = None,
 ) -> CustomerBill:
     ship_lines = [ln for ln in lines_in if int(ln.get("quantity_to_ship") or 0) > 0]
     if not ship_lines:
@@ -90,12 +91,17 @@ def process_customer_bill(
     item_overrides: list[dict] = []
     use_overall = overall_discount_percent is not None and overall_discount_percent > 0
 
+    selected_ids = [int(x) for x in (placement_ids or []) if int(x) > 0]
+    allowed = _unbilled_qty_on_placements(db, customer_id, selected_ids) if selected_ids else None
+
     for ln in ship_lines:
         cid = int(ln["catalog_product_id"])
         qty = int(ln["quantity_to_ship"])
         row = open_map.get(cid)
         if not row or qty > row.quantity_open:
             raise HTTPException(400, f"cannot ship more than open qty for product {cid}")
+        if allowed is not None and qty > allowed.get(cid, 0):
+            raise HTTPException(400, f"cannot ship more than the selected orders for product {cid}")
         bill_items.append(
             {
                 "catalog_product_id": cid,
@@ -243,7 +249,10 @@ def process_customer_bill(
                 open_row.status = "open"
         billed_qty[cid] = billed_qty.get(cid, 0) + qty
 
-    _apply_billed_qtys_to_received(db, customer_id, billed_qty)
+    if selected_ids:
+        _apply_billed_qtys_to_placements(db, customer_id, billed_qty, selected_ids)
+    else:
+        _apply_billed_qtys_to_received(db, customer_id, billed_qty)
 
     from app.services.freight_parcels import ensure_bill_freight_charge
 
@@ -270,6 +279,78 @@ def process_customer_bill(
     response_cache.invalidate("shop:")
     response_cache.invalidate("catalog:")
     return bill
+
+def _unbilled_qty_on_placements(db: Session, customer_id: int, placement_ids: list[int]) -> dict[int, int]:
+    rows = (
+        db.query(CustomerOrderLine, CustomerOrderPlacement)
+        .join(CustomerOrderPlacement, CustomerOrderPlacement.id == CustomerOrderLine.placement_id)
+        .join(CustomerOrder, CustomerOrder.id == CustomerOrderPlacement.customer_order_id)
+        .filter(
+            CustomerOrder.customer_id == customer_id,
+            CustomerOrderPlacement.id.in_(placement_ids),
+            CustomerOrderPlacement.deleted_at.is_(None),
+            CustomerOrderLine.status == "active",
+        )
+        .all()
+    )
+    found = {int(placement.id) for _, placement in rows}
+    missing = [pid for pid in placement_ids if pid not in found]
+    if missing:
+        raise HTTPException(400, "selected order is not on this customer")
+    allowed: dict[int, int] = {}
+    for ln, _placement in rows:
+        left = int(ln.quantity) - int(ln.quantity_billed or 0)
+        if left <= 0:
+            continue
+        cid = int(ln.catalog_product_id)
+        allowed[cid] = allowed.get(cid, 0) + left
+    return allowed
+
+
+def _apply_billed_qtys_to_placements(
+    db: Session,
+    customer_id: int,
+    qty_by_product: dict[int, int],
+    placement_ids: list[int],
+) -> None:
+    """Mark only the chosen orders billed. Older selected orders are used first."""
+    remaining = {int(cid): int(qty) for cid, qty in qty_by_product.items() if int(qty) > 0}
+    placements = (
+        db.query(CustomerOrderPlacement)
+        .join(CustomerOrder, CustomerOrder.id == CustomerOrderPlacement.customer_order_id)
+        .filter(
+            CustomerOrder.customer_id == customer_id,
+            CustomerOrderPlacement.id.in_(placement_ids),
+            CustomerOrderPlacement.deleted_at.is_(None),
+        )
+        .order_by(CustomerOrderPlacement.placed_at.asc(), CustomerOrderPlacement.id.asc())
+        .all()
+    )
+    if not placements or not remaining:
+        return
+    rank = {p.id: i for i, p in enumerate(placements)}
+    lines = (
+        db.query(CustomerOrderLine)
+        .filter(
+            CustomerOrderLine.placement_id.in_([p.id for p in placements]),
+            CustomerOrderLine.catalog_product_id.in_(list(remaining)),
+            CustomerOrderLine.status == "active",
+        )
+        .all()
+    )
+    lines.sort(key=lambda ln: (rank.get(ln.placement_id, 0), ln.id))
+    for ln in lines:
+        left = remaining.get(int(ln.catalog_product_id), 0)
+        if left <= 0:
+            continue
+        unbilled = int(ln.quantity) - int(ln.quantity_billed or 0)
+        if unbilled <= 0:
+            continue
+        take = min(left, unbilled)
+        ln.quantity_billed = int(ln.quantity_billed or 0) + take
+        remaining[int(ln.catalog_product_id)] = left - take
+    close_received_order_if_fully_billed(db, customer_id)
+
 
 def _apply_billed_to_received_lines(db: Session, customer_id: int, catalog_product_id: int, qty: int) -> None:
     _apply_billed_qtys_to_received(db, customer_id, {int(catalog_product_id): int(qty)})

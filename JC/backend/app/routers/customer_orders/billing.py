@@ -24,6 +24,7 @@ from app.schemas.customer_order import (
     CustomerBillLineOut,
     CustomerBillOut,
     CustomerOpenLineOut,
+    BillableOrderOut,
     CustomerOrderDetail,
     CustomerOrderSummary,
     CustomerOrderLineOut,
@@ -115,6 +116,7 @@ def get_process_context(
         marker_2=getattr(customer, "marker_2", None),
         payment_type=getattr(customer, "payment_type", None),
         city_name=city.name if city else None,
+        orders=[BillableOrderOut(**row) for row in ctx.get("orders") or []],
     )
 
 @router.post("/customer/{customer_id}/process/preview")
@@ -217,6 +219,7 @@ def submit_process_bill(
         transport_mode=body.transport_mode,
         transport_receipt_number=body.transport_receipt_number,
         freight_charges_raw=body.freight_charges,
+        placement_ids=body.placement_ids or None,
     )
     log_from_auth(db, auth, action="bill", entity_type="customer_order", entity_id=bill.id, entity_label=customer.business_name, detail=f"Bill {bill.bill_number}")
     db.commit()

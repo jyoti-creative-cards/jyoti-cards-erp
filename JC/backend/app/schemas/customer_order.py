@@ -170,6 +170,7 @@ class AdditionalChargeIn(BaseModel):
 
 class ProcessBillIn(BaseModel):
     lines: List[ProcessLineIn]
+    placement_ids: List[int] = []
     overall_discount_percent: Optional[float] = None
     gst_enabled: bool = False
     gst_rate_percent: float = 18
@@ -212,6 +213,21 @@ class PatchBillNumberIn(BaseModel):
     bill_number: str = Field(..., min_length=1, max_length=60)
 
 
+class BillableOrderLineOut(BaseModel):
+    catalog_product_id: int
+    our_product_id: str
+    quantity: int
+    unit_price: str
+
+
+class BillableOrderOut(BaseModel):
+    placement_id: int
+    placed_at: datetime
+    order_source: Optional[str] = None
+    placed_by_name: Optional[str] = None
+    lines: List[BillableOrderLineOut] = []
+
+
 class ProcessLineOut(BaseModel):
     open_line_id: int
     catalog_product_id: int
@@ -237,6 +253,7 @@ class ProcessContextOut(BaseModel):
     marker_2: Optional[str] = None
     payment_type: Optional[str] = None
     city_name: Optional[str] = None
+    orders: List[BillableOrderOut] = []
 
 
 class OfflineLineIn(BaseModel):

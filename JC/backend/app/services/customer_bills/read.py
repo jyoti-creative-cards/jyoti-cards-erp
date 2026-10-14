@@ -77,7 +77,72 @@ def get_process_lines(db: Session, customer_id: int) -> dict:
         )
     return {
         "lines": out,
+        "orders": billable_orders(db, customer_id),
         "default_narration": " · ".join(notes_parts),
         "credit": credit_status(db, customer_id),
     }
+
+
+def billable_orders(db: Session, customer_id: int) -> list[dict]:
+    """Each confirmed (or still-new) placement that still has quantity to bill."""
+    orders = (
+        db.query(CustomerOrder)
+        .filter(
+            CustomerOrder.customer_id == customer_id,
+            CustomerOrder.is_open.is_(True),
+            CustomerOrder.bucket.in_(["open", "received"]),
+        )
+        .all()
+    )
+    if not orders:
+        return []
+    placements = (
+        db.query(CustomerOrderPlacement)
+        .filter(
+            CustomerOrderPlacement.customer_order_id.in_([o.id for o in orders]),
+            CustomerOrderPlacement.deleted_at.is_(None),
+            CustomerOrderPlacement.status.in_(["open", "received"]),
+        )
+        .order_by(CustomerOrderPlacement.placed_at.asc(), CustomerOrderPlacement.id.asc())
+        .all()
+    )
+    if not placements:
+        return []
+    lines = (
+        db.query(CustomerOrderLine)
+        .filter(
+            CustomerOrderLine.placement_id.in_([p.id for p in placements]),
+            CustomerOrderLine.status == "active",
+        )
+        .order_by(CustomerOrderLine.id.asc())
+        .all()
+    )
+    by_placement: dict[int, list] = {}
+    for ln in lines:
+        left = int(ln.quantity) - int(ln.quantity_billed or 0)
+        if left <= 0:
+            continue
+        by_placement.setdefault(int(ln.placement_id), []).append(
+            {
+                "catalog_product_id": int(ln.catalog_product_id),
+                "our_product_id": ln.our_product_id,
+                "quantity": left,
+                "unit_price": format(ln.unit_price, "f"),
+            }
+        )
+    out = []
+    for placement in placements:
+        rows = by_placement.get(int(placement.id)) or []
+        if not rows:
+            continue
+        out.append(
+            {
+                "placement_id": int(placement.id),
+                "placed_at": placement.placed_at,
+                "order_source": placement.order_source,
+                "placed_by_name": placement.placed_by_name,
+                "lines": rows,
+            }
+        )
+    return out
 

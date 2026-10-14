@@ -172,6 +172,15 @@ def update_product(
         row.our_product_id = new_id
         del data["our_product_id"]
 
+    if "vendor_id" in data:
+        new_vendor_id = data.pop("vendor_id")
+        if new_vendor_id is None:
+            raise HTTPException(400, "vendor required")
+        vendor = db.get(Vendor, int(new_vendor_id))
+        if not vendor or vendor.deleted_at or vendor.is_active is False:
+            raise HTTPException(404, "vendor not found")
+        row.vendor_id = vendor.id
+
     if "year_group" in data:
         if not auth.is_admin:
             # Staff cannot change year group

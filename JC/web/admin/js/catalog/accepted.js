@@ -762,9 +762,18 @@ const Catalog = (() => {
         loadAddons(),
         ensureProductCategories(),
         ensureProductYears(),
+        ensureVendors(),
       ]);
       if (!p || !p.id) throw new Error("Product not found");
       const altOptions = (Array.isArray(optRes) ? optRes : []).filter(x => x.id !== p.id);
+      const vendorChoices = catalogVendors.slice();
+      if (p.vendor_id && !vendorChoices.some(v => Number(v.id) === Number(p.vendor_id))) {
+        vendorChoices.unshift({
+          id: p.vendor_id,
+          business_name: p.vendor_name || `Vendor #${p.vendor_id}`,
+          city_name: p.vendor_city || "",
+        });
+      }
 
       // Keep already-linked add-ons in the dropdown even if /addons list failed or filtered them out
       const linkedAddons = (p.addon_links || []).map(l => ({
@@ -788,6 +797,11 @@ const Catalog = (() => {
       <div style="display:grid;gap:16px;">
         <div><label class="label">Our Product ID *</label>
           <input id="ce-our_product_id" class="input" value="${ctx.esc(p.our_product_id)}" /></div>
+        <div><label class="label">Vendor *</label>
+          <select id="ce-vendor_id" class="input">
+            <option value="">— Select vendor —</option>
+            ${vendorChoices.map(v => `<option value="${v.id}" ${Number(v.id) === Number(p.vendor_id) ? "selected" : ""}>${ctx.esc(vendorLabel(v))}</option>`).join("")}
+          </select></div>
         <div><label class="label">Vendor Product ID</label>
           <input id="ce-vendor_product_id" class="input" value="${ctx.esc(p.vendor_product_id)}" /></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
@@ -820,7 +834,6 @@ const Catalog = (() => {
             <div style="flex:1;">
               <input id="ce-image" type="file" accept="image/*" class="input" />
               <input type="hidden" id="ce-image_keys" value="${ctx.esc((p.image_keys || []).join(","))}" />
-              <input type="hidden" id="ce-vendor_id" value="${p.vendor_id}" />
               <p style="margin:6px 0 0;font-size:12px;color:var(--muted);">${p.image_urls?.length ? "Replace image (optional)." : "Add an image now, or leave empty."}</p>
             </div>
           </div>
@@ -895,6 +908,8 @@ const Catalog = (() => {
 
     const ourId = document.getElementById("ce-our_product_id").value.trim();
     if (!ourId) return ctx.toast("Our Product ID required", "error");
+    const vendorId = Number(document.getElementById("ce-vendor_id")?.value || 0);
+    if (!vendorId) return ctx.toast("Select a vendor", "error");
 
     let imageKeys = (document.getElementById("ce-image_keys")?.value || "")
       .split(",").map(s => s.trim()).filter(Boolean);
@@ -923,6 +938,7 @@ const Catalog = (() => {
     const bpEl = document.getElementById("ce-buying_price");
     const body = {
       our_product_id: ourId,
+      vendor_id: vendorId,
       vendor_product_id: document.getElementById("ce-vendor_product_id").value.trim(),
       category: document.getElementById("ce-category").value || null,
       second_category: document.getElementById("ce-second_category").value || null,

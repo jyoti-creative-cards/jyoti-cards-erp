@@ -1034,6 +1034,7 @@ const Products = (() => {
 
       const catalogPane = cat ? `
         <div class="review-grid" style="margin-bottom:20px;">
+          ${ctx.reviewRow("Vendor", [vendorName, vendorCity].filter(Boolean).join(" · ") || "—")}
           ${ctx.reviewRow("Vendor Product ID", cat.vendor_product_id)}
           ${ctx.reviewRow("Year Group", cat.year_group)}
           ${ctx.reviewRow("Category", cat.category)}

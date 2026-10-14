@@ -1793,7 +1793,7 @@ const CustomerOrders = (() => {
       unit_price: p.selling_price,
       quantity_open: 999999,
       quantity_on_hand: p.quantity_on_hand ?? 0,
-      quantity_to_ship: 50,
+      quantity_to_ship: "",
       discount_percent: "",
       net_rate: "",
       discSource: "",
@@ -1813,6 +1813,11 @@ const CustomerOrders = (() => {
   function setShipQty(idx, val) {
     const ln = processLines[idx];
     if (!ln) return;
+    if (val === "" || val == null) {
+      ln.quantity_to_ship = "";
+      renderWizardTotalsBar();
+      return;
+    }
     let q = Math.max(0, parseInt(val, 10) || 0);
     if (!editBillId) q = Math.min(ln.quantity_open, q);
     ln.quantity_to_ship = q;
@@ -1928,20 +1933,11 @@ const CustomerOrders = (() => {
             </label>
             ${discountEnabled && useOverallDiscount ? `<input class="input" style="width:100px;" placeholder="%" value="${ctx.esc(overallDiscount)}" oninput="CustomerOrders.setOverallDisc(this.value)" />` : ""}
           </div>`;
-      const addProd = editBillId ? (() => {
-        const q = billEditSearch.trim().toLowerCase();
-        const matches = q
-          ? billEditProducts.filter(p => String(p.our_product_id || "").toLowerCase().includes(q)).slice(0, 8)
-          : [];
-        return `<div style="margin-top:14px;">
+      const addProd = editBillId ? `<div style="margin-top:14px;">
           <label class="label">Add product</label>
-          <input class="input" style="width:100%;margin-bottom:8px;" placeholder="Search product ID…" value="${ctx.esc(billEditSearch)}" oninput="CustomerOrders.setBillEditSearch(this.value)" />
-          ${matches.length ? `<div style="display:flex;flex-direction:column;gap:4px;">${matches.map(p => `
-            <button type="button" class="btn btn-secondary btn-sm" style="justify-content:flex-start;" onclick="CustomerOrders.addBillEditProduct(${p.catalog_product_id})">
-              ${ctx.esc(p.our_product_id)} · ${fmtPrice(p.selling_price)} · stock ${p.quantity_on_hand ?? 0}
-            </button>`).join("")}</div>` : (q ? `<p style="font-size:12px;color:var(--muted);">${billEditSearchPending ? "Searching…" : "No matches"}</p>` : `<p style="font-size:12px;color:var(--muted);">Type a product number</p>`)}
-        </div>`;
-      })() : "";
+          <input id="co-bill-edit-search" class="input" style="width:100%;margin-bottom:8px;" placeholder="Search product ID…" value="${ctx.esc(billEditSearch)}" oninput="CustomerOrders.setBillEditSearch(this.value)" />
+          <div id="co-bill-edit-matches">${billEditMatchesHtml()}</div>
+        </div>` : "";
       bodyEl.innerHTML = `
         ${!editBillId ? creditBannerHtml(processContext?.credit) : ""}
         <p style="margin:0 0 12px;color:var(--muted);font-size:14px;">Customer: <strong>${processContext?.party_number ? `#${processContext.party_number} ` : ""}${ctx.esc(processContext?.customer_name || "")}</strong>${partyMarkerBadgesHtml(processContext)}${editBillId ? " · editing bill (order syncs on save)" : ""}</p>
@@ -1960,7 +1956,7 @@ const CustomerOrders = (() => {
             <td><strong>${ctx.esc(ln.our_product_id)}</strong>${ln.marking ? ` <span class="badge badge-amber" style="font-size:9px;padding:1px 4px;">${ctx.esc(ln.marking)}</span>` : ""}${addonsUnderHtml(ln.addons, ln.quantity_to_ship || 1)}</td>
             ${editBillId ? "" : `<td>${ln.quantity_on_hand}</td><td>${ln.quantity_open}</td>`}
             <td>${fmtPrice(ln.unit_price)}</td>
-            <td><input type="number" class="input" style="width:72px;" min="0" ${editBillId ? "" : `max="${ln.quantity_open}"`} value="${ln.quantity_to_ship}" onchange="CustomerOrders.setShipQty(${i}, this.value)" /></td>
+            <td><input type="number" class="input" style="width:72px;" min="0" ${editBillId ? "" : `max="${ln.quantity_open}"`} value="${ln.quantity_to_ship ?? ""}" onchange="CustomerOrders.setShipQty(${i}, this.value)" /></td>
             <td><input type="number" class="input" style="width:64px;" min="0" max="100" step="0.1" ${ro} value="${ctx.esc(shownDisc)}" oninput="CustomerOrders.setLineDisc(${i}, this.value)" /></td>
             <td><input type="number" class="input" style="width:80px;" min="0" step="0.01" placeholder="₹" ${ro} value="${ctx.esc(shownNet || "")}" oninput="CustomerOrders.setLineNetRate(${i}, this.value)" /></td>
             ${editBillId ? `<td><button type="button" class="btn btn-ghost btn-sm" style="color:var(--danger);" onclick="CustomerOrders.removeProcessLine(${i})">Remove</button></td>` : ""}
@@ -2163,18 +2159,36 @@ const CustomerOrders = (() => {
     renderProcessWizard();
   }
   function setOverallDisc(v) { overallDiscount = v; renderWizardTotalsBar(); }
+  function billEditMatchesHtml() {
+    const q = billEditSearch.trim().toLowerCase();
+    const matches = q
+      ? billEditProducts.filter(p => String(p.our_product_id || "").toLowerCase().includes(q)).slice(0, 8)
+      : [];
+    if (matches.length) {
+      return `<div style="display:flex;flex-direction:column;gap:4px;">${matches.map(p => `
+        <button type="button" class="btn btn-secondary btn-sm" style="justify-content:flex-start;" onclick="CustomerOrders.addBillEditProduct(${p.catalog_product_id})">
+          ${ctx.esc(p.our_product_id)} · ${fmtPrice(p.selling_price)} · stock ${p.quantity_on_hand ?? 0}
+        </button>`).join("")}</div>`;
+    }
+    if (q) return `<p style="font-size:12px;color:var(--muted);">${billEditSearchPending ? "Searching…" : "No matches"}</p>`;
+    return `<p style="font-size:12px;color:var(--muted);">Type a product number</p>`;
+  }
+  function paintBillEditMatches() {
+    const box = document.getElementById("co-bill-edit-matches");
+    if (box) box.innerHTML = billEditMatchesHtml();
+  }
   function setBillEditSearch(v) {
     billEditSearch = v || "";
-    renderProcessWizard();
     clearTimeout(billEditTimer);
     const q = billEditSearch.trim();
     if (q.length < 1) {
       billEditProducts = [];
       billEditSearchPending = false;
-      renderProcessWizard();
+      paintBillEditMatches();
       return;
     }
     billEditSearchPending = true;
+    paintBillEditMatches();
     billEditTimer = setTimeout(async () => {
       try {
         billEditProducts = await ctx.api(`/stock/products?lite=1&limit=8&search=${encodeURIComponent(q)}`, {}, 0) || [];
@@ -2183,7 +2197,7 @@ const CustomerOrders = (() => {
       }
       if (billEditSearch.trim() !== q) return;
       billEditSearchPending = false;
-      renderProcessWizard();
+      paintBillEditMatches();
     }, 200);
   }
   function defaultFreightAgentId() {
@@ -2233,6 +2247,9 @@ const CustomerOrders = (() => {
 
   async function processNext() {
     if (processStep === 1) {
+      if (editBillId && processLines.some(l => !(Number(l.quantity_to_ship) > 0))) {
+        return ctx.toast("Enter quantity for every item", "error");
+      }
       if (!processLines.some(l => Number(l.quantity_to_ship) > 0)) return ctx.toast("Enter qty to ship", "error");
       processStep = 2;
       renderProcessWizard();

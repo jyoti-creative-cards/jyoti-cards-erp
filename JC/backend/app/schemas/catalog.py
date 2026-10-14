@@ -124,6 +124,7 @@ class CheckDuplicatesResponse(BaseModel):
 
 class CatalogUpdate(BaseModel):
     our_product_id: Optional[str] = Field(None, min_length=1, max_length=120)
+    vendor_id: Optional[int] = None
     vendor_product_id: Optional[str] = None
     category: Optional[str] = None
     second_category: Optional[str] = None

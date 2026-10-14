@@ -120,7 +120,7 @@ def _pdf_text(pdf: bytes) -> str:
 
 
 def test_every_bill_is_original_and_duplicate():
-    text = _pdf_text(_render(1, gst=False))
+    text = _pdf_text(_render(1, gst=False)).replace("\\(", "(").replace("\\)", ")")
     assert text.count("ORIGINAL") == 1
     assert text.count("DUPLICATE") == 1
     assert text.count("Order Estimate") == 2
@@ -133,7 +133,9 @@ def test_every_bill_is_original_and_duplicate():
     assert "270.00" not in text
     assert "750.00" not in text
     assert text.count("Credit") == 2
-    assert text.count("Sharma Gift House  G  J") == 2
+    assert text.count("Sharma Gift House, JODHPUR  G  J") == 2
+    assert text.count("No. (42)") == 2
+    assert "12 Market Road, Near Bus Stand, Ward 4, JODHPUR" not in text
     assert "Freight Charges" in text
     assert "Transport Charges" not in text
 

@@ -118,7 +118,11 @@ def _draw_header(
     c.drawCentredString(PAGE_W / 2, _y(98), title)
 
     party_lines: list[tuple[str, str, bool]] = []
-    name = _txt(customer_name, 70) or "Customer"
+    raw_name = _txt(customer_name, 70) or "Customer"
+    name = raw_name
+    city = _txt(customer_city, 40)
+    if city:
+        name = f"{name}, {city}"
     marks = [m for m in (_txt(marker_1, 40), _txt(marker_2, 40)) if m]
     if marks:
         name = f"{name}  {'  '.join(marks)}"
@@ -127,13 +131,13 @@ def _draw_header(
     if phone:
         party_lines.append(("", phone, False))
     person = _txt(customer_company, 60)
-    if person and person != name:
+    if person and person != raw_name:
         party_lines.append(("", person, False))
-    addr_bits = [b for b in (_txt(customer_address, 80), _txt(customer_city, 40)) if b]
-    if addr_bits:
-        party_lines.append(("", ", ".join(addr_bits), False))
+    address = _txt(customer_address, 80)
+    if address:
+        party_lines.append(("", address, False))
     if customer_party_number not in (None, ""):
-        party_lines.append(("", f"No. ({customer_party_number})", False))
+        party_lines.append(("", f"No. ({customer_party_number})", True))
     pay = _txt(payment_type, 12).upper()
     if pay == "CASH":
         party_lines.append(("", "Cash", True))

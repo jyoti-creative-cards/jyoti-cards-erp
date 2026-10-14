@@ -57,6 +57,11 @@ class CustomerOpenLineOut(BaseModel):
     marking: Optional[str] = None
 
 
+class BilledBillChip(BaseModel):
+    bill_number: str
+    grand_total: str
+
+
 class CustomerOrderSummary(BaseModel):
     id: int
     customer_id: int
@@ -67,6 +72,8 @@ class CustomerOrderSummary(BaseModel):
     # CustomerBill rows (no real placement exists for that summary card) — sent under its
     # real name too so nobody trusts the misleading placement_count field name elsewhere.
     bill_count: Optional[int] = None
+    bills: List[BilledBillChip] = []
+    amount: Optional[str] = None
     line_count: int
     total_quantity: int
     updated_at: Union[date, datetime]

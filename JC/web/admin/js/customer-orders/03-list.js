@@ -95,7 +95,15 @@
     } else if (currentBucket === "billed") {
       primaryLabel = "Dispatch";
       primaryOnclick = "CustomerOrders.goToDispatch()";
-      statText = `${o.placement_count || o.bill_count || 0} bill${(o.placement_count || 0) !== 1 ? "s" : ""}`;
+      const chips = Array.isArray(o.bills) ? o.bills : [];
+      const billBits = chips.map(b => {
+        const num = b.bill_number ? `Bill ${ctx.esc(b.bill_number)}` : "";
+        const amt = b.grand_total != null && b.grand_total !== "" ? fmtPrice(b.grand_total) : "";
+        return [num, amt].filter(Boolean).join(" · ");
+      }).filter(Boolean);
+      statText = billBits.length
+        ? billBits.join("<br>")
+        : `${o.bill_count || 0} bill${(o.bill_count || 0) !== 1 ? "s" : ""}`;
     } else if (currentBucket === "cancelled" || currentBucket === "closed") {
       statText = `${o.placement_count || 0} placement${(o.placement_count || 0) !== 1 ? "s" : ""}`;
     }

@@ -458,12 +458,7 @@ def list_customer_orders(
 
     if bucket == "billed":
         bill_q = (
-            db.query(
-                CustomerBill.customer_id,
-                func.count(CustomerBill.id),
-                func.max(CustomerBill.bill_date),
-                func.max(CustomerBill.created_at),
-            )
+            db.query(CustomerBill)
             .filter(
                 CustomerBill.cancelled_at.is_(None),
                 CustomerBill.closed_at.is_(None),
@@ -472,10 +467,18 @@ def list_customer_orders(
         )
         if day_start is not None:
             bill_q = bill_q.filter(CustomerBill.bill_date == today_ist())
+        grouped: dict[int, list[CustomerBill]] = defaultdict(list)
+        for bill in bill_q.all():
+            grouped[int(bill.customer_id)].append(bill)
         bill_rows = []
-        for cid, cnt, bill_date, created in bill_q.group_by(CustomerBill.customer_id).all():
-            display = bill_date if bill_date is not None else created
-            bill_rows.append((int(cid), int(cnt or 0), display or today_ist()))
+        for cid, bills in grouped.items():
+            dated = [b.bill_date for b in bills if b.bill_date is not None]
+            if dated:
+                display = max(dated)
+            else:
+                created = [b.created_at for b in bills if b.created_at is not None]
+                display = max(created) if created else None
+            bill_rows.append((cid, bills, display or today_ist()))
         bill_rows.sort(key=lambda row: _sort_business_date(row[2]), reverse=True)
         # Batch the customer-name lookup — was one query PER customer (N+1), which
         # noticeably hung the UI once dozens of customers had unclosed bills sitting
@@ -487,16 +490,23 @@ def list_customer_orders(
         city_ids = {c.city_id for c in customers_by_id.values() if c.city_id}
         cities = {c.id: c.name for c in (db.query(City).filter(City.id.in_(city_ids)).all() if city_ids else [])}
         out = []
-        for cid, cnt, display_date in bill_rows:
+        for cid, bills, display_date in bill_rows:
             cust_obj = customers_by_id.get(int(cid))
+            chips = [
+                {"bill_number": b.bill_number, "grand_total": format(b.grand_total or 0, "f")}
+                for b in sorted(bills, key=lambda b: int(b.id or 0))
+            ]
+            total = sum((b.grand_total or Decimal("0") for b in bills), Decimal("0"))
             out.append(
                 CustomerOrderSummary(
                     id=0,
                     customer_id=int(cid),
                     customer_name=cust_obj.business_name if cust_obj else f"Customer #{int(cid)}",
                     bucket="billed",
-                    placement_count=int(cnt or 0),
-                    bill_count=int(cnt or 0),
+                    placement_count=len(bills),
+                    bill_count=len(bills),
+                    bills=chips,
+                    amount=format(total, "f"),
                     line_count=0,
                     total_quantity=0,
                     updated_at=display_date or today_ist(),

@@ -118,7 +118,7 @@
             ${HubUI.searchBar({
               id: "co-hub-search",
               value: hubSearch,
-              placeholder: "Search customer…",
+              placeholder: currentBucket === "billed" ? "Search customer, bill no…" : "Search customer…",
               oninput: "CustomerOrders.setHubSearch(this.value)",
             })}
             <div class="ord-mode-toggle" style="flex:0 0 auto;" role="tablist" aria-label="Sort order">
@@ -202,7 +202,29 @@
       })),
       hubSearch,
     );
-    return ranked;
+    if (currentBucket !== "billed") return ranked;
+    const tokens = OrdersUI.partySearchTokens(hubSearch);
+    const seen = new Set(ranked.map(o => o.customer_id));
+    const billHits = (list || []).filter(o => {
+      if (seen.has(o.customer_id)) return false;
+      const bills = o.bills || [];
+      return tokens.every(t => bills.some(b => billNumberMatches(b.bill_number, t))
+        || (!/^\d+$/.test(t) && String(o.customer_name || "").toLowerCase().includes(t))
+        || (!/^\d+$/.test(t) && String(o.city_name || "").toLowerCase().includes(t))
+        || (/^\d+$/.test(t) && String(o.party_number ?? "") === t));
+    });
+    return [...ranked, ...billHits];
+  }
+
+  function billNumberMatches(billNumber, token) {
+    const n = String(billNumber || "").toLowerCase();
+    const t = String(token || "").toLowerCase();
+    if (!n || !t) return false;
+    if (/^\d+$/.test(t)) {
+      const tail = n.match(/(\d+)$/);
+      return !!(tail && tail[1] === t);
+    }
+    return n.includes(t);
   }
 
   function setHubSort(val) {

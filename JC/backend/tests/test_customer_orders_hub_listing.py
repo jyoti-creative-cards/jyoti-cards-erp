@@ -106,8 +106,12 @@ def test_billed_bucket_batched_customer_names(db):
     by_cid = {r.customer_id: r for r in rows}
     assert by_cid[cust_a.id].customer_name == "Gamma Co"
     assert by_cid[cust_a.id].bill_count == 2
+    assert [b.bill_number for b in by_cid[cust_a.id].bills] == [f"B-{cust_a.id}-0", f"B-{cust_a.id}-1"]
+    assert Decimal(by_cid[cust_a.id].amount) == Decimal("200")
     assert by_cid[cust_b.id].customer_name == "Delta Co"
     assert by_cid[cust_b.id].bill_count == 1
+    assert by_cid[cust_b.id].bills[0].bill_number == f"B-{cust_b.id}-0"
+    assert Decimal(by_cid[cust_b.id].amount) == Decimal("100")
 
 
 def test_billed_bucket_prefers_newer_bill_date_over_old_null_bill_date_created_at(db):

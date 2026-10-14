@@ -194,7 +194,7 @@ const CustomerOrders = (() => {
             ${HubUI.searchBar({
               id: "co-hub-search",
               value: hubSearch,
-              placeholder: "Search customer…",
+              placeholder: currentBucket === "billed" ? "Search customer, bill no…" : "Search customer…",
               oninput: "CustomerOrders.setHubSearch(this.value)",
             })}
             <div class="ord-mode-toggle" style="flex:0 0 auto;" role="tablist" aria-label="Sort order">
@@ -278,7 +278,29 @@ const CustomerOrders = (() => {
       })),
       hubSearch,
     );
-    return ranked;
+    if (currentBucket !== "billed") return ranked;
+    const tokens = OrdersUI.partySearchTokens(hubSearch);
+    const seen = new Set(ranked.map(o => o.customer_id));
+    const billHits = (list || []).filter(o => {
+      if (seen.has(o.customer_id)) return false;
+      const bills = o.bills || [];
+      return tokens.every(t => bills.some(b => billNumberMatches(b.bill_number, t))
+        || (!/^\d+$/.test(t) && String(o.customer_name || "").toLowerCase().includes(t))
+        || (!/^\d+$/.test(t) && String(o.city_name || "").toLowerCase().includes(t))
+        || (/^\d+$/.test(t) && String(o.party_number ?? "") === t));
+    });
+    return [...ranked, ...billHits];
+  }
+
+  function billNumberMatches(billNumber, token) {
+    const n = String(billNumber || "").toLowerCase();
+    const t = String(token || "").toLowerCase();
+    if (!n || !t) return false;
+    if (/^\d+$/.test(t)) {
+      const tail = n.match(/(\d+)$/);
+      return !!(tail && tail[1] === t);
+    }
+    return n.includes(t);
   }
 
   function setHubSort(val) {
@@ -576,7 +598,15 @@ const CustomerOrders = (() => {
     } else if (currentBucket === "billed") {
       primaryLabel = "Dispatch";
       primaryOnclick = "CustomerOrders.goToDispatch()";
-      statText = `${o.placement_count || o.bill_count || 0} bill${(o.placement_count || 0) !== 1 ? "s" : ""}`;
+      const chips = Array.isArray(o.bills) ? o.bills : [];
+      const billBits = chips.map(b => {
+        const num = b.bill_number ? `Bill ${ctx.esc(b.bill_number)}` : "";
+        const amt = b.grand_total != null && b.grand_total !== "" ? fmtPrice(b.grand_total) : "";
+        return [num, amt].filter(Boolean).join(" · ");
+      }).filter(Boolean);
+      statText = billBits.length
+        ? billBits.join("<br>")
+        : `${o.bill_count || 0} bill${(o.bill_count || 0) !== 1 ? "s" : ""}`;
     } else if (currentBucket === "cancelled" || currentBucket === "closed") {
       statText = `${o.placement_count || 0} placement${(o.placement_count || 0) !== 1 ? "s" : ""}`;
     }
@@ -1816,6 +1846,27 @@ const CustomerOrders = (() => {
     return { qty, amount };
   }
 
+  function reviewChargeRows(tot, chargeLabel) {
+    const rows = [];
+    const freight = Number(tot.freight_charges) || 0;
+    if (freight > 0 && transportMode !== "self_pickup") {
+      rows.push([chargeLabel, fmtPrice(freight)]);
+    }
+    const packaging = Number(tot.packaging_charges) || 0;
+    if (packaging > 0) rows.push(["Packaging", fmtPrice(packaging)]);
+    for (const c of tot.additional_charges || []) {
+      if (!(Number(c.amount) > 0)) continue;
+      rows.push([c.name || "Other charges", fmtPrice(c.amount)]);
+    }
+    rows.push(["Grand total", fmtPrice(tot.rounded_grand_total || tot.grand_total)]);
+    return rows.map((row, i) => {
+      const last = i === rows.length - 1;
+      return `<tr style="${last ? "font-weight:700;border-top:2px solid var(--border);" : ""}">
+        <td colspan="5">${ctx.esc(row[0])}</td><td>${row[1]}</td>
+      </tr>`;
+    }).join("");
+  }
+
   function renderWizardTotalsBar() {
     const bar = document.getElementById("co-wizard-totals");
     if (!bar) return;
@@ -2024,7 +2075,7 @@ const CustomerOrders = (() => {
     const totalQty = (tot.lines || []).reduce((s, ln) => s + (Number(ln.quantity) || 0), 0);
     const totalLineAmount = (tot.lines || []).reduce((s, ln) => s + (Number(ln.line_total) || 0), 0);
     const modeLabel = transportMode === "bus" ? "Bus" : transportMode === "transport" ? "Transport" : transportMode === "self_pickup" ? "Self-pickup" : "—";
-    const chargeLabel = transportMode === "transport" ? "Transport charges" : "Freight";
+    const chargeLabel = transportMode === "transport" ? "Transport" : "Bus";
     const agentName = (freightAgents.find(a => String(a.id) === String(freightAgentId)) || {}).name;
     bodyEl.innerHTML = `
       ${creditBannerHtml(cr, { afterBill: true })}
@@ -2033,9 +2084,12 @@ const CustomerOrders = (() => {
           <th>Item</th><th>Qty</th><th>Rate</th><th>Disc</th><th>Net</th><th>Total</th>
         </tr></thead><tbody>
           ${lineRows || `<tr><td colspan="6" style="text-align:center;color:var(--muted);">No lines</td></tr>`}
-        </tbody>${lineRows ? `<tfoot><tr style="font-weight:600;border-top:2px solid var(--border);">
-          <td>Total</td><td>${totalQty}</td><td></td><td></td><td></td><td>${fmtPrice(totalLineAmount)}</td>
-        </tr></tfoot>` : ""}</table>
+        </tbody>${lineRows ? `<tfoot>
+          <tr style="font-weight:600;border-top:2px solid var(--border);">
+            <td>Total</td><td>${totalQty}</td><td></td><td></td><td></td><td>${fmtPrice(totalLineAmount)}</td>
+          </tr>
+          ${reviewChargeRows(tot, chargeLabel)}
+        </tfoot>` : ""}</table>
       </div>
       <div class="review-grid" style="margin-bottom:16px;">
         ${ctx.reviewRow("Customer", processContext?.customer_name)}
@@ -2050,10 +2104,6 @@ const CustomerOrders = (() => {
         ${discAmt > 0 ? ctx.reviewRow(tot.discount_percent ? `Discount (${tot.discount_percent}%)` : "Discount", "−" + fmtPrice(tot.discount_amount)) : ""}
         ${Number(tot.taxable_value) > 0 && tot.gst_enabled ? ctx.reviewRow("Taxable", fmtPrice(tot.taxable_value)) : ""}
         ${Number(tot.gst_amount) > 0 ? ctx.reviewRow(`GST (${tot.gst_rate_label || ""})`, fmtPrice(tot.gst_amount)) : ""}
-        ${tot.freight_charges && transportMode !== "self_pickup" ? ctx.reviewRow(chargeLabel, fmtPrice(tot.freight_charges)) : ""}
-        ${tot.packaging_charges ? ctx.reviewRow("Packaging", fmtPrice(tot.packaging_charges)) : ""}
-        ${(tot.additional_charges || []).map(c => ctx.reviewRow(c.name, fmtPrice(c.amount))).join("")}
-        ${ctx.reviewRow("Grand total", fmtPrice(tot.rounded_grand_total || tot.grand_total))}
       </div>
       ${customerNotes ? `<p style="font-size:13px;margin:0 0 6px;"><span class="vo-muted">Customer note:</span> ${ctx.esc(customerNotes)}</p>` : ""}
       <p style="font-size:13px;color:var(--muted);margin:0;"><span class="vo-muted">Narration:</span> ${ctx.esc(narration || "—")}</p>

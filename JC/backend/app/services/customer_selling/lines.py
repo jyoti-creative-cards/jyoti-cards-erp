@@ -112,23 +112,23 @@ def edit_customer_placement_line_qty(
     return line
 
 def _apply_addon_skip(db: Session, line: CustomerOrderLine, skip: set[int], party: str, reference_id: int) -> None:
-    """Drop add-ons the order screen removed, and put that add-on stock back."""
+    """Keep exactly the catalog add-ons the order did not remove, and move that stock."""
     from app.services.addon_stock import add_addon_stock
     from app.services.catalog_addons import addon_snapshots_for_product
 
-    current = line.addons_json
-    if current is None:
-        current = addon_snapshots_for_product(db, line.catalog_product_id)
-    current = list(current or [])
-    if not skip:
-        if line.addons_json is None:
-            line.addons_json = current or None
-        return
-    kept = [a for a in current if int(a.get("addon_product_id") or 0) not in skip]
-    removed = [a for a in current if int(a.get("addon_product_id") or 0) in skip]
+    catalog = addon_snapshots_for_product(db, line.catalog_product_id)
+    current = list(line.addons_json) if isinstance(line.addons_json, list) else list(catalog)
+    kept = [a for a in catalog if int(a.get("addon_product_id") or 0) not in skip]
+    current_ids = {int(a.get("addon_product_id") or 0) for a in current}
+    kept_ids = {int(a.get("addon_product_id") or 0) for a in kept}
+    removed = [a for a in current if int(a.get("addon_product_id") or 0) not in kept_ids]
+    added = [a for a in kept if int(a.get("addon_product_id") or 0) not in current_ids]
     line.addons_json = kept
     qty = int(line.quantity or 0)
-    for addon in removed:
+    for addon, sign, kind, note in (
+        *((a, 1, "customer_order_restore", "Add-on removed from order") for a in removed),
+        *((a, -1, "customer_order", "Add-on put back on order") for a in added),
+    ):
         per = int(addon.get("quantity") or 1) * qty
         aid = addon.get("addon_product_id")
         if per <= 0 or not aid:
@@ -137,12 +137,12 @@ def _apply_addon_skip(db: Session, line: CustomerOrderLine, skip: set[int], part
             add_addon_stock(
                 db,
                 addon_product_id=int(aid),
-                quantity=per,
-                entry_type="customer_order_restore",
+                quantity=sign * per,
+                entry_type=kind,
                 reference_type="customer_placement",
                 reference_id=reference_id,
                 party=party,
-                notes="Name Plate removed from order",
+                notes=note,
             )
         except ValueError:
             continue
@@ -184,9 +184,8 @@ def replace_received_placement(
             continue
         cid = int(raw["catalog_product_id"])
         desired[cid] = desired.get(cid, 0) + qty
-        skipped = {int(x) for x in (raw.get("skip_addon_ids") or [])}
-        if skipped:
-            skip_by_cid[cid] = skipped
+        if "skip_addon_ids" in raw:
+            skip_by_cid[cid] = {int(x) for x in (raw.get("skip_addon_ids") or [])}
 
     # Keep billed floor for products omitted from desired
     for cid, ln in by_cat.items():
@@ -224,7 +223,8 @@ def replace_received_placement(
                 db, by_cat[cid].id, qty, customer_name, allow_negative_stock=allow_negative_stock
             )
             existing_ln = by_cat[cid]
-            _apply_addon_skip(db, existing_ln, skip_by_cid.get(cid) or set(), customer_name, placement.id)
+            if cid in skip_by_cid:
+                _apply_addon_skip(db, existing_ln, skip_by_cid[cid], customer_name, placement.id)
         else:
             from app.services.catalog_addons import addon_snapshots_for_product, kept_addon_ids
 

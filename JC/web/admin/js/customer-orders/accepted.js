@@ -1061,8 +1061,22 @@ const CustomerOrders = (() => {
     offlineSearchQuery = "";
     offlineSearchResults = [];
     try {
-      offlineLines = active.map(ln => {
+      offlineLines = await Promise.all(active.map(async ln => {
         const stock = offlineSearchResults.find(x => x.catalog_product_id === ln.catalog_product_id);
+        let catalog = [];
+        try {
+          const rows = await ctx.api(`/stock/products?lite=1&limit=5&search=${encodeURIComponent(ln.our_product_id)}`, {}, 0) || [];
+          const hit = rows.find(r => r.catalog_product_id === ln.catalog_product_id);
+          catalog = (hit && (hit.addons || hit.priced_addons)) || [];
+        } catch (_) {}
+        const keptRows = Array.isArray(ln.addons) ? ln.addons : catalog;
+        const byId = new Map();
+        for (const a of [...catalog, ...keptRows]) {
+          if (a && a.addon_product_id != null) byId.set(Number(a.addon_product_id), a);
+        }
+        const addons = [...byId.values()];
+        const keptIds = new Set(keptRows.map(a => Number(a.addon_product_id)));
+        const legacy = ln.addons == null;
         return {
           catalog_product_id: ln.catalog_product_id,
           our_product_id: ln.our_product_id,
@@ -1070,16 +1084,11 @@ const CustomerOrders = (() => {
           min_qty: Number(ln.quantity_billed) || 0,
           selling_price: ln.unit_price ?? stock?.selling_price,
           quantity_on_hand: stock?.quantity_on_hand,
-          priced_addons: (ln.addons || []).filter(a => Number(a.selling_price) > 0).map(a => ({
-            addon_product_id: a.addon_product_id,
-            name: a.name || a.our_product_id,
-            our_product_id: a.our_product_id,
-            selling_price: a.selling_price,
-            quantity: a.quantity || 1,
-          })),
-          skip_addon_ids: [],
+          addons,
+          priced_addons: addons.filter(a => Number(a.selling_price) > 0),
+          skip_addon_ids: legacy ? [] : addons.map(a => Number(a.addon_product_id)).filter(id => !keptIds.has(id)),
         };
-      });
+      }));
       document.getElementById("co-offline-wizard")?.classList.remove("hidden");
       renderOfflineWizard();
     } catch (e) { ctx.toast(e.message, "error"); offlineEditPlacementId = null; }
@@ -2458,25 +2467,35 @@ const CustomerOrders = (() => {
     return offlineLines.reduce((s, l) => {
       let n = (Number(l.selling_price) || 0) * (Number(l.quantity) || 0);
       const skipped = new Set(l.skip_addon_ids || []);
-      for (const a of l.priced_addons || []) {
+      const extras = (l.addons && l.addons.length) ? l.addons : (l.priced_addons || []);
+      for (const a of extras) {
         if (skipped.has(a.addon_product_id)) continue;
+        if (!(Number(a.selling_price) > 0)) continue;
         n += (Number(a.selling_price) || 0) * (Number(a.quantity) || 1) * (Number(l.quantity) || 0);
       }
       return s + n;
     }, 0);
   }
 
+  function lineAddons(p, line) {
+    if (line && Array.isArray(line.addons) && line.addons.length) return line.addons;
+    if (p && Array.isArray(p.addons) && p.addons.length) return p.addons;
+    return (line && line.priced_addons) || (p && p.priced_addons) || [];
+  }
+
   function pricedAddonHtml(p, line) {
-    const addons = (line && line.priced_addons) || p.priced_addons || [];
+    const addons = lineAddons(p, line);
     if (!addons.length || !line) return "";
     const skipped = new Set(line.skip_addon_ids || []);
     return addons.map(a => {
       const id = a.addon_product_id;
+      const name = a.name || a.our_product_id || "Add-on";
       const price = Number(a.selling_price) || 0;
+      const priceBit = price > 0 ? ` · ₹${price} each` : "";
       if (skipped.has(id)) {
-        return `<div class="co-addon-row" onclick="event.stopPropagation()">Name Plate removed · <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();CustomerOrders.skipOfflineAddon(${p.catalog_product_id}, ${id})">Add back</button></div>`;
+        return `<div class="co-addon-row" onclick="event.stopPropagation()">${ctx.esc(name)} removed · <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();CustomerOrders.skipOfflineAddon(${p.catalog_product_id}, ${id})">Add back</button></div>`;
       }
-      return `<div class="co-addon-row" onclick="event.stopPropagation()">+ ${ctx.esc(a.name || a.our_product_id || "Name Plate")} · ₹${price} each <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();CustomerOrders.skipOfflineAddon(${p.catalog_product_id}, ${id})">Remove</button></div>`;
+      return `<div class="co-addon-row" onclick="event.stopPropagation()">+ ${ctx.esc(name)}${priceBit} <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();CustomerOrders.skipOfflineAddon(${p.catalog_product_id}, ${id})">Remove</button></div>`;
     }).join("");
   }
 
@@ -2806,6 +2825,7 @@ const CustomerOrders = (() => {
           min_qty: 0,
           selling_price: p.selling_price,
           quantity_on_hand: p.quantity_on_hand,
+          addons: (p.addons && p.addons.length) ? p.addons : (p.priced_addons || []),
           priced_addons: p.priced_addons || [],
           skip_addon_ids: [],
         });
@@ -2851,6 +2871,7 @@ const CustomerOrders = (() => {
         min_qty: 0,
         selling_price: p.selling_price,
         quantity_on_hand: p.quantity_on_hand,
+        addons: (p.addons && p.addons.length) ? p.addons : (p.priced_addons || []),
         priced_addons: p.priced_addons || [],
         skip_addon_ids: [],
       });

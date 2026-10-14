@@ -125,25 +125,35 @@
     return offlineLines.reduce((s, l) => {
       let n = (Number(l.selling_price) || 0) * (Number(l.quantity) || 0);
       const skipped = new Set(l.skip_addon_ids || []);
-      for (const a of l.priced_addons || []) {
+      const extras = (l.addons && l.addons.length) ? l.addons : (l.priced_addons || []);
+      for (const a of extras) {
         if (skipped.has(a.addon_product_id)) continue;
+        if (!(Number(a.selling_price) > 0)) continue;
         n += (Number(a.selling_price) || 0) * (Number(a.quantity) || 1) * (Number(l.quantity) || 0);
       }
       return s + n;
     }, 0);
   }
 
+  function lineAddons(p, line) {
+    if (line && Array.isArray(line.addons) && line.addons.length) return line.addons;
+    if (p && Array.isArray(p.addons) && p.addons.length) return p.addons;
+    return (line && line.priced_addons) || (p && p.priced_addons) || [];
+  }
+
   function pricedAddonHtml(p, line) {
-    const addons = (line && line.priced_addons) || p.priced_addons || [];
+    const addons = lineAddons(p, line);
     if (!addons.length || !line) return "";
     const skipped = new Set(line.skip_addon_ids || []);
     return addons.map(a => {
       const id = a.addon_product_id;
+      const name = a.name || a.our_product_id || "Add-on";
       const price = Number(a.selling_price) || 0;
+      const priceBit = price > 0 ? ` · ₹${price} each` : "";
       if (skipped.has(id)) {
-        return `<div class="co-addon-row" onclick="event.stopPropagation()">Name Plate removed · <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();CustomerOrders.skipOfflineAddon(${p.catalog_product_id}, ${id})">Add back</button></div>`;
+        return `<div class="co-addon-row" onclick="event.stopPropagation()">${ctx.esc(name)} removed · <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();CustomerOrders.skipOfflineAddon(${p.catalog_product_id}, ${id})">Add back</button></div>`;
       }
-      return `<div class="co-addon-row" onclick="event.stopPropagation()">+ ${ctx.esc(a.name || a.our_product_id || "Name Plate")} · ₹${price} each <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();CustomerOrders.skipOfflineAddon(${p.catalog_product_id}, ${id})">Remove</button></div>`;
+      return `<div class="co-addon-row" onclick="event.stopPropagation()">+ ${ctx.esc(name)}${priceBit} <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();CustomerOrders.skipOfflineAddon(${p.catalog_product_id}, ${id})">Remove</button></div>`;
     }).join("");
   }
 
@@ -473,6 +483,7 @@
           min_qty: 0,
           selling_price: p.selling_price,
           quantity_on_hand: p.quantity_on_hand,
+          addons: (p.addons && p.addons.length) ? p.addons : (p.priced_addons || []),
           priced_addons: p.priced_addons || [],
           skip_addon_ids: [],
         });
@@ -518,6 +529,7 @@
         min_qty: 0,
         selling_price: p.selling_price,
         quantity_on_hand: p.quantity_on_hand,
+        addons: (p.addons && p.addons.length) ? p.addons : (p.priced_addons || []),
         priced_addons: p.priced_addons || [],
         skip_addon_ids: [],
       });

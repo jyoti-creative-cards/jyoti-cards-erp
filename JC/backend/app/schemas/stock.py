@@ -48,6 +48,7 @@ class StockProductSummary(BaseModel):
     addon_count: int = 0
     alt_count: int = 0
     priced_addons: List[dict] = []
+    addons: List[dict] = []
 
 
 class StockBrowseCounts(BaseModel):

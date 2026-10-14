@@ -350,8 +350,22 @@
     offlineSearchQuery = "";
     offlineSearchResults = [];
     try {
-      offlineLines = active.map(ln => {
+      offlineLines = await Promise.all(active.map(async ln => {
         const stock = offlineSearchResults.find(x => x.catalog_product_id === ln.catalog_product_id);
+        let catalog = [];
+        try {
+          const rows = await ctx.api(`/stock/products?lite=1&limit=5&search=${encodeURIComponent(ln.our_product_id)}`, {}, 0) || [];
+          const hit = rows.find(r => r.catalog_product_id === ln.catalog_product_id);
+          catalog = (hit && (hit.addons || hit.priced_addons)) || [];
+        } catch (_) {}
+        const keptRows = Array.isArray(ln.addons) ? ln.addons : catalog;
+        const byId = new Map();
+        for (const a of [...catalog, ...keptRows]) {
+          if (a && a.addon_product_id != null) byId.set(Number(a.addon_product_id), a);
+        }
+        const addons = [...byId.values()];
+        const keptIds = new Set(keptRows.map(a => Number(a.addon_product_id)));
+        const legacy = ln.addons == null;
         return {
           catalog_product_id: ln.catalog_product_id,
           our_product_id: ln.our_product_id,
@@ -359,16 +373,11 @@
           min_qty: Number(ln.quantity_billed) || 0,
           selling_price: ln.unit_price ?? stock?.selling_price,
           quantity_on_hand: stock?.quantity_on_hand,
-          priced_addons: (ln.addons || []).filter(a => Number(a.selling_price) > 0).map(a => ({
-            addon_product_id: a.addon_product_id,
-            name: a.name || a.our_product_id,
-            our_product_id: a.our_product_id,
-            selling_price: a.selling_price,
-            quantity: a.quantity || 1,
-          })),
-          skip_addon_ids: [],
+          addons,
+          priced_addons: addons.filter(a => Number(a.selling_price) > 0),
+          skip_addon_ids: legacy ? [] : addons.map(a => Number(a.addon_product_id)).filter(id => !keptIds.has(id)),
         };
-      });
+      }));
       document.getElementById("co-offline-wizard")?.classList.remove("hidden");
       renderOfflineWizard();
     } catch (e) { ctx.toast(e.message, "error"); offlineEditPlacementId = null; }

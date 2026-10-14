@@ -69,11 +69,15 @@ from app.routers.stock.router import router
 def _attach_priced_addons(db: Session, rows: list) -> None:
     if not rows:
         return
-    from app.services.catalog_addons import priced_addons_by_product
+    from app.services.catalog_addons import addon_snapshots_map, priced_addons_by_product
 
-    priced = priced_addons_by_product(db, [int(r.catalog_product_id) for r in rows])
+    ids = [int(r.catalog_product_id) for r in rows]
+    all_addons = addon_snapshots_map(db, ids)
+    priced = priced_addons_by_product(db, ids)
     for row in rows:
-        row.priced_addons = priced.get(int(row.catalog_product_id), [])
+        pid = int(row.catalog_product_id)
+        row.addons = all_addons.get(pid, [])
+        row.priced_addons = priced.get(pid, [])
 
 
 @router.get("/products", response_model=List[StockProductSummary])
@@ -87,7 +91,7 @@ def list_stock(
 ):
     yg = (year_group or "").replace("\x00", "").strip()
     cache_key = (
-        f"stock:products:v5:{(search or '').replace(chr(0), '')}:{yg}:{int(lite)}:"
+        f"stock:products:v6:{(search or '').replace(chr(0), '')}:{yg}:{int(lite)}:"
         f"lim={limit or 0}:cost={int(can_see_cost(auth))}"
     )
     cached = response_cache.get(cache_key)

@@ -379,22 +379,21 @@ def product_suggestions(
     return out
 
 def _query_products(db: Session, raw: str, limit: int) -> list[CatalogProduct]:
-    # Exact-code fast path (dealer types full product name/code like 9500).
-    exact = (
+    # Full item name only. A vendor code must not hide the item whose own
+    # number starts with what the dealer typed (6734 is "6734 BOX PATRIKA",
+    # while "9073 CARD" happens to use 6734 as the vendor's code).
+    exact_ours = (
         db.query(CatalogProduct)
         .filter(
             CatalogProduct.is_active.is_(True),
             CatalogProduct.deleted_at.is_(None),
-            or_(
-                CatalogProduct.our_product_id == raw,
-                CatalogProduct.vendor_product_id == raw,
-            ),
+            CatalogProduct.our_product_id == raw,
         )
         .limit(limit)
         .all()
     )
-    if exact and len(raw) >= 2:
-        return _rank_products(exact, raw)[:limit]
+    if exact_ours and len(raw) >= 2:
+        return _rank_products(exact_ours, raw)[:limit]
     rows = (
         db.query(CatalogProduct)
         .filter(CatalogProduct.is_active.is_(True), CatalogProduct.deleted_at.is_(None), _match(raw))
@@ -410,10 +409,14 @@ def _rank_products(rows: list[CatalogProduct], raw: str) -> list[CatalogProduct]
     def score(p: CatalogProduct) -> tuple:
         oid = (p.our_product_id or "").lower()
         vid = (p.vendor_product_id or "").lower()
-        if oid == q or vid == q:
+        if oid == q:
             s = 100
-        elif oid.startswith(q) or vid.startswith(q):
-            s = 80
+        elif oid.startswith(q):
+            s = 90
+        elif vid == q:
+            s = 60
+        elif vid.startswith(q):
+            s = 50
         elif q in oid or q in vid:
             s = 40
         else:

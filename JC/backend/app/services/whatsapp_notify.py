@@ -1,12 +1,14 @@
 """Hindi WhatsApp updates for confirm, bill, and dispatch.
 
-Order confirmation uses the approved template order_confirmation (PDF + portal button).
-Bill and dispatch use bill_ready_hindi and dispatch_ready_hindi, which write the
-portal address in the message. Sending never raises and never runs on sqlite tests.
+Order confirmation and dispatch are text only. The bill message is the one
+that carries a PDF. Sending runs after the screen has already moved on, and
+never raises. Sqlite tests do not send.
 """
 from __future__ import annotations
 
 import logging
+import sys
+import threading
 from decimal import Decimal
 
 from sqlalchemy.orm import Session
@@ -20,13 +22,10 @@ from app.models.customer_order import CustomerOrder, CustomerOrderLine, Customer
 logger = logging.getLogger("jc.whatsapp")
 
 PORTAL_URL = "https://jyoticards.vercel.app"
-# Dynamic button on order_confirmation is https://jyoticards.vercel.app/{{1}}.
-# "?" keeps the click on the portal home.
-PORTAL_BUTTON_SUFFIX = "?"
 
-ORDER_TEMPLATE = "order_confirmation"
+ORDER_TEMPLATE = "order_confirmed_hindi"
 BILL_TEMPLATE = "bill_ready_hindi"
-DISPATCH_TEMPLATE = "dispatch_ready_hindi"
+DISPATCH_TEMPLATE = "dispatch_sent_hindi"
 ORDER_CANCEL_TEMPLATE = "order_cancelled_hindi"
 BILL_CANCEL_TEMPLATE = "bill_cancelled_hindi"
 
@@ -88,14 +87,6 @@ def notify_order_confirmed(db: Session, placement_id: int) -> None:
             item = f"{item} (+{extra})"
         qty = sum(int(ln.quantity or 0) for ln in lines)
         rate = format(Decimal(str(first.unit_price or 0)), "f")
-        pdf = _order_pdf(db, placement)
-        if not pdf:
-            logger.error("WhatsApp order %s skipped: no PDF", placement_id)
-            return
-        media = upload_media(pdf, f"order-{placement.id}.pdf")
-        if not media.get("ok"):
-            logger.error("WhatsApp order %s upload failed: %s", placement_id, media.get("error"))
-            return
         result = send_template(
             customer.phone,
             ORDER_TEMPLATE,
@@ -107,9 +98,6 @@ def notify_order_confirmed(db: Session, placement_id: int) -> None:
                 qty,
                 rate,
             ),
-            header_media_id=media.get("media_id"),
-            header_filename=f"order-{placement.id}.pdf",
-            url_button_suffix=PORTAL_BUTTON_SUFFIX,
         )
         if not result.get("ok"):
             logger.error("WhatsApp order %s failed: %s", placement_id, result.get("error"))
@@ -160,21 +148,11 @@ def notify_dispatched(db: Session, bill_id: int) -> None:
         customer = db.get(Customer, bill.customer_id)
         if not customer or not customer.phone:
             return
-        pdf = _bill_pdf(db, bill.id)
-        if not pdf:
-            logger.error("WhatsApp dispatch %s skipped: no PDF", bill_id)
-            return
-        media = upload_media(pdf, f"dispatch-{bill.bill_number}.pdf")
-        if not media.get("ok"):
-            logger.error("WhatsApp dispatch %s upload failed: %s", bill_id, media.get("error"))
-            return
         result = send_template(
             customer.phone,
             DISPATCH_TEMPLATE,
             language="hi",
             body_params=dispatch_ready_params(customer.business_name or "Customer", bill.bill_number),
-            header_media_id=media.get("media_id"),
-            header_filename=f"dispatch-{bill.bill_number}.pdf",
         )
         if not result.get("ok"):
             logger.error("WhatsApp dispatch %s failed: %s", bill_id, result.get("error"))
@@ -229,6 +207,39 @@ def notify_bill_cancelled(db: Session, bill_id: int) -> None:
         logger.exception("WhatsApp bill cancel %s failed", bill_id)
 
 
+def schedule_whatsapp(kind: str, entity_id: int) -> None:
+    """Send after this request returns. The screen does not wait on Meta or a PDF."""
+    if "pytest" in sys.modules:
+        return
+    threading.Thread(
+        target=_deliver,
+        args=(kind, int(entity_id)),
+        daemon=True,
+        name=f"wa-{kind}-{entity_id}",
+    ).start()
+
+
+def _deliver(kind: str, entity_id: int) -> None:
+    from app.db.session import SessionLocal
+
+    db = SessionLocal()
+    try:
+        if kind == "order_confirmed":
+            notify_order_confirmed(db, entity_id)
+        elif kind == "order_cancelled":
+            notify_order_cancelled(db, entity_id)
+        elif kind == "bill_created":
+            notify_bill_created(db, entity_id)
+        elif kind == "bill_cancelled":
+            notify_bill_cancelled(db, entity_id)
+        elif kind == "dispatched":
+            notify_dispatched(db, entity_id)
+    except Exception:
+        logger.exception("WhatsApp %s %s failed", kind, entity_id)
+    finally:
+        db.close()
+
+
 def _allow(db: Session) -> bool:
     try:
         if db.get_bind().dialect.name == "sqlite":
@@ -239,21 +250,6 @@ def _allow(db: Session) -> bool:
     if settings.whatsapp_disable or not (settings.whatsapp_access_token or "").strip():
         return False
     return True
-
-
-def _order_pdf(db: Session, placement: CustomerOrderPlacement) -> bytes | None:
-    from app.services.doc_gen import generate_customer_order_document
-    from app.services.storage import download_bytes
-
-    if placement.document_key:
-        stored = download_bytes(placement.document_key)
-        if stored:
-            return stored
-    generate_customer_order_document(db, placement.id)
-    db.commit()
-    if placement.document_key:
-        return download_bytes(placement.document_key)
-    return None
 
 
 def _bill_pdf(db: Session, bill_id: int) -> bytes | None:

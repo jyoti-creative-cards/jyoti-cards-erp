@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import logging
 import re
+import sys
+import threading
 import unicodedata
 from decimal import Decimal
 from typing import List, Optional
@@ -15,7 +17,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.db.session import get_db
 from app.deps import get_current_customer
-from app.integrations.whatsapp.client import send_document, send_text, upload_media
+from app.integrations.whatsapp.client import send_text
 from app.models.catalog_alternative import CatalogAlternative
 from app.models.catalog_product import CatalogProduct
 from app.models.customer import Customer
@@ -46,7 +48,6 @@ from app.services.credit_limit import credit_status
 from app.services.customer_order_flow import append_or_create_portal_placement
 from app.services.doc_gen import generate_customer_bill_document, generate_customer_order_document
 from app.services.document_present import present
-from app.services.storage import download_bytes, presigned_url, storage_configured
 from app.services.stock_levels import stock_status_label
 
 logger = logging.getLogger("jc.shop")
@@ -129,15 +130,21 @@ def create_customer_order(
         db.rollback()
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Order could not be saved. Please try again.") from e
 
-    _notify_order_whatsapp(
-        customer=customer,
-        prod=prod,
-        quantity=body.quantity,
-        unit_price=unit_price,
-        placement_id=placement.id,
-        merged=merged,
-        document_key=None,
-    )
+    if "pytest" not in sys.modules:
+        threading.Thread(
+            target=_notify_order_whatsapp,
+            kwargs={
+                "customer_name": customer.business_name,
+                "customer_phone": customer.phone,
+                "our_product_id": prod.our_product_id,
+                "quantity": body.quantity,
+                "unit_price": unit_price,
+                "placement_id": placement.id,
+                "merged": merged,
+            },
+            daemon=True,
+            name=f"wa-portal-order-{placement.id}",
+        ).start()
 
     msg = (
         "Added to your order. Keep searching to add more items."
@@ -160,44 +167,32 @@ def create_customer_order(
 
 def _notify_order_whatsapp(
     *,
-    customer: Customer,
-    prod: CatalogProduct,
+    customer_name: str,
+    customer_phone: str,
+    our_product_id: str,
     quantity: int,
     unit_price: Decimal,
     placement_id: int,
     merged: bool,
-    document_key: str | None,
 ) -> None:
-    """Best-effort WhatsApp to customer + staff. Never raises."""
+    """Best-effort WhatsApp to customer + staff. Never raises. No PDF."""
     try:
         total = (unit_price * quantity).quantize(Decimal("0.01"))
         verb = "updated" if merged else "placed"
         portal = (get_settings().customer_portal_url or "https://jyoticards.vercel.app").rstrip("/")
         cust_body = (
             f"Jyoti Creative Cards\n"
-            f"Order {verb}: {prod.our_product_id} × {quantity}\n"
+            f"Order {verb}: {our_product_id} × {quantity}\n"
             f"Amount: ₹{format(total, 'f')}\n"
             f"Order #{placement_id}\n"
             f"Open: {portal}"
         )
-        send_text(customer.phone, cust_body)
-
-        if document_key and storage_configured():
-            data = download_bytes(document_key)
-            if data:
-                up = upload_media(data, f"order-{placement_id}.pdf")
-                if up.get("ok") and up.get("media_id"):
-                    send_document(
-                        customer.phone,
-                        media_id=up["media_id"],
-                        filename=f"order-{placement_id}.pdf",
-                        caption=f"Order #{placement_id} — {prod.our_product_id} × {quantity}",
-                    )
+        send_text(customer_phone, cust_body)
 
         staff_msg = (
             f"New dealer order\n"
-            f"{customer.business_name} ({customer.phone})\n"
-            f"{prod.our_product_id} × {quantity} = ₹{format(total, 'f')}\n"
+            f"{customer_name} ({customer_phone})\n"
+            f"{our_product_id} × {quantity} = ₹{format(total, 'f')}\n"
             f"Order #{placement_id}"
             + (" (added to open order)" if merged else "")
         )

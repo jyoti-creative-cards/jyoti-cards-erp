@@ -256,8 +256,8 @@ def cancel_placement_endpoint(
         detail=f"cancelled placement #{placement_id}: {line_summary} — {body.reason[:120]}",
     )
     db.commit()
-    from app.services.whatsapp_notify import notify_order_cancelled
-    notify_order_cancelled(db, placement_id)
+    from app.services.whatsapp_notify import schedule_whatsapp
+    schedule_whatsapp("order_cancelled", placement_id)
     response_cache.invalidate("stock:")
     response_cache.invalidate("shop:")
     response_cache.invalidate("catalog:")
@@ -361,9 +361,9 @@ def confirm_customer_order(
         detail="Confirmed received order → open",
     )
     db.commit()
-    from app.services.whatsapp_notify import notify_order_confirmed
+    from app.services.whatsapp_notify import schedule_whatsapp
     for placement_id in received_ids:
-        notify_order_confirmed(db, placement_id)
+        schedule_whatsapp("order_confirmed", placement_id)
     return {"ok": True, "customer_id": customer_id}
 
 @router.post("/customer/{customer_id}/offline/preview")
@@ -478,9 +478,9 @@ def create_offline_customer_order(
     )
     db.commit()
     from app.services.doc_jobs import enqueue_order_pdf
-    from app.services.whatsapp_notify import notify_order_confirmed
+    from app.services.whatsapp_notify import schedule_whatsapp
     enqueue_order_pdf(placement.id)
-    notify_order_confirmed(db, placement.id)
+    schedule_whatsapp("order_confirmed", placement.id)
     return {
         "ok": True,
         "placement_id": placement.id,

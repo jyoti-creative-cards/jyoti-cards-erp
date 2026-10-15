@@ -1,4 +1,4 @@
-"""Customer search uses our item number, not a colliding vendor code."""
+"""Customer search matches our item number only."""
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -30,5 +30,5 @@ def test_search_returns_the_item_number_not_only_the_vendor_code():
     ))
     db.commit()
     found = _query_products(db, "6734", 20)
-    assert found[0].our_product_id == "6734 BOX PATRIKA"
-    assert any(row.our_product_id == "9073 CARD" for row in found)
+    assert [row.our_product_id for row in found] == ["6734 BOX PATRIKA"]
+    assert _query_products(db, "G-42", 20) == []

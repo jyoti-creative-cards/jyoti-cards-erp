@@ -379,9 +379,7 @@ def product_suggestions(
     return out
 
 def _query_products(db: Session, raw: str, limit: int) -> list[CatalogProduct]:
-    # Full item name only. A vendor code must not hide the item whose own
-    # number starts with what the dealer typed (6734 is "6734 BOX PATRIKA",
-    # while "9073 CARD" happens to use 6734 as the vendor's code).
+    # Customers search our item number only. Vendor codes stay off this search.
     exact_ours = (
         db.query(CatalogProduct)
         .filter(
@@ -408,16 +406,11 @@ def _rank_products(rows: list[CatalogProduct], raw: str) -> list[CatalogProduct]
 
     def score(p: CatalogProduct) -> tuple:
         oid = (p.our_product_id or "").lower()
-        vid = (p.vendor_product_id or "").lower()
         if oid == q:
             s = 100
         elif oid.startswith(q):
             s = 90
-        elif vid == q:
-            s = 60
-        elif vid.startswith(q):
-            s = 50
-        elif q in oid or q in vid:
+        elif q in oid:
             s = 40
         else:
             s = 10
@@ -468,9 +461,7 @@ def _match(raw: str):
     term = f"%{raw}%"
     return or_(
         CatalogProduct.our_product_id == raw,
-        CatalogProduct.vendor_product_id == raw,
         CatalogProduct.our_product_id.ilike(term),
-        CatalogProduct.vendor_product_id.ilike(term),
     )
 
 def _stock_map(db: Session, product_ids: list[int]) -> dict[int, tuple[int, int]]:

@@ -14,7 +14,7 @@ from app.models.stock import StockBalance
 from app.models.vendor import Vendor
 from app.schemas.stock_journal import JournalIn, JournalOut, JournalVoidIn
 from app.services import stock_journal as journal_svc
-from app.services.stock_journal import album_parent_needles
+from app.services.stock_journal import album_parent_needles, category_name_match
 
 router = APIRouter(prefix="/stock-journals", tags=["stock-journals"])
 
@@ -42,10 +42,13 @@ def search_journal_products(
         # "Album" alone is every album. "Album 1" is the parent category, every series.
         if not parent:
             return []
-        cat = func.lower(CatalogProduct.category)
-        sec = func.lower(func.coalesce(CatalogProduct.second_category, ""))
+        slots = (
+            func.lower(CatalogProduct.category),
+            func.lower(func.coalesce(CatalogProduct.second_category, "")),
+            func.lower(func.coalesce(CatalogProduct.category_3, "")),
+        )
         rows = (
-            base.filter(*active, or_(cat.in_(parent), sec.in_(parent)))
+            base.filter(*active, or_(*[slot.in_(parent) for slot in slots]))
             .order_by(CatalogProduct.our_product_id.asc(), CatalogProduct.id.asc())
             .limit(2000)
             .all()
@@ -53,7 +56,7 @@ def search_journal_products(
     else:
         # Item number, vendor, or an exact other category such as BOX NO. 09.
         # A series code is not a parent album, and a loose "album" substring is not either.
-        exact_category = func.lower(CatalogProduct.category) == needle
+        exact_category = category_name_match(needle)
         category_hit = (
             db.query(CatalogProduct.id)
             .filter(*active, exact_category)

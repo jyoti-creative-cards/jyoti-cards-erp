@@ -43,6 +43,7 @@
           vendor_city: p.vendor_city,
           category: p.category,
           second_category: p.second_category,
+          category_3: p.category_3,
           series: p.series,
           year_group: p.year_group,
           marking: p.marking,
@@ -68,6 +69,7 @@
           vendor_city: p.vendor_city,
           category: p.category,
           second_category: p.second_category,
+          category_3: p.category_3,
           series: p.series,
           year_group: p.year_group,
           marking: p.marking,
@@ -101,7 +103,7 @@
       // Catalog and stock products are already filtered on the server
       if ((catalogServer || stockServer) && it.kind === "product") return true;
       if (filters.vendor_id && String(it.vendor_id) !== String(filters.vendor_id)) return false;
-      if (filters.category && (it.category || "") !== filters.category && (it.second_category || "") !== filters.category) return false;
+      if (filters.category && (it.category || "") !== filters.category && (it.second_category || "") !== filters.category && (it.category_3 || "") !== filters.category) return false;
       if (filters.year_group && (it.year_group || "") !== filters.year_group) return false;
       const sellOrBuy = it.kind === "product"
         ? Number(it.selling_price != null && it.selling_price !== "" ? it.selling_price : it.buying_price)
@@ -287,7 +289,7 @@
             ${itemIdHtml(it)}
             ${it.kind === "addon" ? "" : `<div class="prod-card-vendor">${ctx.esc(vendorLine(it))}</div>`}
             ${it.kind === "addon" ? "" : (it.category
-              ? `<div class="prod-card-cat"><span class="prod-cat-badge">${ctx.esc(it.category)}</span>${it.second_category ? `<span class="prod-cat-badge">${ctx.esc(it.second_category)}</span>` : ""}</div>`
+              ? `<div class="prod-card-cat"><span class="prod-cat-badge">${ctx.esc(it.category)}</span>${it.second_category ? `<span class="prod-cat-badge">${ctx.esc(it.second_category)}</span>` : ""}${it.category_3 ? `<span class="prod-cat-badge">${ctx.esc(it.category_3)}</span>` : ""}</div>`
               : `<div class="prod-card-cat"><span class="prod-cat-badge is-empty">No category</span></div>`)}
             ${it.marking ? `<div class="prod-card-cat"><span class="badge badge-blue" style="font-size:10px;">${ctx.esc(it.marking)}</span></div>` : ""}
             ${(isStockProduct || showsAddonStock) ? `<div class="prod-card-qty-block">
@@ -322,7 +324,7 @@
           </td>
           <td><span class="badge ${it.kind === "addon" ? "badge-amber" : "badge-blue"}">${it.kind === "addon" ? "Add-on" : "Product"}</span></td>
           <td>${ctx.esc(vendorLine(it))}</td>
-          <td>${ctx.esc(it.category || "—")}${it.second_category ? ` · ${ctx.esc(it.second_category)}` : ""}</td>
+          <td>${ctx.esc(it.category || "—")}${it.second_category ? ` · ${ctx.esc(it.second_category)}` : ""}${it.category_3 ? ` · ${ctx.esc(it.category_3)}` : ""}</td>
           ${mainTab === "stock" ? `<td class="prod-list-qty-cell">${(it.kind === "product" || it.kind === "addon") ? `<strong class="prod-list-qty-big">${it.qty ?? 0}</strong>` : "—"}</td>
           <td>${st ? `<span class="badge ${st.cls === "is-ok" ? "badge-green" : st.cls === "is-low" ? "badge-amber" : st.cls === "is-neg" ? "badge-red" : "badge-gray"}">${st.label}</span>` : "—"}</td>` : ""}
           <td class="prod-list-price">${it.kind === "product" ? (hasRealSell(it) ? fmtPrice(it.selling_price) : '<span class="prod-price-missing">Not set</span>') : "—"}</td>

@@ -146,6 +146,7 @@ def init_db() -> None:
         _migrate_customer_bill_closed()
         _migrate_bill_number_unique()
         _migrate_catalog_marking()
+        _migrate_catalog_category_3()
         _migrate_vendor_cash_discount_gst()
         _migrate_expense_is_cash()
         with engine.begin() as conn:
@@ -440,6 +441,25 @@ def _migrate_expense_is_cash() -> None:
             _exec_sql(
                 conn,
                 "ALTER TABLE jc_expenses ADD COLUMN IF NOT EXISTS is_cash BOOLEAN NOT NULL DEFAULT TRUE",
+                critical=False,
+            )
+
+
+def _migrate_catalog_category_3() -> None:
+    """Third album slot. A custom catalog such as ALBUM NO. 123 sits here
+    without moving the product out of its home album or its second album."""
+    with engine.begin() as conn:
+        if _is_sqlite:
+            _exec_sql(conn, "ALTER TABLE jc_catalog_products ADD COLUMN category_3 VARCHAR(120)", critical=False)
+        else:
+            _exec_sql(
+                conn,
+                "ALTER TABLE jc_catalog_products ADD COLUMN IF NOT EXISTS category_3 VARCHAR(120)",
+                critical=False,
+            )
+            _exec_sql(
+                conn,
+                "CREATE INDEX IF NOT EXISTS ix_jc_catalog_products_category_3 ON jc_catalog_products (category_3)",
                 critical=False,
             )
 

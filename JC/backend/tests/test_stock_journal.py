@@ -14,7 +14,7 @@ from app.models.accounts_payable import ApLedgerEntry
 from app.models.accounts_receivable import ArLedgerEntry
 from app.models.catalog_product import CatalogProduct
 from app.models.expense import Expense
-from app.models.stock import StockBalance
+from app.models.stock import StockBalance, StockLedger
 from app.models.vendor import Vendor
 from app.schemas.stock_journal import JournalIn, JournalLineIn
 from app.services.biz_date import today_ist
@@ -205,6 +205,45 @@ def test_item_in_two_albums_is_on_both_expenses(db):
     assert _hand(db, only_two.id) == 4
     assert _hand(db, only_four.id) == 4
     assert _hand(db, shared.id) == 3
+
+
+def test_album_123_uses_third_category_and_posts_expense(db):
+    vendor = _vendor(db)
+    home = _product(db, vendor, "1044", category="ALBUM NO. 01", buying=Decimal("8.00"), stock=6)
+    home.second_category = "ALBUM NO. 02"
+    home.category_3 = "ALBUM NO. 123"
+    outsider = _product(db, vendor, "5151", category="ALBUM NO. 02", buying=Decimal("3.00"), stock=6)
+    db.commit()
+
+    saved = post_journal(
+        db,
+        JournalIn(journal_date=today_ist(), kind="consumption", album="ALBUM NO. 123", copies=2),
+        AUTH,
+    )
+    assert {ln.our_product_id for ln in saved.lines} == {"1044"}
+    assert saved.lines[0].quantity_delta == -2
+    assert Decimal(saved.total_cost) == Decimal("16.00")
+    assert saved.expense_category == "sample catalogues"
+    expense = db.get(Expense, saved.expense_id)
+    assert expense.amount == Decimal("16.00")
+    assert expense.category == "sample catalogues"
+    assert _hand(db, home.id) == 4
+    assert _hand(db, outsider.id) == 6
+    ledger = (
+        db.query(StockLedger)
+        .filter(StockLedger.catalog_product_id == home.id, StockLedger.entry_type == "journal")
+        .one()
+    )
+    assert ledger.quantity_delta == -2
+    assert ledger.balance_after == 4
+
+    album_one = post_journal(
+        db,
+        JournalIn(journal_date=today_ist(), kind="consumption", album="Album 1", copies=1),
+        AUTH,
+    )
+    assert {ln.our_product_id for ln in album_one.lines} == {"1044"}
+    assert _hand(db, home.id) == 3
 
 
 def test_album_without_a_buying_price_still_posts(db):

@@ -91,6 +91,7 @@ def list_products(
         q = q.filter(or_(
             CatalogProduct.category == category,
             CatalogProduct.second_category == category,
+            CatalogProduct.category_3 == category,
         ))
     if series:
         q = q.filter(CatalogProduct.series == series)
@@ -119,6 +120,7 @@ def list_products(
             func.lower(CatalogProduct.vendor_product_id).like(s),
             func.lower(func.coalesce(CatalogProduct.category, "")).like(s),
             func.lower(func.coalesce(CatalogProduct.second_category, "")).like(s),
+            func.lower(func.coalesce(CatalogProduct.category_3, "")).like(s),
             func.lower(func.coalesce(CatalogProduct.series, "")).like(s),
             func.lower(func.coalesce(CatalogProduct.year_group, "")).like(s),
             func.lower(func.coalesce(Vendor.business_name, "")).like(s),

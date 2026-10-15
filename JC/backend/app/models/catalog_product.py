@@ -21,6 +21,8 @@ class CatalogProduct(Base):
     category: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
     # Second album, when a product is in two categories. Blank for every other product.
     second_category: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
+    # Third album, for a custom pick list such as ALBUM NO. 123. Home album and second album stay put.
+    category_3: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
     series: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
     unit: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     year_group: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)

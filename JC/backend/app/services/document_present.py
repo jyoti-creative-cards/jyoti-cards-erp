@@ -662,7 +662,7 @@ def _refresh_line_masters(db: Session, lines: list) -> None:
             for a in db.query(AddonProduct).filter(AddonProduct.id.in_(set(addon_ids))).all()
         }
     identity = (
-        "our_product_id", "vendor_product_id", "category", "second_category",
+        "our_product_id", "vendor_product_id", "category", "second_category", "category_3",
         "year_group", "marking", "series", "unit",
     )
     for ln in lines:

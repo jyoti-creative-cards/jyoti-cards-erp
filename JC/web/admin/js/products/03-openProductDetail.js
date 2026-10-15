@@ -88,6 +88,8 @@
           ${ctx.reviewRow("Vendor Product ID", cat.vendor_product_id)}
           ${ctx.reviewRow("Year Group", cat.year_group)}
           ${ctx.reviewRow("Category", cat.category)}
+          ${ctx.reviewRow("Second category", cat.second_category)}
+          ${ctx.reviewRow("Third category", cat.category_3)}
           ${ctx.reviewRow("Marking", cat.marking)}
           ${ctx.reviewRow("Created", ctx.fmtDate(cat.created_at))}
           ${ctx.reviewRow("Updated", ctx.fmtDate(cat.updated_at))}
@@ -149,6 +151,8 @@
                  <span class="badge ${statusBadge}">${ctx.esc((stock.stock_status || "").replace(/_/g, " "))}</span>`
               : `<span class="badge badge-gray">No stock yet</span>`}
             ${cat?.category ? `<span class="badge badge-gray">${ctx.esc(cat.category)}</span>` : ""}
+            ${cat?.second_category ? `<span class="badge badge-gray">${ctx.esc(cat.second_category)}</span>` : ""}
+            ${cat?.category_3 ? `<span class="badge badge-gray">${ctx.esc(cat.category_3)}</span>` : ""}
             ${(cat?.marking || stock?.marking) ? `<span class="badge badge-amber">${ctx.esc(cat?.marking || stock?.marking)}</span>` : ""}
           </div>
           ${images}

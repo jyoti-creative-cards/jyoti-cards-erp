@@ -223,6 +223,7 @@
           <span class="badge badge-blue">Buy ${fmtPrice(p.buying_price)}</span>
           ${p.category ? `<span class="badge badge-gray">${ctx.esc(p.category)}</span>` : ""}
           ${p.second_category ? `<span class="badge badge-gray">${ctx.esc(p.second_category)}</span>` : ""}
+          ${p.category_3 ? `<span class="badge badge-gray">${ctx.esc(p.category_3)}</span>` : ""}
         </div>
         ${images}
       </div>

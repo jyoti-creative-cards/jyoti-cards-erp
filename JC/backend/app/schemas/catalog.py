@@ -16,6 +16,7 @@ class CatalogProductPublic(BaseModel):
     vendor_product_id: str
     category: Optional[str]
     second_category: Optional[str] = None
+    category_3: Optional[str] = None
     series: Optional[str]
     unit: Optional[str]
     year_group: Optional[str]
@@ -128,6 +129,7 @@ class CatalogUpdate(BaseModel):
     vendor_product_id: Optional[str] = None
     category: Optional[str] = None
     second_category: Optional[str] = None
+    category_3: Optional[str] = None
     series: Optional[str] = None
     unit: Optional[str] = None
     year_group: Optional[str] = None

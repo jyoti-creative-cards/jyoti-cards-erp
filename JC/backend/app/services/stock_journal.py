@@ -67,6 +67,21 @@ def album_parent_needles(typed: str) -> set[str] | None:
     return {f"album no. {number:02d}", text}
 
 
+def _category_slots():
+    """Home album, second album, and the third album (custom catalogs such as 123)."""
+    return (
+        func.lower(CatalogProduct.category),
+        func.lower(func.coalesce(CatalogProduct.second_category, "")),
+        func.lower(func.coalesce(CatalogProduct.category_3, "")),
+    )
+
+
+def category_name_match(needle: str):
+    """Exact match on any of the three category slots."""
+    text = (needle or "").strip().lower()
+    return or_(*[slot == text for slot in _category_slots()])
+
+
 def _album_products(db: Session, name: str) -> list[CatalogProduct]:
     typed = (name or "").strip()
     if not typed:
@@ -83,13 +98,12 @@ def _album_products(db: Session, name: str) -> list[CatalogProduct]:
     )
     # Parent album, including a design that also sits in another album.
     # Series (1000, 4000, …) is a subgroup and is not an album on its own.
-    cat = func.lower(CatalogProduct.category)
-    sec = func.lower(func.coalesce(CatalogProduct.second_category, ""))
+    # category_3 is the custom catalog slot (ALBUM NO. 123) and does not move the home album.
+    slots = _category_slots()
     if needles:
-        cond = or_(cat.in_(needles), sec.in_(needles))
+        cond = or_(*[slot.in_(needles) for slot in slots])
     else:
-        needle = typed.lower()
-        cond = or_(cat == needle, sec == needle)
+        cond = category_name_match(typed)
     rows = (
         db.query(CatalogProduct)
         .filter(*active, cond)

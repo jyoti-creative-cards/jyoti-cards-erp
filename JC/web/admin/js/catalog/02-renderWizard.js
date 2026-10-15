@@ -280,11 +280,13 @@
           </select></div>
         <div><label class="label">Vendor Product ID</label>
           <input id="ce-vendor_product_id" class="input" value="${ctx.esc(p.vendor_product_id)}" /></div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
           <div><label class="label">Category</label>
             ${categoryField("ce-category", p.category)}</div>
           <div><label class="label">Second category</label>
             ${categoryField("ce-second_category", p.second_category)}</div>
+          <div><label class="label">Third category</label>
+            ${categoryField("ce-category_3", p.category_3)}</div>
         </div>
         <div>
           <label class="label">Year Group ${ctx.isAdmin?.() ? "" : "(admin only)"}</label>
@@ -418,6 +420,7 @@
       vendor_product_id: document.getElementById("ce-vendor_product_id").value.trim(),
       category: document.getElementById("ce-category").value || null,
       second_category: document.getElementById("ce-second_category").value || null,
+      category_3: document.getElementById("ce-category_3").value || null,
       marking: document.getElementById("ce-marking")?.value.trim() || null,
       year_group: ctx.isAdmin?.()
         ? (document.getElementById("ce-year_group")?.value || null)

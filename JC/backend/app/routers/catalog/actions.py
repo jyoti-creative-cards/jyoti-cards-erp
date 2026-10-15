@@ -122,13 +122,13 @@ def product_options(db: Session = Depends(get_db)) -> list[dict]:
 def list_product_categories(db: Session = Depends(get_db)) -> list[str]:
     """Category dropdown values, taken from the products themselves."""
     rows = (
-        db.query(CatalogProduct.category, CatalogProduct.second_category)
+        db.query(CatalogProduct.category, CatalogProduct.second_category, CatalogProduct.category_3)
         .filter(CatalogProduct.is_active.is_(True), CatalogProduct.deleted_at.is_(None))
         .all()
     )
     found: set[str] = set()
-    for category, second in rows:
-        for value in (category, second):
+    for category, second, third in rows:
+        for value in (category, second, third):
             text = (value or "").strip()
             if text:
                 found.add(text)

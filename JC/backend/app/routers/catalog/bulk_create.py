@@ -299,6 +299,7 @@ def _to_public(
         vendor_product_id=row.vendor_product_id,
         category=row.category,
         second_category=row.second_category,
+        category_3=row.category_3,
         series=row.series,
         unit=row.unit,
         year_group=row.year_group,

@@ -118,6 +118,7 @@ def list_stock(
             OR lower(COALESCE(p.vendor_product_id, '')) LIKE :search
             OR lower(COALESCE(p.category, '')) LIKE :search
             OR lower(COALESCE(p.second_category, '')) LIKE :search
+            OR lower(COALESCE(p.category_3, '')) LIKE :search
             OR lower(COALESCE(p.series, '')) LIKE :search
             OR lower(COALESCE(p.year_group, '')) LIKE :search
             OR lower(COALESCE(v.business_name, '')) LIKE :search
@@ -167,6 +168,7 @@ def list_stock(
               p.vendor_id,
               p.category,
               p.second_category,
+              p.category_3,
               p.series,
               p.year_group,
               p.marking,
@@ -216,6 +218,7 @@ def list_stock(
                 vendor_label=label,
                 category=r["category"],
                 second_category=r["second_category"],
+                category_3=r["category_3"],
                 series=r["series"],
                 year_group=r["year_group"],
                 marking=r["marking"],
@@ -265,6 +268,7 @@ def _list_stock_sqlite(
                 func.lower(func.coalesce(CatalogProduct.vendor_product_id, "")).like(like),
                 func.lower(func.coalesce(CatalogProduct.category, "")).like(like),
                 func.lower(func.coalesce(CatalogProduct.second_category, "")).like(like),
+                func.lower(func.coalesce(CatalogProduct.category_3, "")).like(like),
                 func.lower(func.coalesce(CatalogProduct.series, "")).like(like),
                 func.lower(func.coalesce(CatalogProduct.year_group, "")).like(like),
                 func.lower(func.coalesce(Vendor.business_name, "")).like(like),
@@ -293,6 +297,7 @@ def _list_stock_sqlite(
                 vendor_label=label,
                 category=product.category,
                 second_category=product.second_category,
+                category_3=product.category_3,
                 series=product.series,
                 year_group=product.year_group,
                 marking=product.marking,
@@ -351,6 +356,7 @@ def _stock_scope(db: Session, search: str, year_group: str):
             func.lower(func.coalesce(CatalogProduct.vendor_product_id, "")).like(like),
             func.lower(func.coalesce(CatalogProduct.category, "")).like(like),
             func.lower(func.coalesce(CatalogProduct.second_category, "")).like(like),
+            func.lower(func.coalesce(CatalogProduct.category_3, "")).like(like),
             func.lower(func.coalesce(CatalogProduct.series, "")).like(like),
             func.lower(func.coalesce(CatalogProduct.year_group, "")).like(like),
             func.lower(func.coalesce(Vendor.business_name, "")).like(like),
@@ -378,6 +384,7 @@ def _apply_stock_filters(
         q = q.filter(or_(
             CatalogProduct.category == category,
             CatalogProduct.second_category == category,
+            CatalogProduct.category_3 == category,
         ))
     price = func.coalesce(CatalogProduct.selling_price, CatalogProduct.buying_price)
     if price_min is not None:
@@ -477,6 +484,7 @@ def browse_stock(
             vendor_label=label,
             category=product.category,
             second_category=product.second_category,
+            category_3=product.category_3,
             series=product.series,
             year_group=product.year_group,
             marking=product.marking,

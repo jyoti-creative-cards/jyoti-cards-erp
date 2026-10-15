@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     whatsapp_disable: bool = False
     # Comma-separated staff phones for new customer-order alerts (10-digit or E.164).
     whatsapp_staff_notify_phones: str = ""
+    # Meta webhook handshake. Empty means the callback refuses verification.
+    whatsapp_webhook_verify_token: str = ""
+    # App secret. When set, inbound posts must carry a valid X-Hub-Signature-256.
+    whatsapp_app_secret: str = ""
     customer_portal_url: str = ""
     customer_portal_url_button_suffix: str = ""
 

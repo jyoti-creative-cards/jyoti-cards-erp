@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>JC Admin — Jyoti Creative</title>
-  <link rel="stylesheet" href="styles.css?v=ui63" />
+  <link rel="stylesheet" href="styles.css?v=ui64" />
 </head>
 <body>
   <div id="toasts"></div>
@@ -62,6 +62,7 @@
         <button class="nav-item hidden" id="nav-reports" onclick="App.showView('reports')" aria-hidden="true"></button>
         <button class="nav-item hidden" id="nav-setup" onclick="App.showView('setup')" aria-hidden="true"></button>
         <button class="nav-item hidden" id="nav-recycle" onclick="App.showView('recycle')" aria-hidden="true"></button>
+        <button class="nav-item hidden" id="nav-whatsapp" onclick="WhatsAppInbox.open()" aria-hidden="true"></button>
       </nav>
       <div style="padding:12px;border-top:1px solid var(--border);">
         <div id="user-badge" style="font-size:11px;color:var(--muted);margin-bottom:8px;text-align:center;"></div>
@@ -114,6 +115,12 @@
               <span class="big-tile-letter">S</span>
               <span class="big-tile-title">Print sticker</span>
               <span class="big-tile-desc">A5 label · past prints</span>
+            </button>
+            <button type="button" class="big-tile ui-tile setup-tile" id="more-tile-whatsapp" onclick="WhatsAppInbox.open()">
+              <span class="setup-tile-tag">Messages</span>
+              <span class="big-tile-letter">W</span>
+              <span class="big-tile-title">WhatsApp inbox</span>
+              <span class="big-tile-desc">Customer replies on this number</span>
             </button>
             <button type="button" class="big-tile ui-tile setup-tile" id="more-tile-setup" onclick="App.showView('setup')">
               <span class="setup-tile-tag">Config</span>
@@ -744,6 +751,31 @@
         </div>
       </div>
 
+      <div id="view-whatsapp" class="view hidden">
+        <div class="setup-page">
+          <div class="ui-hero setup-page-hero">
+            <div>
+              <h2 class="setup-page-title">WhatsApp inbox</h2>
+              <p class="setup-page-sub">Replies that customers send to the Jyoti number. A free reply works for 24 hours after they write. Order, bill, and dispatch updates still go out on their own.</p>
+            </div>
+            <div class="ui-hero-actions">
+              <button class="btn btn-secondary btn-lg" type="button" onclick="WhatsAppInbox.load()">Refresh</button>
+            </div>
+          </div>
+          <div class="wa-inbox">
+            <div class="wa-threads" id="wa-threads"></div>
+            <div class="wa-chat">
+              <div class="wa-chat-head" id="wa-chat-head">Select a chat</div>
+              <div class="wa-bubbles" id="wa-bubbles"></div>
+              <form class="wa-reply" id="wa-reply" onsubmit="return WhatsAppInbox.send(event)">
+                <input id="wa-reply-text" type="text" maxlength="4000" placeholder="Reply" autocomplete="off" />
+                <button class="btn btn-primary" type="submit">Send</button>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Recycle Bin -->
       <div id="view-recycle" class="view hidden">
         <div class="setup-page">
@@ -1138,5 +1170,6 @@
   <script src="js/freight-agents.js?v=ui66"></script>
   <script src="js/calculator.js?v=ui1"></script>
   <script src="app.js?v=ui82"></script>
+  <script src="js/whatsapp-inbox.js?v=ui1"></script>
 </body>
 </html>

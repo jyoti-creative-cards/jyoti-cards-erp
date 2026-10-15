@@ -28,6 +28,7 @@ from app.models.manual_loss import ManualLoss
 from app.models.payment_mode import PaymentMode
 from app.models.sticker_label import StickerLabel
 from app.models.sticker_print import StickerPrint
+from app.models.whatsapp_message import WhatsAppMessage
 
 __all__ = [
     "ActivityLog", "AddonProduct", "AddonStockLedger", "CatalogAddonLink", "CatalogAlternative",
@@ -40,4 +41,5 @@ __all__ = [
     "StockJournal", "StockJournalLine",
     "DebitNote", "VendorApAccount", "ApLedgerEntry",
     "StickerLabel", "StickerPrint",
+    "WhatsAppMessage",
 ]

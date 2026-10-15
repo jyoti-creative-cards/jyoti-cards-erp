@@ -103,6 +103,7 @@ def init_db() -> None:
         DebitNote, VendorApAccount, ApLedgerEntry, ManualLoss,
         CustomerReturn, CustomerReturnLine,
         StickerLabel, StickerPrint,
+        WhatsAppMessage,
     )
 
     try:

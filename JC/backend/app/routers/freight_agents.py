@@ -206,6 +206,8 @@ def pick_freight_parcel(
         detail=f"agent {agent.name if agent else bill.freight_agent_id} ₹{bill.freight_charges}",
     )
     db.commit()
+    from app.services.whatsapp_notify import notify_dispatched
+    notify_dispatched(db, bill.id)
     return {"ok": True, "bill_id": bill.id, "status": "picked", "freight_agent_id": bill.freight_agent_id}
 
 

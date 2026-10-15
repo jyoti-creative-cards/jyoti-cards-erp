@@ -172,6 +172,67 @@ def send_document(
     })
 
 
+def send_template(
+    phone: str,
+    template_name: str,
+    *,
+    language: str,
+    body_params: list[str],
+    header_media_id: Optional[str] = None,
+    header_filename: str = "document.pdf",
+    url_button_suffix: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Send an approved template. Body slots are numbered {{1}}… in order.
+
+    A document header is the PDF. url_button_suffix fills a dynamic URL button {{1}}.
+    """
+    to = _e164(phone)
+    if not to:
+        return {"ok": False, "error": "invalid phone"}
+    components: list = []
+    if header_media_id:
+        components.append({
+            "type": "header",
+            "parameters": [{
+                "type": "document",
+                "document": {
+                    "id": header_media_id,
+                    "filename": (header_filename or "document.pdf")[:240],
+                },
+            }],
+        })
+    components.append({
+        "type": "body",
+        "parameters": [
+            {"type": "text", "text": _wa_param(value)}
+            for value in body_params
+        ],
+    })
+    if url_button_suffix is not None:
+        components.append({
+            "type": "button",
+            "sub_type": "url",
+            "index": "0",
+            "parameters": [{"type": "text", "text": _wa_param(url_button_suffix)[:1024]}],
+        })
+    return _post({
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": to,
+        "type": "template",
+        "template": {
+            "name": template_name,
+            "language": {"code": language},
+            "components": components,
+        },
+    })
+
+
+def _wa_param(value: object) -> str:
+    text = re.sub(r"\s+", " ", str(value or "").replace("\n", " ").replace("\t", " ")).strip()
+    return (text or "-")[:1024]
+
+
 def send_text(phone: str, body: str) -> Dict[str, Any]:
     to = _e164(phone)
     if not to:

@@ -332,6 +332,21 @@ def confirm_customer_order(
     customer = db.get(Customer, customer_id)
     if not customer or customer.deleted_at:
         raise HTTPException(404, "customer not found")
+    from app.models.customer_order import CustomerOrder, CustomerOrderPlacement
+    received_ids = [
+        int(row.id)
+        for row in (
+            db.query(CustomerOrderPlacement.id)
+            .join(CustomerOrder, CustomerOrder.id == CustomerOrderPlacement.customer_order_id)
+            .filter(
+                CustomerOrder.customer_id == customer_id,
+                CustomerOrder.bucket == "received",
+                CustomerOrderPlacement.status == "received",
+                CustomerOrderPlacement.deleted_at.is_(None),
+            )
+            .all()
+        )
+    ]
     confirmed = confirm_received_order(db, customer_id)
     if not confirmed:
         raise HTTPException(400, "no pending received order to confirm")
@@ -344,6 +359,9 @@ def confirm_customer_order(
         detail="Confirmed received order → open",
     )
     db.commit()
+    from app.services.whatsapp_notify import notify_order_confirmed
+    for placement_id in received_ids:
+        notify_order_confirmed(db, placement_id)
     return {"ok": True, "customer_id": customer_id}
 
 @router.post("/customer/{customer_id}/offline/preview")
@@ -458,7 +476,9 @@ def create_offline_customer_order(
     )
     db.commit()
     from app.services.doc_jobs import enqueue_order_pdf
+    from app.services.whatsapp_notify import notify_order_confirmed
     enqueue_order_pdf(placement.id)
+    notify_order_confirmed(db, placement.id)
     return {
         "ok": True,
         "placement_id": placement.id,

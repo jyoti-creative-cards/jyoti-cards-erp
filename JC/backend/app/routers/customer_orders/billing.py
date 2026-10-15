@@ -224,7 +224,9 @@ def submit_process_bill(
     log_from_auth(db, auth, action="bill", entity_type="customer_order", entity_id=bill.id, entity_label=customer.business_name, detail=f"Bill {bill.bill_number}")
     db.commit()
     from app.services.doc_jobs import enqueue_bill_pdf
+    from app.services.whatsapp_notify import notify_bill_created
     enqueue_bill_pdf(bill.id)
+    notify_bill_created(db, bill.id)
     response_cache.invalidate("stock:")
     response_cache.invalidate("shop:")
     response_cache.invalidate("catalog:")

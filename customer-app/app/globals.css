@@ -1,0 +1,30 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --jc-bg: #faf7f4;
+  --jc-bg-deep: #f0ebe6;
+  --jc-card: #ffffff;
+  --jc-ink: #1c1917;
+  --jc-muted: #57534e;
+  --jc-border: #e7e0da;
+  --jc-brand: #7c2d12;
+  --jc-brand-light: #991b1b;
+  --jc-accent: #c2410c;
+  --jc-accent-hover: #9a3412;
+  --jc-success: #166534;
+}
+
+body {
+  @apply antialiased;
+  color: var(--jc-ink);
+}
+
+.jc-page-bg {
+  background-color: var(--jc-bg);
+  background-image:
+    radial-gradient(ellipse 130% 90% at 50% -30%, rgba(124, 45, 18, 0.14), transparent 55%),
+    radial-gradient(ellipse 70% 50% at 100% 0%, rgba(194, 65, 12, 0.07), transparent 50%),
+    radial-gradient(ellipse 55% 45% at 0% 100%, rgba(124, 45, 18, 0.06), transparent 45%);
+}

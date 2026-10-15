@@ -135,6 +135,32 @@ class ShopOrderHistoryLine(BaseModel):
     has_bill_document: bool = False
 
 
+class PortalOrderItem(BaseModel):
+    catalog_product_id: int
+    our_product_id: str
+    quantity: int
+    unit_price: str
+
+
+class PortalOrderBill(BaseModel):
+    id: int
+    bill_number: str
+    dispatched: bool = False
+    receipt_number: Optional[str] = None
+
+
+class PortalOrderPublic(BaseModel):
+    """One customer order on the portal, from new through dispatch."""
+    id: int
+    status: str  # new | confirmed | billed | dispatched | cancelled
+    placed_at: str
+    customer_notes: Optional[str] = None
+    total_amount: str
+    items: List[PortalOrderItem] = []
+    bills: List[PortalOrderBill] = []
+    has_order_document: bool = True
+
+
 class ShopOrderHistoryPublic(BaseModel):
     id: int  # placement id
     placed_at: str

@@ -33,6 +33,9 @@ from app.schemas.shop import (
     ShopAlternativePublic,
     ShopAddonPublic,
     ShopLedgerEntryPublic,
+    PortalOrderBill,
+    PortalOrderItem,
+    PortalOrderPublic,
     ShopOrderHistoryLine,
     ShopOrderHistoryPublic,
     ShopProductPublic,
@@ -128,70 +131,114 @@ def list_order_history(
         )
     return out
 
-@router.get("/orders", response_model=List[PortalPlacementPublic])
+@router.get("/orders", response_model=List[PortalOrderPublic])
 def list_my_orders(
     db: Session = Depends(get_db),
     customer: Customer = Depends(get_current_customer),
+    status: Optional[str] = Query(None),
 ):
-    """Open-order lines (compat). Prefer /shop/orders/history for full history."""
-    received = (
+    """Every order this customer placed, with confirmed / billed / dispatched."""
+    orders = (
         db.query(CustomerOrder)
-        .filter(CustomerOrder.customer_id == customer.id, CustomerOrder.bucket == "received", CustomerOrder.is_open.is_(True))
-        .first()
+        .filter(
+            CustomerOrder.customer_id == customer.id,
+            CustomerOrder.bucket.in_(["received", "open", "cancelled", "closed"]),
+        )
+        .all()
     )
-    out: list[PortalPlacementPublic] = []
-    if not received:
-        return out
-
+    if not orders:
+        return []
+    by_id = {o.id: o for o in orders}
     placements = (
         db.query(CustomerOrderPlacement)
         .filter(
-            CustomerOrderPlacement.customer_order_id == received.id,
-            CustomerOrderPlacement.status == "received",
+            CustomerOrderPlacement.customer_order_id.in_(list(by_id)),
             CustomerOrderPlacement.deleted_at.is_(None),
         )
-        .order_by(CustomerOrderPlacement.placed_at.desc())
+        .order_by(CustomerOrderPlacement.placed_at.desc(), CustomerOrderPlacement.id.desc())
         .all()
     )
-    for p in placements:
-        lines = (
-            db.query(CustomerOrderLine)
-            .filter(CustomerOrderLine.placement_id == p.id, CustomerOrderLine.status.in_(["active", "billed"]))
-            .all()
+    if not placements:
+        return []
+    lines = (
+        db.query(CustomerOrderLine)
+        .filter(
+            CustomerOrderLine.placement_id.in_([p.id for p in placements]),
+            CustomerOrderLine.status.in_(["active", "billed", "cancelled"]),
         )
-        for ln in lines:
-            shipped = int(ln.quantity_billed or 0)
-            qty = int(ln.quantity or 0)
-            dealer_st = _dealer_status(qty, shipped)
-            prod = db.get(CatalogProduct, ln.catalog_product_id)
-            image_url = _image_url(prod) if prod else ""
-            bill = None
-            if shipped > 0:
-                bill = _find_bill_for_line(db, customer.id, ln.catalog_product_id, p.placed_at)
-            line_total = (ln.unit_price * ln.quantity).quantize(Decimal("0.01"))
-            out.append(
-                PortalPlacementPublic(
-                    id=p.id,
-                    line_id=ln.id,
-                    catalog_product_id=ln.catalog_product_id,
-                    our_product_id=prod.our_product_id if prod else ln.our_product_id,
-                    image_url=image_url,
-                    quantity=qty,
-                    quantity_shipped=shipped,
-                    unit_price=format(ln.unit_price, "f"),
-                    line_total=format(line_total, "f"),
-                    status=_legacy_status(dealer_st),
-                    customer_notes=p.customer_notes,
-                    placed_at=p.placed_at.isoformat(),
-                    bill_id=bill.id if bill else None,
-                    bill_number=bill.bill_number if bill else None,
-                    has_bill_document=bool(bill and bill.document_key) or bool(bill),
-                    has_order_document=bool(p.document_key),
-                    category=prod.category if prod else None,
-                    series=prod.series if prod else None,
-                    unit=prod.unit if prod else None,
-                )
+        .order_by(CustomerOrderLine.id.asc())
+        .all()
+    )
+    lines_by_placement: dict[int, list[CustomerOrderLine]] = {}
+    for ln in lines:
+        lines_by_placement.setdefault(ln.placement_id, []).append(ln)
+    bills = (
+        db.query(CustomerBill)
+        .filter(
+            CustomerBill.customer_id == customer.id,
+            CustomerBill.deleted_at.is_(None),
+            CustomerBill.cancelled_at.is_(None),
+        )
+        .all()
+    )
+    bill_lines: dict[int, list[CustomerBillLine]] = {}
+    if bills:
+        for bl in db.query(CustomerBillLine).filter(CustomerBillLine.bill_id.in_([b.id for b in bills])).all():
+            bill_lines.setdefault(bl.bill_id, []).append(bl)
+    want = (status or "").strip().lower()
+    if want == "shipped":
+        want = "dispatched"
+    out: list[PortalOrderPublic] = []
+    for placement in placements:
+        order = by_id.get(placement.customer_order_id)
+        if not order:
+            continue
+        own = lines_by_placement.get(placement.id) or []
+        visible = [ln for ln in own if ln.status != "cancelled"] or own
+        if not visible:
+            continue
+        linked = _bills_for_placement(placement, visible, placements, lines_by_placement, bills, bill_lines)
+        qty = sum(int(ln.quantity or 0) for ln in visible if ln.status != "cancelled")
+        billed = sum(int(ln.quantity_billed or 0) for ln in visible if ln.status != "cancelled")
+        state = portal_order_status(
+            bucket=order.bucket,
+            placement_status=placement.status,
+            quantity=qty,
+            quantity_billed=billed,
+            dispatched=any(b.freight_picked_at is not None for b in linked),
+        )
+        if want and want != "all" and state != want:
+            continue
+        total = sum((ln.unit_price * ln.quantity for ln in visible), Decimal("0")).quantize(Decimal("0.01"))
+        out.append(
+            PortalOrderPublic(
+                id=placement.id,
+                status=state,
+                placed_at=placement.placed_at.isoformat(),
+                customer_notes=placement.customer_notes,
+                total_amount=format(total, "f"),
+                items=[
+                    PortalOrderItem(
+                        catalog_product_id=ln.catalog_product_id,
+                        our_product_id=ln.our_product_id,
+                        quantity=int(ln.quantity or 0),
+                        unit_price=format(ln.unit_price, "f"),
+                    )
+                    for ln in visible
+                    if ln.status != "cancelled"
+                ],
+                bills=[
+                    PortalOrderBill(
+                        id=b.id,
+                        bill_number=b.bill_number,
+                        dispatched=b.freight_picked_at is not None,
+                        receipt_number=(b.transport_receipt_number or "").strip() or None,
+                    )
+                    for b in linked
+                ],
+                has_order_document=True,
             )
+        )
     return out
 
 def _alternatives_batch(db: Session, parent_ids: list[int], stock: dict[int, tuple[int, int]]) -> dict[int, List[ShopAlternativePublic]]:
@@ -447,6 +494,57 @@ def _sell_price(prod: CatalogProduct) -> str:
     if eff is not None and eff > 0:
         return _fmt_price(eff)
     return "0"
+
+def portal_order_status(
+    *,
+    bucket: str,
+    placement_status: str,
+    quantity: int,
+    quantity_billed: int,
+    dispatched: bool,
+) -> str:
+    """new, confirmed, billed, dispatched, or cancelled."""
+    if placement_status in {"cancelled", "void"} or bucket == "cancelled":
+        return "cancelled"
+    if quantity_billed <= 0:
+        if bucket == "received" or placement_status == "received":
+            return "new"
+        return "confirmed"
+    if dispatched:
+        return "dispatched"
+    return "billed"
+
+
+def _bills_for_placement(placement, lines, placements, lines_by_placement, bills, bill_lines):
+    """Bills that cover this order, not a later order of the same item."""
+    product_ids = {int(ln.catalog_product_id) for ln in lines if int(ln.quantity_billed or 0) > 0}
+    later = []
+    for other in placements:
+        if other.id == placement.id or other.placed_at <= placement.placed_at:
+            continue
+        other_products = {int(ln.catalog_product_id) for ln in lines_by_placement.get(other.id, [])}
+        if product_ids & other_products:
+            later.append(other.placed_at)
+    window_end = min(later) if later else None
+    matched = []
+    seen = set()
+    for bill in bills:
+        if bill.id in seen:
+            continue
+        if bill.placement_id == placement.id:
+            matched.append(bill)
+            seen.add(bill.id)
+            continue
+        if not product_ids or bill.created_at < placement.placed_at:
+            continue
+        if window_end is not None and bill.created_at >= window_end:
+            continue
+        if any(int(bl.catalog_product_id) in product_ids for bl in bill_lines.get(bill.id, [])):
+            matched.append(bill)
+            seen.add(bill.id)
+    matched.sort(key=lambda b: b.created_at)
+    return matched
+
 
 def _dealer_status(qty: int, shipped: int) -> str:
     if shipped <= 0:

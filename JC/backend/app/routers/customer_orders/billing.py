@@ -296,6 +296,8 @@ def cancel_bill_endpoint(
         detail=f"Bill {cancelled.bill_number} cancelled — {body.reason[:120]}",
     )
     db.commit()
+    from app.services.whatsapp_notify import notify_bill_cancelled
+    notify_bill_cancelled(db, cancelled.id)
     response_cache.invalidate("stock:")
     response_cache.invalidate("shop:")
     response_cache.invalidate("catalog:")

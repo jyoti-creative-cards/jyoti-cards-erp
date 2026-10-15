@@ -27,6 +27,8 @@ PORTAL_BUTTON_SUFFIX = "?"
 ORDER_TEMPLATE = "order_confirmation"
 BILL_TEMPLATE = "bill_ready_hindi"
 DISPATCH_TEMPLATE = "dispatch_ready_hindi"
+ORDER_CANCEL_TEMPLATE = "order_cancelled_hindi"
+BILL_CANCEL_TEMPLATE = "bill_cancelled_hindi"
 
 
 def order_confirmation_params(
@@ -44,6 +46,14 @@ def bill_ready_params(customer_name: str, bill_number: str, amount: str) -> list
 
 
 def dispatch_ready_params(customer_name: str, bill_number: str) -> list[str]:
+    return [customer_name, bill_number]
+
+
+def order_cancelled_params(customer_name: str, order_no: str) -> list[str]:
+    return [customer_name, order_no]
+
+
+def bill_cancelled_params(customer_name: str, bill_number: str) -> list[str]:
     return [customer_name, bill_number]
 
 
@@ -170,6 +180,53 @@ def notify_dispatched(db: Session, bill_id: int) -> None:
             logger.error("WhatsApp dispatch %s failed: %s", bill_id, result.get("error"))
     except Exception:
         logger.exception("WhatsApp dispatch %s failed", bill_id)
+
+
+def notify_order_cancelled(db: Session, placement_id: int) -> None:
+    if not _allow(db):
+        return
+    try:
+        placement = db.get(CustomerOrderPlacement, placement_id)
+        if not placement:
+            return
+        order = db.get(CustomerOrder, placement.customer_order_id)
+        if not order:
+            return
+        customer = db.get(Customer, order.customer_id)
+        if not customer or not customer.phone:
+            return
+        result = send_template(
+            customer.phone,
+            ORDER_CANCEL_TEMPLATE,
+            language="hi",
+            body_params=order_cancelled_params(customer.business_name or "Customer", str(placement.id)),
+        )
+        if not result.get("ok"):
+            logger.error("WhatsApp order cancel %s failed: %s", placement_id, result.get("error"))
+    except Exception:
+        logger.exception("WhatsApp order cancel %s failed", placement_id)
+
+
+def notify_bill_cancelled(db: Session, bill_id: int) -> None:
+    if not _allow(db):
+        return
+    try:
+        bill = db.get(CustomerBill, bill_id)
+        if not bill:
+            return
+        customer = db.get(Customer, bill.customer_id)
+        if not customer or not customer.phone:
+            return
+        result = send_template(
+            customer.phone,
+            BILL_CANCEL_TEMPLATE,
+            language="hi",
+            body_params=bill_cancelled_params(customer.business_name or "Customer", bill.bill_number),
+        )
+        if not result.get("ok"):
+            logger.error("WhatsApp bill cancel %s failed: %s", bill_id, result.get("error"))
+    except Exception:
+        logger.exception("WhatsApp bill cancel %s failed", bill_id)
 
 
 def _allow(db: Session) -> bool:

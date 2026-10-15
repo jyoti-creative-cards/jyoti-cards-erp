@@ -313,6 +313,9 @@ def generate_customer_bill_document(
         },
         agent_name=agent_name,
     )
+    from app.services.transport_mode import align_totals_to_bill_charges
+
+    totals = align_totals_to_bill_charges(totals, bill)
     bill.totals_json = totals
     flag_modified(bill, "totals_json")
     lines = totals.get("lines") or []

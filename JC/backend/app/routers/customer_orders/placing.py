@@ -256,6 +256,8 @@ def cancel_placement_endpoint(
         detail=f"cancelled placement #{placement_id}: {line_summary} — {body.reason[:120]}",
     )
     db.commit()
+    from app.services.whatsapp_notify import notify_order_cancelled
+    notify_order_cancelled(db, placement_id)
     response_cache.invalidate("stock:")
     response_cache.invalidate("shop:")
     response_cache.invalidate("catalog:")

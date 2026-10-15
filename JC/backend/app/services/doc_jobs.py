@@ -89,17 +89,32 @@ def bill_file_pdf_bytes(db: Session, bill_id: int) -> bytes | None:
         return fresh
 
 
-def bill_pdf_bytes(db: Session, bill_id: int) -> bytes | None:
+def _bill_for_pdf(db: Session, bill_id: int):
     from app.models.customer_bill import CustomerBill
 
+    existing = db.get(CustomerBill, bill_id)
+    if existing is not None:
+        db.expire(existing)
+    q = db.query(CustomerBill).filter(CustomerBill.id == bill_id)
+    if db.get_bind().dialect.name == "postgresql":
+        q = q.with_for_update()
+    return q.one_or_none()
+
+
+def bill_pdf_bytes(db: Session, bill_id: int) -> bytes | None:
+    from app.services.transport_mode import bill_totals_match_columns
+
     with _lock("bill", bill_id):
-        bill = db.get(CustomerBill, bill_id)
+        bill = _bill_for_pdf(db, bill_id)
         if not bill:
             return None
-        if bill.document_key:
+        # A stored print from before a freight edit still says the old amount.
+        if bill.document_key and bill_totals_match_columns(bill):
             stored = download_bytes(bill.document_key)
             if stored:
                 return stored
+        if bill.document_key:
+            bill.document_key = None
         generate_customer_bill_document(db, bill_id)
         fresh = getattr(bill, "_pdf_bytes", None)
         db.commit()

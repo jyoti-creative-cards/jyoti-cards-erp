@@ -105,7 +105,7 @@ const WhatsAppInbox = (() => {
   }
 
   async function open() {
-    if (window.App?.showView) App.showView("whatsapp");
+    App.showView("whatsapp");
     document.getElementById("nav-more")?.classList.add("active");
     try {
       await load();

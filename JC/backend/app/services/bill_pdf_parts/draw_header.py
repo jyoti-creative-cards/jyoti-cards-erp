@@ -266,9 +266,11 @@ def _draw_page(
     remarks: str,
     printed: datetime | None,
     header_kw: dict,
+    pay_qr=None,
+    show_disc_label: bool = True,
 ) -> None:
     _draw_header(c, page_no=page_no, show_printed=(page_no == 1), **header_kw)
-    _draw_table_head(c, table_top)
+    _draw_table_head(c, table_top, show_disc_label=show_disc_label)
     cursor = table_top + HEAD_H
     for row in page["running"] + page["closing"]:
         if row["kind"] in ("item", "addon"):
@@ -287,15 +289,15 @@ def _draw_page(
         photo_top = total_top + TOTAL_H
         _draw_verticals(c, photo_top, BOX_BOTTOM, outer_only=True)
         _draw_photos(c, photos, photo_top + 2, max(0.0, BOX_BOTTOM - photo_top - 4))
-        _draw_footer(c, grand=grand, remarks=remarks, printed=printed, continued=False)
+        _draw_footer(c, grand=grand, remarks=remarks, printed=printed, continued=False, pay_qr=pay_qr)
     else:
         _draw_verticals(c, table_top, BOX_BOTTOM_CONT)
         c.setStrokeColorRGB(0, 0, 0)
         c.setLineWidth(0.6)
         c.line(LEFT, _y(BOX_BOTTOM_CONT), RIGHT, _y(BOX_BOTTOM_CONT))
-        _draw_footer(c, grand=grand, remarks=remarks, printed=printed, continued=True)
+        _draw_footer(c, grand=grand, remarks=remarks, printed=printed, continued=True, pay_qr=None)
 
-def _draw_table_head(c: canvas.Canvas, top: float) -> None:
+def _draw_table_head(c: canvas.Canvas, top: float, *, show_disc_label: bool = True) -> None:
     bottom = top + HEAD_H
     c.setStrokeColorRGB(0, 0, 0)
     c.setLineWidth(0.6)
@@ -316,6 +318,8 @@ def _draw_table_head(c: canvas.Canvas, top: float) -> None:
     for idx, line1, line2 in labels:
         x0, x1 = COLS[idx], COLS[idx + 1]
         mid = (x0 + x1) / 2
+        if idx == 6 and not show_disc_label:
+            continue
         if line2:
             c.drawCentredString(mid, _y(top + 11), line1)
             c.setFont("Helvetica", 7)

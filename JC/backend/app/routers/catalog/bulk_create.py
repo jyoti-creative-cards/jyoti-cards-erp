@@ -30,6 +30,7 @@ from app.schemas.catalog import (
     CatalogUpdate,
     CheckDuplicatesRequest,
     CheckDuplicatesResponse,
+    AlternativeLinkIn,
     VendorOption,
 )
 from app.services.activity import log_from_auth
@@ -331,15 +332,24 @@ def add_product_alternative(
     if not row or not row.is_active or row.deleted_at:
         raise HTTPException(404, "product not found")
     alt_oid = (body.alternative_our_product_id or "").strip()
-    alt = (
-        db.query(CatalogProduct)
-        .filter(
-            CatalogProduct.our_product_id == alt_oid,
-            CatalogProduct.is_active.is_(True),
-            CatalogProduct.deleted_at.is_(None),
+    alt = None
+    if body.alternative_product_id:
+        alt = db.get(CatalogProduct, int(body.alternative_product_id))
+        if alt and (not alt.is_active or alt.deleted_at):
+            alt = None
+    if alt is None and alt_oid:
+        matches = (
+            db.query(CatalogProduct)
+            .filter(
+                CatalogProduct.our_product_id == alt_oid,
+                CatalogProduct.is_active.is_(True),
+                CatalogProduct.deleted_at.is_(None),
+            )
+            .all()
         )
-        .first()
-    )
+        if len(matches) > 1:
+            raise HTTPException(400, "several products share that id — pick one from the list")
+        alt = matches[0] if matches else None
     if not alt:
         raise HTTPException(404, "alternative product not found")
     if alt.id == product_id:

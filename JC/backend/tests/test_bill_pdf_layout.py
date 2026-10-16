@@ -187,3 +187,30 @@ def test_transport_mode_prints_transport_charges():
     assert "TR-19" in text
     assert "Freight Charges" not in text
     assert text.count("Cash") == 2
+
+
+def test_discount_bill_keeps_disc_column_and_pay_qr():
+    text = _pdf_text(_render(1, gst=False))
+    assert "Disc. %" in text
+    assert "Scan to Pay" in text
+
+
+def test_net_rate_bill_hides_disc_column():
+    totals = _totals(1, gst=False)
+    line = totals["lines"][0]
+    line["price_entry"] = "net"
+    line["net_rate"] = "22.50"
+    pdf = render_customer_bill_pdf(
+        bill_id=11,
+        order_id=11,
+        bill_number="B11",
+        customer_name="Sharma Gift House",
+        customer_company=None,
+        totals=totals,
+        copies=1,
+        with_labels=False,
+    )
+    text = _pdf_text(pdf)
+    assert "Scan to Pay" in text
+    assert "Disc. %" not in text
+    assert "22.50" in text

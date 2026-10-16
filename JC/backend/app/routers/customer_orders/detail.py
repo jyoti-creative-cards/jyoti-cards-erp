@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date, datetime, timezone
+import json
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -83,6 +84,39 @@ def _line_net_rate(bill: CustomerBill, ln: CustomerBillLine) -> str | None:
         return format((Decimal(str(ln.line_total)) / Decimal(qty)).quantize(Decimal("0.01")), "f")
     return None
 
+def _price_entries(bill: CustomerBill) -> dict[int, str]:
+    raw = bill.totals_json
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            return {}
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[int, str] = {}
+    for ln in raw.get("lines") or []:
+        if not isinstance(ln, dict):
+            continue
+        entry = ln.get("price_entry")
+        cid = ln.get("catalog_product_id")
+        if entry not in ("net", "discount") or cid is None:
+            continue
+        try:
+            out[int(cid)] = entry
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _hide_discount_column(bill: CustomerBill, entries: dict[int, str]) -> bool:
+    if bill.discount_percent is not None and bill.discount_percent > 0:
+        return False
+    if not entries:
+        return False
+    vals = set(entries.values())
+    return "net" in vals and "discount" not in vals
+
+
 def serialize_customer_bill(
     db: Session,
     bill: CustomerBill,
@@ -115,6 +149,7 @@ def serialize_customer_bill(
         bill_status = "closed"
     else:
         bill_status = "open"
+    entries = _price_entries(bill)
     return CustomerBillOut(
         id=bill.id,
         bill_number=bill.bill_number,
@@ -141,6 +176,8 @@ def serialize_customer_bill(
         cancel_reason=bill.cancel_reason,
         deleted_at=bill.deleted_at,
         deleted_reason=bill.deleted_reason,
+        hide_discount_column=_hide_discount_column(bill, entries),
+        has_custom_qr=bool(bill.payment_qr_key),
         lines=[
             CustomerBillLineOut(
                 id=ln.id,
@@ -153,6 +190,7 @@ def serialize_customer_bill(
                 line_total=format(ln.line_total, "f"),
                 discount_percent=format(ln.discount_percent, "f") if ln.discount_percent is not None else None,
                 net_rate=_line_net_rate(bill, ln),
+                price_entry=entries.get(int(ln.catalog_product_id)) if ln.catalog_product_id else None,
                 status=ln.status,
                 close_reason=ln.close_reason,
                 addons=addon_by_cid.get(int(ln.catalog_product_id), []),

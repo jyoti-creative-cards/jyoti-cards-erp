@@ -97,6 +97,28 @@ def _draw_charge(c: canvas.Canvas, row: dict, top: float) -> None:
     c.drawRightString(COLS[2] - 6, _y(top + 10), label)
     _draw_amount(c, top, _money(row["amount"], whole=True))
 
+def _draw_pay_qr(c: canvas.Canvas, pay_qr) -> None:
+    """Default or per-bill QR, with the caption under it, on the right of the remarks."""
+    if pay_qr is None:
+        return
+    size = 72.0
+    x = RIGHT - size
+    top = 648.0
+    c.drawImage(
+        pay_qr,
+        x,
+        _y(top + size),
+        width=size,
+        height=size,
+        preserveAspectRatio=True,
+        anchor="c",
+        mask="auto",
+    )
+    c.setFillColorRGB(0, 0, 0)
+    c.setFont("Helvetica-Bold", 8)
+    c.drawCentredString(x + size / 2, _y(top + size + 12), "Scan to Pay")
+
+
 def _draw_footer(
     c: canvas.Canvas,
     *,
@@ -104,6 +126,7 @@ def _draw_footer(
     remarks: str,
     printed: datetime | None,
     continued: bool,
+    pay_qr=None,
 ) -> None:
     c.setFillColorRGB(0, 0, 0)
     if continued:
@@ -125,8 +148,7 @@ def _draw_footer(
         if remarks:
             c.setFont("Helvetica", 9)
             c.drawString(LEFT, _y(666), remarks[:90])
-        c.setFont("Helvetica-Bold", 7)
-        c.drawRightString(RIGHT, _y(652), "SCAN TO PAY")
+        _draw_pay_qr(c, pay_qr)
 
         c.setStrokeColorRGB(0, 0, 0)
         c.setLineWidth(0.4)
@@ -172,7 +194,12 @@ def _draw_item(c: canvas.Canvas, row: dict, top: float, *, show_disc: bool) -> N
         c.drawString(COLS[5] + 6, _y(top + 10), "pcs")
         if show_disc and row["disc"]:
             c.drawCentredString((COLS[6] + COLS[7]) / 2, _y(top + 10), row["disc"])
-        shown = row["gross"] if not show_disc and row["gross"] is not None else row["amount"]
+        if row.get("price_entry") == "net":
+            shown = row["amount"]
+        elif not show_disc and row["gross"] is not None:
+            shown = row["gross"]
+        else:
+            shown = row["amount"]
         _draw_amount(c, top, _money(shown, whole=True))
 
 def _draw_photos(c: canvas.Canvas, photos: list[dict], top: float, height: float) -> None:

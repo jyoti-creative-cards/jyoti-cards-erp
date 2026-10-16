@@ -5,7 +5,7 @@ const Products = (() => {
   let typeFilter = "products";
   let addonMode = false;
   let searchQuery = "";
-  let filters = { vendor_id: "", category: "", series: "", year_group: "", price_min: "", price_max: "", stock_status: "", no_sell_price: false, no_addons: false };
+  let filters = { vendor_id: "", category: "", series: "", year_group: "", price_min: "", price_max: "", stock_status: "", no_sell_price: false, no_addons: false, no_alternatives: false };
   let catalogProducts = [];
   let catalogTotal = 0;
   let catalogOffset = 0;
@@ -173,18 +173,27 @@ const Products = (() => {
       filters.stock_status = attentionFilter;
       filters.no_sell_price = false;
       filters.no_addons = false;
+      filters.no_alternatives = false;
     } else if (attentionFilter === "no_sell") {
       filters.stock_status = "";
       filters.no_sell_price = true;
       filters.no_addons = false;
+      filters.no_alternatives = false;
     } else if (attentionFilter === "no_addons") {
       filters.stock_status = "";
       filters.no_sell_price = false;
       filters.no_addons = true;
+      filters.no_alternatives = false;
+    } else if (attentionFilter === "no_alternatives") {
+      filters.stock_status = "";
+      filters.no_sell_price = false;
+      filters.no_addons = false;
+      filters.no_alternatives = true;
     } else {
       filters.stock_status = "";
       filters.no_sell_price = false;
       filters.no_addons = false;
+      filters.no_alternatives = false;
     }
     const sel = document.getElementById("pf-stock-status");
     if (sel) sel.value = filters.stock_status;
@@ -192,10 +201,12 @@ const Products = (() => {
     if (noSell) noSell.checked = filters.no_sell_price;
     const noAdd = document.getElementById("pf-no-addons");
     if (noAdd) noAdd.checked = filters.no_addons;
+    const noAlts = document.getElementById("pf-no-alts");
+    if (noAlts) noAlts.checked = filters.no_alternatives;
     document.getElementById("products-clear-filters")?.classList.toggle("hidden", !hasActiveFilters());
     syncFiltersVisibility();
     if (mainTab === "stock" && !addonMode) load();
-    else if (mainTab === "catalog" && (attentionFilter === "no_sell" || attentionFilter === "no_addons" || attentionFilter === "all")) {
+    else if (mainTab === "catalog" && (attentionFilter === "no_sell" || attentionFilter === "no_addons" || attentionFilter === "no_alternatives" || attentionFilter === "all")) {
       load();
     } else {
       render();
@@ -211,6 +222,7 @@ const Products = (() => {
       negative_stock: 0,
       no_sell: 0,
       no_addons: 0,
+      no_alternatives: 0,
     };
     products.forEach(it => {
       if (it.stock_status === "low_stock") counts.low_stock += 1;
@@ -218,6 +230,7 @@ const Products = (() => {
       if (it.stock_status === "negative_stock") counts.negative_stock += 1;
       if (!hasRealSell(it)) counts.no_sell += 1;
       if (!(it.addon_count > 0)) counts.no_addons += 1;
+      if (!(it.alt_count > 0)) counts.no_alternatives += 1;
     });
     return counts;
   }
@@ -269,6 +282,7 @@ const Products = (() => {
           { id: "all", label: "All", count: c.all },
           { id: "no_sell", label: "No sell price", count: c.no_sell },
           { id: "no_addons", label: "No add-ons", count: c.no_addons },
+          { id: "no_alternatives", label: "No alternatives", count: c.no_alternatives },
         ],
       });
     }
@@ -331,7 +345,7 @@ const Products = (() => {
   })();
 
   function hasActiveFilters() {
-    return !!(filters.vendor_id || filters.category || filters.year_group || filters.price_min || filters.price_max || filters.stock_status || filters.no_sell_price || filters.no_addons);
+    return !!(filters.vendor_id || filters.category || filters.year_group || filters.price_min || filters.price_max || filters.stock_status || filters.no_sell_price || filters.no_addons || filters.no_alternatives);
   }
 
   function onFilterChange() {
@@ -343,8 +357,10 @@ const Products = (() => {
     filters.stock_status = document.getElementById("pf-stock-status")?.value || "";
     filters.no_sell_price = !!document.getElementById("pf-no-sell")?.checked;
     filters.no_addons = !!document.getElementById("pf-no-addons")?.checked;
+    filters.no_alternatives = !!document.getElementById("pf-no-alts")?.checked;
     if (filters.no_sell_price) attentionFilter = "no_sell";
     else if (filters.no_addons) attentionFilter = "no_addons";
+    else if (filters.no_alternatives) attentionFilter = "no_alternatives";
     else if (filters.stock_status) attentionFilter = filters.stock_status;
     else attentionFilter = "all";
     document.getElementById("products-clear-filters")?.classList.toggle("hidden", !hasActiveFilters());
@@ -354,7 +370,7 @@ const Products = (() => {
   }
 
   function clearFilters() {
-    filters = { vendor_id: "", category: "", series: "", year_group: "", price_min: "", price_max: "", stock_status: "", no_sell_price: false, no_addons: false };
+    filters = { vendor_id: "", category: "", series: "", year_group: "", price_min: "", price_max: "", stock_status: "", no_sell_price: false, no_addons: false, no_alternatives: false };
     attentionFilter = "all";
     renderFilters();
     document.getElementById("products-clear-filters")?.classList.add("hidden");
@@ -377,6 +393,7 @@ const Products = (() => {
     if (filters.price_max) params.set("price_max", filters.price_max);
     if (filters.no_sell_price) params.set("no_sell_price", "true");
     if (filters.no_addons) params.set("no_addons", "true");
+    if (filters.no_alternatives) params.set("no_alternatives", "true");
     return params;
   }
 
@@ -395,6 +412,7 @@ const Products = (() => {
     if (filters.stock_status) params.set("stock_status", filters.stock_status);
     if (filters.no_sell_price) params.set("no_sell_price", "true");
     if (filters.no_addons) params.set("no_addons", "true");
+    if (filters.no_alternatives) params.set("no_alternatives", "true");
     return params;
   }
 
@@ -478,6 +496,10 @@ const Products = (() => {
       <label class="prod-filter-chip ${filters.no_addons ? "is-on" : ""}">
         <input type="checkbox" id="pf-no-addons" ${filters.no_addons ? "checked" : ""} onchange="Products.onFilterChange()" />
         No add-ons
+      </label>
+      <label class="prod-filter-chip ${filters.no_alternatives ? "is-on" : ""}">
+        <input type="checkbox" id="pf-no-alts" ${filters.no_alternatives ? "checked" : ""} onchange="Products.onFilterChange()" />
+        No alternatives
       </label>
       <button type="button" class="btn btn-secondary btn-sm" onclick="Products.openAlternativesManager()">Manage alternatives</button>`;
     document.getElementById("products-clear-filters")?.classList.toggle("hidden", !hasActiveFilters());
@@ -630,6 +652,7 @@ const Products = (() => {
           buying_price: p.buying_price,
           selling_price: p.selling_price,
           addon_count: p.addon_count || 0,
+          alt_count: p.alt_count || 0,
           qty: p.quantity_on_hand,
           stock_status: p.stock_status,
           image_urls: p.image_urls,
@@ -656,6 +679,7 @@ const Products = (() => {
           buying_price: p.buying_price,
           selling_price: p.selling_price,
           addon_count: p.addon_count || 0,
+          alt_count: p.alt_count || 0,
           qty: null,
           stock_status: null,
           image_urls: p.image_urls,
@@ -695,7 +719,10 @@ const Products = (() => {
       if (filters.no_addons && it.kind === "product") {
         if ((it.addon_count || 0) > 0) return false;
       }
-      if ((filters.no_sell_price || filters.no_addons) && it.kind === "addon") return false;
+      if (filters.no_alternatives && it.kind === "product") {
+        if ((it.alt_count || 0) > 0) return false;
+      }
+      if ((filters.no_sell_price || filters.no_addons || filters.no_alternatives) && it.kind === "addon") return false;
       return true;
     });
   }
@@ -1318,7 +1345,7 @@ const Products = (() => {
         <div class="alts-picker-list">
           ${hits.length ? hits.map(s => {
             const img = (s.image_urls && s.image_urls[0]) || "";
-            return `<button type="button" class="alts-picker-item" onclick="Products.addAlternative(${altsPickerForId}, '${ctx.esc(s.our_product_id).replace(/'/g, "\\'")}')">
+            return `<button type="button" class="alts-picker-item" onclick="Products.addAlternative(${altsPickerForId}, '${ctx.esc(s.our_product_id).replace(/'/g, "\\'")}', ${Number(s.catalog_product_id) || 0})">
               <div class="alts-slot-ph sm"></div>
               <div class="alts-picker-meta">
                 <strong>${ctx.esc(s.our_product_id)}</strong>
@@ -1359,12 +1386,15 @@ const Products = (() => {
     altsPickerTimer = setTimeout(() => renderAlternativesBoard(), 120);
   }
 
-  async function addAlternative(productId, altOurId) {
+  async function addAlternative(productId, altOurId, altProductId) {
     ctx.showLoading?.();
     try {
       await ctx.api(`/catalog/products/${productId}/alternatives`, {
         method: "POST",
-        body: JSON.stringify({ alternative_our_product_id: altOurId }),
+        body: JSON.stringify({
+          alternative_our_product_id: altOurId,
+          alternative_product_id: altProductId || null,
+        }),
       });
       ctx.toast("Alternative added", "success");
       altsBoardRows = await ctx.api("/catalog/alternatives-board", {}, 0);

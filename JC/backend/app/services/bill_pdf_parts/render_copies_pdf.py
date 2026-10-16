@@ -14,6 +14,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from io import BytesIO
 from math import ceil
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from reportlab.lib.pagesizes import A4
@@ -60,6 +61,41 @@ _TENS = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eigh
 from app.services.bill_pdf_parts.common import _dec, _money, _txt
 from app.services.bill_pdf_parts.draw_header import _draw_header, _draw_page, _paginate
 
+
+def _default_pay_qr() -> bytes | None:
+    path = Path(__file__).resolve().parents[2] / "assets" / "pay_qr.jpeg"
+    try:
+        return path.read_bytes()
+    except OSError:
+        return None
+
+
+def _pay_qr_reader(raw: bytes | None):
+    data = raw if raw else _default_pay_qr()
+    if not data:
+        return None
+    try:
+        return ImageReader(BytesIO(data))
+    except Exception:
+        return None
+
+
+def _net_rate_bill(item_rows: list[dict]) -> bool:
+    """Hide Disc. % when every priced line was entered as a net rate."""
+    items = [r for r in item_rows if r["kind"] == "item"]
+    if not items:
+        return False
+    entries = [r.get("price_entry") for r in items]
+    if any(entry == "discount" for entry in entries):
+        return False
+    return any(entry == "net" for entry in entries)
+
+
+def _row_rate(ln: Dict[str, Any]) -> str:
+    if ln.get("price_entry") == "net":
+        return _money(ln.get("net_rate") or ln.get("effective_price") or ln.get("rate_inclusive"))
+    return _money(ln.get("rate_inclusive") or ln.get("unit_price") or ln.get("base_unit_price"))
+
 def render_copies_pdf(
     *,
     copies: int = 1,
@@ -87,6 +123,7 @@ def render_copies_pdf(
     invoice_date=None,
     credit_limit: float | None = None,
     outstanding: float | None = None,
+    payment_qr: bytes | None = None,
 ) -> bytes:
     del credit_limit, outstanding, order_id
     copies = max(1, min(int(copies or 1), 4))
@@ -96,7 +133,9 @@ def render_copies_pdf(
     invoice_day = _as_date(invoice_date) or to_ist(created).date()
     lines = [ln for ln in (totals.get("lines") or []) if isinstance(ln, dict)]
     item_rows, qty_total = _build_rows(lines)
-    cash = _cash_discount_mode(item_rows, totals)
+    net_only = _net_rate_bill(item_rows)
+    cash = _cash_discount_mode(item_rows, totals) and not net_only
+    show_disc = (not cash) and not net_only
     running, closing, _goods = _running_and_closing(item_rows, totals, cash)
     images = _load_images(item_image_urls or {})
     photos = _photos_for(item_rows, images)
@@ -160,13 +199,15 @@ def render_copies_pdf(
                 page,
                 page_no=i,
                 table_top=table_top,
-                show_disc=not cash,
+                show_disc=show_disc,
                 qty_total=qty_total,
                 grand=grand,
                 photos=photos if page["last"] else [],
                 remarks=remarks,
                 printed=printed,
                 header_kw=kw,
+                pay_qr=_pay_qr_reader(payment_qr) if page["last"] else None,
+                show_disc_label=not net_only,
             )
             c.showPage()
     c.save()
@@ -254,12 +295,13 @@ def _build_rows(lines: List[Dict[str, Any]]) -> tuple[list[dict], Decimal]:
             "sl": sl,
             "desc": _description(ln),
             "qty": qty,
-            "rate": _money(ln.get("rate_inclusive") or ln.get("unit_price") or ln.get("base_unit_price")),
-            "disc": _disc_text(ln.get("item_discount_percent")),
+            "rate": _row_rate(ln),
+            "disc": "" if ln.get("price_entry") == "net" else _disc_text(ln.get("item_discount_percent")),
             "amount": _dec(ln.get("line_total") or ln.get("line_inclusive_after_discount")),
             "gross": _line_gross(ln),
             "image_id": cid_i,
             "source": ln,
+            "price_entry": ln.get("price_entry"),
         })
         for addon in ln.get("addons") or []:
             if not isinstance(addon, dict):
@@ -308,6 +350,7 @@ def render_customer_bill_pdf(
     bill_number: str | None = None,
     copies: int = 2,
     with_labels: bool = True,
+    payment_qr: bytes | None = None,
 ) -> bytes:
     del credit_limit, outstanding
     return render_copies_pdf(
@@ -334,6 +377,7 @@ def render_customer_bill_pdf(
         order_created_at=order_created_at,
         order_by=order_by,
         invoice_date=invoice_date,
+        payment_qr=payment_qr,
     )
 
 def _cash_discount_mode(item_rows: list[dict], totals: Dict[str, Any]) -> bool:

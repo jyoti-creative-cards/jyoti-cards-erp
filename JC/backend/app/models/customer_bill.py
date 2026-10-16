@@ -41,6 +41,7 @@ class CustomerBill(Base):
     totals_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     card_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     document_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    payment_qr_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     cancelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     cancel_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # Set once every CustomerBillLine on this bill has been individually closed

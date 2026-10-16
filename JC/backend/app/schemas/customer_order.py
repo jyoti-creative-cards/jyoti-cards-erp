@@ -98,6 +98,7 @@ class CustomerBillLineOut(BaseModel):
     line_total: str
     discount_percent: Optional[str] = None
     net_rate: Optional[str] = None
+    price_entry: Optional[str] = None
     status: str
     close_reason: Optional[str] = None
     addons: List[AddonSnapOut] = []
@@ -130,6 +131,8 @@ class CustomerBillOut(BaseModel):
     cancel_reason: Optional[str] = None
     deleted_at: Optional[datetime] = None
     deleted_reason: Optional[str] = None
+    hide_discount_column: bool = False
+    has_custom_qr: bool = False
     lines: List[CustomerBillLineOut] = []
 
 

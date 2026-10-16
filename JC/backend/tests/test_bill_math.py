@@ -163,6 +163,7 @@ def test_line_net_rate_derives_discount():
     assert line["net_rate"] == "85.00"
     assert line["item_discount_percent"] == "15"
     assert line["line_total"] == "85.00"
+    assert line["price_entry"] == "net"
 
 
 def test_no_discount_net_equals_rate():

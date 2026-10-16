@@ -5,7 +5,7 @@ const Products = (() => {
   let typeFilter = "products";
   let addonMode = false;
   let searchQuery = "";
-  let filters = { vendor_id: "", category: "", series: "", year_group: "", price_min: "", price_max: "", stock_status: "", no_sell_price: false, no_addons: false };
+  let filters = { vendor_id: "", category: "", series: "", year_group: "", price_min: "", price_max: "", stock_status: "", no_sell_price: false, no_addons: false, no_alternatives: false };
   let catalogProducts = [];
   let catalogTotal = 0;
   let catalogOffset = 0;

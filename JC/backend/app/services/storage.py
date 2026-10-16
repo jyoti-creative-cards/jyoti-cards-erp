@@ -27,6 +27,10 @@ def customer_bill_key(customer_slug: str, bill_number: str) -> str:
     return f"{_ROOT}/customer/{customer_slug}/bills/{safe}.pdf"
 
 
+def customer_bill_qr_key(bill_id: int, ext: str = "jpg") -> str:
+    return f"{_ROOT}/customer/bills/{int(bill_id)}/payment-qr.{ext.lstrip('.')}"
+
+
 def customer_return_key(customer_slug: str, return_id: int, return_number: str | None = None) -> str:
     safe = re.sub(r"[^\w-]", "_", (return_number or f"return_{return_id}").strip())[:80]
     return f"{_ROOT}/customer/{customer_slug}/returns/{safe}.pdf"

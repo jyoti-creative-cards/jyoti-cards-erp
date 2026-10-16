@@ -251,7 +251,7 @@
         net_rate: l.net_rate || (l.discount_percent
           ? calcNetFromDisc(l.unit_price, l.discount_percent)
           : calcNetFromDisc(l.unit_price, 0)),
-        discSource: l.discount_percent ? "pct" : (l.net_rate ? "net" : ""),
+        discSource: l.price_entry === "net" ? "net" : (l.discount_percent ? "pct" : (l.net_rate ? "net" : "")),
         addons: l.addons || [],
       }));
       editBillOriginalQty = {};

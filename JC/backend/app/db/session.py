@@ -148,6 +148,7 @@ def init_db() -> None:
         _migrate_bill_number_unique()
         _migrate_catalog_marking()
         _migrate_catalog_category_3()
+        _migrate_bill_payment_qr()
         _migrate_vendor_cash_discount_gst()
         _migrate_expense_is_cash()
         with engine.begin() as conn:
@@ -442,6 +443,21 @@ def _migrate_expense_is_cash() -> None:
             _exec_sql(
                 conn,
                 "ALTER TABLE jc_expenses ADD COLUMN IF NOT EXISTS is_cash BOOLEAN NOT NULL DEFAULT TRUE",
+                critical=False,
+            )
+
+
+def _migrate_bill_payment_qr() -> None:
+    """Per-bill payment QR. Empty means the printed bill uses the default QR."""
+    with engine.begin() as conn:
+        if _is_sqlite:
+            cols = [r[1] for r in conn.execute(text("PRAGMA table_info(jc_customer_bills)")).fetchall()]
+            if "payment_qr_key" not in cols:
+                _exec_sql(conn, "ALTER TABLE jc_customer_bills ADD COLUMN payment_qr_key VARCHAR(500)")
+        else:
+            _exec_sql(
+                conn,
+                "ALTER TABLE jc_customer_bills ADD COLUMN IF NOT EXISTS payment_qr_key VARCHAR(500)",
                 critical=False,
             )
 

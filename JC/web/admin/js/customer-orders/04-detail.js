@@ -101,12 +101,13 @@
         const canEditBill = canWrite && (b.lines || []).every(ln => ln.status === "billed");
         const hasFreight = b.transport_mode === "bus" || !!(b.freight_agent_id);
         const modeLbl = b.transport_mode === "bus" ? "Bus" : b.transport_mode === "transport" ? "Transport" : b.transport_mode === "self_pickup" ? "Self-pickup" : (hasFreight ? "Bus" : "");
-        const linesHtml = `<table class="data vo-hub-table"><thead><tr><th>Product</th><th>Qty</th><th>Rate</th><th>Disc</th><th>Net</th><th>Total</th><th></th></tr></thead><tbody>
+        const hideDisc = !!b.hide_discount_column;
+        const linesHtml = `<table class="data vo-hub-table"><thead><tr><th>Product</th><th>Qty</th><th>Rate</th>${hideDisc ? "" : "<th>Disc</th>"}<th>Net</th><th>Total</th><th></th></tr></thead><tbody>
           ${(b.lines || []).map(ln => `<tr>
             <td>${ctx.esc(ln.our_product_id)}${ln.marking ? ` <span class="badge badge-amber" style="font-size:9px;padding:1px 4px;">${ctx.esc(ln.marking)}</span>` : ""}${addonsUnderHtml(ln.addons, ln.quantity_shipped)}</td>
             <td>${ln.quantity_shipped}</td>
             <td>${fmtPrice(ln.unit_price)}</td>
-            <td>${ln.discount_percent ? ctx.esc(String(ln.discount_percent)) + "%" : "—"}</td>
+            ${hideDisc ? "" : `<td>${ln.discount_percent ? ctx.esc(String(ln.discount_percent)) + "%" : "—"}</td>`}
             <td>${fmtPrice(ln.net_rate)}</td>
             <td>${fmtPrice(ln.line_total)}</td>
             <td>${ln.status === "billed" && canWrite
@@ -120,6 +121,10 @@
         ];
         if (canWrite) {
           more.push({ label: "Edit bill number", onclick: `CustomerOrders.promptEditBillNumber(${b.id}, ${JSON.stringify(b.bill_number || "")})` });
+          more.push({ label: "Update payment QR", onclick: `CustomerOrders.uploadBillQr(${b.id})` });
+          if (b.has_custom_qr) {
+            more.push({ label: "Use default payment QR", onclick: `CustomerOrders.resetBillQr(${b.id})` });
+          }
         }
         if (canEditBill) {
           more.push({ label: "Cancel bill", onclick: `CustomerOrders.cancelBill(${b.id})`, danger: true });

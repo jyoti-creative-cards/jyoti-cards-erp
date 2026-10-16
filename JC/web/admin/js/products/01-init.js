@@ -150,18 +150,27 @@
       filters.stock_status = attentionFilter;
       filters.no_sell_price = false;
       filters.no_addons = false;
+      filters.no_alternatives = false;
     } else if (attentionFilter === "no_sell") {
       filters.stock_status = "";
       filters.no_sell_price = true;
       filters.no_addons = false;
+      filters.no_alternatives = false;
     } else if (attentionFilter === "no_addons") {
       filters.stock_status = "";
       filters.no_sell_price = false;
       filters.no_addons = true;
+      filters.no_alternatives = false;
+    } else if (attentionFilter === "no_alternatives") {
+      filters.stock_status = "";
+      filters.no_sell_price = false;
+      filters.no_addons = false;
+      filters.no_alternatives = true;
     } else {
       filters.stock_status = "";
       filters.no_sell_price = false;
       filters.no_addons = false;
+      filters.no_alternatives = false;
     }
     const sel = document.getElementById("pf-stock-status");
     if (sel) sel.value = filters.stock_status;
@@ -169,10 +178,12 @@
     if (noSell) noSell.checked = filters.no_sell_price;
     const noAdd = document.getElementById("pf-no-addons");
     if (noAdd) noAdd.checked = filters.no_addons;
+    const noAlts = document.getElementById("pf-no-alts");
+    if (noAlts) noAlts.checked = filters.no_alternatives;
     document.getElementById("products-clear-filters")?.classList.toggle("hidden", !hasActiveFilters());
     syncFiltersVisibility();
     if (mainTab === "stock" && !addonMode) load();
-    else if (mainTab === "catalog" && (attentionFilter === "no_sell" || attentionFilter === "no_addons" || attentionFilter === "all")) {
+    else if (mainTab === "catalog" && (attentionFilter === "no_sell" || attentionFilter === "no_addons" || attentionFilter === "no_alternatives" || attentionFilter === "all")) {
       load();
     } else {
       render();
@@ -188,6 +199,7 @@
       negative_stock: 0,
       no_sell: 0,
       no_addons: 0,
+      no_alternatives: 0,
     };
     products.forEach(it => {
       if (it.stock_status === "low_stock") counts.low_stock += 1;
@@ -195,6 +207,7 @@
       if (it.stock_status === "negative_stock") counts.negative_stock += 1;
       if (!hasRealSell(it)) counts.no_sell += 1;
       if (!(it.addon_count > 0)) counts.no_addons += 1;
+      if (!(it.alt_count > 0)) counts.no_alternatives += 1;
     });
     return counts;
   }
@@ -246,6 +259,7 @@
           { id: "all", label: "All", count: c.all },
           { id: "no_sell", label: "No sell price", count: c.no_sell },
           { id: "no_addons", label: "No add-ons", count: c.no_addons },
+          { id: "no_alternatives", label: "No alternatives", count: c.no_alternatives },
         ],
       });
     }
@@ -308,7 +322,7 @@
   })();
 
   function hasActiveFilters() {
-    return !!(filters.vendor_id || filters.category || filters.year_group || filters.price_min || filters.price_max || filters.stock_status || filters.no_sell_price || filters.no_addons);
+    return !!(filters.vendor_id || filters.category || filters.year_group || filters.price_min || filters.price_max || filters.stock_status || filters.no_sell_price || filters.no_addons || filters.no_alternatives);
   }
 
   function onFilterChange() {
@@ -320,8 +334,10 @@
     filters.stock_status = document.getElementById("pf-stock-status")?.value || "";
     filters.no_sell_price = !!document.getElementById("pf-no-sell")?.checked;
     filters.no_addons = !!document.getElementById("pf-no-addons")?.checked;
+    filters.no_alternatives = !!document.getElementById("pf-no-alts")?.checked;
     if (filters.no_sell_price) attentionFilter = "no_sell";
     else if (filters.no_addons) attentionFilter = "no_addons";
+    else if (filters.no_alternatives) attentionFilter = "no_alternatives";
     else if (filters.stock_status) attentionFilter = filters.stock_status;
     else attentionFilter = "all";
     document.getElementById("products-clear-filters")?.classList.toggle("hidden", !hasActiveFilters());
@@ -331,7 +347,7 @@
   }
 
   function clearFilters() {
-    filters = { vendor_id: "", category: "", series: "", year_group: "", price_min: "", price_max: "", stock_status: "", no_sell_price: false, no_addons: false };
+    filters = { vendor_id: "", category: "", series: "", year_group: "", price_min: "", price_max: "", stock_status: "", no_sell_price: false, no_addons: false, no_alternatives: false };
     attentionFilter = "all";
     renderFilters();
     document.getElementById("products-clear-filters")?.classList.add("hidden");
@@ -354,6 +370,7 @@
     if (filters.price_max) params.set("price_max", filters.price_max);
     if (filters.no_sell_price) params.set("no_sell_price", "true");
     if (filters.no_addons) params.set("no_addons", "true");
+    if (filters.no_alternatives) params.set("no_alternatives", "true");
     return params;
   }
 
@@ -372,6 +389,7 @@
     if (filters.stock_status) params.set("stock_status", filters.stock_status);
     if (filters.no_sell_price) params.set("no_sell_price", "true");
     if (filters.no_addons) params.set("no_addons", "true");
+    if (filters.no_alternatives) params.set("no_alternatives", "true");
     return params;
   }
 
@@ -455,6 +473,10 @@
       <label class="prod-filter-chip ${filters.no_addons ? "is-on" : ""}">
         <input type="checkbox" id="pf-no-addons" ${filters.no_addons ? "checked" : ""} onchange="Products.onFilterChange()" />
         No add-ons
+      </label>
+      <label class="prod-filter-chip ${filters.no_alternatives ? "is-on" : ""}">
+        <input type="checkbox" id="pf-no-alts" ${filters.no_alternatives ? "checked" : ""} onchange="Products.onFilterChange()" />
+        No alternatives
       </label>
       <button type="button" class="btn btn-secondary btn-sm" onclick="Products.openAlternativesManager()">Manage alternatives</button>`;
     document.getElementById("products-clear-filters")?.classList.toggle("hidden", !hasActiveFilters());

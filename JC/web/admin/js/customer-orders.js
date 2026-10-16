@@ -860,12 +860,13 @@ const CustomerOrders = (() => {
         const canEditBill = canWrite && (b.lines || []).every(ln => ln.status === "billed");
         const hasFreight = b.transport_mode === "bus" || !!(b.freight_agent_id);
         const modeLbl = b.transport_mode === "bus" ? "Bus" : b.transport_mode === "transport" ? "Transport" : b.transport_mode === "self_pickup" ? "Self-pickup" : (hasFreight ? "Bus" : "");
-        const linesHtml = `<table class="data vo-hub-table"><thead><tr><th>Product</th><th>Qty</th><th>Rate</th><th>Disc</th><th>Net</th><th>Total</th><th></th></tr></thead><tbody>
+        const hideDisc = !!b.hide_discount_column;
+        const linesHtml = `<table class="data vo-hub-table"><thead><tr><th>Product</th><th>Qty</th><th>Rate</th>${hideDisc ? "" : "<th>Disc</th>"}<th>Net</th><th>Total</th><th></th></tr></thead><tbody>
           ${(b.lines || []).map(ln => `<tr>
             <td>${ctx.esc(ln.our_product_id)}${ln.marking ? ` <span class="badge badge-amber" style="font-size:9px;padding:1px 4px;">${ctx.esc(ln.marking)}</span>` : ""}${addonsUnderHtml(ln.addons, ln.quantity_shipped)}</td>
             <td>${ln.quantity_shipped}</td>
             <td>${fmtPrice(ln.unit_price)}</td>
-            <td>${ln.discount_percent ? ctx.esc(String(ln.discount_percent)) + "%" : "—"}</td>
+            ${hideDisc ? "" : `<td>${ln.discount_percent ? ctx.esc(String(ln.discount_percent)) + "%" : "—"}</td>`}
             <td>${fmtPrice(ln.net_rate)}</td>
             <td>${fmtPrice(ln.line_total)}</td>
             <td>${ln.status === "billed" && canWrite
@@ -879,6 +880,10 @@ const CustomerOrders = (() => {
         ];
         if (canWrite) {
           more.push({ label: "Edit bill number", onclick: `CustomerOrders.promptEditBillNumber(${b.id}, ${JSON.stringify(b.bill_number || "")})` });
+          more.push({ label: "Update payment QR", onclick: `CustomerOrders.uploadBillQr(${b.id})` });
+          if (b.has_custom_qr) {
+            more.push({ label: "Use default payment QR", onclick: `CustomerOrders.resetBillQr(${b.id})` });
+          }
         }
         if (canEditBill) {
           more.push({ label: "Cancel bill", onclick: `CustomerOrders.cancelBill(${b.id})`, danger: true });
@@ -1673,7 +1678,7 @@ const CustomerOrders = (() => {
         net_rate: l.net_rate || (l.discount_percent
           ? calcNetFromDisc(l.unit_price, l.discount_percent)
           : calcNetFromDisc(l.unit_price, 0)),
-        discSource: l.discount_percent ? "pct" : (l.net_rate ? "net" : ""),
+        discSource: l.price_entry === "net" ? "net" : (l.discount_percent ? "pct" : (l.net_rate ? "net" : "")),
         addons: l.addons || [],
       }));
       editBillOriginalQty = {};
@@ -2488,6 +2493,63 @@ const CustomerOrders = (() => {
     finally { ctx.hideLoading?.(); }
   }
 
+  function billApiBase() {
+    const saved = localStorage.getItem("jc_api");
+    if (saved) return saved;
+    const host = location.hostname;
+    if (host === "127.0.0.1" || host === "localhost") return "http://127.0.0.1:8003/api/v1";
+    return `${location.origin}/api/v1`;
+  }
+
+  function billAuthHeaders() {
+    const h = {};
+    if (sessionStorage.getItem("jc_auth_mode") === "admin") h["X-Admin-Key"] = sessionStorage.getItem("jc_admin_key") || "";
+    else h.Authorization = `Bearer ${sessionStorage.getItem("jc_staff_token") || ""}`;
+    return h;
+  }
+
+  function uploadBillQr(billId) {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/jpeg,image/png,image/webp";
+    input.onchange = async () => {
+      const file = input.files && input.files[0];
+      if (!file) return;
+      const fd = new FormData();
+      fd.append("file", file);
+      ctx.showLoading?.();
+      try {
+        const res = await fetch(`${billApiBase()}/customer-orders/bills/${billId}/payment-qr`, {
+          method: "POST",
+          headers: billAuthHeaders(),
+          body: fd,
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(typeof err.detail === "string" ? err.detail : "QR upload failed");
+        }
+        ctx.toast("Payment QR updated", "success");
+        if (detailCustomerId) openDetail(detailCustomerId, "billed");
+      } catch (e) { ctx.toast(e.message, "error"); }
+      finally { ctx.hideLoading?.(); }
+    };
+    input.click();
+  }
+
+  async function resetBillQr(billId) {
+    ctx.showLoading?.();
+    try {
+      const res = await fetch(`${billApiBase()}/customer-orders/bills/${billId}/payment-qr`, {
+        method: "DELETE",
+        headers: billAuthHeaders(),
+      });
+      if (!res.ok) throw new Error("Could not restore the default QR");
+      ctx.toast("Default payment QR restored", "success");
+      if (detailCustomerId) openDetail(detailCustomerId, "billed");
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
   function showCreateMenuFromCustomer(customerId) {
     openOfflineWizard(customerId);
   }
@@ -3191,7 +3253,7 @@ const CustomerOrders = (() => {
     setOfflinePlacedOn,
     setForceCredit,
     processNext, processBack, submitProcess, toggleBillOrder, toggleAllBillOrders,
-    confirmOrder, _doConfirm, cancelOpenLine, cancelPlacement, cancelCustomerOpen, cancelEntireReceived, cancelAllOpen, editOpenLine, editReceivedLine, deleteReceivedLine, openEditPlacement, closeBillLine, cancelBill, voidBill, voidPlacement, openBillDoc, shareBillWhatsApp,
+    confirmOrder, _doConfirm, cancelOpenLine, cancelPlacement, cancelCustomerOpen, cancelEntireReceived, cancelAllOpen, editOpenLine, editReceivedLine, deleteReceivedLine, openEditPlacement, closeBillLine, cancelBill, voidBill, voidPlacement, openBillDoc, shareBillWhatsApp, uploadBillQr, resetBillQr,
     openOfflineWizard, closeOfflineWizard, renderOfflineWizard,
     pickOfflineCustomer, onOfflineCustomerSearch, setOfflineNotes,
     onOfflineSearchInput, onOfflineSearchKey, onOfflineQtyKey, toggleOfflineProduct, pickOfflineProduct, removeOfflineLine, skipOfflineAddon,

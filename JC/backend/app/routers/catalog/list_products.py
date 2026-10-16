@@ -71,13 +71,14 @@ def list_products(
     price_max: Optional[Decimal] = Query(None, ge=0),
     no_sell_price: bool = Query(False),
     no_addons: bool = Query(False),
+    no_alternatives: bool = Query(False),
     year_group: Optional[str] = Query(None),
     limit: int = Query(60, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> CatalogListResponse:
     cache_key = (
         f"catalog:products:v3:{search or ''}:{vendor_id or ''}:{category or ''}:"
-        f"{series or ''}:{year_group or ''}:{price_min}:{price_max}:{int(no_sell_price)}:{int(no_addons)}:{limit}:{offset}"
+        f"{series or ''}:{year_group or ''}:{price_min}:{price_max}:{int(no_sell_price)}:{int(no_addons)}:{int(no_alternatives)}:{limit}:{offset}"
         f":cost={int(can_see_cost(auth))}"
     )
     cached = response_cache.get(cache_key)
@@ -108,6 +109,9 @@ def list_products(
     if no_addons:
         linked_ids = db.query(CatalogAddonLink.catalog_product_id).distinct()
         q = q.filter(~CatalogProduct.id.in_(linked_ids))
+    if no_alternatives:
+        linked_alts = _alternative_product_ids(db)
+        q = q.filter(~CatalogProduct.id.in_(linked_alts))
     if price_min is not None:
         q = q.filter(func.coalesce(CatalogProduct.selling_price, CatalogProduct.buying_price) >= price_min)
     if price_max is not None:
@@ -125,6 +129,7 @@ def list_products(
             func.lower(func.coalesce(CatalogProduct.year_group, "")).like(s),
             func.lower(func.coalesce(Vendor.business_name, "")).like(s),
             func.lower(func.coalesce(City.name, "")).like(s),
+            CatalogProduct.id.in_(_alternative_match_ids(db, s)),
         ))
     total = q.count()
     rows = (
@@ -244,6 +249,32 @@ def alternatives_board(db: Session = Depends(get_db), auth: AuthContext = Depend
             "alternatives": alts,
         })
     return out
+
+def _alternative_product_ids(db: Session):
+    """Products that have at least one live alternative."""
+    alt_target = aliased(CatalogProduct)
+    return (
+        db.query(CatalogAlternative.product_id)
+        .join(alt_target, alt_target.id == CatalogAlternative.alternative_product_id)
+        .filter(alt_target.is_active.is_(True), alt_target.deleted_at.is_(None))
+        .distinct()
+    )
+
+
+def _alternative_match_ids(db: Session, like: str):
+    """Products whose alternative item number matches the search."""
+    alt_target = aliased(CatalogProduct)
+    return (
+        db.query(CatalogAlternative.product_id)
+        .join(alt_target, alt_target.id == CatalogAlternative.alternative_product_id)
+        .filter(
+            alt_target.is_active.is_(True),
+            alt_target.deleted_at.is_(None),
+            func.lower(alt_target.our_product_id).like(like),
+        )
+        .distinct()
+    )
+
 
 def _vendor_info_map(db: Session, vendor_ids: list[int]) -> dict[int, tuple[Optional[str], Optional[str]]]:
     """Batch vendor + city names (avoids N+1 on list endpoints)."""

@@ -370,7 +370,7 @@
         <div class="alts-picker-list">
           ${hits.length ? hits.map(s => {
             const img = (s.image_urls && s.image_urls[0]) || "";
-            return `<button type="button" class="alts-picker-item" onclick="Products.addAlternative(${altsPickerForId}, '${ctx.esc(s.our_product_id).replace(/'/g, "\\'")}')">
+            return `<button type="button" class="alts-picker-item" onclick="Products.addAlternative(${altsPickerForId}, '${ctx.esc(s.our_product_id).replace(/'/g, "\\'")}', ${Number(s.catalog_product_id) || 0})">
               <div class="alts-slot-ph sm"></div>
               <div class="alts-picker-meta">
                 <strong>${ctx.esc(s.our_product_id)}</strong>
@@ -411,12 +411,15 @@
     altsPickerTimer = setTimeout(() => renderAlternativesBoard(), 120);
   }
 
-  async function addAlternative(productId, altOurId) {
+  async function addAlternative(productId, altOurId, altProductId) {
     ctx.showLoading?.();
     try {
       await ctx.api(`/catalog/products/${productId}/alternatives`, {
         method: "POST",
-        body: JSON.stringify({ alternative_our_product_id: altOurId }),
+        body: JSON.stringify({
+          alternative_our_product_id: altOurId,
+          alternative_product_id: altProductId || null,
+        }),
       });
       ctx.toast("Alternative added", "success");
       altsBoardRows = await ctx.api("/catalog/alternatives-board", {}, 0);

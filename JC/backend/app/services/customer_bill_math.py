@@ -195,6 +195,7 @@ def compute_bill_totals(
                 "item_discount_pct": item_discount_pct,
                 "fixed_line_discount": fixed_line_discount,
                 "net_unit": net_unit,
+                "price_entry": "net" if net_unit is not None else ("discount" if item_discount_pct > 0 else None),
             }
         )
 
@@ -299,6 +300,10 @@ def compute_bill_totals(
             "effective_price": _fmt2(eff),
             "net_rate": _fmt2(eff),
         }
+        if lr.get("price_entry") == "net":
+            out_row["price_entry"] = "net"
+        elif lr.get("price_entry") == "discount" or (dp > 0 and display_pct > 0 and not has_item_discounts):
+            out_row["price_entry"] = "discount"
         if lr.get("catalog_product_id") is not None:
             out_row["catalog_product_id"] = lr["catalog_product_id"]
         lines_out.append(out_row)

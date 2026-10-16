@@ -6,7 +6,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy import and_, case, func, or_, text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.db.session import get_db
 from app.deps import AuthContext, get_auth_context, require_admin, require_permission
@@ -361,6 +361,7 @@ def _stock_scope(db: Session, search: str, year_group: str):
             func.lower(func.coalesce(CatalogProduct.year_group, "")).like(like),
             func.lower(func.coalesce(Vendor.business_name, "")).like(like),
             func.lower(func.coalesce(City.name, "")).like(like),
+            CatalogProduct.id.in_(_alternative_match_ids(db, like)),
         ))
     return q, qty, addon_count
 
@@ -375,8 +376,10 @@ def _apply_stock_filters(
     stock_status: Optional[str],
     no_sell_price: bool,
     no_addons: bool,
+    no_alternatives: bool,
     addon_count,
     qty,
+    db: Session,
 ):
     if vendor_id:
         q = q.filter(CatalogProduct.vendor_id == vendor_id)
@@ -408,7 +411,33 @@ def _apply_stock_filters(
         ))
     if no_addons:
         q = q.filter(addon_count == 0)
+    if no_alternatives:
+        q = q.filter(~CatalogProduct.id.in_(_products_with_alternatives(db)))
     return q
+
+
+def _products_with_alternatives(db: Session):
+    alt_target = aliased(CatalogProduct)
+    return (
+        db.query(CatalogAlternative.product_id)
+        .join(alt_target, alt_target.id == CatalogAlternative.alternative_product_id)
+        .filter(alt_target.is_active.is_(True), alt_target.deleted_at.is_(None))
+        .distinct()
+    )
+
+
+def _alternative_match_ids(db: Session, like: str):
+    alt_target = aliased(CatalogProduct)
+    return (
+        db.query(CatalogAlternative.product_id)
+        .join(alt_target, alt_target.id == CatalogAlternative.alternative_product_id)
+        .filter(
+            alt_target.is_active.is_(True),
+            alt_target.deleted_at.is_(None),
+            func.lower(alt_target.our_product_id).like(like),
+        )
+        .distinct()
+    )
 
 
 def browse_stock(
@@ -424,6 +453,7 @@ def browse_stock(
     stock_status: Optional[str] = None,
     no_sell_price: bool = False,
     no_addons: bool = False,
+    no_alternatives: bool = False,
     limit: int = 100,
     offset: int = 0,
 ) -> StockBrowsePage:
@@ -447,6 +477,12 @@ def browse_stock(
         func.coalesce(func.sum(case((addon_count == 0, 1), else_=0)), 0),
     ).one()
     all_count, units, negative, out_of, low, missing_sell, missing_addons = counted
+    missing_alts = (
+        scope.filter(~CatalogProduct.id.in_(_products_with_alternatives(db)))
+        .order_by(None)
+        .with_entities(func.count(CatalogProduct.id))
+        .scalar()
+    )
     filtered, _qty, filtered_addon = _stock_scope(db, search_clean, year_clean)
     filtered = _apply_stock_filters(
         filtered,
@@ -457,8 +493,10 @@ def browse_stock(
         stock_status=stock_status,
         no_sell_price=no_sell_price,
         no_addons=no_addons,
+        no_alternatives=no_alternatives,
         addon_count=filtered_addon,
         qty=_qty,
+        db=db,
     )
     total = filtered.order_by(None).with_entities(func.count(CatalogProduct.id)).scalar() or 0
     rows = (
@@ -467,6 +505,22 @@ def browse_stock(
         .limit(limit)
         .all()
     )
+    page_ids = [product.id for product, _balance, _vendor, _city, _addons in rows]
+    alt_counts: dict[int, int] = {}
+    if page_ids:
+        alt_target = aliased(CatalogProduct)
+        for pid, cnt in (
+            db.query(CatalogAlternative.product_id, func.count(CatalogAlternative.id))
+            .join(alt_target, alt_target.id == CatalogAlternative.alternative_product_id)
+            .filter(
+                CatalogAlternative.product_id.in_(page_ids),
+                alt_target.is_active.is_(True),
+                alt_target.deleted_at.is_(None),
+            )
+            .group_by(CatalogAlternative.product_id)
+            .all()
+        ):
+            alt_counts[int(pid)] = int(cnt)
     items: list[StockProductSummary] = []
     for product, balance, vendor, city, addons in rows:
         on_hand = int(balance.quantity_on_hand) if balance else 0
@@ -503,7 +557,7 @@ def browse_stock(
             unit=product.unit,
             image_urls=[],
             addon_count=int(addons or 0),
-            alt_count=0,
+            alt_count=alt_counts.get(product.id, 0),
         ))
     return StockBrowsePage(
         items=items,
@@ -516,6 +570,7 @@ def browse_stock(
             "negative_stock": int(negative or 0),
             "no_sell": int(missing_sell or 0),
             "no_addons": int(missing_addons or 0),
+            "no_alternatives": int(missing_alts or 0),
         },
     )
 
@@ -532,6 +587,7 @@ def browse_stock_products(
     stock_status: Optional[str] = Query(None),
     no_sell_price: bool = Query(False),
     no_addons: bool = Query(False),
+    no_alternatives: bool = Query(False),
     limit: int = Query(100, ge=1, le=200),
     offset: int = Query(0, ge=0),
     auth: AuthContext = Depends(require_permission("stock.read")),
@@ -539,7 +595,7 @@ def browse_stock_products(
     cache_key = (
         f"stock:page:v1:{(search or '').replace(chr(0), '')}:{(year_group or '').replace(chr(0), '')}:"
         f"{vendor_id or ''}:{category or ''}:{price_min}:{price_max}:{stock_status or ''}:"
-        f"{int(no_sell_price)}:{int(no_addons)}:{limit}:{offset}:cost={int(can_see_cost(auth))}"
+        f"{int(no_sell_price)}:{int(no_addons)}:{int(no_alternatives)}:{limit}:{offset}:cost={int(can_see_cost(auth))}"
     )
     cached = response_cache.get(cache_key)
     if cached is not None:
@@ -548,7 +604,8 @@ def browse_stock_products(
         db, auth,
         search=search, year_group=year_group, vendor_id=vendor_id, category=category,
         price_min=price_min, price_max=price_max, stock_status=stock_status,
-        no_sell_price=no_sell_price, no_addons=no_addons, limit=limit, offset=offset,
+        no_sell_price=no_sell_price, no_addons=no_addons, no_alternatives=no_alternatives,
+        limit=limit, offset=offset,
     )
     dumped = page.model_dump()
     response_cache.set(cache_key, dumped, 25.0)

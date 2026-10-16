@@ -89,6 +89,63 @@
     finally { ctx.hideLoading?.(); }
   }
 
+  function billApiBase() {
+    const saved = localStorage.getItem("jc_api");
+    if (saved) return saved;
+    const host = location.hostname;
+    if (host === "127.0.0.1" || host === "localhost") return "http://127.0.0.1:8003/api/v1";
+    return `${location.origin}/api/v1`;
+  }
+
+  function billAuthHeaders() {
+    const h = {};
+    if (sessionStorage.getItem("jc_auth_mode") === "admin") h["X-Admin-Key"] = sessionStorage.getItem("jc_admin_key") || "";
+    else h.Authorization = `Bearer ${sessionStorage.getItem("jc_staff_token") || ""}`;
+    return h;
+  }
+
+  function uploadBillQr(billId) {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/jpeg,image/png,image/webp";
+    input.onchange = async () => {
+      const file = input.files && input.files[0];
+      if (!file) return;
+      const fd = new FormData();
+      fd.append("file", file);
+      ctx.showLoading?.();
+      try {
+        const res = await fetch(`${billApiBase()}/customer-orders/bills/${billId}/payment-qr`, {
+          method: "POST",
+          headers: billAuthHeaders(),
+          body: fd,
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(typeof err.detail === "string" ? err.detail : "QR upload failed");
+        }
+        ctx.toast("Payment QR updated", "success");
+        if (detailCustomerId) openDetail(detailCustomerId, "billed");
+      } catch (e) { ctx.toast(e.message, "error"); }
+      finally { ctx.hideLoading?.(); }
+    };
+    input.click();
+  }
+
+  async function resetBillQr(billId) {
+    ctx.showLoading?.();
+    try {
+      const res = await fetch(`${billApiBase()}/customer-orders/bills/${billId}/payment-qr`, {
+        method: "DELETE",
+        headers: billAuthHeaders(),
+      });
+      if (!res.ok) throw new Error("Could not restore the default QR");
+      ctx.toast("Default payment QR restored", "success");
+      if (detailCustomerId) openDetail(detailCustomerId, "billed");
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
   function showCreateMenuFromCustomer(customerId) {
     openOfflineWizard(customerId);
   }

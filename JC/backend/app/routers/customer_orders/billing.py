@@ -5,7 +5,7 @@ from collections import defaultdict
 from datetime import date, datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -36,7 +36,7 @@ from app.schemas.customer_order import (
     CloseableItemOut,
     CloseBatchIn,
 )
-from app.services.storage import presigned_urls
+from app.services.storage import customer_bill_qr_key, presigned_url, presigned_urls, storage_configured, upload_bytes
 from decimal import Decimal
 
 from app.models.freight_agent import FreightAgent
@@ -62,7 +62,6 @@ from app.services.customer_order_flow import (
 from app.services.doc_gen import generate_customer_bill_document, generate_customer_order_document
 from app.services.document_present import present
 from app.services import response_cache
-from app.services.storage import presigned_url, storage_configured
 from app.schemas.stock import VoidIn
 from app.services.void_service import void_customer_bill, void_customer_placement
 
@@ -489,6 +488,59 @@ def get_bill_document(
     if not url:
         raise HTTPException(503, "storage not available")
     return {"document_url": url, "document_key": bill.document_key, "bill_number": bill.bill_number}
+
+@router.post("/bills/{bill_id}/payment-qr")
+async def upload_bill_payment_qr(
+    bill_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("customer_orders.write")),
+):
+    bill = db.get(CustomerBill, bill_id)
+    if not bill or bill.deleted_at:
+        raise HTTPException(404, "bill not found")
+    if not storage_configured():
+        raise HTTPException(503, "S3 not configured")
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "empty file")
+    if len(data) > 2 * 1024 * 1024:
+        raise HTTPException(400, "file too large (max 2MB)")
+    content_type = (file.content_type or "").lower()
+    allowed = {"image/jpeg", "image/png", "image/webp"}
+    if content_type and content_type not in allowed:
+        raise HTTPException(400, "upload a JPEG, PNG, or WebP QR")
+    ext = "jpg"
+    if content_type == "image/png":
+        ext = "png"
+    elif content_type == "image/webp":
+        ext = "webp"
+    key = customer_bill_qr_key(bill.id, ext)
+    upload_bytes(key, data, content_type or "image/jpeg")
+    bill.payment_qr_key = key
+    bill.document_key = None
+    db.add(bill)
+    db.commit()
+    from app.services.doc_jobs import enqueue_bill_pdf
+    enqueue_bill_pdf(bill.id)
+    return {"ok": True, "bill_id": bill.id, "has_custom_qr": True}
+
+@router.delete("/bills/{bill_id}/payment-qr")
+def reset_bill_payment_qr(
+    bill_id: int,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("customer_orders.write")),
+):
+    bill = db.get(CustomerBill, bill_id)
+    if not bill or bill.deleted_at:
+        raise HTTPException(404, "bill not found")
+    bill.payment_qr_key = None
+    bill.document_key = None
+    db.add(bill)
+    db.commit()
+    from app.services.doc_jobs import enqueue_bill_pdf
+    enqueue_bill_pdf(bill.id)
+    return {"ok": True, "bill_id": bill.id, "has_custom_qr": False}
 
 @router.get("/closeable", response_model=List[CloseableItemOut])
 def list_closeable_bill_lines(

@@ -166,11 +166,23 @@ from app.services.storage import (
     customer_bill_key,
     customer_folder_slug,
     customer_order_key,
+    download_bytes,
     upload_bytes,
     vendor_folder_slug,
     vendor_order_key,
     vendor_receipt_key,
 )
+
+
+def _bill_payment_qr(bill: CustomerBill) -> bytes | None:
+    key = getattr(bill, "payment_qr_key", None)
+    if not key:
+        return None
+    try:
+        return download_bytes(key)
+    except Exception:
+        logging.getLogger(__name__).warning("payment QR download failed for bill %s", bill.id, exc_info=True)
+        return None
 
 
 def _card_or_live(view: dict, card_val, live_val):
@@ -405,6 +417,7 @@ def generate_customer_bill_document(
         outstanding=outstanding,
         copies=copies,
         with_labels=with_labels,
+        payment_qr=_bill_payment_qr(bill),
     )
     if not persist:
         bill._pdf_bytes = pdf

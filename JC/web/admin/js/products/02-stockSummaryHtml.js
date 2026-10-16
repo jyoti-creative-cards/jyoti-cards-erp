@@ -52,6 +52,7 @@
           buying_price: p.buying_price,
           selling_price: p.selling_price,
           addon_count: p.addon_count || 0,
+          alt_count: p.alt_count || 0,
           qty: p.quantity_on_hand,
           stock_status: p.stock_status,
           image_urls: p.image_urls,
@@ -78,6 +79,7 @@
           buying_price: p.buying_price,
           selling_price: p.selling_price,
           addon_count: p.addon_count || 0,
+          alt_count: p.alt_count || 0,
           qty: null,
           stock_status: null,
           image_urls: p.image_urls,
@@ -117,7 +119,10 @@
       if (filters.no_addons && it.kind === "product") {
         if ((it.addon_count || 0) > 0) return false;
       }
-      if ((filters.no_sell_price || filters.no_addons) && it.kind === "addon") return false;
+      if (filters.no_alternatives && it.kind === "product") {
+        if ((it.alt_count || 0) > 0) return false;
+      }
+      if ((filters.no_sell_price || filters.no_addons || filters.no_alternatives) && it.kind === "addon") return false;
       return true;
     });
   }

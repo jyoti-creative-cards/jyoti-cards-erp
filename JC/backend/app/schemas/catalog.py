@@ -82,6 +82,11 @@ class AddonLinkIn(BaseModel):
     quantity: int = Field(..., ge=1)
 
 
+class AlternativeLinkIn(BaseModel):
+    alternative_our_product_id: str = Field(..., min_length=1, max_length=120)
+    alternative_product_id: Optional[int] = None
+
+
 class CatalogBulkCreate(BaseModel):
     vendor_id: int
     items: List[CatalogBulkItem] = Field(..., min_length=1)

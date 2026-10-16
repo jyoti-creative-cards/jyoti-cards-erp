@@ -44,7 +44,13 @@ const App = (() => {
     return h;
   }
 
-  function isAdmin() { return authMode === "admin" || authMode === "staff"; }
+  function lookupDesk() {
+    return authMode === "staff" && permissions.size === 1 && permissions.has("items.lookup");
+  }
+  function isAdmin() {
+    if (lookupDesk()) return false;
+    return authMode === "admin" || authMode === "staff";
+  }
   function can(perm) { return isAdmin() || permissions.has(perm); }
   function stickerDesk() {
     return !isAdmin() && permissions.size === 1 && permissions.has("stickers.print");
@@ -59,15 +65,17 @@ const App = (() => {
     const showSelling = canRead("customer_orders");
     const showReturns = canRead("returns");
     const desk = stickerDesk();
+    const lookup = lookupDesk();
+    document.getElementById("app")?.classList.toggle("lookup-only", lookup);
     const moreTitle = document.querySelector("#more-hub .ui-hub-title");
     const moreSub = document.querySelector("#more-hub .ui-hub-sub");
     if (moreTitle) moreTitle.textContent = desk ? "Print sticker" : "More";
     if (moreSub) moreSub.textContent = desk ? "Search a party number and print." : "History, reports, setup, and safety — when you need them.";
-    document.getElementById("nav-today")?.classList.toggle("hidden", desk);
-    document.getElementById("nav-people")?.classList.toggle("hidden", desk || !showPeople);
-    document.getElementById("nav-products")?.classList.toggle("hidden", desk || !showProducts);
-    document.getElementById("nav-money")?.classList.toggle("hidden", desk || !(isAdmin() || can("finance.write") || canRead("ar") || canRead("ap")));
-    document.getElementById("nav-more")?.classList.toggle("hidden", false);
+    document.getElementById("nav-today")?.classList.toggle("hidden", desk || lookup);
+    document.getElementById("nav-people")?.classList.toggle("hidden", desk || lookup || !showPeople);
+    document.getElementById("nav-products")?.classList.toggle("hidden", desk || lookup || !showProducts);
+    document.getElementById("nav-money")?.classList.toggle("hidden", desk || lookup || !(isAdmin() || can("finance.write") || canRead("ar") || canRead("ap")));
+    document.getElementById("nav-more")?.classList.toggle("hidden", lookup);
     document.getElementById("more-tile-buying")?.classList.toggle("hidden", !showBuying);
     document.getElementById("more-tile-selling")?.classList.toggle("hidden", !showSelling);
     document.getElementById("more-tile-returns")?.classList.toggle("hidden", !showReturns);
@@ -391,6 +399,10 @@ const App = (() => {
       try { FreightAgentsSetup.init(sharedCtx()); } catch (e) { console.error("FreightAgentsSetup init failed", e); }
       try { DocShare.init(sharedCtx()); } catch (e) { console.error("DocShare init failed", e); }
       applyNavPermissions();
+      if (lookupDesk()) {
+        showView("lookup");
+        return;
+      }
       if (stickerDesk()) {
         showView("more");
         try { Sticker.open(); } catch (e) { /* sticker script */ }
@@ -483,6 +495,37 @@ const App = (() => {
       await enterApp();
     } catch (e) {
       showLoginShell(e.message);
+    }
+  }
+
+  async function searchItemLookup() {
+    const input = document.getElementById("item-lookup-q");
+    const host = document.getElementById("item-lookup-results");
+    const q = (input?.value || "").trim();
+    if (!q) return toast("Type an item number", "error");
+    if (host) host.innerHTML = `<p style="color:var(--muted);">Searching…</p>`;
+    try {
+      const data = await api(`/items/lookup?q=${encodeURIComponent(q)}`, {}, 0);
+      const items = data.items || [];
+      if (!host) return;
+      if (!items.length) {
+        host.innerHTML = `<p style="color:var(--muted);">No item ${esc(q)}</p>`;
+        return;
+      }
+      host.innerHTML = items.map(item => `
+        <div style="display:flex;gap:16px;align-items:center;padding:14px 0;border-bottom:1px solid var(--border);">
+          ${item.image_url
+            ? `<img src="${esc(item.image_url)}" alt="" style="width:120px;height:120px;object-fit:contain;background:#f8fafc;border-radius:8px;" />`
+            : `<div style="width:120px;height:120px;display:flex;align-items:center;justify-content:center;background:#f8fafc;border-radius:8px;color:var(--muted);">No photo</div>`}
+          <div>
+            <strong style="font-size:18px;">${esc(item.our_product_id)}</strong>
+            ${item.year_group ? `<div style="color:var(--muted);font-size:13px;margin-top:4px;">${esc(item.year_group)}</div>` : ""}
+            <div style="margin-top:8px;font-size:16px;">Stock <strong>${Number(item.quantity_on_hand) || 0}</strong></div>
+          </div>
+        </div>`).join("");
+    } catch (e) {
+      if (host) host.innerHTML = "";
+      toast(e.message || "Search failed", "error");
     }
   }
 
@@ -610,6 +653,10 @@ const App = (() => {
       return;
     }
     const resolved = resolveViewName(name);
+    if (lookupDesk() && resolved !== "lookup") {
+      if (currentViewName !== "lookup") showView("lookup", { replace: true });
+      return;
+    }
     if (stickerDesk() && resolved !== "more") {
       if (currentViewName !== "more") showView("more", { replace: true });
       try { Sticker.open(); } catch (e) { /* sticker script */ }
@@ -627,6 +674,10 @@ const App = (() => {
 
     const markMore = () => document.getElementById("nav-more")?.classList.add("active");
 
+    if (name === "lookup") {
+      document.getElementById("view-lookup")?.classList.remove("hidden");
+      return;
+    }
     if (name === "today") {
       document.getElementById("view-today")?.classList.remove("hidden");
       document.getElementById("nav-today")?.classList.add("active");
@@ -2798,7 +2849,7 @@ const App = (() => {
     toggleCustomerLedgerRow, setCustomerRealOnly, openSelling, billCustomer, collectCustomer, openCustomerMoney,
     loadRecycleBin, setRecycleTab, openRecycleDetail, restoreItem, purgeItem,
     addLookup, submitLookup, editLookup, deleteLookup, openCustomerLedgerEntry, createCustomerOrder,
-    closeModal, init,
+    closeModal, init, searchItemLookup,
     downloadExportKind, downloadBackupZip,
     debouncedLoadCustomers, debouncedVendorSearch, debouncedCatalogSearch, debouncedAddonSearch, debouncedStockSearch,
     setVendors,

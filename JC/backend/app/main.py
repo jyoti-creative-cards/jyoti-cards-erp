@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.db.session import init_db
-from app.routers import addons, activity, auth, catalog, customers, recycle_bin, routes, staff, stats, stock, stock_journals, vendor_orders, vendors, debit_notes, accounts_payable, shop, customer_orders, customer_returns, bill_series, freight_agents, expenses, accounts_receivable, documents, finance, reports, dashboard, share, export, payment_modes, whatsapp_inbox
+from app.routers import addons, activity, auth, catalog, customers, recycle_bin, routes, staff, stats, stock, stock_journals, vendor_orders, vendors, debit_notes, accounts_payable, shop, customer_orders, customer_returns, bill_series, freight_agents, expenses, accounts_receivable, documents, finance, reports, dashboard, share, export, payment_modes, whatsapp_inbox, items_lookup
 from app.services.observability import setup_observability
 
 # Real format (with request-id correlation) is installed by setup_observability()
@@ -47,6 +47,35 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def block_item_lookup_account(request, call_next):
+    """The item-lookup staff account can call only its search."""
+    path = request.url.path
+    header = request.headers.get("authorization") or ""
+    if header.lower().startswith("bearer ") and not path.startswith("/api/v1/items/lookup"):
+        token = header.split(" ", 1)[1].strip()
+        try:
+            from app.db.session import SessionLocal
+            from app.models.staff import Staff
+            from app.services.permissions import parse_permissions
+            from app.services.tokens import decode_access_token, token_staff_id
+
+            payload = decode_access_token(token)
+            if payload.get("type") == "staff":
+                db = SessionLocal()
+                try:
+                    row = db.get(Staff, token_staff_id(payload))
+                    perms = parse_permissions(row.permissions_json) if row and row.is_active else set()
+                finally:
+                    db.close()
+                if perms == {"items.lookup"}:
+                    from starlette.responses import JSONResponse
+                    return JSONResponse({"detail": "permission denied"}, status_code=403)
+        except Exception:
+            pass
+    return await call_next(request)
+
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(customers.router, prefix="/api/v1")
 app.include_router(routes.router, prefix="/api/v1")
@@ -78,6 +107,7 @@ app.include_router(dashboard.router, prefix="/api/v1")
 app.include_router(share.router, prefix="/api/v1")
 app.include_router(export.router, prefix="/api/v1")
 app.include_router(whatsapp_inbox.router, prefix="/api/v1")
+app.include_router(items_lookup.router, prefix="/api/v1")
 
 
 @app.get("/health")

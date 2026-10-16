@@ -22,6 +22,19 @@ def test_staff_is_not_blocked_by_permissions():
     assert auth.has("stickers.print")
 
 
+def test_item_lookup_account_only_sees_photo_and_stock():
+    from app.routers.items_lookup import _matches
+
+    auth = AuthContext(actor_type="staff", actor_id=9, actor_name="anshul", permissions={"items.lookup"})
+    assert auth.is_lookup_only()
+    assert auth.has("items.lookup")
+    assert not auth.has("catalog.read")
+    assert not auth.has("stock.read")
+    assert _matches("6734 BOX PATRIKA", "6734")
+    assert not _matches("67340 BOX", "6734")
+    assert not _matches("16734 CARD", "6734")
+
+
 def test_billed_items_count_bills_qty_rate_and_closing():
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(bind=engine)

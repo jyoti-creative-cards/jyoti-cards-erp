@@ -28,9 +28,15 @@ class AuthContext:
     def is_admin(self) -> bool:
         return self.actor_type == "admin"
 
+    def is_lookup_only(self) -> bool:
+        """One staff account that may only search an item number for its photo and stock."""
+        return self.actor_type == "staff" and self.permissions == {"items.lookup"}
+
     def has(self, perm: str) -> bool:
-        # Every signed-in person has full access for now. Restrictions come back
-        # one account at a time when asked.
+        if self.is_lookup_only():
+            return perm == "items.lookup"
+        # Every other signed-in person has full access for now. Restrictions come
+        # back one account at a time when asked.
         return True
 
     def require(self, perm: str) -> None:
@@ -108,7 +114,10 @@ def require_all_permissions(*permissions: str) -> Callable:
 
 
 def require_admin(auth: AuthContext = Depends(get_auth_context)) -> AuthContext:
-    # Staff and the admin key both pass. Who did it is still recorded on the activity log.
+    # Staff and the admin key both pass, except the item-lookup account.
+    # Who did it is still recorded on the activity log.
+    if auth.is_lookup_only():
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="permission denied")
     return auth
 
 

@@ -68,6 +68,10 @@
       return;
     }
     const resolved = resolveViewName(name);
+    if (lookupDesk() && resolved !== "lookup") {
+      if (currentViewName !== "lookup") showView("lookup", { replace: true });
+      return;
+    }
     if (stickerDesk() && resolved !== "more") {
       if (currentViewName !== "more") showView("more", { replace: true });
       try { Sticker.open(); } catch (e) { /* sticker script */ }
@@ -85,6 +89,10 @@
 
     const markMore = () => document.getElementById("nav-more")?.classList.add("active");
 
+    if (name === "lookup") {
+      document.getElementById("view-lookup")?.classList.remove("hidden");
+      return;
+    }
     if (name === "today") {
       document.getElementById("view-today")?.classList.remove("hidden");
       document.getElementById("nav-today")?.classList.add("active");

@@ -18,6 +18,7 @@ PERMISSION_GROUPS = [
     ("Customer Orders", [("customer_orders.read", "View customer orders"), ("customer_orders.write", "Place & bill customer orders")]),
     ("Returns", [("returns.read", "View customer returns"), ("returns.write", "Create customer returns")]),
     ("Stock", [("stock.read", "View stock"), ("stock.write", "Receive, edit & bill stock (stock adjustment and selling-price edits are always owner/admin-only)")]),
+    ("Item lookup", [("items.lookup", "Search an item number and see only its photo and stock")]),
     ("Costs", [("costs.read", "See our buying price / cost & margins")]),
     ("Finance", [("finance.write", "Record vendor/customer payments & add expenses — no totals or reports")]),
     ("Print sticker", [("stickers.print", "Print party stickers only")]),

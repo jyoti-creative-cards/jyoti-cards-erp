@@ -387,6 +387,17 @@
       </div>
 
       <!-- Products -->
+      <div id="view-lookup" class="view hidden">
+        <div style="max-width:560px;margin:0 auto;padding:24px 16px 48px;">
+          <h2 style="margin:0 0 4px;">Item lookup</h2>
+          <p style="margin:0 0 16px;color:var(--muted);">Type the item number. You will see the photo and the stock.</p>
+          <div style="display:flex;gap:8px;">
+            <input id="item-lookup-q" class="input" placeholder="Item number" autocomplete="off" onkeydown="if(event.key==='Enter')App.searchItemLookup()" />
+            <button type="button" class="btn btn-primary" onclick="App.searchItemLookup()">Search</button>
+          </div>
+          <div id="item-lookup-results" style="margin-top:16px;"></div>
+        </div>
+      </div>
       <div id="view-products" class="view hidden">
         <div class="prod-page ui-page">
           <div id="products-unified" class="prod-panel">
@@ -1169,7 +1180,7 @@
   <script src="js/payment-modes.js?v=ui62"></script>
   <script src="js/freight-agents.js?v=ui66"></script>
   <script src="js/calculator.js?v=ui1"></script>
-  <script src="app.js?v=ui82"></script>
+  <script src="app.js?v=ui83"></script>
   <script src="js/whatsapp-inbox.js?v=ui2"></script>
 </body>
 </html>

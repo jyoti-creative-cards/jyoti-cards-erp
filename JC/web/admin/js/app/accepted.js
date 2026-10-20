@@ -398,9 +398,11 @@ const App = (() => {
       try { DocShare.init(sharedCtx()); } catch (e) { console.error("DocShare init failed", e); }
       applyNavPermissions();
       if (lookupDesk()) {
+        document.getElementById("wa-send-bar")?.classList.add("hidden");
         showView("lookup");
         return;
       }
+      loadWhatsappSends();
       if (stickerDesk()) {
         showView("more");
         try { Sticker.open(); } catch (e) { /* sticker script */ }
@@ -424,6 +426,37 @@ const App = (() => {
     } catch (e) {
       showLoginShell(e?.message || "Could not open app");
       throw e;
+    }
+  }
+
+  function paintWhatsappSends(on) {
+    const box = document.getElementById("wa-sends-toggle");
+    const hint = document.getElementById("wa-sends-hint");
+    if (box) box.checked = !!on;
+    if (hint) hint.textContent = on ? "On. Orders and bills are sent." : "Off. Nothing is sent.";
+  }
+
+  async function loadWhatsappSends() {
+    try {
+      const row = await api("/settings/whatsapp", {}, 0);
+      paintWhatsappSends(!!row.enabled);
+    } catch (_) {
+      paintWhatsappSends(false);
+    }
+  }
+
+  async function setWhatsappSends(on) {
+    const box = document.getElementById("wa-sends-toggle");
+    try {
+      const row = await api("/settings/whatsapp", {
+        method: "PUT",
+        body: JSON.stringify({ enabled: !!on }),
+      }, 0);
+      paintWhatsappSends(!!row.enabled);
+      toast(row.enabled ? "WhatsApp is on" : "WhatsApp is off", "success");
+    } catch (e) {
+      if (box) box.checked = !on;
+      toast(e.message || "Could not change WhatsApp", "error");
     }
   }
 
@@ -2841,7 +2874,7 @@ const App = (() => {
     toggleCustomerLedgerRow, setCustomerRealOnly, openSelling, billCustomer, collectCustomer, openCustomerMoney,
     loadRecycleBin, setRecycleTab, openRecycleDetail, restoreItem, purgeItem,
     addLookup, submitLookup, editLookup, deleteLookup, openCustomerLedgerEntry, createCustomerOrder,
-    closeModal, init, searchItemLookup,
+    closeModal, init, searchItemLookup, setWhatsappSends,
     downloadExportKind, downloadBackupZip,
     debouncedLoadCustomers, debouncedVendorSearch, debouncedCatalogSearch, debouncedAddonSearch, debouncedStockSearch,
     setVendors,

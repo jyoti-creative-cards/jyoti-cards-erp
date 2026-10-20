@@ -14,7 +14,7 @@
     toggleCustomerLedgerRow, setCustomerRealOnly, openSelling, billCustomer, collectCustomer, openCustomerMoney,
     loadRecycleBin, setRecycleTab, openRecycleDetail, restoreItem, purgeItem,
     addLookup, submitLookup, editLookup, deleteLookup, openCustomerLedgerEntry, createCustomerOrder,
-    closeModal, init, searchItemLookup,
+    closeModal, init, searchItemLookup, setWhatsappSends,
     downloadExportKind, downloadBackupZip,
     debouncedLoadCustomers, debouncedVendorSearch, debouncedCatalogSearch, debouncedAddonSearch, debouncedStockSearch,
     setVendors,

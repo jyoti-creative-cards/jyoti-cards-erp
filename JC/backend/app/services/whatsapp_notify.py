@@ -211,6 +211,10 @@ def schedule_whatsapp(kind: str, entity_id: int) -> None:
     """Send after this request returns. The screen does not wait on Meta or a PDF."""
     if "pytest" in sys.modules:
         return
+    from app.services.whatsapp_gate import whatsapp_sends_enabled
+
+    if not whatsapp_sends_enabled():
+        return
     threading.Thread(
         target=_deliver,
         args=(kind, int(entity_id)),

@@ -29,6 +29,7 @@ from app.models.payment_mode import PaymentMode
 from app.models.sticker_label import StickerLabel
 from app.models.sticker_print import StickerPrint
 from app.models.whatsapp_message import WhatsAppMessage
+from app.models.runtime_flag import RuntimeFlag
 
 __all__ = [
     "ActivityLog", "AddonProduct", "AddonStockLedger", "CatalogAddonLink", "CatalogAlternative",

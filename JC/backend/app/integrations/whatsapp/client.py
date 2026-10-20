@@ -22,9 +22,18 @@ def _e164(phone: str) -> Optional[str]:
     return t if len(t) >= 8 else None
 
 
-def _post(payload: Dict[str, Any]) -> Dict[str, Any]:
+def _sends_blocked() -> bool:
     s = get_settings()
     if s.whatsapp_disable:
+        return True
+    from app.services.whatsapp_gate import whatsapp_sends_enabled
+
+    return not whatsapp_sends_enabled()
+
+
+def _post(payload: Dict[str, Any]) -> Dict[str, Any]:
+    s = get_settings()
+    if _sends_blocked():
         return {"ok": False, "error": "WHATSAPP_DISABLE"}
     tok = s.whatsapp_access_token.strip()
     pn = s.whatsapp_phone_number_id.strip()
@@ -99,7 +108,7 @@ def send_account_creation(
 def upload_media(data: bytes, filename: str, mime: str = "application/pdf") -> Dict[str, Any]:
     """Upload bytes to WhatsApp Cloud API media; returns {ok, media_id}."""
     s = get_settings()
-    if s.whatsapp_disable:
+    if _sends_blocked():
         return {"ok": False, "error": "WHATSAPP_DISABLE"}
     tok = s.whatsapp_access_token.strip()
     pn = s.whatsapp_phone_number_id.strip()

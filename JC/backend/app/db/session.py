@@ -104,6 +104,7 @@ def init_db() -> None:
         CustomerReturn, CustomerReturnLine,
         StickerLabel, StickerPrint,
         WhatsAppMessage,
+        RuntimeFlag,
     )
 
     try:

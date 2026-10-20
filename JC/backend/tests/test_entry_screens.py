@@ -14,6 +14,17 @@ def test_entry_lists_are_on_the_api():
     assert "names_only" in names
 
 
+def test_whatsapp_stays_off_until_the_switch_is_on(monkeypatch):
+    from app.services import whatsapp_gate
+
+    monkeypatch.setattr(whatsapp_gate, "_read_flag", lambda: None)
+    assert whatsapp_gate.whatsapp_sends_enabled() is False
+    monkeypatch.setattr(whatsapp_gate, "_read_flag", lambda: "0")
+    assert whatsapp_gate.whatsapp_sends_enabled() is False
+    monkeypatch.setattr(whatsapp_gate, "_read_flag", lambda: "1")
+    assert whatsapp_gate.whatsapp_sends_enabled() is True
+
+
 def test_customer_app_can_send_a_bag_of_items():
     from app.schemas.shop import CustomerOrderCreate
 

@@ -64,6 +64,13 @@
         <button class="nav-item hidden" id="nav-recycle" onclick="App.showView('recycle')" aria-hidden="true"></button>
         <button class="nav-item hidden" id="nav-whatsapp" onclick="WhatsAppInbox.open()" aria-hidden="true"></button>
       </nav>
+      <div id="wa-send-bar" style="padding:12px;border-top:1px solid var(--border);">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;cursor:pointer;">
+          <input type="checkbox" id="wa-sends-toggle" onchange="App.setWhatsappSends(this.checked)" />
+          WhatsApp
+        </label>
+        <div id="wa-sends-hint" style="font-size:11px;color:var(--muted);margin-top:4px;">Off. Nothing is sent.</div>
+      </div>
       <div style="padding:12px;border-top:1px solid var(--border);">
         <div id="user-badge" style="font-size:11px;color:var(--muted);margin-bottom:8px;text-align:center;"></div>
         <button class="btn btn-secondary btn-sm" style="width:100%;" onclick="App.logout()">Logout</button>
@@ -1180,7 +1187,7 @@
   <script src="js/payment-modes.js?v=ui62"></script>
   <script src="js/freight-agents.js?v=ui66"></script>
   <script src="js/calculator.js?v=ui1"></script>
-  <script src="app.js?v=ui83"></script>
+  <script src="app.js?v=ui84"></script>
   <script src="js/whatsapp-inbox.js?v=ui2"></script>
 </body>
 </html>

@@ -2275,16 +2275,10 @@ const CustomerOrders = (() => {
       ctx.invalidateCache?.("/accounts-receivable");
       ctx.invalidateCache?.("/stock");
       const edited = !!editBillId;
-      closeProcessWizard();
-      if (edited) {
-        ctx.toast(`Bill ${res.bill_number} updated`, "success");
-        ctx.invalidateCache?.("/freight-agents");
-        if (isDispatchBucket()) await loadDispatch();
-        if (detailCustomerId) await openDetail(detailCustomerId, "billed");
-      } else {
-        ctx.toast(`Bill ${res.bill_number} — ${fmtPrice(res.grand_total)}`, "success");
-      }
+      if (edited) ctx.invalidateCache?.("/freight-agents");
       entryItems = null;
+      showBillReady(res);
+      ctx.toast(`Bill ${res.bill_number} — ${fmtPrice(res.grand_total)}`, "success");
       loadList();
     } catch (e) {
       processBusy = false;
@@ -2296,7 +2290,33 @@ const CustomerOrders = (() => {
     }
   }
 
+  function showBillReady(res) {
+    const title = document.getElementById("co-wizard-title");
+    const body = document.getElementById("co-wizard-body");
+    const footer = document.getElementById("co-wizard-footer");
+    const steps = document.getElementById("co-wizard-steps");
+    const totals = document.getElementById("co-wizard-totals");
+    if (steps) steps.innerHTML = "";
+    if (totals) totals.innerHTML = "";
+    if (title) title.textContent = `Bill ${res.bill_number || ""}`;
+    if (body) {
+      body.innerHTML = `
+        <p style="margin:0 0 8px;font-size:18px;"><strong>${ctx.esc(res.bill_number || "")}</strong> saved</p>
+        <p style="margin:0 0 20px;color:var(--muted);">${fmtPrice(res.grand_total)}</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button type="button" class="btn btn-primary" onclick="CustomerOrders.openBillDoc(${Number(res.bill_id)}, true)">Print</button>
+          <button type="button" class="btn btn-secondary" onclick="CustomerOrders.openBillDoc(${Number(res.bill_id)}, false)">Download</button>
+        </div>
+        <p style="margin:12px 0 0;font-size:13px;color:var(--muted);">Print is the original and the duplicate. Download is the original only.</p>`;
+    }
+    if (footer) {
+      footer.innerHTML = `<button type="button" class="btn btn-secondary" onclick="CustomerOrders.closeProcessWizard()">Done</button>`;
+    }
+    document.getElementById("co-wizard")?.classList.remove("hidden");
+  }
+
   async function openBillDoc(billId, print) {
+    ctx.showLoading?.();
     try {
       await DocShare.openPdf(`/share/bills/${billId}/pdf?layout=${print ? "print" : "file"}`, {
         print: !!print,
@@ -2313,6 +2333,8 @@ const CustomerOrders = (() => {
           window.open(d.document_url, "_blank");
         }
       } catch (e2) { ctx.toast(e2.message || e.message, "error"); }
+    } finally {
+      ctx.hideLoading?.();
     }
   }
 

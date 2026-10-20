@@ -477,6 +477,7 @@ def create_offline_customer_order(
         detail=f"Confirmed placement #{placement.id}",
     )
     db.commit()
+    response_cache.invalidate("stock:")
     from app.services.doc_jobs import enqueue_order_pdf
     from app.services.whatsapp_notify import schedule_whatsapp
     enqueue_order_pdf(placement.id)

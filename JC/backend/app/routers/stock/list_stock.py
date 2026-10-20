@@ -9,7 +9,7 @@ from sqlalchemy import and_, case, func, or_, text
 from sqlalchemy.orm import Session, aliased
 
 from app.db.session import get_db
-from app.deps import AuthContext, get_auth_context, require_admin, require_permission
+from app.deps import AuthContext, get_auth_context, require_admin, require_any_permission, require_permission
 from app.models.addon_product import AddonProduct
 from app.models.catalog_alternative import CatalogAlternative
 from app.models.catalog_addon_link import CatalogAddonLink
@@ -241,6 +241,44 @@ def list_stock(
         _attach_priced_addons(db, out)
     response_cache.set(cache_key, out, 25.0)
     return out
+
+
+@router.get("/entry-items")
+def entry_items(
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_any_permission("customer_orders.read", "customer_orders.write", "stock.read")),
+) -> list[dict]:
+    """Item numbers for the order form. The page filters this list locally."""
+    cached = response_cache.get("stock:entry-items:v1")
+    if cached is not None:
+        return cached
+    from app.services.catalog_addons import addon_snapshots_map
+
+    rows = (
+        db.query(CatalogProduct, StockBalance.quantity_on_hand)
+        .outerjoin(StockBalance, StockBalance.catalog_product_id == CatalogProduct.id)
+        .filter(CatalogProduct.is_active.is_(True), CatalogProduct.deleted_at.is_(None))
+        .order_by(CatalogProduct.our_product_id.asc(), CatalogProduct.id.asc())
+        .all()
+    )
+    ids = [product.id for product, _qty in rows]
+    addons = addon_snapshots_map(db, ids, with_images=False)
+    out = []
+    for product, qty in rows:
+        price = effective_selling_price(product.buying_price, product.selling_price)
+        extra = addons.get(product.id) or []
+        out.append({
+            "catalog_product_id": product.id,
+            "our_product_id": product.our_product_id,
+            "year_group": product.year_group,
+            "selling_price": format(price, "f") if price is not None else None,
+            "quantity_on_hand": int(qty or 0),
+            "addons": extra,
+            "priced_addons": [a for a in extra if float(a.get("selling_price") or 0) > 0],
+        })
+    response_cache.set("stock:entry-items:v1", out, 60.0)
+    return out
+
 
 def _list_stock_sqlite(
     db: Session,

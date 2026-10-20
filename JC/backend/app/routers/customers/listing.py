@@ -147,6 +147,42 @@ def quick_search_customers(
         for r in rows[:8]
     ]
 
+
+@router.get("/entry-parties")
+def entry_parties(
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_any_permission("customer_orders.read", "customer_orders.write", "customers.read")),
+) -> list[dict]:
+    """Names for the order form. Filtered in the browser, so typing does not wait."""
+    cached = response_cache.get("customers:entry-parties:v1")
+    if cached is not None:
+        return cached
+    rows = (
+        db.query(Customer, City.name)
+        .outerjoin(City, City.id == Customer.city_id)
+        .filter(Customer.is_active.is_(True), Customer.deleted_at.is_(None))
+        .order_by(Customer.business_name.asc(), Customer.id.asc())
+        .all()
+    )
+    out = [
+        {
+            "id": customer.id,
+            "business_name": customer.business_name,
+            "person_name": customer.person_name,
+            "phone": customer.phone,
+            "alias": customer.alias,
+            "party_number": customer.party_number,
+            "marker_1": customer.marker_1,
+            "marker_2": customer.marker_2,
+            "payment_type": customer.payment_type,
+            "city_name": city_name,
+        }
+        for customer, city_name in rows
+    ]
+    response_cache.set("customers:entry-parties:v1", out, 60.0)
+    return out
+
+
 def search_sticker_parties(db: Session, q: str) -> list[Customer]:
     """Party-number prefix only. A typed 3 must not match a name or a phone."""
     text = (q or "").strip()

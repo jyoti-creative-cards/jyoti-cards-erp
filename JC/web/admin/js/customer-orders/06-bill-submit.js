@@ -1,7 +1,18 @@
   async function submitProcess() {
     if (processBusy || !detailCustomerId) return;
+    if (!processLines.some(l => Number(l.quantity_to_ship) > 0)) return ctx.toast("Enter a quantity", "error");
+    if (!transportMode) return ctx.toast("Select transport", "error");
+    if (transportMode === "bus") {
+      if (!freightAgentId) return ctx.toast("Select the freight agent", "error");
+      if (String(freightCharges || "").trim() === "") return ctx.toast("Enter freight", "error");
+    }
+    if (transportMode === "transport" && String(freightCharges || "").trim() === "") {
+      return ctx.toast("Enter transport charges", "error");
+    }
+    if (!editBillId && !billSeriesId) return ctx.toast("Select a bill series", "error");
     processBusy = true;
-    renderProcessWizard();
+    const saveBtn = document.querySelector("#co-wizard-footer .btn-primary");
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "Saving…"; }
     ctx.showLoading?.();
     try {
       let res;
@@ -22,32 +33,18 @@
       ctx.invalidateCache?.("/stock");
       const edited = !!editBillId;
       closeProcessWizard();
-      const cid = detailCustomerId;
       if (edited) {
-        ctx.toast(`Bill ${res.bill_number} updated — order + dispatch synced`, "success");
+        ctx.toast(`Bill ${res.bill_number} updated`, "success");
         ctx.invalidateCache?.("/freight-agents");
         if (isDispatchBucket()) await loadDispatch();
+        if (detailCustomerId) await openDetail(detailCustomerId, "billed");
       } else {
-        const hasFreight = transportMode === "bus" || !!(res.freight_agent_id || freightAgentId);
-        const nextHint = transportMode === "bus" || hasFreight
-          ? "Next: Dispatch (agent pick) or Collect."
-          : "Next: Dispatch or Collect — then Close.";
-        ctx.openDetail?.(`Bill ${res.bill_number}`, `
-            <p style="margin:0 0 16px;color:var(--muted);">Bill created — ${fmtPrice(res.grand_total)}. AR posted. ${nextHint}</p>
-            <div style="display:flex;flex-direction:column;gap:8px;">
-              <button class="btn btn-primary" onclick="App.closeDetail();CustomerOrders.goToDispatch()">Dispatch</button>
-              ${(ctx.isAdmin?.() || ctx.canWrite?.("ar") || ctx.canWrite?.("finance")) ? `<button class="btn btn-secondary" onclick="App.closeDetail();CustomerOrders.goCollectPayment(${cid})">Collect payment</button>` : ""}
-              <button class="btn btn-secondary" onclick="CustomerOrders.openBillDoc(${res.bill_id}, false)">Download PDF</button>
-              <button class="btn btn-secondary" onclick="CustomerOrders.openBillDoc(${res.bill_id}, true)">Print</button>
-              <button class="btn btn-secondary" onclick="CustomerOrders.shareBillWhatsApp(${res.bill_id})">WhatsApp</button>
-              <button class="btn btn-secondary" onclick="App.closeDetail();CustomerOrders.openCloseBatch(${cid})">Close order</button>
-            </div>`,
-          `<button class="btn btn-secondary" style="flex:1;" onclick="App.closeDetail()">Done</button>`, "sm");
         ctx.toast(`Bill ${res.bill_number} — ${fmtPrice(res.grand_total)}`, "success");
       }
+      entryItems = null;
       loadList();
-      if (edited) await openDetail(detailCustomerId, "billed");
     } catch (e) {
+      processBusy = false;
       ctx.toast(e.message, "error");
       renderProcessWizard();
     } finally {

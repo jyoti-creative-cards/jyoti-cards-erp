@@ -149,9 +149,12 @@ def _ensure_default_freight_agent(db: Session) -> None:
 def list_freight_agents(
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_any_permission("vendor_orders.read", "customer_orders.read")),
+    names_only: bool = Query(False),
 ):
     _ensure_default_freight_agent(db)
     rows = db.query(FreightAgent).order_by(FreightAgent.name.asc()).all()
+    if names_only:
+        return [_pub(r, auth=auth) for r in rows]
     dirty = False
     out = []
     for r in rows:

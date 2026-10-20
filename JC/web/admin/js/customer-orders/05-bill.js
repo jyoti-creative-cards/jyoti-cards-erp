@@ -144,7 +144,7 @@
     try {
       const [pctx, agents, series] = await Promise.all([
         ctx.api(`/customer-orders/customer/${detailCustomerId}/process-context`, {}, 0),
-        ctx.api("/freight-agents", {}, 30000),
+        ctx.api("/freight-agents?names_only=1", {}, 30000),
         ctx.api("/bill-series", {}, 30000),
       ]);
       processContext = pctx;
@@ -182,8 +182,7 @@
       billEditSearch = "";
       processStep = billableOrders.length ? 0 : 1;
       document.getElementById("co-wizard")?.classList.remove("hidden");
-      const title = document.getElementById("co-wizard-title");
-      if (title) title.textContent = "Bill customer";
+      try { await ensureEntryCatalogs(); } catch (_) {}
       renderProcessWizard();
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
@@ -216,7 +215,7 @@
     try {
       const [bill, agents] = await Promise.all([
         ctx.api(`/customer-orders/bills/${billId}`, {}, 0),
-        ctx.api("/freight-agents", {}, 30000),
+        ctx.api("/freight-agents?names_only=1", {}, 30000),
       ]);
       if (bill.cancelled_at) {
         ctx.toast("Cannot edit — bill cancelled", "error");
@@ -292,8 +291,7 @@
       billEditProducts = [];
       billEditSearchPending = false;
       document.getElementById("co-wizard")?.classList.remove("hidden");
-      const title = document.getElementById("co-wizard-title");
-      if (title) title.textContent = `Edit bill ${bill.bill_number}`;
+      try { await ensureEntryCatalogs(); } catch (_) {}
       renderProcessWizard();
     } catch (e) { ctx.toast(e.message, "error"); editBillId = null; }
     finally { ctx.hideLoading?.(); }
@@ -417,6 +415,8 @@
     ln.discount_percent = val;
     ln.discSource = val === "" || val == null ? "" : "pct";
     ln.net_rate = val === "" || val == null ? "" : calcNetFromDisc(ln.unit_price, val);
+    const net = document.querySelector(`[data-net-for="${idx}"]`);
+    if (net && document.activeElement !== net) net.value = ln.net_rate ?? "";
     renderWizardTotalsBar();
   }
 
@@ -433,6 +433,8 @@
     ln.discount_percent = calcDiscFromNet(ln.unit_price, val);
     discountEnabled = true;
     useOverallDiscount = false;
+    const disc = document.querySelector(`[data-disc-for="${idx}"]`);
+    if (disc && document.activeElement !== disc) disc.value = ln.discount_percent ?? "";
     renderWizardTotalsBar();
   }
 
@@ -491,277 +493,124 @@
       : "";
   }
 
+  function transportFieldsHtml() {
+    if (transportMode === "bus") {
+      return `
+        <label class="label">Freight agent</label>
+        <select class="input" onchange="CustomerOrders.setFreightAgent(this.value)">
+          <option value="">—</option>
+          ${freightAgents.map(a => `<option value="${a.id}" ${String(a.id) === String(freightAgentId) ? "selected" : ""}>${ctx.esc(a.name)}</option>`).join("")}
+        </select>
+        <label class="label">Freight (₹)</label>
+        <input id="co-freight-amount" class="input" value="${ctx.esc(freightCharges)}" oninput="CustomerOrders.setFreightCharges(this.value)" />`;
+    }
+    if (transportMode === "transport") {
+      return `
+        <label class="label">Transport (₹)</label>
+        <input id="co-freight-amount" class="input" value="${ctx.esc(freightCharges)}" oninput="CustomerOrders.setFreightCharges(this.value)" />
+        <label class="label">Receipt number</label>
+        <input class="input" value="${ctx.esc(transportReceiptNumber)}" oninput="CustomerOrders.setTransportReceipt(this.value)" />`;
+    }
+    if (transportMode === "self_pickup") return `<p style="margin:8px 0 0;font-size:13px;color:var(--muted);">Customer picks up.</p>`;
+    return "";
+  }
+
   function renderProcessWizard() {
     const stepsEl = document.getElementById("co-wizard-steps");
     const bodyEl = document.getElementById("co-wizard-body");
     const footerEl = document.getElementById("co-wizard-footer");
     if (!stepsEl || !bodyEl || !footerEl) return;
+    stepsEl.innerHTML = "";
     renderWizardTotalsBar();
-
-    const labels = editBillId
-      ? ["Lines", "Transport", "Charges", "Narration", "Review"]
-      : ["Orders", "Lines", "Transport", "Charges", "Narration", "Review"];
-    const stepOffset = editBillId ? 1 : 0;
-    stepsEl.innerHTML = labels.map((l, i) => {
-      const n = i + stepOffset;
-      const cls = n === processStep ? "step active" : n < processStep ? "step done" : "step";
-      return `<div class="${cls}"><span class="step-num">${i + 1}</span><span class="step-label">${l}</span></div>`;
-    }).join("");
-
-    if (processStep === 0) {
-      const allOn = billableOrders.length > 0 && billableOrders.every(o => selectedPlacementIds.includes(Number(o.placement_id)));
-      bodyEl.innerHTML = `
-        <p style="margin:0 0 12px;color:var(--muted);font-size:14px;">Pick the orders to bill now. Anything you leave unticked stays in Confirmed.</p>
-        <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:14px;">
-          <input type="checkbox" ${allOn ? "checked" : ""} onchange="CustomerOrders.toggleAllBillOrders(this.checked)" /> Select all
-        </label>
-        <div style="display:flex;flex-direction:column;gap:12px;">
-          ${billableOrders.map(order => {
-            const on = selectedPlacementIds.includes(Number(order.placement_id));
-            const when = ctx.fmtDate ? ctx.fmtDate(order.placed_at) : "";
-            const who = order.order_source === "app"
-              ? "Portal"
-              : (order.placed_by_name ? ctx.esc(order.placed_by_name) : "Staff");
-            const rows = (order.lines || []).map(ln => `<tr>
-              <td><strong>${ctx.esc(ln.our_product_id)}</strong></td>
-              <td style="text-align:right;">${ln.quantity}</td>
-            </tr>`).join("");
-            return `<label style="display:block;border:1px solid var(--border);border-radius:10px;padding:12px;background:${on ? "#f8fafc" : "#fff"};">
-              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-                <input type="checkbox" ${on ? "checked" : ""} onchange="CustomerOrders.toggleBillOrder(${order.placement_id}, this.checked)" />
-                <strong>${ctx.esc(when || "Order")}</strong>
-                <span style="color:var(--muted);font-size:13px;">${who}</span>
-              </div>
-              <table class="data"><thead><tr><th>Item</th><th style="text-align:right;">Qty</th></tr></thead><tbody>${rows}</tbody></table>
-            </label>`;
-          }).join("")}
-        </div>`;
-      footerEl.innerHTML = `
-        <button class="btn btn-secondary" onclick="CustomerOrders.closeProcessWizard()">Cancel</button>
-        <button class="btn btn-primary" onclick="CustomerOrders.processNext()">Proceed →</button>`;
-      return;
-    }
-
-    if (processStep === 1) {
-      const lineDiscLocked = !discountEnabled || useOverallDiscount;
-      const discPanel = `<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:12px;border:1px solid var(--border);border-radius:10px;background:#fafafa;">
-            <strong style="font-size:13px;">Discount</strong>
-            <label style="display:flex;align-items:center;gap:6px;font-size:14px;">
-              <input type="radio" name="co-disc-mode" ${!discountEnabled ? "checked" : ""} onchange="CustomerOrders.setDiscToggle('off')" /> Off
-            </label>
-            <label style="display:flex;align-items:center;gap:6px;font-size:14px;">
-              <input type="radio" name="co-disc-mode" ${discountEnabled && !useOverallDiscount ? "checked" : ""} onchange="CustomerOrders.setDiscToggle('line')" /> Per item
-            </label>
-            <label style="display:flex;align-items:center;gap:6px;font-size:14px;">
-              <input type="radio" name="co-disc-mode" ${discountEnabled && useOverallDiscount ? "checked" : ""} onchange="CustomerOrders.setDiscToggle('overall')" /> Overall
-            </label>
-            ${discountEnabled && useOverallDiscount ? `<input class="input" style="width:100px;" placeholder="%" value="${ctx.esc(overallDiscount)}" oninput="CustomerOrders.setOverallDisc(this.value)" />` : ""}
-          </div>`;
-      const addProd = editBillId ? `<div style="margin-top:14px;">
-          <label class="label">Add product</label>
-          <input id="co-bill-edit-search" class="input" style="width:100%;margin-bottom:8px;" placeholder="Search product ID…" value="${ctx.esc(billEditSearch)}" oninput="CustomerOrders.setBillEditSearch(this.value)" />
-          <div id="co-bill-edit-matches">${billEditMatchesHtml()}</div>
-        </div>` : "";
-      bodyEl.innerHTML = `
-        ${!editBillId ? creditBannerHtml(processContext?.credit) : ""}
-        <p style="margin:0 0 12px;color:var(--muted);font-size:14px;">Customer: <strong>${processContext?.party_number ? `#${processContext.party_number} ` : ""}${ctx.esc(processContext?.customer_name || "")}</strong>${partyMarkerBadgesHtml(processContext)}${editBillId ? " · editing bill (order syncs on save)" : ""}</p>
-        <div style="margin-bottom:12px;">${discPanel}</div>
-        <table class="data"><thead><tr>
-          <th></th><th>Product</th>${editBillId ? "" : "<th>Stock</th><th>To bill</th>"}<th>Rate</th><th>${editBillId ? "Qty" : "Ship"}</th><th>Disc %</th><th>Net rate</th>${editBillId ? "<th></th>" : ""}
-        </tr></thead><tbody>
-          ${processLines.map((ln, i) => {
-            const shownNet = useOverallDiscount && overallDiscount
-              ? calcNetFromDisc(ln.unit_price, overallDiscount)
-              : (ln.net_rate || calcNetFromDisc(ln.unit_price, ln.discount_percent || 0));
-            const shownDisc = useOverallDiscount ? (overallDiscount || "") : (ln.discount_percent || "");
-            const ro = lineDiscLocked ? "readonly" : "";
-            return `<tr>
-            <td>${thumb((ln.image_urls || [])[0])}</td>
-            <td><strong>${ctx.esc(ln.our_product_id)}</strong>${ln.marking ? ` <span class="badge badge-amber" style="font-size:9px;padding:1px 4px;">${ctx.esc(ln.marking)}</span>` : ""}${addonsUnderHtml(ln.addons, ln.quantity_to_ship || 1)}</td>
-            ${editBillId ? "" : `<td>${ln.quantity_on_hand}</td><td>${ln.quantity_open}</td>`}
-            <td>${fmtPrice(ln.unit_price)}</td>
-            <td><input type="number" class="input" style="width:72px;" min="0" ${editBillId ? "" : `max="${ln.quantity_open}"`} value="${ln.quantity_to_ship ?? ""}" onchange="CustomerOrders.setShipQty(${i}, this.value)" /></td>
-            <td><input type="number" class="input" style="width:64px;" min="0" max="100" step="0.1" ${ro} value="${ctx.esc(shownDisc)}" oninput="CustomerOrders.setLineDisc(${i}, this.value)" /></td>
-            <td><input type="number" class="input" style="width:80px;" min="0" step="0.01" placeholder="₹" ${ro} value="${ctx.esc(shownNet || "")}" oninput="CustomerOrders.setLineNetRate(${i}, this.value)" /></td>
-            ${editBillId ? `<td><button type="button" class="btn btn-ghost btn-sm" style="color:var(--danger);" onclick="CustomerOrders.removeProcessLine(${i})">Remove</button></td>` : ""}
-          </tr>`;
-          }).join("")}
-        </tbody></table>
-        ${addProd}`;
-      footerEl.innerHTML = `
-        <button class="btn btn-secondary" onclick="CustomerOrders.closeProcessWizard()">Cancel</button>
-        ${!editBillId && billableOrders.length ? `<button class="btn btn-secondary" onclick="CustomerOrders.processBack()">← Orders</button>` : ""}
-        <button class="btn btn-primary" onclick="CustomerOrders.processNext()">Next →</button>`;
-      return;
-    }
-
-    if (processStep === 2) {
-      let extra = "";
-      if (transportMode === "bus") {
-        extra = `
-          <label class="label">Freight agent</label>
-          <select class="input" style="margin-bottom:12px;width:100%;" onchange="CustomerOrders.setFreightAgent(this.value)">
-            <option value="">— Select agent —</option>
-            ${freightAgents.map(a => `<option value="${a.id}" ${String(a.id) === freightAgentId ? "selected" : ""}>${ctx.esc(a.name)} (due ${fmtPrice(a.balance_due)})</option>`).join("")}
-          </select>
-          <label class="label">Freight charges (₹)</label>
-          <input id="co-freight-amount" class="input" style="width:100%;max-width:220px;" value="${ctx.esc(freightCharges)}" oninput="CustomerOrders.setFreightCharges(this.value)" />`;
-      } else if (transportMode === "transport") {
-        extra = `
-          <label class="label">Transport charges (₹)</label>
-          <input id="co-freight-amount" class="input" style="width:100%;max-width:220px;margin-bottom:12px;" value="${ctx.esc(freightCharges)}" oninput="CustomerOrders.setFreightCharges(this.value)" />
-          <label class="label">Receipt number <span style="font-weight:400;color:var(--muted);">(optional)</span></label>
-          <input class="input" style="width:100%;max-width:280px;" placeholder="If you have it" value="${ctx.esc(transportReceiptNumber)}" oninput="CustomerOrders.setTransportReceipt(this.value)" />`;
-      } else if (transportMode === "self_pickup") {
-        extra = `<p style="font-size:13px;color:var(--muted);margin:0;">Customer picks up. No agent or charges.</p>`;
-      }
-      bodyEl.innerHTML = `
-        <label class="label">Mode of transport</label>
-        <select class="input" style="width:100%;max-width:320px;margin-bottom:16px;" onchange="CustomerOrders.setTransportMode(this.value)">
-          <option value="" ${transportMode ? "" : "selected"}>— Select —</option>
-          <option value="bus" ${transportMode === "bus" ? "selected" : ""}>Bus</option>
-          <option value="transport" ${transportMode === "transport" ? "selected" : ""}>Transport</option>
-          <option value="self_pickup" ${transportMode === "self_pickup" ? "selected" : ""}>Self-pickup</option>
-        </select>
-        ${extra}`;
-      footerEl.innerHTML = `
-        <button class="btn btn-secondary" onclick="CustomerOrders.processBack()">← Back</button>
-        <button class="btn btn-primary" onclick="CustomerOrders.processNext()">Next →</button>`;
-      return;
-    }
-
-    if (processStep === 3) {
-      bodyEl.innerHTML = `
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
-          <div><label class="label">Packaging (₹)</label><input class="input" value="${ctx.esc(packagingCharges)}" oninput="CustomerOrders.setPackagingCharges(this.value)" /></div>
-        </div>
-        <label class="label">Additional charges</label>
-        ${additionalCharges.map((c, i) => `
-          <div style="display:flex;gap:8px;margin-bottom:8px;">
-            <input class="input" placeholder="Name" value="${ctx.esc(c.name)}" oninput="CustomerOrders.setAddCharge(${i}, 'name', this.value)" />
-            <input class="input" placeholder="₹" style="width:100px;" value="${ctx.esc(c.amount)}" oninput="CustomerOrders.setAddCharge(${i}, 'amount', this.value)" />
-          </div>`).join("")}
-        <button type="button" class="btn btn-secondary btn-sm" onclick="CustomerOrders.addChargeRow()">+ Add charge</button>
-        <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);">
-          <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-            <input type="checkbox" ${gstEnabled ? "checked" : ""} onchange="CustomerOrders.setGst(this.checked)" /> GST inclusive split
-          </label>
-          ${gstEnabled ? `<label class="label">GST rate %</label><input class="input" style="width:100px;margin-bottom:12px;" value="${ctx.esc(gstRate)}" oninput="CustomerOrders.setGstRate(this.value)" />` : ""}
-          ${editBillId ? "" : `<label class="label">Bill series</label>
-          <select class="input" style="width:100%;" onchange="CustomerOrders.setBillSeries(this.value)">
-            ${billSeries.map(s => `<option value="${s.id}" ${String(s.id) === billSeriesId ? "selected" : ""}>${ctx.esc(s.name)} (${s.prefix}${s.current_num + 1 >= s.start_num ? s.current_num + 1 : s.start_num}…${s.prefix}${s.end_num})</option>`).join("")}
-            ${!billSeries.length ? `<option value="">No series — create one in Setup</option>` : ""}
-          </select>`}
-        </div>`;
-      footerEl.innerHTML = `
-        <button class="btn btn-secondary" onclick="CustomerOrders.processBack()">← Back</button>
-        <button class="btn btn-primary" ${(!editBillId && !billSeriesId) ? "disabled" : ""} onclick="CustomerOrders.processNext()">Next →</button>`;
-      return;
-    }
-
-    if (processStep === 4) {
-      bodyEl.innerHTML = `
-        ${customerNotes ? `
-          <label class="label">Customer note</label>
-          <div class="card" style="padding:12px 14px;margin-bottom:16px;background:#f8fafc;white-space:pre-wrap;font-size:14px;">${ctx.esc(customerNotes)}</div>
-          <p style="font-size:12px;color:var(--muted);margin:-8px 0 16px;">From the customer — not editable here.</p>
-        ` : (editBillId ? "" : `<p style="font-size:13px;color:var(--muted);margin:0 0 16px;">No customer note on this order.</p>`)}
-        ${editBillId ? "" : `
-          <div style="margin-bottom:16px;">
-            <label class="label">Bill number</label>
-            <div style="font-size:15px;font-weight:600;color:var(--text);">${ctx.esc(nextBillNumberFromSeries() || "—")}</div>
-            <p style="font-size:12px;color:var(--muted);margin:4px 0 0;">Auto-assigned from series when bill is created.</p>
-          </div>
-        `}
-        <label class="label">Bill date</label>
-        <input type="date" class="input" style="width:100%;max-width:220px;margin-bottom:4px;" value="${ctx.esc(billDate || localToday())}" onchange="CustomerOrders.setBillDate(this.value)" />
-        <p style="font-size:12px;color:var(--muted);margin:0 0 16px;">Use the day the bill actually happened (backdate OK).</p>
-        <label class="label">Your narration</label>
-        <textarea class="input" rows="4" style="width:100%;" placeholder="Staff note for the bill…" oninput="CustomerOrders.setNarration(this.value)">${ctx.esc(narration)}</textarea>
-        <p style="font-size:12px;color:var(--muted);margin-top:8px;">This goes on the bill. Separate from the customer note above.</p>`;
-      footerEl.innerHTML = `
-        <button class="btn btn-secondary" onclick="CustomerOrders.processBack()">← Back</button>
-        <button class="btn btn-primary" onclick="CustomerOrders.processNext()">Review →</button>`;
-      return;
-    }
-
-    const shipCount = processLines.filter(l => Number(l.quantity_to_ship) > 0).length;
-    const tot = previewTotals || {};
-    const cr = tot.credit || processContext?.credit;
-    const discAmt = Number(tot.discount_amount || 0);
-    const lineRows = (tot.lines || []).map(ln => {
-      const disc = Number(ln.line_discount || 0);
-      const discPct = ln.item_discount_percent ? ` (${ln.item_discount_percent}%)` : "";
-      const src = processLines.find(p => String(p.our_product_id) === String(ln.our_product_id)) || {};
-      const addonRows = (src.addons || ln.addons || []).map(a => {
-        const per = Number(a.quantity) || 1;
-        const qty = per * (Number(ln.quantity) || 0);
-        const price = Number(a.selling_price) || 0;
-        const amount = price > 0 ? price * qty : 0;
-        return `<tr>
-          <td style="padding-left:16px;color:var(--muted);">+ ${ctx.esc(a.name || a.our_product_id || "Add-on")}</td>
-          <td>${qty}</td>
-          <td>${price > 0 ? fmtPrice(price) : "—"}</td>
-          <td>—</td>
-          <td>${price > 0 ? fmtPrice(price) : "—"}</td>
-          <td>${price > 0 ? fmtPrice(amount) : "—"}</td>
-        </tr>`;
-      }).join("");
+    const title = document.getElementById("co-wizard-title");
+    if (title) title.textContent = editBillId ? `Edit ${editBillNumber || "bill"}` : "Bill";
+    const lineDiscLocked = !discountEnabled || useOverallDiscount;
+    const ro = lineDiscLocked ? "readonly" : "";
+    const ordersHtml = (!editBillId && billableOrders.length > 1) ? `
+      <label class="label">Orders on this bill</label>
+      ${billableOrders.map(order => {
+        const on = selectedPlacementIds.includes(Number(order.placement_id));
+        const when = ctx.fmtDate ? ctx.fmtDate(order.placed_at) : "Order";
+        return `<label style="display:block;margin:0 0 6px;font-size:14px;">
+          <input type="checkbox" ${on ? "checked" : ""} onchange="CustomerOrders.toggleBillOrder(${order.placement_id}, this.checked)" />
+          ${ctx.esc(when)} · ${(order.lines || []).length} items
+        </label>`;
+      }).join("")}` : "";
+    const linesHtml = processLines.map((ln, i) => {
+      const shownNet = useOverallDiscount && overallDiscount
+        ? calcNetFromDisc(ln.unit_price, overallDiscount)
+        : (ln.net_rate || calcNetFromDisc(ln.unit_price, ln.discount_percent || 0));
+      const shownDisc = useOverallDiscount ? (overallDiscount || "") : (ln.discount_percent || "");
       return `<tr>
         <td><strong>${ctx.esc(ln.our_product_id)}</strong></td>
-        <td>${ln.quantity}</td>
-        <td>${fmtPrice(ln.rate_inclusive || ln.unit_price)}</td>
-        <td>${disc > 0 ? `${discPct.trim() || "—"}` : "—"}</td>
-        <td>${fmtPrice(ln.net_rate || ln.effective_price)}</td>
-        <td>${fmtPrice(ln.line_total)}</td>
-      </tr>${addonRows}`;
+        <td>${ln.quantity_on_hand ?? "—"}</td>
+        <td>${fmtPrice(ln.unit_price)}</td>
+        <td><input data-ship-for="${i}" type="number" class="input" style="width:72px;" min="0" value="${ln.quantity_to_ship ?? ""}" oninput="CustomerOrders.setShipQty(${i}, this.value)" /></td>
+        <td><input data-disc-for="${i}" type="number" class="input" style="width:72px;" min="0" max="100" step="0.1" ${ro} value="${ctx.esc(shownDisc)}" oninput="CustomerOrders.setLineDisc(${i}, this.value)" /></td>
+        <td><input data-net-for="${i}" type="number" class="input" style="width:88px;" min="0" step="0.01" ${ro} value="${ctx.esc(shownNet || "")}" oninput="CustomerOrders.setLineNetRate(${i}, this.value)" /></td>
+        ${editBillId ? `<td><button type="button" class="btn btn-ghost btn-sm" onclick="CustomerOrders.removeProcessLine(${i})">Remove</button></td>` : ""}
+      </tr>`;
     }).join("");
-    const totalQty = (tot.lines || []).reduce((s, ln) => s + (Number(ln.quantity) || 0), 0);
-    const totalLineAmount = (tot.lines || []).reduce((s, ln) => s + (Number(ln.line_total) || 0), 0);
-    const modeLabel = transportMode === "bus" ? "Bus" : transportMode === "transport" ? "Transport" : transportMode === "self_pickup" ? "Self-pickup" : "—";
-    const chargeLabel = transportMode === "transport" ? "Transport" : "Bus";
-    const agentName = (freightAgents.find(a => String(a.id) === String(freightAgentId)) || {}).name;
+    const addProd = editBillId ? `
+      <label class="label">Add item</label>
+      <input id="co-bill-edit-search" class="input" placeholder="Item number" oninput="CustomerOrders.setBillEditSearch(this.value)" />
+      <div id="co-bill-edit-matches"></div>` : "";
     bodyEl.innerHTML = `
-      ${creditBannerHtml(cr, { afterBill: true })}
-      <div class="card table-wrap" style="margin-bottom:16px;">
-        <table class="data"><thead><tr>
-          <th>Item</th><th>Qty</th><th>Rate</th><th>Disc</th><th>Net</th><th>Total</th>
-        </tr></thead><tbody>
-          ${lineRows || `<tr><td colspan="6" style="text-align:center;color:var(--muted);">No lines</td></tr>`}
-        </tbody>${lineRows ? `<tfoot>
-          <tr style="font-weight:600;border-top:2px solid var(--border);">
-            <td>Total</td><td>${totalQty}</td><td></td><td></td><td></td><td>${fmtPrice(totalLineAmount)}</td>
-          </tr>
-          ${reviewChargeRows(tot, chargeLabel)}
-        </tfoot>` : ""}</table>
+      <p style="margin:0 0 12px;"><strong>${processContext?.party_number ? "#" + processContext.party_number + " " : ""}${ctx.esc(processContext?.customer_name || "")}</strong>${partyMarkerBadgesHtml(processContext)}</p>
+      ${cashWarningHtml(processContext)}
+      ${!editBillId ? creditBannerHtml(processContext?.credit) : ""}
+      ${ordersHtml}
+      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin:8px 0 12px;font-size:14px;">
+        <label><input type="radio" name="co-disc-mode" ${!discountEnabled ? "checked" : ""} onchange="CustomerOrders.setDiscToggle('off')" /> No discount</label>
+        <label><input type="radio" name="co-disc-mode" ${discountEnabled && !useOverallDiscount ? "checked" : ""} onchange="CustomerOrders.setDiscToggle('line')" /> Per item</label>
+        <label><input type="radio" name="co-disc-mode" ${discountEnabled && useOverallDiscount ? "checked" : ""} onchange="CustomerOrders.setDiscToggle('overall')" /> Overall %</label>
+        ${discountEnabled && useOverallDiscount ? `<input class="input" style="width:80px;" placeholder="%" value="${ctx.esc(overallDiscount)}" oninput="CustomerOrders.setOverallDisc(this.value)" />` : ""}
       </div>
-      <div class="review-grid" style="margin-bottom:16px;">
-        ${ctx.reviewRow("Customer", processContext?.customer_name)}
-        ${processContext?.city_name ? ctx.reviewRow("City", processContext.city_name) : ""}
-        ${!editBillId ? ctx.reviewRow("Bill number", nextBillNumberFromSeries() || "auto") : ""}
-        ${ctx.reviewRow("Bill date", billDate || localToday())}
-        ${ctx.reviewRow("Lines shipping", shipCount)}
-        ${ctx.reviewRow("Transport", modeLabel)}
-        ${transportMode === "bus" && agentName ? ctx.reviewRow("Freight agent", agentName) : ""}
-        ${transportMode === "transport" && transportReceiptNumber.trim() ? ctx.reviewRow("Receipt", transportReceiptNumber.trim()) : ""}
-        ${ctx.reviewRow("Subtotal", fmtPrice(tot.subtotal_inclusive))}
-        ${discAmt > 0 ? ctx.reviewRow(tot.discount_percent ? `Discount (${tot.discount_percent}%)` : "Discount", "−" + fmtPrice(tot.discount_amount)) : ""}
-        ${Number(tot.taxable_value) > 0 && tot.gst_enabled ? ctx.reviewRow("Taxable", fmtPrice(tot.taxable_value)) : ""}
-        ${Number(tot.gst_amount) > 0 ? ctx.reviewRow(`GST (${tot.gst_rate_label || ""})`, fmtPrice(tot.gst_amount)) : ""}
+      <table class="data"><thead><tr>
+        <th>Item</th><th>Stock</th><th>Rate</th><th>Qty</th><th>Disc %</th><th>Net</th>${editBillId ? "<th></th>" : ""}
+      </tr></thead><tbody>${linesHtml || `<tr><td colspan="6" style="color:var(--muted);">No items</td></tr>`}</tbody></table>
+      ${addProd}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;">
+        <div>
+          <label class="label">Transport</label>
+          <select class="input" onchange="CustomerOrders.setTransportMode(this.value)">
+            <option value="" ${transportMode ? "" : "selected"}>—</option>
+            <option value="bus" ${transportMode === "bus" ? "selected" : ""}>Bus</option>
+            <option value="transport" ${transportMode === "transport" ? "selected" : ""}>Transport</option>
+            <option value="self_pickup" ${transportMode === "self_pickup" ? "selected" : ""}>Self-pickup</option>
+          </select>
+          ${transportFieldsHtml()}
+        </div>
+        <div>
+          <label class="label">Packing (₹)</label>
+          <input class="input" value="${ctx.esc(packagingCharges)}" oninput="CustomerOrders.setPackagingCharges(this.value)" />
+          ${editBillId ? "" : `<label class="label">Bill series</label>
+          <select class="input" onchange="CustomerOrders.setBillSeries(this.value)">
+            ${billSeries.map(s => `<option value="${s.id}" ${String(s.id) === String(billSeriesId) ? "selected" : ""}>${ctx.esc(s.name)}</option>`).join("")}
+          </select>
+          <p style="margin:6px 0 0;font-size:13px;">Number <strong id="co-bill-number">${ctx.esc(nextBillNumberFromSeries() || "—")}</strong></p>`}
+          <label class="label">Bill date</label>
+          <input type="date" class="input" value="${ctx.esc(billDate || localToday())}" onchange="CustomerOrders.setBillDate(this.value)" />
+        </div>
       </div>
-      ${customerNotes ? `<p style="font-size:13px;margin:0 0 6px;"><span class="vo-muted">Customer note:</span> ${ctx.esc(customerNotes)}</p>` : ""}
-      <p style="font-size:13px;color:var(--muted);margin:0;"><span class="vo-muted">Narration:</span> ${ctx.esc(narration || "—")}</p>
-      ${editBillId ? `<p style="font-size:12px;color:var(--muted);margin:10px 0 0;">Saving updates the bill and syncs the customer order quantities.</p>` : ""}
-      ${editBillId && _billEditShrinkLines().length ? `<div style="margin-top:10px;padding:10px 12px;background:#fef3c7;border:1px solid #fde68a;border-radius:8px;font-size:13px;color:#92400e;">
-        <strong>Reducing quantity below what was billed:</strong>
-        <ul style="margin:6px 0 0;padding-left:18px;">
-          ${_billEditShrinkLines().map(l => `<li>${ctx.esc(l.our_product_id)}: ${l.from} → ${l.to}</li>`).join("")}
-        </ul>
-        <div style="margin-top:6px;">Stock will be restored and the customer's order for these qty will shrink — this can't be told apart later from "never ordered".</div>
-      </div>` : ""}`;
+      <label class="label">Other charges</label>
+      ${additionalCharges.map((c, i) => `
+        <div style="display:flex;gap:8px;margin-bottom:6px;">
+          <input class="input" placeholder="Name" value="${ctx.esc(c.name)}" oninput="CustomerOrders.setAddCharge(${i}, 'name', this.value)" />
+          <input class="input" placeholder="₹" style="width:110px;" value="${ctx.esc(c.amount)}" oninput="CustomerOrders.setAddCharge(${i}, 'amount', this.value)" />
+        </div>`).join("")}
+      <button type="button" class="btn btn-secondary btn-sm" onclick="CustomerOrders.addChargeRow()">+ Charge</button>
+      <label style="display:flex;gap:8px;align-items:center;margin:12px 0;">
+        <input type="checkbox" ${gstEnabled ? "checked" : ""} onchange="CustomerOrders.setGst(this.checked)" /> GST
+        ${gstEnabled ? `<input class="input" style="width:80px;" value="${ctx.esc(gstRate)}" oninput="CustomerOrders.setGstRate(this.value)" />` : ""}
+      </label>
+      <label class="label">Narration</label>
+      <textarea class="input" rows="2" oninput="CustomerOrders.setNarration(this.value)">${ctx.esc(narration)}</textarea>
+      ${customerNotes ? `<p style="font-size:13px;color:var(--muted);margin:8px 0 0;">Customer note: ${ctx.esc(customerNotes)}</p>` : ""}
+    `;
     footerEl.innerHTML = `
-      <button class="btn btn-secondary" onclick="CustomerOrders.processBack()">← Back</button>
-      <button class="btn btn-primary" ${processBusy ? "disabled" : ""} onclick="CustomerOrders.submitProcess()">${processBusy ? "Saving…" : (editBillId ? "Save bill" : "Submit Bill")}</button>`;
+      <button class="btn btn-secondary" onclick="CustomerOrders.closeProcessWizard()">Cancel</button>
+      <button class="btn btn-primary" ${processBusy ? "disabled" : ""} onclick="CustomerOrders.submitProcess()">${processBusy ? "Saving…" : "Save bill"}</button>`;
   }
 
   function setForceCredit(v) { forceCreditOverride = !!v; renderProcessWizard(); }
@@ -783,7 +632,14 @@
     }
     renderProcessWizard();
   }
-  function setOverallDisc(v) { overallDiscount = v; renderWizardTotalsBar(); }
+  function setOverallDisc(v) {
+    overallDiscount = v;
+    processLines.forEach((ln, i) => {
+      const net = document.querySelector(`[data-net-for="${i}"]`);
+      if (net) net.value = calcNetFromDisc(ln.unit_price, v);
+    });
+    renderWizardTotalsBar();
+  }
   function billEditMatchesHtml() {
     const q = billEditSearch.trim().toLowerCase();
     const matches = q
@@ -804,26 +660,10 @@
   }
   function setBillEditSearch(v) {
     billEditSearch = v || "";
-    clearTimeout(billEditTimer);
-    const q = billEditSearch.trim();
-    if (q.length < 1) {
-      billEditProducts = [];
-      billEditSearchPending = false;
-      paintBillEditMatches();
-      return;
-    }
-    billEditSearchPending = true;
+    const q = billEditSearch.trim().toLowerCase();
+    billEditProducts = q ? filterEntryItems(q).slice(0, 8) : [];
+    billEditSearchPending = false;
     paintBillEditMatches();
-    billEditTimer = setTimeout(async () => {
-      try {
-        billEditProducts = await ctx.api(`/stock/products?lite=1&limit=8&search=${encodeURIComponent(q)}`, {}, 0) || [];
-      } catch (_) {
-        billEditProducts = [];
-      }
-      if (billEditSearch.trim() !== q) return;
-      billEditSearchPending = false;
-      paintBillEditMatches();
-    }, 200);
   }
   function defaultFreightAgentId() {
     const hit = freightAgents.find(a => String(a.name || "").trim().toLowerCase() === "vishnu parcel");
@@ -857,6 +697,8 @@
   function setGstRate(v) { gstRate = v; }
   function setBillSeries(v) {
     billSeriesId = v;
+    const el = document.getElementById("co-bill-number");
+    if (el) el.textContent = nextBillNumberFromSeries() || "—";
   }
   function nextBillNumberFromSeries() {
     const s = billSeries.find(x => String(x.id) === String(billSeriesId));
@@ -877,10 +719,15 @@
     } else {
       selectedPlacementIds = selectedPlacementIds.filter(x => x !== n);
     }
+    if (!editBillId && billableOrders.length) {
+      applySelectedOrders();
+      renderProcessWizard();
+    }
   }
 
   function toggleAllBillOrders(checked) {
     selectedPlacementIds = checked ? billableOrders.map(o => Number(o.placement_id)) : [];
+    if (!editBillId) applySelectedOrders();
     renderProcessWizard();
   }
 

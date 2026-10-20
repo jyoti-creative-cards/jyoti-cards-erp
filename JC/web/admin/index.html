@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>JC Admin — Jyoti Creative</title>
-  <link rel="stylesheet" href="styles.css?v=ui64" />
+  <link rel="stylesheet" href="styles.css?v=ui65" />
 </head>
 <body>
   <div id="toasts"></div>
@@ -1002,12 +1002,12 @@
   </div>
 
   <!-- Customer process wizard -->
-  <div id="co-wizard" class="modal-overlay hidden">
-    <div class="modal" style="max-width:900px;" onclick="event.stopPropagation()">
-      <div class="modal-header"><h3 id="co-wizard-title" style="margin:0;">Bill customer</h3><button class="btn-ghost" onclick="CustomerOrders.closeProcessWizard()">✕</button></div>
+  <div id="co-wizard" class="modal-overlay co-entry hidden">
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-header"><h3 id="co-wizard-title" style="margin:0;">Bill</h3><button class="btn-ghost" onclick="CustomerOrders.closeProcessWizard()">✕</button></div>
       <div class="steps" id="co-wizard-steps"></div>
       <div id="co-wizard-totals" class="wizard-totals-bar"></div>
-      <div class="modal-body" id="co-wizard-body" style="max-height:60vh;overflow-y:auto;"></div>
+      <div class="modal-body" id="co-wizard-body" style="overflow-y:auto;"></div>
       <div class="modal-footer" id="co-wizard-footer"></div>
     </div>
   </div>
@@ -1062,11 +1062,11 @@
   </div>
 
   <!-- Customer offline wizard -->
-  <div id="co-offline-wizard" class="modal-overlay hidden">
-    <div class="modal" style="max-width:900px;" onclick="event.stopPropagation()">
-      <div class="modal-header"><h3 style="margin:0;">Place for customer</h3><button class="btn-ghost" onclick="CustomerOrders.closeOfflineWizard()">✕</button></div>
+  <div id="co-offline-wizard" class="modal-overlay co-entry hidden">
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-header"><h3 style="margin:0;">Place order</h3><button class="btn-ghost" onclick="CustomerOrders.closeOfflineWizard()">✕</button></div>
       <div class="steps" id="co-offline-steps"></div>
-      <div class="modal-body" id="co-offline-body" style="max-height:60vh;overflow-y:auto;"></div>
+      <div class="modal-body" id="co-offline-body" style="overflow-y:auto;"></div>
       <div class="modal-footer" id="co-offline-footer"></div>
     </div>
   </div>
@@ -1167,7 +1167,7 @@
   <script src="js/staff.js?v=ui80"></script>
   <script src="js/vendor-orders.js?v=ui84"></script>
   <script src="js/share.js?v=ui63"></script>
-  <script src="js/customer-orders.js?v=ui107"></script>
+  <script src="js/customer-orders.js?v=ui108"></script>
   <script src="js/returns.js?v=ui73"></script>
   <script src="js/debit-notes.js?v=ui73"></script>
   <script src="js/stock.js?v=ui93"></script>

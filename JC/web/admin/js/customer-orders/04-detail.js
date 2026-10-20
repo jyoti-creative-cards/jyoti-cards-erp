@@ -354,15 +354,14 @@
     offlineBusy = false;
     offlineSearchQuery = "";
     offlineSearchResults = [];
+    if (p.placed_at) offlinePlacedOn = String(p.placed_at).slice(0, 10);
     try {
-      offlineLines = await Promise.all(active.map(async ln => {
-        const stock = offlineSearchResults.find(x => x.catalog_product_id === ln.catalog_product_id);
-        let catalog = [];
-        try {
-          const rows = await ctx.api(`/stock/products?lite=1&limit=5&search=${encodeURIComponent(ln.our_product_id)}`, {}, 0) || [];
-          const hit = rows.find(r => r.catalog_product_id === ln.catalog_product_id);
-          catalog = (hit && (hit.addons || hit.priced_addons)) || [];
-        } catch (_) {}
+      await ensureEntryCatalogs();
+    } catch (_) {}
+    try {
+      offlineLines = active.map(ln => {
+        const hit = (entryItems || []).find(x => x.catalog_product_id === ln.catalog_product_id);
+        const catalog = (hit && (hit.addons || hit.priced_addons)) || [];
         const keptRows = Array.isArray(ln.addons) ? ln.addons : catalog;
         const byId = new Map();
         for (const a of [...catalog, ...keptRows]) {
@@ -376,13 +375,13 @@
           our_product_id: ln.our_product_id,
           quantity: ln.quantity,
           min_qty: Number(ln.quantity_billed) || 0,
-          selling_price: ln.unit_price ?? stock?.selling_price,
-          quantity_on_hand: stock?.quantity_on_hand,
+          selling_price: ln.unit_price ?? hit?.selling_price,
+          quantity_on_hand: hit?.quantity_on_hand,
           addons,
           priced_addons: addons.filter(a => Number(a.selling_price) > 0),
           skip_addon_ids: legacy ? [] : addons.map(a => Number(a.addon_product_id)).filter(id => !keptIds.has(id)),
         };
-      }));
+      });
       document.getElementById("co-offline-wizard")?.classList.remove("hidden");
       renderOfflineWizard();
     } catch (e) { ctx.toast(e.message, "error"); offlineEditPlacementId = null; }

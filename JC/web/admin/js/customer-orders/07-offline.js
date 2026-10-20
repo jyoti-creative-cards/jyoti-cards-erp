@@ -1,9 +1,60 @@
+  let entryParties = null;
+  let entryItems = null;
+
+  async function ensureEntryCatalogs() {
+    if (entryParties && entryItems) return;
+    const [parties, items] = await Promise.all([
+      ctx.api("/customers/entry-parties", {}, 0),
+      ctx.api("/stock/entry-items", {}, 0),
+    ]);
+    entryParties = parties || [];
+    entryItems = items || [];
+  }
+
+  function filterEntryParties(q) {
+    const needle = String(q || "").trim().toLowerCase();
+    if (!needle) return [];
+    const scored = [];
+    for (const c of entryParties || []) {
+      const name = String(c.business_name || "").toLowerCase();
+      const alias = String(c.alias || "").toLowerCase();
+      const city = String(c.city_name || "").toLowerCase();
+      const phone = String(c.phone || "");
+      const num = String(c.party_number || "");
+      let score = 0;
+      if (name === needle || num === needle) score = 100;
+      else if (name.startsWith(needle) || alias.startsWith(needle) || num.startsWith(needle)) score = 80;
+      else if (name.includes(needle) || alias.includes(needle) || city.includes(needle) || phone.includes(needle)) score = 40;
+      else continue;
+      scored.push({ c, score, name });
+    }
+    scored.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+    return scored.slice(0, 12).map(x => x.c);
+  }
+
+  function filterEntryItems(q) {
+    const needle = String(q || "").trim().toLowerCase();
+    if (!needle) return [];
+    const scored = [];
+    for (const p of entryItems || []) {
+      const id = String(p.our_product_id || "").toLowerCase();
+      let score = 0;
+      if (id === needle) score = 100;
+      else if (id.startsWith(needle)) score = 80;
+      else if (id.includes(needle)) score = 40;
+      else continue;
+      scored.push({ p, score, id });
+    }
+    scored.sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
+    return scored.slice(0, 12).map(x => x.p);
+  }
+
   async function openOfflineWizard(presetCustomerId) {
     const hasPreset = arguments.length > 0 && presetCustomerId != null && presetCustomerId !== "";
     const cid = hasPreset ? presetCustomerId : null;
     offlineEditPlacementId = null;
     offlineStep = 1;
-    offlineCustomerId = cid || null;
+    offlineCustomerId = null;
     offlineCustomerName = "";
     offlineCustomerSearch = "";
     offlineSelectedDetail = null;
@@ -17,65 +68,48 @@
     offlineBusy = false;
     offlineCustomers = [];
     document.getElementById("co-offline-wizard")?.classList.remove("hidden");
-    renderOfflineWizard();
-    if (!cid) return;
+    const body = document.getElementById("co-offline-body");
+    if (body) body.innerHTML = `<p style="color:var(--muted);">Loading…</p>`;
     try {
-      const c = await ctx.api(`/customers/${cid}`, {}, 0);
-      offlineCustomers = [c];
-      offlinePicked = c;
-      offlineCustomerId = cid;
-      offlineCustomerName = c.business_name || "";
-      offlineSelectedDetail = c;
-      renderOfflineWizard();
-    } catch (e) { ctx.toast(e.message, "error"); }
-  }
-
-  function matchOfflineCustomer(c, tokens) {
-    if (!tokens.length) return true;
-    return OrdersUI.partySearchRank(c, tokens) != null;
+      await ensureEntryCatalogs();
+    } catch (e) { ctx.toast(e.message || "Could not load the lists", "error"); }
+    if (cid) {
+      const c = (entryParties || []).find(x => Number(x.id) === Number(cid));
+      if (c) {
+        offlineCustomerId = c.id;
+        offlineCustomerName = c.business_name || "";
+        offlinePicked = c;
+      } else {
+        offlineCustomerId = cid;
+      }
+    }
+    renderOfflineWizard();
   }
 
   function onOfflineCustomerSearch(val) {
     offlineCustomerSearch = val || "";
-    renderOfflineWizard();
-    clearTimeout(offlineCustomerTimer);
-    const q = (offlineCustomerSearch || "").trim();
-    if (q.length < 1) {
-      offlineCustomers = offlinePicked ? [offlinePicked] : [];
-      renderOfflineWizard();
-      return;
-    }
-    offlineCustomerTimer = setTimeout(async () => {
-      try {
-        const rows = await ctx.api(`/customers/quick-search?q=${encodeURIComponent(q)}`, {}, 0) || [];
-        if ((offlineCustomerSearch || "").trim() !== q) return;
-        offlineCustomers = rows;
-        renderOfflineWizard();
-      } catch (e) { ctx.toast(e.message, "error"); }
-    }, 200);
+    const box = document.getElementById("co-order-customer-matches");
+    if (!box) return;
+    const rows = filterEntryParties(offlineCustomerSearch);
+    box.innerHTML = rows.map(c =>
+      `<button type="button" class="btn btn-secondary btn-sm" style="display:block;width:100%;text-align:left;margin-top:4px;" onclick="CustomerOrders.pickOfflineCustomer(${c.id})">${ctx.esc(c.business_name || "")}${c.city_name ? " · " + ctx.esc(c.city_name) : ""}${c.party_number ? " · #" + c.party_number : ""}</button>`
+    ).join("") || (String(offlineCustomerSearch || "").trim() ? `<p style="font-size:13px;color:var(--muted);margin:6px 0 0;">No match</p>` : "");
   }
 
-  async function pickOfflineCustomer(id) {
-    if (!id) {
-      offlineCustomerId = null;
-      offlineCustomerName = "";
-      offlineSelectedDetail = null;
-      offlinePicked = null;
-      renderOfflineWizard();
-      return;
-    }
-    const c = (offlineCustomers || []).find(x => x.id === id);
-    offlineCustomerId = id;
-    offlineCustomerName = c?.business_name || "";
-    offlinePicked = c || null;
-    offlineSelectedDetail = c || null;
-    renderOfflineWizard();
-    // fetch full detail (has outstanding_balance + available_credit)
-    try {
-      offlineSelectedDetail = await ctx.api(`/customers/${id}`, {}, 0);
-      offlinePicked = { ...(offlinePicked || {}), ...offlineSelectedDetail, id };
-      renderOfflineWizard();
-    } catch (_) {}
+  function pickOfflineCustomer(id) {
+    const c = (entryParties || []).find(x => Number(x.id) === Number(id));
+    if (!c) return;
+    offlineCustomerId = c.id;
+    offlineCustomerName = c.business_name || "";
+    offlinePicked = c;
+    offlineCustomerSearch = "";
+    const picked = document.getElementById("co-order-customer-picked");
+    if (picked) picked.textContent = `${c.business_name || ""}${c.city_name ? " · " + c.city_name : ""}`;
+    const input = document.getElementById("co-order-customer");
+    if (input) input.value = "";
+    const box = document.getElementById("co-order-customer-matches");
+    if (box) box.innerHTML = "";
+    document.getElementById("co-order-item")?.focus();
   }
 
   function closeOfflineWizard() {
@@ -158,256 +192,72 @@
   }
 
   function renderOfflineWizard() {
-    const stepsEl = document.getElementById("co-offline-steps");
     const bodyEl = document.getElementById("co-offline-body");
     const footerEl = document.getElementById("co-offline-footer");
-    if (!stepsEl || !bodyEl || !footerEl) return;
-    const custBox = document.getElementById("co-offline-cust-search");
-    const custCaret = custBox && document.activeElement === custBox ? custBox.selectionStart : null;
-
+    const stepsEl = document.getElementById("co-offline-steps");
+    if (!bodyEl || !footerEl) return;
+    if (stepsEl) stepsEl.innerHTML = "";
     const editing = !!offlineEditPlacementId;
-    const labels = editing ? ["Products", "Review"] : ["Customer", "Products", "Review"];
-    const stepNum = editing ? offlineStep - 1 : offlineStep;
-    stepsEl.innerHTML = labels.map((lbl, i) => {
-      const n = i + 1;
-      const cls = n === stepNum ? "step active" : n < stepNum ? "step done" : "step";
-      return `<div class="${cls}"><span class="step-num">${n < stepNum ? "✓" : n}</span><span class="step-label">${lbl}</span></div>`;
-    }).join("");
-
-    if (offlineStep === 1 && !editing) {
-      const tokens = OrdersUI.partySearchTokens(offlineCustomerSearch);
-      const customers = OrdersUI.filterAndRankParties(
-        (offlineCustomers || []).filter(c => c.is_active !== false),
-        offlineCustomerSearch,
-      ).slice(0, tokens.length ? 40 : 60);
-      const selected = offlineCustomerId
-        ? (offlinePicked || (offlineCustomers || []).find(c => c.id === offlineCustomerId))
-        : null;
-      bodyEl.innerHTML = `
-        <div class="vo-wiz-step-head">
-          <h4>Select customer</h4>
-          <p>Search any part of name, city, or phone — e.g. <em>natraj</em> or <em>anjad</em>.</p>
-        </div>
-        <div class="vo-wiz-search-wrap">
-          <span class="vo-wiz-search-icon" aria-hidden="true">⌕</span>
-          <input id="co-offline-cust-search" class="input vo-wiz-search" type="text" placeholder="Search customer, city, phone, alias…" value="${ctx.esc(offlineCustomerSearch)}" oninput="CustomerOrders.onOfflineCustomerSearch(this.value)" autocomplete="off" spellcheck="false" />
-          ${offlineCustomerSearch ? `<button type="button" class="vo-wiz-search-clear" onclick="CustomerOrders.onOfflineCustomerSearch('')">×</button>` : ""}
-        </div>
-        ${selected ? `<div class="vo-wiz-selected-banner">
-          <div>
-            <span class="vo-wiz-selected-label">Selected</span>
-            ${selected.party_number ? `<span style="font-size:11px;color:var(--muted);font-weight:600;margin-right:4px;">#${selected.party_number}</span>` : ""}<strong>${ctx.esc(selected.business_name || offlineCustomerName)}</strong>${selected.marker_1 ? ` <span class="badge badge-blue" style="font-size:10px;padding:2px 4px;vertical-align:middle;">${ctx.esc(selected.marker_1)}</span>` : ""}${selected.marker_2 ? ` <span class="badge badge-amber" style="font-size:10px;padding:2px 4px;vertical-align:middle;">${ctx.esc(selected.marker_2)}</span>` : ""}${(selected.payment_type === "CASH" && !(selected.marker_1 || "").toUpperCase().includes("CASH")) ? ` <span class="badge badge-amber" style="font-size:10px;padding:2px 4px;vertical-align:middle;">CASH</span>` : ""}
-            ${selected.city_name ? `<span class="vo-muted"> · ${ctx.esc(selected.city_name)}</span>` : ""}
-          </div>
-          <button type="button" class="btn btn-ghost btn-sm" onclick="CustomerOrders.pickOfflineCustomer(null)">Change</button>
-        </div>
-        ${cashWarningHtml(selected)}
-        ${offlineSelectedDetail ? (() => {
-          const d = offlineSelectedDetail;
-          const outstanding = d.outstanding_balance;
-          const avail = d.available_credit;
-          const limit = d.credit_limit;
-          if (outstanding == null && avail == null) return "";
-          const outN = Number(outstanding || 0);
-          const availN = Number(avail || 0);
-          const overLimit = availN < 0;
-          const bg = overLimit ? "#fef2f2" : "#f0fdf4";
-          const border = overLimit ? "#fecaca" : "#bbf7d0";
-          return `<div style="margin:8px 0;padding:10px 14px;border-radius:8px;background:${bg};border:1px solid ${border};display:flex;gap:16px;flex-wrap:wrap;font-size:13px;">
-            <span><strong>Outstanding:</strong> ${outN < 0 ? "<span style='color:#16a34a'>Credit ₹" + Math.abs(outN).toLocaleString("en-IN", {maximumFractionDigits:2}) + "</span>" : outN > 0 ? "<span style='color:#dc2626'>₹" + outN.toLocaleString("en-IN", {maximumFractionDigits:2}) + "</span>" : "₹0"}</span>
-            <span><strong>Credit Limit:</strong> ₹${Number(limit || 0).toLocaleString("en-IN", {maximumFractionDigits:2})}</span>
-            <span><strong>Available:</strong> ${availN < 0 ? "<span style='color:#dc2626'>-₹" + Math.abs(availN).toLocaleString("en-IN", {maximumFractionDigits:2}) + "</span>" : "<span style='color:#16a34a'>₹" + availN.toLocaleString("en-IN", {maximumFractionDigits:2}) + "</span>"}</span>
-          </div>`;
-        })() : (offlineCustomerId ? `<p style="font-size:12px;color:var(--muted);margin:4px 0;">Loading credit info…</p>` : "")}` : ""}
-        <div class="vo-wiz-vendor-list">
-          ${customers.length ? customers.map(c => {
-            const selectedCls = offlineCustomerId === c.id ? " selected" : "";
-            const _cm1u = (c.marker_1 || "").toUpperCase();
-            return `<button type="button" class="vo-wiz-vendor-card${selectedCls}" onclick="CustomerOrders.pickOfflineCustomer(${c.id})">
-              <span class="vo-wiz-vendor-letter">${ctx.esc((c.business_name || "?").slice(0, 1).toUpperCase())}</span>
-              <span class="vo-wiz-vendor-meta">
-                <strong>${c.party_number ? `<span style="font-size:10px;color:var(--muted);font-weight:600;margin-right:3px;">#${c.party_number}</span>` : ""}${ctx.esc(c.business_name || "Customer")}${c.marker_1 ? ` <span class="badge badge-blue" style="font-size:9px;padding:1px 4px;vertical-align:middle;">${ctx.esc(c.marker_1)}</span>` : ""}${c.marker_2 ? ` <span class="badge badge-amber" style="font-size:9px;padding:1px 4px;vertical-align:middle;">${ctx.esc(c.marker_2)}</span>` : ""}${(c.payment_type === "CASH" && !_cm1u.includes("CASH")) ? ` <span class="badge badge-amber" style="font-size:9px;padding:1px 4px;vertical-align:middle;">CASH</span>` : ""}</strong>
-                <span>${c.city_name ? ctx.esc(c.city_name) : "No city"}${c.phone ? ` · ${ctx.esc(c.phone)}` : ""}</span>
-              </span>
-              <span class="vo-wiz-vendor-check">${offlineCustomerId === c.id ? "✓" : ""}</span>
-            </button>`;
-          }).join("") : HubUI.emptyState({
-            title: tokens.length ? "No matches" : "Type to search",
-            sub: tokens.length ? `No customer matches “${ctx.esc(offlineCustomerSearch)}”.` : "Name, city, or phone.",
-          })}
-        </div>`;
-      footerEl.innerHTML = `
-        <button class="btn btn-secondary" onclick="CustomerOrders.closeOfflineWizard()">Cancel</button>
-        <button class="btn btn-primary" ${offlineCustomerId ? "" : "disabled"} onclick="CustomerOrders.offlineNext()">Next →</button>`;
-      const custInput = document.getElementById("co-offline-cust-search");
-      if (custInput) {
-        if (typeof custCaret === "number") {
-          custInput.focus();
-          try { custInput.setSelectionRange(custCaret, custCaret); } catch (_) {}
-        } else if (!offlineCustomerId) {
-          custInput.focus();
-        }
-      }
-      return;
-    }
-
-    if (offlineStep === 2) {
-      const shown = filterOfflineProducts();
-      const list = shown;
-      const cartHtml = offlineLines.length ? `
-        <div class="vo-wiz-cart">
-          <div class="vo-wiz-cart-head">
-            <strong>In this order</strong>
-            <span>${offlineLines.length} product${offlineLines.length === 1 ? "" : "s"} · ${offlineCartQty()} qty</span>
-          </div>
-          <div class="vo-wiz-cart-chips">
-            ${offlineLines.map(l => `<span class="vo-wiz-cart-chip">
-              <span>${ctx.esc(l.our_product_id)} × ${l.quantity}</span>
-              <button type="button" title="Remove" onclick="CustomerOrders.toggleOfflineProduct(${l.catalog_product_id}, false)">×</button>
-            </span>`).join("")}
-          </div>
-        </div>` : "";
-
-      bodyEl.innerHTML = `
-        <div class="vo-wiz-step-head vo-wiz-step-head-row">
-          <div>
-            <h4 style="margin:0;">${editing ? `Edit placement #${offlineEditPlacementId}` : `Products for ${ctx.esc(offlineCustomerName)}`}</h4>
-            <p style="margin:4px 0 0;font-size:13px;color:var(--muted);">${editing ? "Add, change qty, or remove products. Stock updates on save." : "Search product ID — tick rows, set qty. Enter adds exact / best match."}</p>
-          </div>
-          <div class="vo-wiz-count-pill">${offlineLines.length} selected</div>
-        </div>
-        ${cartHtml}
-        <div class="vo-wiz-search-wrap">
-          <span class="vo-wiz-search-icon" aria-hidden="true">⌕</span>
-          <input id="co-offline-search" class="input vo-wiz-search" type="search" placeholder="Search product ID, category…" value="${ctx.esc(offlineSearchQuery)}" oninput="CustomerOrders.onOfflineSearchInput(this.value)" onkeydown="CustomerOrders.onOfflineSearchKey(event)" onfocus="this.select()" autocomplete="off" />
-          ${offlineSearchQuery ? `<button type="button" class="vo-wiz-search-clear" onclick="CustomerOrders.onOfflineSearchInput('')">×</button>` : ""}
-        </div>
-        <div class="vo-wiz-product-meta">
-          <span>Showing ${list.length}${offlineSearchQuery ? " match" : " (type to search)"}${offlineSearchResults.length ? ` · ${offlineSearchResults.length} loaded` : ""}</span>
-        </div>
-        <div class="vo-wiz-products" id="co-offline-product-list">
-          ${!offlineSearchQuery.trim()
-            ? HubUI.emptyState({ title: "Type to search", sub: "Product number, category, or vendor." })
-            : offlineSearchPending && !list.length
-            ? HubUI.emptyState({ title: "Searching…", sub: "Looking up products." })
-            : list.length ? list.map(p => {
-              const line = offlineLines.find(l => l.catalog_product_id === p.catalog_product_id);
-              const qty = line ? line.quantity : 1;
-              const checked = !!line;
-              const img = (p.image_urls && p.image_urls[0]) || "";
-              return `<div class="vo-wiz-product ${checked ? "selected" : ""}" onclick="CustomerOrders.pickOfflineProduct(${p.catalog_product_id})">
-                <div class="vo-wiz-product-main">
-                  <input type="checkbox" ${checked ? "checked" : ""} onclick="event.stopPropagation();CustomerOrders.toggleOfflineProduct(${p.catalog_product_id}, this.checked)" />
-                  ${thumb(img)}
-                  <div class="vo-wiz-product-info">
-                    <strong>${ctx.esc(p.our_product_id)}${p.year_group ? ` <span class="prod-year-pill">${ctx.esc(p.year_group)}</span>` : ""}</strong>
-                    <span class="vo-wiz-product-sub">${p.category ? ctx.esc(p.category) : "Product"}${p.year_group ? ` · ${ctx.esc(p.year_group)}` : ""}${p.vendor_name ? ` · ${ctx.esc(p.vendor_name)}` : ""}</span>
-                    <span class="vo-wiz-product-price">${fmtPrice(p.selling_price)} · Stock ${p.quantity_on_hand ?? 0}</span>
-                    ${pricedAddonHtml(p, line)}
-                  </div>
-                </div>
-                <div class="vo-wiz-qty" onclick="event.stopPropagation()">
-                  <label>Qty</label>
-                  <div class="vo-wiz-qty-controls">
-                    <button type="button" class="vo-wiz-qty-btn" ${checked ? "" : "disabled"} onclick="CustomerOrders.bumpOfflineQty(${p.catalog_product_id}, -1)">−</button>
-                    <input type="number" min="1" class="input vo-wiz-qty-input" data-qty-for="${p.catalog_product_id}" value="${qty}" ${checked ? "" : "disabled"} onchange="CustomerOrders.setOfflineQty(${p.catalog_product_id}, this.value)" onkeydown="CustomerOrders.onOfflineQtyKey(event)" onclick="event.stopPropagation()" />
-                    <button type="button" class="vo-wiz-qty-btn" ${checked ? "" : "disabled"} onclick="CustomerOrders.bumpOfflineQty(${p.catalog_product_id}, 1)">+</button>
-                  </div>
-                </div>
-              </div>`;
-            }).join("") : HubUI.emptyState({
-              title: "No matches",
-              sub: `No products match “${offlineSearchQuery}”.`,
-              ctaHtml: `<button type="button" class="btn btn-secondary" onclick="CustomerOrders.onOfflineSearchInput('')">Clear search</button>`,
-            })}
-        </div>`;
-      footerEl.innerHTML = `
-        <button class="btn btn-secondary" onclick="${editing ? "CustomerOrders.closeOfflineWizard()" : "CustomerOrders.offlineBack()"}">${editing ? "Cancel" : "← Back"}</button>
-        <div class="vo-wiz-footer-mid">${offlineLines.length ? `${offlineLines.length} item(s) · est. ${fmtPrice(offlineCartTotal())}` : "Select at least one product"}</div>
-        <button class="btn btn-primary" ${offlineLines.length ? "" : "disabled"} onclick="CustomerOrders.offlineNext()">Review →</button>`;
-      setTimeout(() => focusPendingQty("co-offline-search"), 30);
-      return;
-    }
-
-    const tot = offlinePreview || {};
-    const lines = tot.lines || offlineLines.map(l => ({
-      our_product_id: l.our_product_id,
-      quantity: l.quantity,
-      unit_price: l.selling_price,
-      line_total: (Number(l.selling_price) || 0) * (Number(l.quantity) || 0),
-      out_of_stock: Number(l.quantity_on_hand) < Number(l.quantity),
-      on_hand: l.quantity_on_hand,
-    }));
-    const warnings = tot.stock_warnings || lines.filter(l => l.out_of_stock).map(l => ({
-      message: `${l.our_product_id}: need ${l.quantity}, have ${l.on_hand ?? 0} — will go negative`,
-    }));
-    const warnHtml = warnings.length
-      ? `<div style="margin:0 0 14px;padding:12px 14px;background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;">
-          <strong style="color:#b45309;">Out of stock — order still allowed (offline)</strong>
-          <ul style="margin:8px 0 0;padding-left:18px;font-size:13px;color:#92400e;">
-            ${warnings.map(w => `<li>${ctx.esc(w.message || w.our_product_id)}</li>`).join("")}
-          </ul>
-          <p style="margin:8px 0 0;font-size:12px;color:#92400e;">Stock on hand will go negative after place. Portal customers still cannot oversell.</p>
-        </div>`
-      : "";
+    const picked = offlinePicked;
     bodyEl.innerHTML = `
-      ${warnHtml}
-      <div class="review-grid" style="margin-bottom:16px;">
-        ${ctx.reviewRow("Customer", offlineCustomerName)}
-        ${editing ? ctx.reviewRow("Placement", `#${offlineEditPlacementId}`) : ""}
-        ${ctx.reviewRow("Items", String(lines.length))}
-        ${ctx.reviewRow("Est. total", fmtPrice(tot.subtotal || offlineCartTotal()))}
-      </div>
-      ${editing ? "" : `
-        <label class="label">Order date</label>
-        <input type="date" class="input" style="width:100%;max-width:220px;margin-bottom:4px;" value="${ctx.esc(offlinePlacedOn || localToday())}" onchange="CustomerOrders.setOfflinePlacedOn(this.value)" />
-        <p style="font-size:12px;color:var(--muted);margin:0 0 12px;">Day the call / order actually happened (backdate OK).</p>
-      `}
-      <label class="label">Notes (optional — shown on order)</label>
-      <textarea class="input" id="co-offline-notes" rows="2" style="width:100%;margin-bottom:12px;" oninput="CustomerOrders.setOfflineNotes(this.value)">${ctx.esc(offlineNotes || "")}</textarea>
-      <div class="card table-wrap">
-        <table class="data"><thead><tr><th>Product</th><th>Stock</th><th>Qty</th><th>Rate</th><th>Line</th></tr></thead>
-        <tbody>${lines.map(ln => `<tr>
-          <td><strong>${ctx.esc(ln.our_product_id)}</strong>${ln.out_of_stock ? ` <span style="color:#b45309;font-size:11px;font-weight:700;">out of stock</span>` : ""}</td>
-          <td>${ln.on_hand != null ? ln.on_hand : "—"}</td>
-          <td>${ln.quantity}</td>
-          <td>${fmtPrice(ln.unit_price || ln.rate_inclusive)}</td>
-          <td>${fmtPrice(ln.line_total)}</td>
-        </tr>`).join("")}</tbody></table>
-      </div>
-      <p style="margin:12px 0 0;font-size:13px;color:var(--muted);">${editing
-        ? "Saves changes to this incoming order. Stock reserve adjusts automatically."
-        : "Goes to <strong>To bill</strong>. Next: Bill when packed."}</p>`;
+      <label class="label">Customer</label>
+      ${editing ? `<p style="margin:0 0 12px;"><strong>${ctx.esc(offlineCustomerName || "")}</strong></p>` : `
+        <input id="co-order-customer" class="input" type="text" placeholder="Name, city, or number" autocomplete="off" oninput="CustomerOrders.onOfflineCustomerSearch(this.value)" />
+        <div id="co-order-customer-picked" style="margin:6px 0;font-weight:600;">${picked ? ctx.esc((picked.business_name || "") + (picked.city_name ? " · " + picked.city_name : "")) : ""}</div>
+        <div id="co-order-customer-matches"></div>`}
+      <label class="label">Item number</label>
+      <input id="co-order-item" class="input" type="text" placeholder="Type the item number" autocomplete="off" oninput="CustomerOrders.onOfflineSearchInput(this.value)" onkeydown="CustomerOrders.onOfflineSearchKey(event)" />
+      <div id="co-order-item-matches"></div>
+      <div id="co-order-lines" style="margin-top:12px;"></div>
+      <div style="display:grid;grid-template-columns:160px 1fr;gap:12px;margin-top:16px;">
+        <div>
+          <label class="label">Date</label>
+          <input id="co-order-date" type="date" class="input" value="${ctx.esc(offlinePlacedOn || localToday())}" onchange="CustomerOrders.setOfflinePlacedOn(this.value)" />
+        </div>
+        <div>
+          <label class="label">Note</label>
+          <input id="co-order-note" class="input" value="${ctx.esc(offlineNotes || "")}" oninput="CustomerOrders.setOfflineNotes(this.value)" />
+        </div>
+      </div>`;
     footerEl.innerHTML = `
-      <button class="btn btn-secondary" onclick="CustomerOrders.offlineBack()">← Back</button>
-      <button class="btn btn-primary" ${offlineBusy ? "disabled" : ""} onclick="CustomerOrders.submitOffline()">${offlineBusy ? "Saving…" : (editing ? "Save changes" : (warnings.length ? "Place anyway" : "Place for customer"))}</button>`;
+      <button class="btn btn-secondary" onclick="CustomerOrders.closeOfflineWizard()">Cancel</button>
+      <button class="btn btn-primary" ${offlineBusy ? "disabled" : ""} onclick="CustomerOrders.submitOffline()">${offlineBusy ? "Saving…" : "Save order"}</button>`;
+    paintOrderLines();
+    const focusId = editing || offlineCustomerId ? "co-order-item" : "co-order-customer";
+    document.getElementById(focusId)?.focus();
+  }
+
+  function paintOrderLines() {
+    const box = document.getElementById("co-order-lines");
+    if (!box) return;
+    if (!offlineLines.length) {
+      box.innerHTML = `<p style="font-size:13px;color:var(--muted);margin:0;">No items yet.</p>`;
+      return;
+    }
+    box.innerHTML = `<table class="data"><thead><tr><th>Item</th><th>Stock</th><th>Rate</th><th>Qty</th><th></th></tr></thead><tbody>
+      ${offlineLines.map(l => `<tr>
+        <td><strong>${ctx.esc(l.our_product_id)}</strong>${pricedAddonHtml({ catalog_product_id: l.catalog_product_id }, l)}</td>
+        <td>${l.quantity_on_hand ?? "—"}</td>
+        <td>${fmtPrice(l.selling_price)}</td>
+        <td><input data-qty-for="${l.catalog_product_id}" type="number" class="input" style="width:72px;" min="${Number(l.min_qty) || 1}" value="${l.quantity}" oninput="CustomerOrders.setOfflineQty(${l.catalog_product_id}, this.value)" onkeydown="CustomerOrders.onOfflineQtyKey(event)" /></td>
+        <td><button type="button" class="btn btn-ghost btn-sm" onclick="CustomerOrders.removeOfflineLine(${l.catalog_product_id})">Remove</button></td>
+      </tr>`).join("")}
+    </tbody></table>
+    <p style="margin:8px 0 0;font-size:13px;">${offlineLines.length} item(s) · ${fmtPrice(offlineCartTotal())}</p>`;
   }
 
   function setOfflineNotes(v) { offlineNotes = v || ""; }
   function setOfflinePlacedOn(v) { offlinePlacedOn = v || localToday(); }
 
   function onOfflineSearchInput(val) {
-    const prev = document.getElementById("co-offline-search");
-    const start = prev?.selectionStart;
     offlineSearchQuery = val || "";
-    offlineSearchPending = !!(offlineSearchQuery || "").trim();
-    renderOfflineWizard();
-    const inp = document.getElementById("co-offline-search");
-    if (inp) {
-      inp.focus();
-      if (typeof start === "number") {
-        try { inp.setSelectionRange(start, start); } catch (_) {}
-      }
-    }
-    clearTimeout(offlineProductTimer);
-    const q = (offlineSearchQuery || "").trim();
-    if (!q) {
-      offlineSearchResults = [];
-      offlineSearchPending = false;
-      return;
-    }
-    offlineSearchPending = true;
-    offlineProductTimer = setTimeout(() => loadOfflineProductSearch(q), 200);
+    const box = document.getElementById("co-order-item-matches");
+    if (!box) return;
+    const rows = filterEntryItems(offlineSearchQuery);
+    offlineSearchResults = rows;
+    box.innerHTML = rows.map(p =>
+      `<button type="button" class="btn btn-secondary btn-sm" style="display:block;width:100%;text-align:left;margin-top:4px;" onclick="CustomerOrders.pickOfflineProduct(${p.catalog_product_id})">${ctx.esc(p.our_product_id)} · stock ${p.quantity_on_hand ?? 0}${p.selling_price ? " · " + fmtPrice(p.selling_price) : ""}</button>`
+    ).join("") || (String(offlineSearchQuery || "").trim() ? `<p style="font-size:13px;color:var(--muted);margin:6px 0 0;">No match</p>` : "");
   }
 
   async function loadOfflineProductSearch(q) {
@@ -436,16 +286,14 @@
     try { const n = (offlineSearchQuery || "").length; inp.setSelectionRange(n, n); } catch (_) {}
   }
 
-  async function onOfflineSearchKey(e) {
+  async   function onOfflineSearchKey(e) {
     if (e.key !== "Enter") return;
     e.preventDefault();
     const q = offlineSearchQuery.trim().toLowerCase();
     if (!q) return;
-    if (!offlineSearchResults.length) {
-      await loadOfflineProductSearch(offlineSearchQuery.trim());
-    }
-    const exact = offlineSearchResults.find(p => String(p.our_product_id || "").toLowerCase() === q);
-    const best = exact || filterOfflineProducts()[0];
+    const matches = filterEntryItems(q);
+    const exact = matches.find(p => String(p.our_product_id || "").toLowerCase() === q);
+    const best = exact || matches[0];
     if (!best) return ctx.toast("No product match", "error");
     pickOfflineProduct(best.catalog_product_id);
   }
@@ -455,7 +303,8 @@
     e.preventDefault();
     offlineSearchQuery = "";
     focusQtyProductId = null;
-    renderOfflineWizard();
+    const item = document.getElementById("co-order-item");
+    if (item) { item.value = ""; item.focus(); }
   }
 
   function pickOfflineProduct(catalogProductId) {
@@ -472,7 +321,8 @@
   }
 
   function toggleOfflineProduct(catalogProductId, checked) {
-    const p = offlineSearchResults.find(x => x.catalog_product_id === catalogProductId);
+    const p = (entryItems || []).find(x => x.catalog_product_id === catalogProductId)
+      || offlineSearchResults.find(x => x.catalog_product_id === catalogProductId);
     if (!p) return;
     if (checked) {
       if (!offlineLines.find(l => l.catalog_product_id === catalogProductId)) {
@@ -497,7 +347,16 @@
       offlineLines = offlineLines.filter(l => l.catalog_product_id !== catalogProductId);
     }
     if (checked) focusQtyProductId = catalogProductId;
-    renderOfflineWizard();
+    const itemInput = document.getElementById("co-order-item");
+    if (itemInput) itemInput.value = "";
+    offlineSearchQuery = "";
+    const matches = document.getElementById("co-order-item-matches");
+    if (matches) matches.innerHTML = "";
+    paintOrderLines();
+    if (checked) {
+      const el = document.querySelector(`[data-qty-for="${catalogProductId}"]`);
+      if (el) { el.focus(); el.select(); }
+    }
   }
 
   function skipOfflineAddon(catalogProductId, addonId) {
@@ -508,7 +367,7 @@
     if (skipped.has(id)) skipped.delete(id);
     else skipped.add(id);
     line.skip_addon_ids = [...skipped];
-    renderOfflineWizard();
+    paintOrderLines();
   }
 
   function removeOfflineLine(catalogProductId) {
@@ -521,7 +380,8 @@
     const qty = Math.max(minQ || 1, parseInt(String(raw || "1"), 10) || 1);
     if (line) line.quantity = qty;
     else {
-      const p = offlineSearchResults.find(x => x.catalog_product_id === cid);
+      const p = (entryItems || []).find(x => x.catalog_product_id === cid)
+        || offlineSearchResults.find(x => x.catalog_product_id === cid);
       if (p) offlineLines.push({
         catalog_product_id: p.catalog_product_id,
         our_product_id: p.our_product_id,
@@ -546,7 +406,7 @@
     }
     const minQ = Number(line.min_qty) || 0;
     line.quantity = Math.max(minQ || 1, (Number(line.quantity) || 1) + delta);
-    renderOfflineWizard();
+    paintOrderLines();
   }
 
   async function offlineNext() {
@@ -588,7 +448,8 @@
       return ctx.toast("Add at least one product before placing the order", "error");
     }
     offlineBusy = true;
-    renderOfflineWizard();
+    const saveBtn = document.querySelector("#co-offline-footer .btn-primary");
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "Saving…"; }
     ctx.showLoading?.();
     try {
       if (offlineEditPlacementId) {
@@ -614,26 +475,18 @@
       ctx.invalidateCache?.("/stock");
       closeOfflineWizard();
       const cid = offlineCustomerId;
-      ctx.openDetail?.(`Order #${res.placement_id}`, `
-        <div class="doc-success-banner">
-          <strong>Placed for customer</strong>
-          <span>Same as portal · stock reserved</span>
-        </div>
-        <p style="margin:12px 0;font-size:14px;color:var(--muted);">Order is in <strong>Confirmed</strong>. Bill it now, or view it first.</p>`,
-        `<button class="btn btn-primary" style="flex:1;" onclick="CustomerOrders.billNow(${cid})">Bill now</button>
-         <button class="btn btn-secondary" style="flex:1;" onclick="App.closeDetail();CustomerOrders.openDetail(${cid}, 'open')">View order</button>`, "sm");
-      ctx.toast("Order placed for customer", "success");
-      hubMode = "needs_action";
+      ctx.toast("Order placed", "success");
+      detailCustomerId = cid;
       currentBucket = "open";
-      syncHubChrome();
-      loadList();
+      entryItems = null;
+      await processOrder();
     } catch (e) { ctx.toast(e.message || "Could not place order", "error"); }
     finally {
       offlineBusy = false;
       ctx.hideLoading?.();
-      // Re-draw so Save button unlocks after error (was stuck on “Saving…”)
       if (!document.getElementById("co-offline-wizard")?.classList.contains("hidden")) {
-        renderOfflineWizard();
+        const saveBtn2 = document.querySelector("#co-offline-footer .btn-primary");
+        if (saveBtn2) { saveBtn2.disabled = false; saveBtn2.textContent = "Save order"; }
       }
     }
   }

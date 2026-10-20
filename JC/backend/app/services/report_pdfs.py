@@ -22,6 +22,14 @@ from app.services.reports import daybook
 from app.services.reports_extended import ageing_ap, ageing_ar
 
 
+def _pdf_day(value) -> str:
+    """Ledger dates arrive as a date, a timestamp, or already as text."""
+    if value is None or value == "":
+        return ""
+    text = value.isoformat() if hasattr(value, "isoformat") else str(value)
+    return text[:10]
+
+
 def _money(v) -> str:
     # Indian digit grouping (12,34,567.00), matching customer_bill_pdf._money — these
     # statements were previously using plain US-style ",.2f" grouping, inconsistent
@@ -58,7 +66,7 @@ def render_ar_statement_pdf(db: Session, customer_id: int) -> bytes:
     rows = [["Date", "Type", "Particulars", "Amount", "Balance"]]
     for e in reversed(entries):
         rows.append([
-            e.get("value_date") or (e.get("created_at") or "")[:10],
+            _pdf_day(e.get("value_date") or e.get("created_at")),
             e.get("entry_type") or "",
             (e.get("description") or "")[:48],
             _money(e.get("signed_amount") or e.get("amount")),
@@ -96,7 +104,7 @@ def render_ap_statement_pdf(db: Session, vendor_id: int) -> bytes:
     rows = [["Date", "Type", "Particulars", "Amount", "Balance"]]
     for e in reversed(entries):
         rows.append([
-            e.get("value_date") or (e.get("created_at") or "")[:10],
+            _pdf_day(e.get("value_date") or e.get("created_at")),
             e.get("entry_type") or "",
             (e.get("description") or "")[:48],
             _money(e.get("signed_amount") or e.get("amount")),
@@ -226,7 +234,7 @@ def render_freight_statement_pdf(db: Session, agent_id: int) -> bytes:
     for e in reversed(entries):
         party = e.get("party_label") or e.get("transaction_ref") or (e.get("notes") or "")[:40]
         rows.append([
-            (e.get("created_at") or "")[:10],
+            _pdf_day(e.get("created_at")),
             e.get("entry_type") or "",
             (party or "")[:40],
             _money(e.get("signed_amount") or e.get("amount")),

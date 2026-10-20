@@ -78,10 +78,14 @@
   function applyBulkFields() {
     const patch = {};
     const cat = document.getElementById("cw-bulk-category")?.value;
+    const cat2 = document.getElementById("cw-bulk-category-2")?.value;
+    const cat3 = document.getElementById("cw-bulk-category-3")?.value;
     const yg = document.getElementById("cw-bulk-year_group")?.value;
     const buy = document.getElementById("cw-bulk-buying_price")?.value;
     const sell = document.getElementById("cw-bulk-selling_price")?.value;
     if (cat) patch.category = cat;
+    if (cat2) patch.second_category = cat2;
+    if (cat3) patch.category_3 = cat3;
     if (yg && ctx.isAdmin?.()) patch.year_group = yg;
     if (buy) patch.buying_price = buy;
     if (sell) patch.selling_price = sell;
@@ -192,6 +196,8 @@
           our_product_id: row.our_product_id.trim(),
           vendor_product_id: row.vendor_product_id.trim(),
           category: row.category || null,
+          second_category: row.second_category || null,
+          category_3: row.category_3 || null,
           unit: "pcs",
           year_group: ctx.isAdmin?.() ? (row.year_group || DEFAULT_YEAR_GROUP) : DEFAULT_YEAR_GROUP,
           buying_price: Number(row.buying_price),
@@ -281,11 +287,11 @@
         <div><label class="label">Vendor Product ID</label>
           <input id="ce-vendor_product_id" class="input" value="${ctx.esc(p.vendor_product_id)}" /></div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
-          <div><label class="label">Category</label>
+          <div><label class="label">Category 1</label>
             ${categoryField("ce-category", p.category)}</div>
-          <div><label class="label">Second category</label>
+          <div><label class="label">Category 2</label>
             ${categoryField("ce-second_category", p.second_category)}</div>
-          <div><label class="label">Third category</label>
+          <div><label class="label">Category 3</label>
             ${categoryField("ce-category_3", p.category_3)}</div>
         </div>
         <div>

@@ -214,6 +214,14 @@
     return body;
   }
 
+  function journalCategoryText(l) {
+    const bits = [];
+    if (l?.category) bits.push(`1 ${l.category}`);
+    if (l?.second_category) bits.push(`2 ${l.second_category}`);
+    if (l?.category_3) bits.push(`3 ${l.category_3}`);
+    return bits.length ? bits.map(ctx.esc).join(" · ") : "no category";
+  }
+
   let journalCategories = [];
 
   async function loadJournals() {
@@ -260,7 +268,7 @@
           <div id="fj-hits-line" style="display:flex;flex-direction:column;gap:4px;">${hitList(journalHits.line, "line")}</div>
           ${(f.lines || []).map((l, i) => `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
             <strong>${ctx.esc(l.our_product_id)}</strong>
-            <span style="color:var(--muted);font-size:12px;">stock ${l.on_hand ?? 0}</span>
+            <span style="color:var(--muted);font-size:12px;">${journalCategoryText(l)} · stock ${l.on_hand ?? 0}</span>
             <input class="input" style="width:90px;" type="number" min="1" value="${ctx.esc(l.quantity)}" oninput="Finance.setJournalLine(${i}, 'quantity', this.value)" />
             <input class="input" style="width:110px;" placeholder="Rate" value="${ctx.esc(l.rate ?? "")}" oninput="Finance.setJournalLine(${i}, 'rate', this.value)" />
             <button type="button" class="btn btn-ghost btn-sm" onclick="Finance.removeJournalLine(${i})">Remove</button>
@@ -296,7 +304,7 @@
             <p style="margin:0;font-size:12px;color:var(--muted);">Every item in this album is listed. Change any quantity (some can be 250). Add the same item again if it should be doubled. Apply to all fills every row with the default qty.</p>
             ${(f.lines || []).map((l, i) => `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
               <strong>${ctx.esc(l.our_product_id)}</strong>
-              <span style="color:var(--muted);font-size:12px;">stock ${l.on_hand ?? 0}</span>
+              <span style="color:var(--muted);font-size:12px;">${journalCategoryText(l)} · stock ${l.on_hand ?? 0}</span>
               <input class="input" style="width:90px;" type="number" min="1" value="${ctx.esc(l.quantity)}" oninput="Finance.setJournalLine(${i}, 'quantity', this.value)" />
               <input class="input" style="width:110px;" placeholder="Rate" value="${ctx.esc(l.rate ?? "")}" oninput="Finance.setJournalLine(${i}, 'rate', this.value)" />
               <button type="button" class="btn btn-ghost btn-sm" onclick="Finance.removeJournalLine(${i})">Remove</button>
@@ -310,7 +318,7 @@
             <div id="fj-hits-line" style="display:flex;flex-direction:column;gap:4px;">${hitList(journalHits.line, "line")}</div>
             ${(f.lines || []).map((l, i) => `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
               <strong>${ctx.esc(l.our_product_id)}</strong>
-              <span style="color:var(--muted);font-size:12px;">stock ${l.on_hand ?? 0}</span>
+              <span style="color:var(--muted);font-size:12px;">${journalCategoryText(l)} · stock ${l.on_hand ?? 0}</span>
               <input class="input" style="width:90px;" type="number" min="1" value="${ctx.esc(l.quantity)}" oninput="Finance.setJournalLine(${i}, 'quantity', this.value)" />
               <input class="input" style="width:110px;" placeholder="Rate" value="${ctx.esc(l.rate ?? "")}" oninput="Finance.setJournalLine(${i}, 'rate', this.value)" />
               <button type="button" class="btn btn-ghost btn-sm" onclick="Finance.removeJournalLine(${i})">Remove</button>
@@ -495,6 +503,9 @@
       journalForm.lines = rows.map(p => ({
         catalog_product_id: p.catalog_product_id,
         our_product_id: p.our_product_id,
+        category: p.category,
+        second_category: p.second_category,
+        category_3: p.category_3,
         quantity: qty,
         rate: p.buying_price || "",
         on_hand: p.quantity_on_hand,
@@ -576,6 +587,9 @@
       journalForm.lines.push({
         catalog_product_id: id,
         our_product_id: p.our_product_id,
+        category: p.category,
+        second_category: p.second_category,
+        category_3: p.category_3,
         quantity: qty,
         rate: p.buying_price || "",
         on_hand: p.quantity_on_hand,

@@ -87,9 +87,9 @@
           ${ctx.reviewRow("Vendor", [vendorName, vendorCity].filter(Boolean).join(" · ") || "—")}
           ${ctx.reviewRow("Vendor Product ID", cat.vendor_product_id)}
           ${ctx.reviewRow("Year Group", cat.year_group)}
-          ${ctx.reviewRow("Category", cat.category)}
-          ${ctx.reviewRow("Second category", cat.second_category)}
-          ${ctx.reviewRow("Third category", cat.category_3)}
+          ${ctx.reviewRow("Category 1", cat.category)}
+          ${ctx.reviewRow("Category 2", cat.second_category)}
+          ${ctx.reviewRow("Category 3", cat.category_3)}
           ${ctx.reviewRow("Marking", cat.marking)}
           ${ctx.reviewRow("Created", ctx.fmtDate(cat.created_at))}
           ${ctx.reviewRow("Updated", ctx.fmtDate(cat.updated_at))}

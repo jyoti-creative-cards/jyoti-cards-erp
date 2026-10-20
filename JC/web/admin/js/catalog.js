@@ -117,6 +117,8 @@ const Catalog = (() => {
       vendor_product_id: "",
       imageFiles: [],
       category: "",
+      second_category: "",
+      category_3: "",
       series: "",
       unit: "pcs",
       year_group: DEFAULT_YEAR_GROUP,
@@ -241,9 +243,9 @@ const Catalog = (() => {
         <div class="profile-meta">
           <span class="badge badge-green">Sell ${p.selling_price ? fmtPrice(p.selling_price) : "—"}</span>
           <span class="badge badge-blue">Buy ${fmtPrice(p.buying_price)}</span>
-          ${p.category ? `<span class="badge badge-gray">${ctx.esc(p.category)}</span>` : ""}
-          ${p.second_category ? `<span class="badge badge-gray">${ctx.esc(p.second_category)}</span>` : ""}
-          ${p.category_3 ? `<span class="badge badge-gray">${ctx.esc(p.category_3)}</span>` : ""}
+          ${p.category ? `<span class="badge badge-gray">1 ${ctx.esc(p.category)}</span>` : ""}
+          ${p.second_category ? `<span class="badge badge-gray">2 ${ctx.esc(p.second_category)}</span>` : ""}
+          ${p.category_3 ? `<span class="badge badge-gray">3 ${ctx.esc(p.category_3)}</span>` : ""}
         </div>
         ${images}
       </div>
@@ -411,7 +413,9 @@ const Catalog = (() => {
         <div class="card" style="padding:16px;background:#eff6ff;border-color:#bfdbfe;">
           <div style="font-size:12px;font-weight:700;color:var(--brand);margin-bottom:10px;">Apply to selected rows</div>
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;align-items:end;">
-            <div><label class="label">Category</label>${categoryField("cw-bulk-category", "")}</div>
+            <div><label class="label">Category 1</label>${categoryField("cw-bulk-category", "")}</div>
+            <div><label class="label">Category 2</label>${categoryField("cw-bulk-category-2", "")}</div>
+            <div><label class="label">Category 3</label>${categoryField("cw-bulk-category-3", "")}</div>
             <div><label class="label">Year ${ctx.isAdmin?.() ? "" : "(admin)"}</label>${yearSelectHtml(DEFAULT_YEAR_GROUP, { id: "cw-bulk-year_group", allowEmpty: true })}</div>
             <div><label class="label">Buy (₹)</label><input id="cw-bulk-buying_price" class="input" type="number" min="0" step="0.01" style="font-size:13px;" /></div>
             <div><label class="label">Sell (₹)</label><input id="cw-bulk-selling_price" class="input" type="number" min="0" step="0.01" style="font-size:13px;" /></div>
@@ -423,7 +427,9 @@ const Catalog = (() => {
             <thead><tr>
               <th style="width:36px;"></th>
               <th>Our code</th>
-              <th>Category</th>
+              <th>Category 1</th>
+              <th>Category 2</th>
+              <th>Category 3</th>
               <th>Year</th>
               <th>Buy</th>
               <th>Sell</th>
@@ -435,6 +441,8 @@ const Catalog = (() => {
                   <td><input type="checkbox" ${row.selected ? "checked" : ""} onchange="Catalog.toggleWizardRow(${idx}, this.checked)" /></td>
                   <td><strong>${ctx.esc(row.our_product_id)}</strong></td>
                   <td>${categoryField(`cw-cat-${idx}`, row.category, `Catalog.updateWizardRow(${idx}, 'category', this.value)`)}</td>
+                  <td>${categoryField(`cw-cat2-${idx}`, row.second_category, `Catalog.updateWizardRow(${idx}, 'second_category', this.value)`)}</td>
+                  <td>${categoryField(`cw-cat3-${idx}`, row.category_3, `Catalog.updateWizardRow(${idx}, 'category_3', this.value)`)}</td>
                   <td>${yearSelectHtml(row.year_group || DEFAULT_YEAR_GROUP, { onchange: `Catalog.updateWizardRow(${idx}, 'year_group', this.value)` })}</td>
                   <td><input class="input" type="number" min="0" step="0.01" style="font-size:12px;width:90px;" value="${ctx.esc(row.buying_price)}"
                     oninput="Catalog.updateWizardRow(${idx}, 'buying_price', this.value)" /></td>
@@ -472,13 +480,15 @@ const Catalog = (() => {
       <div class="table-wrap">
         <table class="data" style="font-size:13px;">
           <thead><tr>
-            <th>Our code</th><th>Vendor code</th><th>Category</th><th>Buy</th><th>Sell</th><th>Photos</th>
+            <th>Our code</th><th>Vendor code</th><th>Category 1</th><th>Category 2</th><th>Category 3</th><th>Buy</th><th>Sell</th><th>Photos</th>
           </tr></thead>
           <tbody>
             ${filled.map(r => `<tr>
               <td><strong>${ctx.esc(r.our_product_id)}</strong></td>
               <td>${ctx.esc(r.vendor_product_id)}</td>
               <td>${ctx.esc(r.category || "—")}</td>
+              <td>${ctx.esc(r.second_category || "—")}</td>
+              <td>${ctx.esc(r.category_3 || "—")}</td>
               <td>${r.buying_price ? fmtPrice(r.buying_price) : "—"}</td>
               <td>${r.selling_price ? fmtPrice(r.selling_price) : "—"}</td>
               <td>${wizardImageThumbs(r) || "—"}</td>
@@ -503,7 +513,7 @@ const Catalog = (() => {
       <div class="table-wrap">
         <table class="data" style="font-size:13px;">
           <thead><tr>
-            <th></th><th>Our code</th><th>Vendor code</th><th>Category</th><th>Buy</th><th>Sell</th>
+            <th></th><th>Our code</th><th>Vendor code</th><th>Category 1</th><th>Category 2</th><th>Category 3</th><th>Buy</th><th>Sell</th>
           </tr></thead>
           <tbody>
             ${rows.map(p => {
@@ -513,6 +523,8 @@ const Catalog = (() => {
                 <td><strong>${ctx.esc(p.our_product_id)}</strong></td>
                 <td>${ctx.esc(p.vendor_product_id || "—")}</td>
                 <td>${ctx.esc(p.category || "—")}</td>
+                <td>${ctx.esc(p.second_category || "—")}</td>
+                <td>${ctx.esc(p.category_3 || "—")}</td>
                 <td>${fmtPrice(p.buying_price)}</td>
                 <td>${p.selling_price ? fmtPrice(p.selling_price) : "—"}</td>
               </tr>`;
@@ -606,10 +618,14 @@ const Catalog = (() => {
   function applyBulkFields() {
     const patch = {};
     const cat = document.getElementById("cw-bulk-category")?.value;
+    const cat2 = document.getElementById("cw-bulk-category-2")?.value;
+    const cat3 = document.getElementById("cw-bulk-category-3")?.value;
     const yg = document.getElementById("cw-bulk-year_group")?.value;
     const buy = document.getElementById("cw-bulk-buying_price")?.value;
     const sell = document.getElementById("cw-bulk-selling_price")?.value;
     if (cat) patch.category = cat;
+    if (cat2) patch.second_category = cat2;
+    if (cat3) patch.category_3 = cat3;
     if (yg && ctx.isAdmin?.()) patch.year_group = yg;
     if (buy) patch.buying_price = buy;
     if (sell) patch.selling_price = sell;
@@ -720,6 +736,8 @@ const Catalog = (() => {
           our_product_id: row.our_product_id.trim(),
           vendor_product_id: row.vendor_product_id.trim(),
           category: row.category || null,
+          second_category: row.second_category || null,
+          category_3: row.category_3 || null,
           unit: "pcs",
           year_group: ctx.isAdmin?.() ? (row.year_group || DEFAULT_YEAR_GROUP) : DEFAULT_YEAR_GROUP,
           buying_price: Number(row.buying_price),
@@ -809,11 +827,11 @@ const Catalog = (() => {
         <div><label class="label">Vendor Product ID</label>
           <input id="ce-vendor_product_id" class="input" value="${ctx.esc(p.vendor_product_id)}" /></div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
-          <div><label class="label">Category</label>
+          <div><label class="label">Category 1</label>
             ${categoryField("ce-category", p.category)}</div>
-          <div><label class="label">Second category</label>
+          <div><label class="label">Category 2</label>
             ${categoryField("ce-second_category", p.second_category)}</div>
-          <div><label class="label">Third category</label>
+          <div><label class="label">Category 3</label>
             ${categoryField("ce-category_3", p.category_3)}</div>
         </div>
         <div>

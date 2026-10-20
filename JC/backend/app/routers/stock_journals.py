@@ -81,6 +81,8 @@ def search_journal_products(
             "catalog_product_id": product.id,
             "our_product_id": product.our_product_id,
             "category": product.category,
+            "second_category": product.second_category,
+            "category_3": product.category_3,
             "series": product.series,
             "buying_price": format(product.buying_price, "f") if product.buying_price is not None else None,
             "quantity_on_hand": int(balance.quantity_on_hand) if balance else 0,

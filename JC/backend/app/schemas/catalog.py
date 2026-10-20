@@ -66,6 +66,8 @@ class CatalogBulkItem(BaseModel):
     our_product_id: str = Field(..., min_length=1, max_length=120)
     vendor_product_id: str = Field(..., min_length=1, max_length=255)
     category: Optional[str] = None
+    second_category: Optional[str] = None
+    category_3: Optional[str] = None
     series: Optional[str] = None
     unit: Optional[str] = None
     year_group: Optional[str] = None

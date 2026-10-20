@@ -294,7 +294,7 @@
             ${itemIdHtml(it)}
             ${it.kind === "addon" ? "" : `<div class="prod-card-vendor">${ctx.esc(vendorLine(it))}</div>`}
             ${it.kind === "addon" ? "" : (it.category
-              ? `<div class="prod-card-cat"><span class="prod-cat-badge">${ctx.esc(it.category)}</span>${it.second_category ? `<span class="prod-cat-badge">${ctx.esc(it.second_category)}</span>` : ""}${it.category_3 ? `<span class="prod-cat-badge">${ctx.esc(it.category_3)}</span>` : ""}</div>`
+              ? `<div class="prod-card-cat">${it.category ? `<span class="prod-cat-badge">1 ${ctx.esc(it.category)}</span>` : ""}${it.second_category ? `<span class="prod-cat-badge">2 ${ctx.esc(it.second_category)}</span>` : ""}${it.category_3 ? `<span class="prod-cat-badge">3 ${ctx.esc(it.category_3)}</span>` : ""}</div>`
               : `<div class="prod-card-cat"><span class="prod-cat-badge is-empty">No category</span></div>`)}
             ${it.marking ? `<div class="prod-card-cat"><span class="badge badge-blue" style="font-size:10px;">${ctx.esc(it.marking)}</span></div>` : ""}
             ${(isStockProduct || showsAddonStock) ? `<div class="prod-card-qty-block">
@@ -312,7 +312,9 @@
         <th>Product ID</th>
         <th>Type</th>
         <th>Vendor</th>
-        <th>Category</th>
+        <th>Category 1</th>
+        <th>Category 2</th>
+        <th>Category 3</th>
         ${mainTab === "stock" ? "<th>On hand</th><th>Status</th>" : ""}
         <th>Sell</th>
         <th>Buy</th>
@@ -329,7 +331,9 @@
           </td>
           <td><span class="badge ${it.kind === "addon" ? "badge-amber" : "badge-blue"}">${it.kind === "addon" ? "Add-on" : "Product"}</span></td>
           <td>${ctx.esc(vendorLine(it))}</td>
-          <td>${ctx.esc(it.category || "—")}${it.second_category ? ` · ${ctx.esc(it.second_category)}` : ""}${it.category_3 ? ` · ${ctx.esc(it.category_3)}` : ""}</td>
+          <td>${ctx.esc(it.category || "—")}</td>
+          <td>${ctx.esc(it.second_category || "—")}</td>
+          <td>${ctx.esc(it.category_3 || "—")}</td>
           ${mainTab === "stock" ? `<td class="prod-list-qty-cell">${(it.kind === "product" || it.kind === "addon") ? `<strong class="prod-list-qty-big">${it.qty ?? 0}</strong>` : "—"}</td>
           <td>${st ? `<span class="badge ${st.cls === "is-ok" ? "badge-green" : st.cls === "is-low" ? "badge-amber" : st.cls === "is-neg" ? "badge-red" : "badge-gray"}">${st.label}</span>` : "—"}</td>` : ""}
           <td class="prod-list-price">${it.kind === "product" ? (hasRealSell(it) ? fmtPrice(it.selling_price) : '<span class="prod-price-missing">Not set</span>') : "—"}</td>

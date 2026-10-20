@@ -60,48 +60,56 @@ def create_customer_order(
     db: Session = Depends(get_db),
     customer: Customer = Depends(get_current_customer),
 ):
-    prod = db.get(CatalogProduct, body.catalog_product_id)
-    if not prod or not prod.is_active or prod.deleted_at:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="product not found")
-
-    if body.quantity < 50 or body.quantity % 50 != 0:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            detail="Quantity must be a multiple of 50",
-        )
-
-    bal = db.query(StockBalance).filter(StockBalance.catalog_product_id == prod.id).first()
-    qty = int(bal.quantity_on_hand) if bal else 0
-    th = int(bal.low_stock_threshold or 5) if bal else 5
-    status_lbl = stock_status_label(qty, th)
-    if status_lbl == "out_of_stock":
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="product is out of stock")
-    if body.quantity > qty:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            detail="Insufficient inventory. Please call godown to book order.",
-        )
+    requested = body.order_lines()
+    if not requested:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Add at least one item")
 
     from app.services.pricing import effective_selling_price
 
-    unit_price = effective_selling_price(prod.buying_price, prod.selling_price) or Decimal("0")
-    if unit_price <= 0:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Sell price not set for this product. Please contact godown.")
-    addons = addon_snapshots_for_product(db, prod.id)
+    prepared = []
+    for catalog_product_id, quantity in requested:
+        prod = db.get(CatalogProduct, catalog_product_id)
+        if not prod or not prod.is_active or prod.deleted_at:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="product not found")
+        bal = db.query(StockBalance).filter(StockBalance.catalog_product_id == prod.id).first()
+        on_hand = int(bal.quantity_on_hand) if bal else 0
+        th = int(bal.low_stock_threshold or 5) if bal else 5
+        if stock_status_label(on_hand, th) == "out_of_stock":
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"{prod.our_product_id} is out of stock")
+        if quantity > on_hand:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail=f"Insufficient inventory for {prod.our_product_id}. Please call godown to book order.",
+            )
+        unit_price = effective_selling_price(prod.buying_price, prod.selling_price) or Decimal("0")
+        if unit_price <= 0:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail=f"Sell price not set for {prod.our_product_id}. Please contact godown.",
+            )
+        prepared.append((prod, quantity, unit_price, addon_snapshots_for_product(db, prod.id)))
+
+    notes = (body.customer_notes or "").strip() or None
     merged = False
+    placement = None
     try:
-        placement, merged = append_or_create_portal_placement(
-            db,
-            customer_id=customer.id,
-            customer_name=customer.business_name,
-            catalog_product_id=prod.id,
-            quantity=body.quantity,
-            unit_price=unit_price,
-            customer_notes=(body.customer_notes or "").strip() or None,
-            addons_json=addons,
-        )
+        for prod, quantity, unit_price, addons in prepared:
+            placement, line_merged = append_or_create_portal_placement(
+                db,
+                customer_id=customer.id,
+                customer_name=customer.business_name,
+                catalog_product_id=prod.id,
+                quantity=quantity,
+                unit_price=unit_price,
+                customer_notes=notes,
+                addons_json=addons,
+            )
+            merged = merged or line_merged
+        if placement is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Add at least one item")
         if merged:
             placement.document_key = None
+        detail = ", ".join(f"{prod.our_product_id} × {quantity}" for prod, quantity, _price, _addons in prepared)
         log_activity(
             db,
             actor_type="customer",
@@ -111,7 +119,7 @@ def create_customer_order(
             entity_type="customer_order",
             entity_id=placement.id,
             entity_label=customer.business_name,
-            detail=f"{prod.our_product_id} × {body.quantity}",
+            detail=detail,
         )
         db.commit()
         from app.services.doc_jobs import enqueue_order_pdf
@@ -131,14 +139,15 @@ def create_customer_order(
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Order could not be saved. Please try again.") from e
 
     if "pytest" not in sys.modules:
+        summary = ", ".join(f"{prod.our_product_id} × {quantity}" for prod, quantity, _price, _addons in prepared)
+        amount = sum((price * qty for _prod, qty, price, _addons in prepared), Decimal("0"))
         threading.Thread(
             target=_notify_order_whatsapp,
             kwargs={
                 "customer_name": customer.business_name,
                 "customer_phone": customer.phone,
-                "our_product_id": prod.our_product_id,
-                "quantity": body.quantity,
-                "unit_price": unit_price,
+                "summary": summary,
+                "total": amount,
                 "placement_id": placement.id,
                 "merged": merged,
             },
@@ -146,6 +155,8 @@ def create_customer_order(
             name=f"wa-portal-order-{placement.id}",
         ).start()
 
+    first_prod, first_qty, first_price, _addons = prepared[0]
+    line_total = sum((price * qty for _prod, qty, price, _addons in prepared), Decimal("0"))
     msg = (
         "Added to your order. Keep searching to add more items."
         if merged
@@ -153,12 +164,13 @@ def create_customer_order(
     )
     return {
         "ok": True,
+        "id": placement.id,
         "placement_id": placement.id,
         "merged": merged,
-        "our_product_id": prod.our_product_id,
-        "quantity": body.quantity,
-        "unit_price": format(unit_price, "f"),
-        "line_total": format(unit_price * body.quantity, "f"),
+        "our_product_id": first_prod.our_product_id if len(prepared) == 1 else f"{len(prepared)} items",
+        "quantity": first_qty if len(prepared) == 1 else sum(qty for _p, qty, _u, _a in prepared),
+        "unit_price": format(first_price, "f") if len(prepared) == 1 else "0",
+        "line_total": format(line_total, "f"),
         "message": msg,
         "document_key": None,
         "document_url": None,
@@ -169,21 +181,20 @@ def _notify_order_whatsapp(
     *,
     customer_name: str,
     customer_phone: str,
-    our_product_id: str,
-    quantity: int,
-    unit_price: Decimal,
+    summary: str,
+    total: Decimal,
     placement_id: int,
     merged: bool,
 ) -> None:
     """Best-effort WhatsApp to customer + staff. Never raises. No PDF."""
     try:
-        total = (unit_price * quantity).quantize(Decimal("0.01"))
+        amount = Decimal(total).quantize(Decimal("0.01"))
         verb = "updated" if merged else "placed"
         portal = (get_settings().customer_portal_url or "https://jyoticards.vercel.app").rstrip("/")
         cust_body = (
             f"Jyoti Creative Cards\n"
-            f"Order {verb}: {our_product_id} × {quantity}\n"
-            f"Amount: ₹{format(total, 'f')}\n"
+            f"Order {verb}: {summary}\n"
+            f"Amount: ₹{format(amount, 'f')}\n"
             f"Order #{placement_id}\n"
             f"Open: {portal}"
         )
@@ -192,7 +203,7 @@ def _notify_order_whatsapp(
         staff_msg = (
             f"New dealer order\n"
             f"{customer_name} ({customer_phone})\n"
-            f"{our_product_id} × {quantity} = ₹{format(total, 'f')}\n"
+            f"{summary} = ₹{format(amount, 'f')}\n"
             f"Order #{placement_id}"
             + (" (added to open order)" if merged else "")
         )

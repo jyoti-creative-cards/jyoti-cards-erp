@@ -44,17 +44,42 @@ class ShopProductPublic(BaseModel):
     alternatives: List[ShopAlternativePublic] = []
 
 
-class CustomerOrderCreate(BaseModel):
+def _quantity_lot(v: int) -> int:
+    if v < 50 or v % 50 != 0:
+        raise ValueError("Quantity must be a multiple of 50")
+    return v
+
+
+class ShopOrderLineIn(BaseModel):
     catalog_product_id: int
-    quantity: int = Field(..., ge=50)
-    customer_notes: Optional[str] = None
+    quantity: int
 
     @field_validator("quantity")
     @classmethod
     def quantity_multiple_of_50(cls, v: int) -> int:
-        if v < 50 or v % 50 != 0:
-            raise ValueError("Quantity must be a multiple of 50")
-        return v
+        return _quantity_lot(v)
+
+
+class CustomerOrderCreate(BaseModel):
+    """One item, or the bag the customer app sends as `lines`."""
+    catalog_product_id: Optional[int] = None
+    quantity: Optional[int] = None
+    lines: Optional[List[ShopOrderLineIn]] = None
+    customer_notes: Optional[str] = None
+
+    @field_validator("quantity")
+    @classmethod
+    def quantity_multiple_of_50(cls, v: Optional[int]) -> Optional[int]:
+        if v is None:
+            return v
+        return _quantity_lot(v)
+
+    def order_lines(self) -> list[tuple[int, int]]:
+        if self.lines:
+            return [(ln.catalog_product_id, int(ln.quantity)) for ln in self.lines]
+        if self.catalog_product_id is not None and self.quantity is not None:
+            return [(int(self.catalog_product_id), int(self.quantity))]
+        return []
 
 
 class PortalPlacementPublic(BaseModel):

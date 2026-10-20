@@ -14,6 +14,19 @@ def test_entry_lists_are_on_the_api():
     assert "names_only" in names
 
 
+def test_customer_app_can_send_a_bag_of_items():
+    from app.schemas.shop import CustomerOrderCreate
+
+    body = CustomerOrderCreate.model_validate({
+        "lines": [
+            {"catalog_product_id": 12, "quantity": 50},
+            {"catalog_product_id": 18, "quantity": 100},
+        ],
+        "customer_notes": "test",
+    })
+    assert body.order_lines() == [(12, 50), (18, 100)]
+
+
 def test_statement_date_accepts_a_timestamp():
     assert _pdf_day(datetime(2026, 10, 20, 5, 30, tzinfo=timezone.utc)) == "2026-10-20"
     assert _pdf_day(None) == ""

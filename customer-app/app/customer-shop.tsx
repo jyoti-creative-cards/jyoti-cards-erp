@@ -275,7 +275,7 @@ export default function CustomerPortalPage() {
         const next = { ...prev };
         for (const row of Array.isArray(data) ? data : []) {
           const prod = row as ShopProductPublic;
-          if (next[prod.catalog_product_id] === undefined) next[prod.catalog_product_id] = "1";
+          if (next[prod.catalog_product_id] === undefined) next[prod.catalog_product_id] = "50";
         }
         return next;
       });
@@ -290,12 +290,12 @@ export default function CustomerPortalPage() {
       return;
     }
     const n = Math.floor(Number(qtyStr));
-    const addQty = Number.isFinite(n) ? Math.max(1, Math.min(n, MAX_ORDER_QTY)) : 1;
+    const addQty = Number.isFinite(n) ? Math.max(50, Math.min(n, MAX_ORDER_QTY)) : 50;
     setOrderMsg("");
     setCart((prev) => {
       const existing = prev[p.catalog_product_id];
       const merged = (existing?.qty ?? 0) + addQty;
-      const q = Math.min(Math.max(1, merged), MAX_ORDER_QTY);
+      const q = Math.min(Math.max(50, merged), MAX_ORDER_QTY);
       return {
         ...prev,
         [p.catalog_product_id]: { p, qty: q },
@@ -311,7 +311,7 @@ export default function CustomerPortalPage() {
     const row = cart[catalogProductId];
     if (!row) return;
     const n = Math.floor(Number(qtyStr));
-    const q = Number.isFinite(n) ? Math.max(1, Math.min(n, MAX_ORDER_QTY)) : 1;
+    const q = Number.isFinite(n) ? Math.max(50, Math.min(n, MAX_ORDER_QTY)) : 50;
     setCart((prev) => ({
       ...prev,
       [catalogProductId]: { ...row, qty: q },
@@ -335,6 +335,10 @@ export default function CustomerPortalPage() {
     }));
     if (lines.length < 1) {
       setOrderMsg("Add at least one item to your bag first.");
+      return;
+    }
+    if (lines.some((ln) => ln.quantity < 50 || ln.quantity % 50 !== 0)) {
+      setOrderMsg("Quantity must be a multiple of 50.");
       return;
     }
     setOrderSubmitting(true);
@@ -723,9 +727,10 @@ export default function CustomerPortalPage() {
                               Qty
                               <input
                                 type="number"
-                                min={1}
+                                min={50}
+                                step={50}
                                 max={MAX_ORDER_QTY}
-                                value={qtyDraft[p.catalog_product_id] ?? "1"}
+                                value={qtyDraft[p.catalog_product_id] ?? "50"}
                                 onChange={(e) => setQtyDraftFor(p.catalog_product_id, e.target.value)}
                                 className="mt-1.5 w-24 rounded-xl border border-jc-border bg-jc-bg/30 px-3 py-2 text-sm shadow-inner"
                               />
@@ -733,7 +738,7 @@ export default function CustomerPortalPage() {
                             <button
                               type="button"
                               disabled={!canOrder}
-                              onClick={() => addProductToCart(p, qtyDraft[p.catalog_product_id] ?? "1")}
+                              onClick={() => addProductToCart(p, qtyDraft[p.catalog_product_id] ?? "50")}
                               className="rounded-xl bg-jc-accent px-5 py-2.5 text-sm font-semibold text-white shadow-md transition hover:bg-jc-accent-hover disabled:cursor-not-allowed disabled:bg-neutral-300"
                             >
                               Add to bag
@@ -878,7 +883,8 @@ export default function CustomerPortalPage() {
                               <div className="mt-2 flex flex-wrap items-center gap-2">
                                 <input
                                   type="number"
-                                  min={1}
+                                  min={50}
+                                  step={50}
                                   max={MAX_ORDER_QTY}
                                   value={qty}
                                   onChange={(e) => setLineQty(p.catalog_product_id, e.target.value)}
@@ -922,7 +928,8 @@ export default function CustomerPortalPage() {
                                 <td className="px-4 py-3 text-right">
                                   <input
                                     type="number"
-                                    min={1}
+                                    min={50}
+                                    step={50}
                                     max={MAX_ORDER_QTY}
                                     value={qty}
                                     onChange={(e) => setLineQty(p.catalog_product_id, e.target.value)}

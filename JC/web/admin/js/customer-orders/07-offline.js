@@ -448,9 +448,7 @@
       return ctx.toast("Add at least one product before placing the order", "error");
     }
     offlineBusy = true;
-    const saveBtn = document.querySelector("#co-offline-footer .btn-primary");
-    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "Saving…"; }
-    ctx.showLoading?.();
+    showOrderPlaced();
     try {
       if (offlineEditPlacementId) {
         const pid = offlineEditPlacementId;
@@ -464,7 +462,7 @@
         closeOfflineWizard();
         ctx.toast("Order updated", "success");
         await openDetail(cid, "received");
-        loadList();
+        loadList(true);
         return;
       }
       const res = await ctx.api(`/customer-orders/customer/${offlineCustomerId}/offline`, {
@@ -473,21 +471,25 @@
       });
       ctx.invalidateCache?.("/customer-orders");
       ctx.invalidateCache?.("/stock");
-      closeOfflineWizard();
       const cid = offlineCustomerId;
       ctx.toast("Order placed", "success");
       detailCustomerId = cid;
       currentBucket = "open";
-      entryItems = null;
-      await processOrder();
-    } catch (e) { ctx.toast(e.message || "Could not place order", "error"); }
-    finally {
+      closeOfflineWizard();
+      await processOrder({ quiet: true });
+      loadList(true);
+    } catch (e) {
+      ctx.toast(e.message || "Could not place order", "error");
+      renderOfflineWizard();
+    } finally {
       offlineBusy = false;
-      ctx.hideLoading?.();
-      if (!document.getElementById("co-offline-wizard")?.classList.contains("hidden")) {
-        const saveBtn2 = document.querySelector("#co-offline-footer .btn-primary");
-        if (saveBtn2) { saveBtn2.disabled = false; saveBtn2.textContent = "Save order"; }
-      }
     }
+  }
+
+  function showOrderPlaced() {
+    const body = document.getElementById("co-offline-body");
+    const footer = document.getElementById("co-offline-footer");
+    if (body) body.innerHTML = `<p style="margin:0;font-size:18px;"><strong>Order placed.</strong> Opening the bill…</p>`;
+    if (footer) footer.innerHTML = "";
   }
 

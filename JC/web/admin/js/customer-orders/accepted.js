@@ -514,12 +514,12 @@ const CustomerOrders = (() => {
     finally { ctx.hideLoading?.(); }
   }
 
-  async function loadList() {
+  async function loadList(silent) {
     if (isDispatchBucket()) {
       await loadDispatch();
       return;
     }
-    ctx.showLoading?.();
+    if (!silent) ctx.showLoading?.();
     try {
       if (!PAST_BUCKETS.includes(currentBucket) || currentBucket === "dispatch") {
         currentBucket = "open";
@@ -529,8 +529,8 @@ const CustomerOrders = (() => {
       if (!Array.isArray(orders)) orders = [];
       syncHubChrome();
       renderList();
-    } catch (e) { ctx.toast(e.message, "error"); }
-    finally { ctx.hideLoading?.(); }
+    } catch (e) { if (!silent) ctx.toast(e.message, "error"); }
+    finally { if (!silent) ctx.hideLoading?.(); }
   }
 
   function showHub() {
@@ -1551,8 +1551,9 @@ const CustomerOrders = (() => {
     }
   }
 
-  async function processOrder() {
+  async function processOrder(opts) {
     if (!detailCustomerId) return;
+    const quiet = !!(opts && opts.quiet);
     editBillId = null;
     processStep = 1;
     billableOrders = [];
@@ -1560,7 +1561,7 @@ const CustomerOrders = (() => {
     processBusy = false;
     previewTotals = null;
     forceCreditOverride = false;
-    ctx.showLoading?.();
+    if (!quiet) ctx.showLoading?.();
     try {
       const [pctx, agents, series] = await Promise.all([
         ctx.api(`/customer-orders/customer/${detailCustomerId}/process-context`, {}, 0),
@@ -1605,7 +1606,7 @@ const CustomerOrders = (() => {
       try { await ensureEntryCatalogs(); } catch (_) {}
       renderProcessWizard();
     } catch (e) { ctx.toast(e.message, "error"); }
-    finally { ctx.hideLoading?.(); }
+    finally { if (!quiet) ctx.hideLoading?.(); }
   }
 
   async function editLatestBill(customerId) {
@@ -2254,9 +2255,7 @@ const CustomerOrders = (() => {
     }
     if (!editBillId && !billSeriesId) return ctx.toast("Select a bill series", "error");
     processBusy = true;
-    const saveBtn = document.querySelector("#co-wizard-footer .btn-primary");
-    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "Saving…"; }
-    ctx.showLoading?.();
+    showBillReady({ bill_number: "Saving…", grand_total: "", bill_id: 0, pending: true });
     try {
       let res;
       const body = buildProcessBody();
@@ -2276,17 +2275,15 @@ const CustomerOrders = (() => {
       ctx.invalidateCache?.("/stock");
       const edited = !!editBillId;
       if (edited) ctx.invalidateCache?.("/freight-agents");
-      entryItems = null;
       showBillReady(res);
       ctx.toast(`Bill ${res.bill_number} — ${fmtPrice(res.grand_total)}`, "success");
-      loadList();
+      loadList(true);
     } catch (e) {
       processBusy = false;
       ctx.toast(e.message, "error");
       renderProcessWizard();
     } finally {
       processBusy = false;
-      ctx.hideLoading?.();
     }
   }
 
@@ -2301,11 +2298,11 @@ const CustomerOrders = (() => {
     if (title) title.textContent = `Bill ${res.bill_number || ""}`;
     if (body) {
       body.innerHTML = `
-        <p style="margin:0 0 8px;font-size:18px;"><strong>${ctx.esc(res.bill_number || "")}</strong> saved</p>
-        <p style="margin:0 0 20px;color:var(--muted);">${fmtPrice(res.grand_total)}</p>
+        <p style="margin:0 0 8px;font-size:18px;"><strong>${ctx.esc(res.bill_number || "")}</strong>${res.pending ? "" : " saved"}</p>
+        <p style="margin:0 0 20px;color:var(--muted);">${res.pending ? "The bill is being saved. Print and download will be ready in a moment." : fmtPrice(res.grand_total)}</p>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button type="button" class="btn btn-primary" onclick="CustomerOrders.openBillDoc(${Number(res.bill_id)}, true)">Print</button>
-          <button type="button" class="btn btn-secondary" onclick="CustomerOrders.openBillDoc(${Number(res.bill_id)}, false)">Download</button>
+          <button type="button" class="btn btn-primary" ${res.pending ? "disabled" : ""} onclick="CustomerOrders.openBillDoc(${Number(res.bill_id) || 0}, true)">Print</button>
+          <button type="button" class="btn btn-secondary" ${res.pending ? "disabled" : ""} onclick="CustomerOrders.openBillDoc(${Number(res.bill_id) || 0}, false)">Download</button>
         </div>
         <p style="margin:12px 0 0;font-size:13px;color:var(--muted);">Print is the original and the duplicate. Download is the original only.</p>`;
     }
@@ -2898,9 +2895,7 @@ const CustomerOrders = (() => {
       return ctx.toast("Add at least one product before placing the order", "error");
     }
     offlineBusy = true;
-    const saveBtn = document.querySelector("#co-offline-footer .btn-primary");
-    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "Saving…"; }
-    ctx.showLoading?.();
+    showOrderPlaced();
     try {
       if (offlineEditPlacementId) {
         const pid = offlineEditPlacementId;
@@ -2914,7 +2909,7 @@ const CustomerOrders = (() => {
         closeOfflineWizard();
         ctx.toast("Order updated", "success");
         await openDetail(cid, "received");
-        loadList();
+        loadList(true);
         return;
       }
       const res = await ctx.api(`/customer-orders/customer/${offlineCustomerId}/offline`, {
@@ -2923,22 +2918,26 @@ const CustomerOrders = (() => {
       });
       ctx.invalidateCache?.("/customer-orders");
       ctx.invalidateCache?.("/stock");
-      closeOfflineWizard();
       const cid = offlineCustomerId;
       ctx.toast("Order placed", "success");
       detailCustomerId = cid;
       currentBucket = "open";
-      entryItems = null;
-      await processOrder();
-    } catch (e) { ctx.toast(e.message || "Could not place order", "error"); }
-    finally {
+      closeOfflineWizard();
+      await processOrder({ quiet: true });
+      loadList(true);
+    } catch (e) {
+      ctx.toast(e.message || "Could not place order", "error");
+      renderOfflineWizard();
+    } finally {
       offlineBusy = false;
-      ctx.hideLoading?.();
-      if (!document.getElementById("co-offline-wizard")?.classList.contains("hidden")) {
-        const saveBtn2 = document.querySelector("#co-offline-footer .btn-primary");
-        if (saveBtn2) { saveBtn2.disabled = false; saveBtn2.textContent = "Save order"; }
-      }
     }
+  }
+
+  function showOrderPlaced() {
+    const body = document.getElementById("co-offline-body");
+    const footer = document.getElementById("co-offline-footer");
+    if (body) body.innerHTML = `<p style="margin:0;font-size:18px;"><strong>Order placed.</strong> Opening the bill…</p>`;
+    if (footer) footer.innerHTML = "";
   }
 
   function _detailCustomerId() { return detailCustomerId; }

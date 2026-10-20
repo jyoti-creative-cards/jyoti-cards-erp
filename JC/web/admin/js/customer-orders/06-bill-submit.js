@@ -11,9 +11,7 @@
     }
     if (!editBillId && !billSeriesId) return ctx.toast("Select a bill series", "error");
     processBusy = true;
-    const saveBtn = document.querySelector("#co-wizard-footer .btn-primary");
-    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "Saving…"; }
-    ctx.showLoading?.();
+    showBillReady({ bill_number: "Saving…", grand_total: "", bill_id: 0, pending: true });
     try {
       let res;
       const body = buildProcessBody();
@@ -33,17 +31,15 @@
       ctx.invalidateCache?.("/stock");
       const edited = !!editBillId;
       if (edited) ctx.invalidateCache?.("/freight-agents");
-      entryItems = null;
       showBillReady(res);
       ctx.toast(`Bill ${res.bill_number} — ${fmtPrice(res.grand_total)}`, "success");
-      loadList();
+      loadList(true);
     } catch (e) {
       processBusy = false;
       ctx.toast(e.message, "error");
       renderProcessWizard();
     } finally {
       processBusy = false;
-      ctx.hideLoading?.();
     }
   }
 
@@ -58,11 +54,11 @@
     if (title) title.textContent = `Bill ${res.bill_number || ""}`;
     if (body) {
       body.innerHTML = `
-        <p style="margin:0 0 8px;font-size:18px;"><strong>${ctx.esc(res.bill_number || "")}</strong> saved</p>
-        <p style="margin:0 0 20px;color:var(--muted);">${fmtPrice(res.grand_total)}</p>
+        <p style="margin:0 0 8px;font-size:18px;"><strong>${ctx.esc(res.bill_number || "")}</strong>${res.pending ? "" : " saved"}</p>
+        <p style="margin:0 0 20px;color:var(--muted);">${res.pending ? "The bill is being saved. Print and download will be ready in a moment." : fmtPrice(res.grand_total)}</p>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button type="button" class="btn btn-primary" onclick="CustomerOrders.openBillDoc(${Number(res.bill_id)}, true)">Print</button>
-          <button type="button" class="btn btn-secondary" onclick="CustomerOrders.openBillDoc(${Number(res.bill_id)}, false)">Download</button>
+          <button type="button" class="btn btn-primary" ${res.pending ? "disabled" : ""} onclick="CustomerOrders.openBillDoc(${Number(res.bill_id) || 0}, true)">Print</button>
+          <button type="button" class="btn btn-secondary" ${res.pending ? "disabled" : ""} onclick="CustomerOrders.openBillDoc(${Number(res.bill_id) || 0}, false)">Download</button>
         </div>
         <p style="margin:12px 0 0;font-size:13px;color:var(--muted);">Print is the original and the duplicate. Download is the original only.</p>`;
     }

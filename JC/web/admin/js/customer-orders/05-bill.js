@@ -131,8 +131,9 @@
     }
   }
 
-  async function processOrder() {
+  async function processOrder(opts) {
     if (!detailCustomerId) return;
+    const quiet = !!(opts && opts.quiet);
     editBillId = null;
     processStep = 1;
     billableOrders = [];
@@ -140,7 +141,7 @@
     processBusy = false;
     previewTotals = null;
     forceCreditOverride = false;
-    ctx.showLoading?.();
+    if (!quiet) ctx.showLoading?.();
     try {
       const [pctx, agents, series] = await Promise.all([
         ctx.api(`/customer-orders/customer/${detailCustomerId}/process-context`, {}, 0),
@@ -185,7 +186,7 @@
       try { await ensureEntryCatalogs(); } catch (_) {}
       renderProcessWizard();
     } catch (e) { ctx.toast(e.message, "error"); }
-    finally { ctx.hideLoading?.(); }
+    finally { if (!quiet) ctx.hideLoading?.(); }
   }
 
   async function editLatestBill(customerId) {

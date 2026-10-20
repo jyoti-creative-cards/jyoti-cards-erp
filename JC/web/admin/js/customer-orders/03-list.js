@@ -1,9 +1,9 @@
-  async function loadList() {
+  async function loadList(silent) {
     if (isDispatchBucket()) {
       await loadDispatch();
       return;
     }
-    ctx.showLoading?.();
+    if (!silent) ctx.showLoading?.();
     try {
       if (!PAST_BUCKETS.includes(currentBucket) || currentBucket === "dispatch") {
         currentBucket = "open";
@@ -13,8 +13,8 @@
       if (!Array.isArray(orders)) orders = [];
       syncHubChrome();
       renderList();
-    } catch (e) { ctx.toast(e.message, "error"); }
-    finally { ctx.hideLoading?.(); }
+    } catch (e) { if (!silent) ctx.toast(e.message, "error"); }
+    finally { if (!silent) ctx.hideLoading?.(); }
   }
 
   function showHub() {

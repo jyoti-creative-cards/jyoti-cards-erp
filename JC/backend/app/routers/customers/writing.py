@@ -30,6 +30,30 @@ logger = logging.getLogger("jc.customers")
 from app.routers.customers.router import router
 from app.routers.customers.support import _normalize_phone, _route_from_city, _send_whatsapp, _to_public
 
+
+def _party_name_key(name: str | None) -> str:
+    return " ".join((name or "").strip().lower().split())
+
+
+def _assert_unique_party(db: Session, business_name: str, city_id, exclude_id: int | None = None) -> None:
+    """One live party per name in a city. Inactive rows still count until they are deleted."""
+    key = _party_name_key(business_name)
+    if not key:
+        return
+    q = db.query(Customer).filter(Customer.deleted_at.is_(None))
+    if city_id is None:
+        q = q.filter(Customer.city_id.is_(None))
+    else:
+        q = q.filter(Customer.city_id == city_id)
+    if exclude_id is not None:
+        q = q.filter(Customer.id != exclude_id)
+    for row in q.all():
+        if _party_name_key(row.business_name) == key:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail="this party already exists in this city",
+            )
+
 @router.post("", response_model=CustomerCreateResponse, status_code=201, dependencies=[Depends(require_permission("customers.write"))])
 def create_customer(body: CustomerCreate, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("customers.write"))) -> CustomerCreateResponse:
     phone = _normalize_phone(body.phone)
@@ -42,6 +66,12 @@ def create_customer(body: CustomerCreate, db: Session = Depends(get_db), auth: A
 
     plain = generate_portal_password()
     route_id = _route_from_city(db, body.city_id)
+    _assert_unique_party(
+        db,
+        body.business_name,
+        body.city_id,
+        exclude_id=existing.id if existing is not None else None,
+    )
     display_name = (body.person_name or "").strip() or body.business_name.strip()
 
     # Soft-deleted / inactive row still holds unique phone — recycle it.
@@ -196,6 +226,8 @@ def update_customer(customer_id: int, body: CustomerUpdate, db: Session = Depend
     if "is_active" in data and data["is_active"] is not None:
         apply_is_active(row, data["is_active"])
         del data["is_active"]
+
+    _assert_unique_party(db, row.business_name, row.city_id, exclude_id=row.id)
 
     # TEMP: opening balance editable on customer save
     if "opening_balance_due" in data or "opening_balance_as_on" in data:

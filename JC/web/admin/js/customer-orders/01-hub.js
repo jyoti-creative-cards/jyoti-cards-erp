@@ -258,6 +258,12 @@
     }).join("")}</div>`;
   }
 
+  function markingBanner(note) {
+    const text = String(note || "").trim();
+    if (!text) return "";
+    return `<div style="margin-top:6px;padding:6px 8px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;font-weight:700;font-size:13px;">${ctx.esc(text)}</div>`;
+  }
+
   function calcNetFromDisc(rate, discPct) {
     const r = Number(rate);
     const d = Number(discPct);

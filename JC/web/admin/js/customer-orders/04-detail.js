@@ -58,8 +58,20 @@
 
     if (currentBucket === "open") {
       const lines = currentOrder.open_lines || [];
+      const waiting = currentOrder.placements || [];
+      const waitingHtml = waiting.length ? `<div style="margin-bottom:14px;">
+        <div class="label">Orders still to bill</div>
+        ${waiting.map(p => {
+          const bits = (p.lines || []).map(ln => `${ctx.esc(ln.our_product_id)} × ${ln.quantity}`).join(", ");
+          return `<div style="margin:0 0 8px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;">
+            <div style="font-size:13px;">${ctx.fmtDay ? ctx.fmtDay(p.placed_at) : ""} · ${bits}</div>
+            ${markingBanner(p.customer_notes)}
+          </div>`;
+        }).join("")}
+      </div>` : "";
       el.innerHTML = `
         ${cashWarningHtml(currentOrder)}
+        ${waitingHtml}
         ${canWrite && lines.length ? `<div class="ui-toolbar" style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">
           <button class="btn btn-primary btn-sm" onclick="CustomerOrders.processOrder()">Create Bill</button>
           <button class="btn btn-secondary btn-sm" onclick="CustomerOrders.openEditFromOpen()">Edit order</button>

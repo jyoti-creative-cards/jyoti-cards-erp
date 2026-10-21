@@ -134,9 +134,12 @@ def render_copies_pdf(
     lines = [ln for ln in (totals.get("lines") or []) if isinstance(ln, dict)]
     item_rows, qty_total = _build_rows(lines)
     net_only = _net_rate_bill(item_rows)
-    cash = _cash_discount_mode(item_rows, totals) and not net_only
-    show_disc = (not cash) and not net_only
-    running, closing, _goods = _running_and_closing(item_rows, totals, cash)
+    # Same percent on every line used to collapse into one "CASH DISCOUNT" row and
+    # leave the Disc. % cells blank. The percent belongs on each item, and the
+    # amount is already the price after that discount. A net-rate bill has no disc.
+    has_line_disc = any(r.get("kind") == "item" and r.get("disc") for r in item_rows)
+    show_disc = has_line_disc and not net_only
+    running, closing, _goods = _running_and_closing(item_rows, totals, False)
     images = _load_images(item_image_urls or {})
     photos = _photos_for(item_rows, images)
     grand = totals.get("rounded_grand_total") or totals.get("grand_total") or "0.00"
@@ -207,7 +210,7 @@ def render_copies_pdf(
                 printed=printed,
                 header_kw=kw,
                 pay_qr=_pay_qr_reader(payment_qr) if page["last"] else None,
-                show_disc_label=not net_only,
+                show_disc_label=show_disc,
             )
             c.showPage()
     c.save()

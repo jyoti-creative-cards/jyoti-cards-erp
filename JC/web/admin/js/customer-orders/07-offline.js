@@ -215,8 +215,9 @@
           <input id="co-order-date" type="date" class="input" value="${ctx.esc(offlinePlacedOn || localToday())}" onchange="CustomerOrders.setOfflinePlacedOn(this.value)" />
         </div>
         <div>
-          <label class="label">Note</label>
-          <input id="co-order-note" class="input" value="${ctx.esc(offlineNotes || "")}" oninput="CustomerOrders.setOfflineNotes(this.value)" />
+          <label class="label">Marking</label>
+          <input id="co-order-note" class="input" style="border:2px solid #f59e0b;background:#fffbeb;font-weight:600;" placeholder="Hold. Do not bill. Bill after 5 days." value="${ctx.esc(offlineNotes || "")}" oninput="CustomerOrders.setOfflineNotes(this.value)" />
+          <p style="margin:4px 0 0;font-size:12px;color:#92400e;">Shown to the person who creates the bill. Use it when the quantity should stay reserved.</p>
         </div>
       </div>`;
     footerEl.innerHTML = `

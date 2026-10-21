@@ -265,12 +265,39 @@ def get_customer_order_detail(
         received = db.query(CustomerOrder).filter(
             CustomerOrder.customer_id == customer_id, CustomerOrder.bucket == "received", CustomerOrder.is_open.is_(True)
         ).first()
+        from app.services.customer_bills.read import billable_orders
+
+        waiting = []
+        for order in billable_orders(db, customer_id):
+            waiting.append(
+                CustomerPlacementOut(
+                    id=int(order["placement_id"]),
+                    status="open",
+                    customer_notes=order.get("customer_notes"),
+                    placed_at=order["placed_at"],
+                    display_date=order["placed_at"],
+                    display_name=f"Order #{order['placement_id']}",
+                    lines=[
+                        CustomerOrderLineOut(
+                            id=0,
+                            catalog_product_id=int(ln["catalog_product_id"]),
+                            our_product_id=ln["our_product_id"],
+                            quantity=int(ln["quantity"]),
+                            quantity_billed=0,
+                            unit_price=ln["unit_price"],
+                            status="active",
+                        )
+                        for ln in order.get("lines") or []
+                    ],
+                )
+            )
         return CustomerOrderDetail(
             id=received.id if received else 0,
             customer_id=customer_id,
             customer_name=customer.business_name,
             bucket="open",
             open_lines=lines_out,
+            placements=waiting,
             **_party_fields(db, customer),
         )
 

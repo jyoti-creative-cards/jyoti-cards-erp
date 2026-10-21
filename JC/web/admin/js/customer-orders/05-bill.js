@@ -160,6 +160,7 @@
         net_rate: calcNetFromDisc(l.unit_price, 0),
         discSource: "",
       }));
+      if (billableOrders.length) applySelectedOrders();
       if (!processLines.length) {
         ctx.toast("Nothing to bill yet. Qty must be in To bill (stock reserved). If still in Orders, wait for stock.", "error");
         return;
@@ -169,9 +170,9 @@
       overallDiscount = "";
       gstEnabled = false;
       gstRate = "18";
-      freightAgentId = defaultFreightAgentId();
+      freightAgentId = "";
       freightCharges = "";
-      transportMode = freightAgentId ? "bus" : "";
+      transportMode = "self_pickup";
       transportReceiptNumber = "";
       packagingCharges = "";
       additionalCharges = [{ name: "", amount: "" }];
@@ -527,15 +528,20 @@
     if (title) title.textContent = editBillId ? `Edit ${editBillNumber || "bill"}` : "Bill";
     const lineDiscLocked = !discountEnabled || useOverallDiscount;
     const ro = lineDiscLocked ? "readonly" : "";
-    const ordersHtml = (!editBillId && billableOrders.length > 1) ? `
-      <label class="label">Orders on this bill</label>
+    const ordersHtml = (!editBillId && billableOrders.length) ? `
+      <label class="label">Orders still to bill</label>
+      <p style="margin:0 0 8px;font-size:13px;color:var(--muted);">Already billed orders are not listed. Uncheck a hold if it should not go on this bill.</p>
       ${billableOrders.map(order => {
         const on = selectedPlacementIds.includes(Number(order.placement_id));
-        const when = ctx.fmtDate ? ctx.fmtDate(order.placed_at) : "Order";
-        return `<label style="display:block;margin:0 0 6px;font-size:14px;">
-          <input type="checkbox" ${on ? "checked" : ""} onchange="CustomerOrders.toggleBillOrder(${order.placement_id}, this.checked)" />
-          ${ctx.esc(when)} · ${(order.lines || []).length} items
-        </label>`;
+        const when = ctx.fmtDay ? ctx.fmtDay(order.placed_at) : "Order";
+        const bits = (order.lines || []).map(ln => `${ctx.esc(ln.our_product_id)} × ${ln.quantity}`).join(", ");
+        return `<div style="margin:0 0 8px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;">
+          <label style="display:block;font-size:14px;">
+            <input type="checkbox" ${on ? "checked" : ""} onchange="CustomerOrders.toggleBillOrder(${order.placement_id}, this.checked)" />
+            ${ctx.esc(when)} · ${bits}
+          </label>
+          ${markingBanner(order.customer_notes)}
+        </div>`;
       }).join("")}` : "";
     const linesHtml = processLines.map((ln, i) => {
       const shownNet = useOverallDiscount && overallDiscount
@@ -636,8 +642,12 @@
   function setOverallDisc(v) {
     overallDiscount = v;
     processLines.forEach((ln, i) => {
+      ln.discount_percent = v;
+      ln.net_rate = calcNetFromDisc(ln.unit_price, v);
       const net = document.querySelector(`[data-net-for="${i}"]`);
-      if (net) net.value = calcNetFromDisc(ln.unit_price, v);
+      if (net) net.value = ln.net_rate ?? "";
+      const disc = document.querySelector(`[data-disc-for="${i}"]`);
+      if (disc) disc.value = v;
     });
     renderWizardTotalsBar();
   }

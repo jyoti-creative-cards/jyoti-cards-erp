@@ -338,6 +338,12 @@ const CustomerOrders = (() => {
     }).join("")}</div>`;
   }
 
+  function markingBanner(note) {
+    const text = String(note || "").trim();
+    if (!text) return "";
+    return `<div style="margin-top:6px;padding:6px 8px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;font-weight:700;font-size:13px;">${ctx.esc(text)}</div>`;
+  }
+
   function calcNetFromDisc(rate, discPct) {
     const r = Number(rate);
     const d = Number(discPct);
@@ -817,8 +823,20 @@ const CustomerOrders = (() => {
 
     if (currentBucket === "open") {
       const lines = currentOrder.open_lines || [];
+      const waiting = currentOrder.placements || [];
+      const waitingHtml = waiting.length ? `<div style="margin-bottom:14px;">
+        <div class="label">Orders still to bill</div>
+        ${waiting.map(p => {
+          const bits = (p.lines || []).map(ln => `${ctx.esc(ln.our_product_id)} × ${ln.quantity}`).join(", ");
+          return `<div style="margin:0 0 8px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;">
+            <div style="font-size:13px;">${ctx.fmtDay ? ctx.fmtDay(p.placed_at) : ""} · ${bits}</div>
+            ${markingBanner(p.customer_notes)}
+          </div>`;
+        }).join("")}
+      </div>` : "";
       el.innerHTML = `
         ${cashWarningHtml(currentOrder)}
+        ${waitingHtml}
         ${canWrite && lines.length ? `<div class="ui-toolbar" style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">
           <button class="btn btn-primary btn-sm" onclick="CustomerOrders.processOrder()">Create Bill</button>
           <button class="btn btn-secondary btn-sm" onclick="CustomerOrders.openEditFromOpen()">Edit order</button>
@@ -1586,6 +1604,7 @@ const CustomerOrders = (() => {
         net_rate: calcNetFromDisc(l.unit_price, 0),
         discSource: "",
       }));
+      if (billableOrders.length) applySelectedOrders();
       if (!processLines.length) {
         ctx.toast("Nothing to bill yet. Qty must be in To bill (stock reserved). If still in Orders, wait for stock.", "error");
         return;
@@ -1595,9 +1614,9 @@ const CustomerOrders = (() => {
       overallDiscount = "";
       gstEnabled = false;
       gstRate = "18";
-      freightAgentId = defaultFreightAgentId();
+      freightAgentId = "";
       freightCharges = "";
-      transportMode = freightAgentId ? "bus" : "";
+      transportMode = "self_pickup";
       transportReceiptNumber = "";
       packagingCharges = "";
       additionalCharges = [{ name: "", amount: "" }];
@@ -1953,15 +1972,20 @@ const CustomerOrders = (() => {
     if (title) title.textContent = editBillId ? `Edit ${editBillNumber || "bill"}` : "Bill";
     const lineDiscLocked = !discountEnabled || useOverallDiscount;
     const ro = lineDiscLocked ? "readonly" : "";
-    const ordersHtml = (!editBillId && billableOrders.length > 1) ? `
-      <label class="label">Orders on this bill</label>
+    const ordersHtml = (!editBillId && billableOrders.length) ? `
+      <label class="label">Orders still to bill</label>
+      <p style="margin:0 0 8px;font-size:13px;color:var(--muted);">Already billed orders are not listed. Uncheck a hold if it should not go on this bill.</p>
       ${billableOrders.map(order => {
         const on = selectedPlacementIds.includes(Number(order.placement_id));
-        const when = ctx.fmtDate ? ctx.fmtDate(order.placed_at) : "Order";
-        return `<label style="display:block;margin:0 0 6px;font-size:14px;">
-          <input type="checkbox" ${on ? "checked" : ""} onchange="CustomerOrders.toggleBillOrder(${order.placement_id}, this.checked)" />
-          ${ctx.esc(when)} · ${(order.lines || []).length} items
-        </label>`;
+        const when = ctx.fmtDay ? ctx.fmtDay(order.placed_at) : "Order";
+        const bits = (order.lines || []).map(ln => `${ctx.esc(ln.our_product_id)} × ${ln.quantity}`).join(", ");
+        return `<div style="margin:0 0 8px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;">
+          <label style="display:block;font-size:14px;">
+            <input type="checkbox" ${on ? "checked" : ""} onchange="CustomerOrders.toggleBillOrder(${order.placement_id}, this.checked)" />
+            ${ctx.esc(when)} · ${bits}
+          </label>
+          ${markingBanner(order.customer_notes)}
+        </div>`;
       }).join("")}` : "";
     const linesHtml = processLines.map((ln, i) => {
       const shownNet = useOverallDiscount && overallDiscount
@@ -2062,8 +2086,12 @@ const CustomerOrders = (() => {
   function setOverallDisc(v) {
     overallDiscount = v;
     processLines.forEach((ln, i) => {
+      ln.discount_percent = v;
+      ln.net_rate = calcNetFromDisc(ln.unit_price, v);
       const net = document.querySelector(`[data-net-for="${i}"]`);
-      if (net) net.value = calcNetFromDisc(ln.unit_price, v);
+      if (net) net.value = ln.net_rate ?? "";
+      const disc = document.querySelector(`[data-disc-for="${i}"]`);
+      if (disc) disc.value = v;
     });
     renderWizardTotalsBar();
   }
@@ -2670,8 +2698,9 @@ const CustomerOrders = (() => {
           <input id="co-order-date" type="date" class="input" value="${ctx.esc(offlinePlacedOn || localToday())}" onchange="CustomerOrders.setOfflinePlacedOn(this.value)" />
         </div>
         <div>
-          <label class="label">Note</label>
-          <input id="co-order-note" class="input" value="${ctx.esc(offlineNotes || "")}" oninput="CustomerOrders.setOfflineNotes(this.value)" />
+          <label class="label">Marking</label>
+          <input id="co-order-note" class="input" style="border:2px solid #f59e0b;background:#fffbeb;font-weight:600;" placeholder="Hold. Do not bill. Bill after 5 days." value="${ctx.esc(offlineNotes || "")}" oninput="CustomerOrders.setOfflineNotes(this.value)" />
+          <p style="margin:4px 0 0;font-size:12px;color:#92400e;">Shown to the person who creates the bill. Use it when the quantity should stay reserved.</p>
         </div>
       </div>`;
     footerEl.innerHTML = `

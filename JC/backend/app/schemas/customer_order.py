@@ -228,6 +228,7 @@ class BillableOrderOut(BaseModel):
     placed_at: datetime
     order_source: Optional[str] = None
     placed_by_name: Optional[str] = None
+    customer_notes: Optional[str] = None
     lines: List[BillableOrderLineOut] = []
 
 

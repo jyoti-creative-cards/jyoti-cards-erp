@@ -84,7 +84,13 @@ def get_process_lines(db: Session, customer_id: int) -> dict:
 
 
 def billable_orders(db: Session, customer_id: int) -> list[dict]:
-    """Each confirmed (or still-new) placement that still has quantity to bill."""
+    """Confirmed orders that still have quantity to bill.
+
+    Older bills sometimes reduced the open tally without marking the order line
+    billed. Those already-billed orders must not come back as selected rows.
+    Anything above the quantity still open is treated as already billed, oldest
+    order first. A hold note stays on the orders that are still open.
+    """
     orders = (
         db.query(CustomerOrder)
         .filter(
@@ -130,10 +136,35 @@ def billable_orders(db: Session, customer_id: int) -> list[dict]:
                 "unit_price": format(ln.unit_price, "f"),
             }
         )
+    room = {
+        int(row.catalog_product_id): int(row.quantity_open or 0)
+        for row in db.query(CustomerOpenLine).filter(
+            CustomerOpenLine.customer_id == customer_id,
+            CustomerOpenLine.status == "open",
+            CustomerOpenLine.quantity_open > 0,
+        ).all()
+    }
+    still_open = {int(cid): int(qty) for cid, qty in room.items()}
+    for placement in placements:
+        for row in by_placement.get(int(placement.id)) or []:
+            cid = int(row["catalog_product_id"])
+            still_open[cid] = still_open.get(cid, 0) - int(row["quantity"])
+    # Negative means the order lines claim more unbilled qty than is still open.
+    hide_left = {cid: -qty for cid, qty in still_open.items() if qty < 0}
     out = []
     for placement in placements:
-        rows = by_placement.get(int(placement.id)) or []
-        if not rows:
+        shown = []
+        for row in by_placement.get(int(placement.id)) or []:
+            cid = int(row["catalog_product_id"])
+            qty = int(row["quantity"])
+            hide = min(qty, int(hide_left.get(cid) or 0))
+            if hide:
+                hide_left[cid] = int(hide_left.get(cid) or 0) - hide
+            keep = qty - hide
+            if keep <= 0:
+                continue
+            shown.append({**row, "quantity": keep})
+        if not shown:
             continue
         out.append(
             {
@@ -141,7 +172,8 @@ def billable_orders(db: Session, customer_id: int) -> list[dict]:
                 "placed_at": placement.placed_at,
                 "order_source": placement.order_source,
                 "placed_by_name": placement.placed_by_name,
-                "lines": rows,
+                "customer_notes": placement.customer_notes,
+                "lines": shown,
             }
         )
     return out

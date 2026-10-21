@@ -192,7 +192,38 @@ def test_transport_mode_prints_transport_charges():
 def test_discount_bill_keeps_disc_column_and_pay_qr():
     text = _pdf_text(_render(1, gst=False))
     assert "Disc. %" in text
+    assert "10 %" in text
     assert "Scan to Pay" in text
+
+
+def test_same_discount_on_every_line_prints_on_each_item():
+    text = _pdf_text(_render(3, gst=False))
+    assert text.count("10 %") >= 3
+    assert "CASH DISCOUNT" not in text
+
+
+def test_different_item_discounts_print_their_own_percent():
+    totals = _totals(2, gst=False)
+    totals["lines"][0]["item_discount_percent"] = "10"
+    totals["lines"][0]["price_entry"] = "discount"
+    totals["lines"][1]["item_discount_percent"] = "5"
+    totals["lines"][1]["price_entry"] = "discount"
+    totals["lines"][1]["line_discount"] = "15.00"
+    totals["lines"][1]["line_total"] = "285.00"
+    pdf = render_customer_bill_pdf(
+        bill_id=21,
+        order_id=21,
+        bill_number="B21",
+        customer_name="Sharma Gift House",
+        customer_company=None,
+        totals=totals,
+        copies=1,
+        with_labels=False,
+    )
+    text = _pdf_text(pdf)
+    assert "10 %" in text
+    assert "5 %" in text
+    assert "CASH DISCOUNT" not in text
 
 
 def test_net_rate_bill_hides_disc_column():

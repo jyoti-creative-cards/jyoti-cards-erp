@@ -61,10 +61,6 @@
       </tbody></table></div>` : empty("No stock movement", "Widen the dates to see products.")}`;
   }
 
-  function outwardIsRange() {
-    return !!(fromDate && toDate && fromDate !== toDate);
-  }
-
   function fmtReportDay(iso) {
     const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
     return m ? `${m[3]}/${m[2]}/${m[1]}` : (iso || "");
@@ -74,30 +70,6 @@
     if (fromDate && toDate && fromDate !== toDate) return `${fmtReportDay(fromDate)} to ${fmtReportDay(toDate)}`;
     if (fromDate || toDate) return fmtReportDay(fromDate || toDate);
     return "All dates";
-  }
-
-  function aggregateOutward(rows) {
-    const map = new Map();
-    for (const it of rows) {
-      const key = it.id;
-      const row = map.get(key) || {
-        id: it.id,
-        label: it.label,
-        bills: 0,
-        out_qty: 0,
-        value: 0,
-        closing_qty: it.closing_qty,
-        closing_value: it.closing_value,
-      };
-      row.bills += Number(it.bills) || 0;
-      row.out_qty += Number(it.out_qty) || 0;
-      row.value += Number(it.value) || 0;
-      map.set(key, row);
-    }
-    return [...map.values()].map(row => ({
-      ...row,
-      rate: row.out_qty ? row.value / row.out_qty : 0,
-    })).sort((a, b) => b.bills - a.bills || String(a.label).localeCompare(String(b.label)));
   }
 
   function setJournalReportKind(kind) {
@@ -143,45 +115,93 @@
       </tbody></table></div>` : empty("No journal lines", "Widen the dates, or pick another type.")}`;
   }
 
+  function tallyCell(raw, pcs) {
+    if (raw == null || raw === "" || Number(raw) === 0) return "";
+    const n = Number(raw);
+    const abs = Math.abs(n).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const body = pcs ? `${abs} pcs` : abs;
+    return n < 0 ? `(-)${body}` : body;
+  }
+
+  function tallyTotal(raw, pcs) {
+    const n = Number(raw) || 0;
+    const abs = Math.abs(n).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const body = pcs ? `${abs} pcs` : abs;
+    return n < 0 ? `(-)${body}` : body;
+  }
+
+  async function shareStockSummary(print) {
+    try {
+      const name = fromDate && toDate && fromDate !== toDate
+        ? `stock_summary_${fromDate}_${toDate}.pdf`
+        : `stock_summary_${fromDate || toDate || "all"}.pdf`;
+      await DocShare.openPdf(`/share/stock-summary/pdf${rangeQs()}`, { print: !!print, filename: name });
+    } catch (e) { ctx.toast(e.message, "error"); }
+  }
+
   async function renderItemOutward(body) {
-    const data = await ctx.api(`/reports/stock/billed-items${rangeQs()}`, {}, 0);
-    const matched = (data.items || []).filter(it => matchSearch(it.label));
-    const showDate = outwardIsRange();
-    const items = showDate
-      ? [...matched].sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.label).localeCompare(String(b.label)))
-      : aggregateOutward(matched);
-    const bills = items.reduce((s, it) => s + (Number(it.bills) || 0), 0);
-    const outQty = items.reduce((s, it) => s + (Number(it.out_qty) || 0), 0);
-    const closingQty = showDate
-      ? [...new Map(items.map(it => [it.id, Number(it.closing_qty) || 0])).values()].reduce((s, n) => s + n, 0)
-      : items.reduce((s, it) => s + (Number(it.closing_qty) || 0), 0);
-    const period = outwardPeriodLabel();
+    const data = await ctx.api(`/reports/stock/group-summary${rangeQs()}`, {}, 0);
+    const items = (data.items || []).filter(it => matchSearch(it.particular, it.vendor_name));
+    const sum = (key) => items.reduce((s, it) => s + (Number(it[key]) || 0), 0);
+    const period = data.period || outwardPeriodLabel();
+    const num = "text-align:right;white-space:nowrap;";
     body.innerHTML = `
       ${DocShare.toolbarHtml({
-        printOnclick: "Reports.printCurrent()",
+        printOnclick: "Reports.shareStockSummary(true)",
+        pdfOnclick: "Reports.shareStockSummary(false)",
         excelOnclick: "Reports.exportCurrentExcel()",
       })}
-      <h2 class="report-print-title" style="position:absolute;left:-9999px;">Items sold · ${ctx.esc(period)}</h2>
-      <p class="fin-panel-sub" style="margin:0 0 12px;">${ctx.esc(period)}. Pick Today for one day, or From and To for a range. Closing is stock on hand now, valued at buying price.</p>
+      <h2 class="report-print-title" style="position:absolute;left:-9999px;">Stock Summary · ${ctx.esc(period)}</h2>
+      <p class="fin-panel-sub" style="margin:0 0 12px;">${ctx.esc(period)}. Same start and end date is one day. Total sales is a bill, or a confirmed order that is not billed yet. Closing rate is the purchase rate.</p>
       <div class="fin-hub-strip" style="margin-bottom:16px;">
-        <div class="fin-stat"><span class="fin-stat-label">Items</span><strong>${showDate ? new Set(items.map(it => it.id)).size : items.length}</strong></div>
-        <div class="fin-stat"><span class="fin-stat-label">Bills</span><strong>${bills}</strong></div>
-        <div class="fin-stat"><span class="fin-stat-label">Sold qty</span><strong>${outQty}</strong></div>
-        <div class="fin-stat"><span class="fin-stat-label">Closing qty</span><strong>${closingQty}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">Items</span><strong>${items.length}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">Total sales</span><strong>${sum("sales_count")}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">Inward</span><strong>${tallyTotal(sum("in_qty"), true)}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">Outward</span><strong>${tallyTotal(sum("out_qty"), true)}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">Closing value</span><strong>${tallyTotal(sum("close_value"), false)}</strong></div>
       </div>
-      ${items.length ? `<div class="card table-wrap"><table class="data"><caption style="caption-side:top;text-align:left;font-weight:700;padding:8px 12px;">Items sold · ${ctx.esc(period)}</caption><thead><tr>
-        ${showDate ? "<th>Date</th>" : ""}<th>Item</th><th>Bills</th><th>Out qty</th><th>Rate</th><th>Closing qty</th><th>Closing value</th>
-      </tr></thead><tbody>
+      ${items.length ? `<div class="card table-wrap"><table class="data"><caption style="caption-side:top;text-align:left;font-weight:700;padding:8px 12px;">Stock Summary · ${ctx.esc(period)}</caption><thead>
+        <tr>
+          <th rowspan="2">Particulars</th>
+          <th rowspan="2">Vendor</th>
+          <th rowspan="2" style="${num}">Total sales</th>
+          <th colspan="3" style="text-align:center;">Inwards</th>
+          <th colspan="3" style="text-align:center;">Outwards</th>
+          <th colspan="3" style="text-align:center;">Closing balance</th>
+        </tr>
+        <tr>
+          <th style="${num}">Quantity</th><th style="${num}">Rate</th><th style="${num}">Value</th>
+          <th style="${num}">Quantity</th><th style="${num}">Rate</th><th style="${num}">Value</th>
+          <th style="${num}">Quantity</th><th style="${num}">Rate</th><th style="${num}">Value</th>
+        </tr>
+      </thead><tbody>
         ${items.map(it => `<tr class="clickable" onclick="Reports.openLedger('products', ${it.id})">
-          ${showDate ? `<td>${ctx.esc(fmtReportDay(it.date))}</td>` : ""}
-          <td><strong>${ctx.esc(it.label)}</strong></td>
-          <td>${it.bills}</td>
-          <td>${it.out_qty}</td>
-          <td>${fmtPrice(it.rate)}</td>
-          <td><strong>${it.closing_qty}</strong></td>
-          <td>${fmtPrice(it.closing_value)}</td>
+          <td><strong>${ctx.esc(it.particular)}</strong></td>
+          <td>${ctx.esc(it.vendor_name || "")}</td>
+          <td style="${num}">${it.sales_count ? it.sales_count : ""}</td>
+          <td style="${num}">${tallyCell(it.in_qty, true)}</td>
+          <td style="${num}">${tallyCell(it.in_rate, false)}</td>
+          <td style="${num}">${tallyCell(it.in_value, false)}</td>
+          <td style="${num}">${tallyCell(it.out_qty, true)}</td>
+          <td style="${num}">${tallyCell(it.out_rate, false)}</td>
+          <td style="${num}">${tallyCell(it.out_value, false)}</td>
+          <td style="${num}">${tallyCell(it.close_qty, true)}</td>
+          <td style="${num}">${tallyCell(it.close_rate, false)}</td>
+          <td style="${num}">${tallyCell(it.close_value, false)}</td>
         </tr>`).join("")}
-      </tbody></table></div>` : empty("No billed items", "No item has a bill in these dates.")}`;
+        <tr>
+          <td colspan="3"><strong>Grand total</strong></td>
+          <td style="${num}"><strong>${tallyTotal(sum("in_qty"), true)}</strong></td>
+          <td></td>
+          <td style="${num}"><strong>${tallyTotal(sum("in_value"), false)}</strong></td>
+          <td style="${num}"><strong>${tallyTotal(sum("out_qty"), true)}</strong></td>
+          <td></td>
+          <td style="${num}"><strong>${tallyTotal(sum("out_value"), false)}</strong></td>
+          <td style="${num}"><strong>${tallyTotal(sum("close_qty"), true)}</strong></td>
+          <td></td>
+          <td style="${num}"><strong>${tallyTotal(sum("close_value"), false)}</strong></td>
+        </tr>
+      </tbody></table></div>` : empty("No movement", "Nothing was billed, confirmed, or received in these dates.")}`;
   }
 
   async function renderValuation(body) {

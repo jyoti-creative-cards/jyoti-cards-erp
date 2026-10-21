@@ -30,6 +30,7 @@ const Reports = (() => {
 
   const CHIPS = {
     today: [
+      { id: "item-outward", label: "Daily stock" },
       { id: "daybook", label: "Daybook" },
       { id: "sales-book", label: "Sales book" },
       { id: "day-bills", label: "Day bills" },
@@ -50,8 +51,8 @@ const Reports = (() => {
       { id: "item-purchases", label: "Item purchase" },
     ],
     stock: [
+      { id: "item-outward", label: "Daily stock" },
       { id: "stock-wise", label: "Stock wise" },
-      { id: "item-outward", label: "Items sold" },
       { id: "stock-journal", label: "Stock journal" },
       { id: "valuation", label: "Valuation" },
       { id: "movers", label: "Fast / slow" },

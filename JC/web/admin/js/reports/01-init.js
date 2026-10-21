@@ -59,9 +59,9 @@
     const body = document.getElementById("reports-body");
     if (!body) return;
     body.innerHTML = HubUI.tileGrid([
-      { letter: "T", tag: "Today", title: "What moved today?", desc: "Daybook · sales · purchases · payments", onclick: "Reports.pickQuestion('today','daybook')", className: "setup-tile-records" },
+      { letter: "T", tag: "Today", title: "What moved today?", desc: "Daily stock · sales · purchases · payments", onclick: "Reports.pickQuestion('today','item-outward')", className: "setup-tile-records" },
       { letter: "B", tag: "Books", title: "Who owes us / we owe?", desc: "Due age · ledgers", onclick: "Reports.pickQuestion('books','ageing')", className: "setup-tile-billing" },
-      { letter: "S", tag: "Stock", title: "What’s in stock?", desc: "Stock wise · items sold · valuation", onclick: "Reports.pickQuestion('stock','stock-wise')", className: "setup-tile-catalog" },
+      { letter: "S", tag: "Stock", title: "What’s in stock?", desc: "Daily stock · stock wise · valuation", onclick: "Reports.pickQuestion('stock','item-outward')", className: "setup-tile-catalog" },
       { letter: "P", tag: "Tax", title: "Profit & tax?", desc: "P&L · GST · cash book", onclick: "Reports.pickQuestion('tax','pnl')", className: "setup-tile-delivery" },
     ], { style: "margin-top:8px;" })
       + `<p class="fin-muted" style="margin-top:16px;">Or pick a mode above (Today / Books / Stock / Tax).</p>`;
@@ -165,7 +165,7 @@
     const heroSub = document.getElementById("reports-hero-sub");
     if (heroSub) {
       const copy = {
-        today: "What moved today — daybook, bills, payments",
+        today: "Daily stock for the dates you pick. Same start and end date is one day.",
         books: "Ledgers, who owes whom, sales & purchase by party or item",
         stock: "Stock wise, value on hand, movers, returns",
         tax: "GST registers, cash book, expenses, profit",
@@ -259,6 +259,7 @@
   }
 
   function printCurrent() {
+    if (chip === "item-outward") return shareStockSummary(true);
     const root = reportPrintRoot();
     const tables = reportTables(root);
     const chunk = tables.length ? tables.map(t => t.outerHTML).join("<br>") : (root?.innerHTML || "");

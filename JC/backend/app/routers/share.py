@@ -29,6 +29,7 @@ from app.services.report_pdfs import (
     render_freight_payment_pdf,
     render_freight_statement_pdf,
 )
+from app.services.stock_summary_pdf import render_stock_summary_pdf
 router = APIRouter(prefix="/share", tags=["share"])
 
 
@@ -119,6 +120,23 @@ def daybook_pdf(
         name = f"daybook_{(from_date or to_date).isoformat()}.pdf"
     else:
         name = "daybook.pdf"
+    return _pdf_response(pdf, name)
+
+
+@router.get("/stock-summary/pdf")
+def stock_summary_pdf(
+    from_date: Optional[date] = Query(None),
+    to_date: Optional[date] = Query(None),
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    pdf = render_stock_summary_pdf(db, from_date, to_date)
+    if from_date and to_date and from_date != to_date:
+        name = f"stock_summary_{from_date.isoformat()}_{to_date.isoformat()}.pdf"
+    elif from_date or to_date:
+        name = f"stock_summary_{(from_date or to_date).isoformat()}.pdf"
+    else:
+        name = "stock_summary.pdf"
     return _pdf_response(pdf, name)
 
 

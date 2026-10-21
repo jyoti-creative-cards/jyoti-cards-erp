@@ -78,6 +78,67 @@ const Finance = (() => {
     return prefix + Math.abs(n).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
   }
 
+  const COLLECT_DATE_KEY = "jc_collect_date_lock";
+
+  function collectDateState() {
+    try {
+      const raw = sessionStorage.getItem(COLLECT_DATE_KEY);
+      if (!raw) return { locked: false, date: "" };
+      const parsed = JSON.parse(raw);
+      return { locked: !!parsed.locked, date: String(parsed.date || "") };
+    } catch (_) {
+      return { locked: false, date: "" };
+    }
+  }
+
+  function saveCollectDateState(locked, date) {
+    if (locked && date) sessionStorage.setItem(COLLECT_DATE_KEY, JSON.stringify({ locked: true, date }));
+    else sessionStorage.removeItem(COLLECT_DATE_KEY);
+  }
+
+  function collectDateHtml(inputId) {
+    const state = collectDateState();
+    const locked = state.locked && !!state.date;
+    const value = locked ? state.date : localToday();
+    return `<div style="margin:0 0 14px;padding:10px 12px;border:2px solid #f59e0b;background:#fffbeb;border-radius:8px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;">
+        <label class="label" style="margin:0;">Collection date</label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700;cursor:pointer;">
+          <input type="checkbox" id="${inputId}-lock" ${locked ? "checked" : ""} onchange="Finance.toggleCollectDateLock('${inputId}')" />
+          Lock
+        </label>
+      </div>
+      <input type="date" class="input" id="${inputId}" value="${ctx.esc(value)}" required oninput="Finance.onCollectDateInput('${inputId}')" onchange="Finance.onCollectDateInput('${inputId}')" />
+      <p id="${inputId}-hint" style="margin:6px 0 0;font-size:12px;color:#92400e;">${locked ? "Locked. Every next payment keeps this date." : "Lock it to keep this date for the next payments."}</p>
+    </div>`;
+  }
+
+  function toggleCollectDateLock(inputId) {
+    const lock = document.getElementById(`${inputId}-lock`);
+    const date = (document.getElementById(inputId)?.value || "").trim();
+    if (lock?.checked && !date) {
+      lock.checked = false;
+      return ctx.toast("Pick a date, then lock it", "error");
+    }
+    saveCollectDateState(!!lock?.checked, date);
+    const hint = document.getElementById(`${inputId}-hint`);
+    if (hint) hint.textContent = lock?.checked
+      ? "Locked. Every next payment keeps this date."
+      : "Lock it to keep this date for the next payments.";
+  }
+
+  function onCollectDateInput(inputId) {
+    const lock = document.getElementById(`${inputId}-lock`);
+    const date = (document.getElementById(inputId)?.value || "").trim();
+    if (lock?.checked) saveCollectDateState(true, date);
+  }
+
+  function rememberCollectDate(inputId) {
+    const lock = document.getElementById(`${inputId}-lock`);
+    const date = (document.getElementById(inputId)?.value || "").trim();
+    if (lock?.checked && date) saveCollectDateState(true, date);
+  }
+
   function localToday() {
     const n = new Date();
     return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
@@ -403,9 +464,8 @@ const Finance = (() => {
       <div class="review-block" style="margin-bottom:16px;">
         ${ctx.reviewRow("Party", partyWithCity(customer))}
       </div>
+      ${collectDateHtml("quick-pay-date")}
       ${modeOpts}
-      <label class="label">Collection date</label>
-      <input type="date" class="input" id="quick-pay-date" value="${ctx.esc(localToday())}" required style="margin-bottom:12px;" />
       <label class="label">Amount (₹)</label>
       <input type="number" step="0.01" class="input" id="quick-pay-amount" placeholder="Enter amount" style="margin-bottom:8px;" />
       <p style="font-size:12px;color:var(--muted);margin:0 0 12px;">More than they owe, or a payment when nothing is due, is saved as credit.</p>
@@ -433,6 +493,7 @@ const Finance = (() => {
     if (quickPayModes.length && !paymentModeId) return ctx.toast("Select payment mode", "error");
     if (!amount || amount <= 0) return ctx.toast("Enter a valid amount", "error");
     if (!valueDate) return ctx.toast("Enter collection date", "error");
+    rememberCollectDate("quick-pay-date");
     ctx.showLoading?.();
     try {
       const res = await ctx.api(`/accounts-receivable/customer/${customer.id}/record-payment`, {
@@ -1806,9 +1867,8 @@ const Finance = (() => {
         ${ctx.reviewRow("Customer", arDetail.customer_label)}
         ${ctx.reviewRow(outstanding < 0 ? "Credit" : "Due", outstanding < 0 ? fmtPrice(Math.abs(outstanding)) : fmtPrice(outstanding))}
       </div>
+      ${collectDateHtml("ar-settle-date")}
       ${modeOpts}
-      <label class="label">Collection date</label>
-      <input type="date" class="input" id="ar-settle-date" value="${ctx.esc(localToday())}" required style="margin-bottom:12px;" />
       <label class="label">Amount (₹)</label>
       <input type="number" step="0.01" class="input" id="ar-settle-amount" value="" placeholder="Enter amount" style="margin-bottom:8px;" oninput="Finance.onArSettleAmount()" />
       <p id="ar-settle-over-hint" class="hidden" style="font-size:12px;color:var(--muted);margin:0 0 12px;">Extra will sit as credit on this customer.</p>
@@ -1849,6 +1909,7 @@ const Finance = (() => {
     if (!amount || amount <= 0) return ctx.toast("Enter valid amount", "error");
     const valueDate = (document.getElementById("ar-settle-date")?.value || "").trim();
     if (!valueDate) return ctx.toast("Enter collection date", "error");
+    rememberCollectDate("ar-settle-date");
     const party = arDetail.customer_label;
     const cid = currentCustomer;
     ctx.showLoading?.();
@@ -3374,6 +3435,7 @@ const Finance = (() => {
     showApFromVendor, showArFromCustomer, openVendorAp, openEntry, openSettle, closeSettle, submitSettle, setSettleFile, onApSettleAmount,
     setApTab, toggleBill, addDebitNote, editDebitNote, voidDebitNote,
     openCustomerAr, setArTab, openArSettle, closeArSettle, submitArSettle, onArSettleAmount,
+    toggleCollectDateLock, onCollectDateInput,
     undoArPayment, undoApPayment, setRealEntriesOnly,
     shareArStatement, shareApStatement,
     setArOpeningBalance, setApOpeningBalance, saveArOpeningBalance, saveApOpeningBalance,

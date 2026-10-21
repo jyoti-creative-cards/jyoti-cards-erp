@@ -250,9 +250,8 @@
         ${ctx.reviewRow("Customer", arDetail.customer_label)}
         ${ctx.reviewRow(outstanding < 0 ? "Credit" : "Due", outstanding < 0 ? fmtPrice(Math.abs(outstanding)) : fmtPrice(outstanding))}
       </div>
+      ${collectDateHtml("ar-settle-date")}
       ${modeOpts}
-      <label class="label">Collection date</label>
-      <input type="date" class="input" id="ar-settle-date" value="${ctx.esc(localToday())}" required style="margin-bottom:12px;" />
       <label class="label">Amount (₹)</label>
       <input type="number" step="0.01" class="input" id="ar-settle-amount" value="" placeholder="Enter amount" style="margin-bottom:8px;" oninput="Finance.onArSettleAmount()" />
       <p id="ar-settle-over-hint" class="hidden" style="font-size:12px;color:var(--muted);margin:0 0 12px;">Extra will sit as credit on this customer.</p>
@@ -293,6 +292,7 @@
     if (!amount || amount <= 0) return ctx.toast("Enter valid amount", "error");
     const valueDate = (document.getElementById("ar-settle-date")?.value || "").trim();
     if (!valueDate) return ctx.toast("Enter collection date", "error");
+    rememberCollectDate("ar-settle-date");
     const party = arDetail.customer_label;
     const cid = currentCustomer;
     ctx.showLoading?.();

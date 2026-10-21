@@ -351,6 +351,31 @@ def _auto_addon_charge(name: str | None) -> bool:
     return is_name_plate(name, None) or is_initial_plate(name, None)
 
 
+def drop_skipped_addons(addon_map: dict[int, list] | None, lines: list | None) -> dict[int, list]:
+    """Drop add-ons the bill screen marked removed. An empty skip list keeps them."""
+    skip: dict[int, set[int]] = {}
+    for raw in lines or []:
+        if not isinstance(raw, dict):
+            continue
+        try:
+            cid = int(raw.get("catalog_product_id") or 0)
+        except (TypeError, ValueError):
+            continue
+        ids = raw.get("skip_addon_ids") or []
+        if cid and ids:
+            skip[cid] = {int(x) for x in ids if x is not None}
+    if not skip:
+        return dict(addon_map or {})
+    out: dict[int, list] = {}
+    for cid, rows in (addon_map or {}).items():
+        blocked = skip.get(int(cid)) or set()
+        out[int(cid)] = [
+            row for row in (rows or [])
+            if int((row or {}).get("addon_product_id") or 0) not in blocked
+        ]
+    return out
+
+
 def merge_priced_addon_charges(
     additional: list | None,
     addons_by_product: dict[int, list],

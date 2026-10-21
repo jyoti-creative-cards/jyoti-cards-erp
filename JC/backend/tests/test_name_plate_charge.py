@@ -1,6 +1,11 @@
 from decimal import Decimal
 
-from app.services.catalog_addons import is_initial_plate, is_name_plate, merge_priced_addon_charges
+from app.services.catalog_addons import (
+    drop_skipped_addons,
+    is_initial_plate,
+    is_name_plate,
+    merge_priced_addon_charges,
+)
 
 
 def test_name_plate_match_ignores_case_and_dashes():
@@ -47,6 +52,17 @@ def test_initial_plate_is_three_and_separate_from_name_plate():
     by_name = {c["name"]: Decimal(c["amount"]) for c in charges}
     assert by_name["Name Plate"] == Decimal("8.00")
     assert by_name["Initial Plate"] == Decimal("12.00")
+
+
+def test_bill_can_skip_the_name_plate_that_is_still_on_the_product():
+    linked = {
+        1: [
+            {"addon_product_id": 9, "our_product_id": "NAME PLATE", "name": "Name Plate", "quantity": 1, "selling_price": "2.00"},
+        ],
+    }
+    kept = drop_skipped_addons(linked, [{"catalog_product_id": 1, "skip_addon_ids": [9]}])
+    charges = merge_priced_addon_charges([], kept, [{"catalog_product_id": 1, "quantity": 600}])
+    assert charges == []
 
 
 def test_removed_name_plate_adds_no_charge():

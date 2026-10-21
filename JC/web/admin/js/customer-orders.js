@@ -1452,6 +1452,7 @@ const CustomerOrders = (() => {
           quantity_to_ship: Number(l.quantity_to_ship),
           quantity: Number(l.quantity_to_ship),
         };
+        row.skip_addon_ids = (l.skip_addon_ids || []).map(Number);
         if (discOn && !useOverallDiscount) {
           const hasPct = l.discount_percent !== "" && l.discount_percent != null && Number.isFinite(Number(l.discount_percent));
           const hasNet = l.net_rate !== "" && l.net_rate != null && Number.isFinite(Number(l.net_rate));
@@ -1603,6 +1604,8 @@ const CustomerOrders = (() => {
         discount_percent: "",
         net_rate: calcNetFromDisc(l.unit_price, 0),
         discSource: "",
+        addons: l.addons || [],
+        skip_addon_ids: [],
       }));
       if (billableOrders.length) applySelectedOrders();
       if (!processLines.length) {
@@ -1738,6 +1741,12 @@ const CustomerOrders = (() => {
       billEditSearchPending = false;
       document.getElementById("co-wizard")?.classList.remove("hidden");
       try { await ensureEntryCatalogs(); } catch (_) {}
+      const chargeList = bill.additional_charges || [];
+      processLines = processLines.map(l => {
+        const hit = (entryItems || []).find(x => x.catalog_product_id === l.catalog_product_id);
+        const ready = billLineAddonState(l, (hit && (hit.addons || hit.priced_addons)) || [], chargeList);
+        return { ...l, ...ready };
+      });
       renderProcessWizard();
     } catch (e) { ctx.toast(e.message, "error"); editBillId = null; }
     finally { ctx.hideLoading?.(); }
@@ -1828,7 +1837,8 @@ const CustomerOrders = (() => {
       discount_percent: "",
       net_rate: "",
       discSource: "",
-      addons: p.addons || [],
+      addons: (p.addons && p.addons.length) ? p.addons : (p.priced_addons || []),
+      skip_addon_ids: [],
     });
     billEditSearch = "";
     renderProcessWizard();
@@ -1899,6 +1909,13 @@ const CustomerOrders = (() => {
         ? Number(calcNetFromDisc(ln.unit_price, overallDiscount)) || 0
         : (Number(ln.net_rate) || Number(calcNetFromDisc(ln.unit_price, ln.discount_percent || 0)) || 0);
       amount += q * rate;
+      const skipped = new Set((ln.skip_addon_ids || []).map(Number));
+      for (const a of ln.addons || []) {
+        if (skipped.has(Number(a.addon_product_id))) continue;
+        const price = addonEachPrice(a);
+        if (!(price > 0)) continue;
+        amount += price * (Number(a.quantity) || 1) * q;
+      }
     }
     let extra = 0;
     if ((transportMode === "bus" || transportMode === "transport") && String(freightCharges || "").trim() !== "") {
@@ -1993,7 +2010,7 @@ const CustomerOrders = (() => {
         : (ln.net_rate || calcNetFromDisc(ln.unit_price, ln.discount_percent || 0));
       const shownDisc = useOverallDiscount ? (overallDiscount || "") : (ln.discount_percent || "");
       return `<tr>
-        <td><strong>${ctx.esc(ln.our_product_id)}</strong></td>
+        <td><strong>${ctx.esc(ln.our_product_id)}</strong>${billAddonHtml(ln)}</td>
         <td>${ln.quantity_on_hand ?? "—"}</td>
         <td>${fmtPrice(ln.unit_price)}</td>
         <td><input data-ship-for="${i}" type="number" class="input" style="width:72px;" min="0" value="${ln.quantity_to_ship ?? ""}" oninput="CustomerOrders.setShipQty(${i}, this.value)" /></td>
@@ -2161,6 +2178,73 @@ const CustomerOrders = (() => {
     const n = s.current_num + 1 >= s.start_num ? s.current_num + 1 : s.start_num;
     return `${s.prefix}${n}`;
   }
+  function billLineAddonState(line, catalogAddons, charges) {
+    const onBill = Array.isArray(line.addons) ? line.addons : [];
+    const byId = new Map();
+    for (const a of [...(catalogAddons || []), ...onBill]) {
+      if (a && a.addon_product_id != null) byId.set(Number(a.addon_product_id), a);
+    }
+    const addons = [...byId.values()];
+    const kept = new Set(onBill.map(a => Number(a.addon_product_id)));
+    const names = (charges || []).map(c => String(c.name || "").toLowerCase());
+    const chargeHas = (kind) => names.some(n => (kind === "name" ? n.includes("name plate") : n.includes("initial plate")));
+    const kindOf = (a) => {
+      const n = String(a.name || a.our_product_id || "").toLowerCase().replace(/[_-]/g, " ");
+      if (n.includes("name plate")) return "name";
+      if (n.includes("initial plate")) return "initial";
+      return "";
+    };
+    const snapshot = Array.isArray(line.addons);
+    const skip = [];
+    for (const a of addons) {
+      const id = Number(a.addon_product_id);
+      const kind = kindOf(a);
+      if (snapshot) {
+        if (!kept.has(id)) skip.push(id);
+        continue;
+      }
+      if (kind && chargeHas(kind)) continue;
+      if (kind) skip.push(id);
+    }
+    return { addons, skip_addon_ids: skip };
+  }
+
+  function addonEachPrice(a) {
+    const price = Number(a && a.selling_price);
+    if (price > 0) return price;
+    const n = String((a && (a.name || a.our_product_id)) || "").toLowerCase().replace(/[_-]/g, " ");
+    if (n.includes("name plate")) return 2;
+    if (n.includes("initial plate")) return 3;
+    return 0;
+  }
+
+  function billAddonHtml(line) {
+    const addons = line.addons || [];
+    if (!addons.length) return "";
+    const skipped = new Set((line.skip_addon_ids || []).map(Number));
+    return addons.map(a => {
+      const id = Number(a.addon_product_id);
+      const name = a.name || a.our_product_id || "Add-on";
+      const price = addonEachPrice(a);
+      const priceBit = price > 0 ? ` · ₹${price} each` : "";
+      if (skipped.has(id)) {
+        return `<div class="co-addon-row">${ctx.esc(name)} removed · <button type="button" class="btn btn-ghost btn-sm" onclick="CustomerOrders.skipBillAddon(${line.catalog_product_id}, ${id})">Add</button></div>`;
+      }
+      return `<div class="co-addon-row">+ ${ctx.esc(name)}${priceBit} <button type="button" class="btn btn-ghost btn-sm" onclick="CustomerOrders.skipBillAddon(${line.catalog_product_id}, ${id})">Remove</button></div>`;
+    }).join("");
+  }
+
+  function skipBillAddon(catalogProductId, addonId) {
+    const ln = processLines.find(l => Number(l.catalog_product_id) === Number(catalogProductId));
+    if (!ln) return;
+    const skipped = new Set((ln.skip_addon_ids || []).map(Number));
+    const id = Number(addonId);
+    if (skipped.has(id)) skipped.delete(id);
+    else skipped.add(id);
+    ln.skip_addon_ids = [...skipped];
+    renderProcessWizard();
+  }
+
   function setNarration(v) { narration = v; }
   function setEditBillNumber(v) { editBillNumber = v || ""; }
   function setBillDate(v) { billDate = v || localToday(); }
@@ -2205,6 +2289,8 @@ const CustomerOrders = (() => {
         discount_percent: "",
         net_rate: calcNetFromDisc(l.unit_price, 0),
         discSource: "",
+        addons: l.addons || [],
+        skip_addon_ids: l.skip_addon_ids || [],
       };
     }).filter(l => l.quantity_open > 0);
     return processLines.length > 0;
@@ -2993,7 +3079,7 @@ const CustomerOrders = (() => {
     openEditBill, editLatestBill, promptEditBillNumber, saveBillNumber, enableDiscount, clearDiscount, setBillEditSearch, addBillEditProduct, removeProcessLine,
     openEditFromOpen,
     _detailCustomerId,
-    setShipQty, setLineDisc, setLineNetRate, setDiscToggle, setOverallDisc,
+    setShipQty, setLineDisc, setLineNetRate, setDiscToggle, setOverallDisc, skipBillAddon,
     setFreightAgent, setFreightCharges, setTransportMode, setTransportReceipt, setPackagingCharges,
     setGst, setGstRate, setBillSeries, setNarration, setEditBillNumber, setBillDate, setAddCharge, addChargeRow,
     setOfflinePlacedOn,

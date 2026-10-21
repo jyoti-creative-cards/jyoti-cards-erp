@@ -20,6 +20,7 @@ from app.services.bill_series_alloc import allocate_bill_number, resolve_bill_nu
 from app.services.catalog_addons import (
     apply_billing_addons_to_totals,
     billing_addons_for_products,
+    drop_skipped_addons,
     merge_priced_addon_charges,
 )
 from app.services.credit_limit import assert_credit_allows_bill, credit_status
@@ -90,6 +91,7 @@ def _prepare_edit_bill_totals(
             "quantity": qty,
             "discount_percent": raw.get("discount_percent"),
             "net_rate": raw.get("net_rate"),
+            "skip_addon_ids": raw.get("skip_addon_ids") or [],
         }
     if not desired:
         raise HTTPException(400, "bill must keep at least one product line")
@@ -136,11 +138,17 @@ def _prepare_edit_bill_totals(
             if "override_price" in ov or "discount_percent" in ov:
                 item_overrides.append(ov)
 
-    addon_for_bill = billing_addons_for_products(
-        db,
-        customer_id,
-        [int(x["catalog_product_id"]) for x in bill_items],
-        placement_id=bill.placement_id,
+    addon_for_bill = drop_skipped_addons(
+        billing_addons_for_products(
+            db,
+            customer_id,
+            [int(x["catalog_product_id"]) for x in bill_items],
+            placement_id=bill.placement_id,
+        ),
+        [
+            {"catalog_product_id": cid, "skip_addon_ids": meta.get("skip_addon_ids") or []}
+            for cid, meta in desired.items()
+        ],
     )
     additional_charges = merge_priced_addon_charges(additional_charges, addon_for_bill, bill_items)
 

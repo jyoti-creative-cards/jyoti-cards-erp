@@ -456,6 +456,16 @@ def get_bill_detail(
     )
     from app.services.catalog_addons import addon_snapshots_map
 
-    addon_by_cid = addon_snapshots_map(db, [ln.catalog_product_id for ln in blines], with_images=False)
+    addon_by_cid: dict[int, list] = {}
+    totals_lines = (bill.totals_json or {}).get("lines") if isinstance(bill.totals_json, dict) else None
+    if isinstance(totals_lines, list):
+        for tl in totals_lines:
+            if isinstance(tl, dict) and tl.get("catalog_product_id") is not None and isinstance(tl.get("addons"), list):
+                addon_by_cid[int(tl["catalog_product_id"])] = list(tl["addons"])
+    missing = [int(ln.catalog_product_id) for ln in blines if int(ln.catalog_product_id) not in addon_by_cid]
+    if missing:
+        live = addon_snapshots_map(db, missing, with_images=False)
+        for cid in missing:
+            addon_by_cid.setdefault(int(cid), list(live.get(int(cid), [])))
     return serialize_customer_bill(db, bill, blines, addon_by_cid)
 

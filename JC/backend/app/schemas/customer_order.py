@@ -164,6 +164,7 @@ class ProcessLineIn(BaseModel):
     quantity_to_ship: int = Field(..., ge=0)
     discount_percent: Optional[float] = None
     net_rate: Optional[float] = None  # used only when discount_percent is omitted
+    skip_addon_ids: List[int] = []
 
 
 class AdditionalChargeIn(BaseModel):
@@ -194,6 +195,7 @@ class EditBillLineIn(BaseModel):
     quantity: int = Field(..., ge=0)
     discount_percent: Optional[float] = None
     net_rate: Optional[float] = None
+    skip_addon_ids: List[int] = []
 
 
 class EditBillIn(BaseModel):

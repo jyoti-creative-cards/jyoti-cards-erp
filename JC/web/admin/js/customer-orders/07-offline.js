@@ -265,7 +265,7 @@
       </div>`;
     footerEl.innerHTML = `
       <button class="btn btn-secondary" onclick="CustomerOrders.closeOfflineWizard()">Cancel</button>
-      <button class="btn btn-primary" onclick="CustomerOrders.previewOrder()">Preview</button>`;
+      <button class="btn btn-primary" ${offlineBusy ? "disabled" : ""} onclick="CustomerOrders.submitOffline()">${offlineBusy ? "Saving…" : "Save order"}</button>`;
     paintOrderLines();
     loadBookedOrders();
     const focusId = editing || offlineCustomerId ? "co-order-item" : "co-order-customer";

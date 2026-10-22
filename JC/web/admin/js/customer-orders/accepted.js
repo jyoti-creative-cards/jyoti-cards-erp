@@ -1961,24 +1961,31 @@ const CustomerOrders = (() => {
   /** Running qty/amount from the line items alone (pre-GST/pre-freight/pre-charges) —
    * kept visible on every wizard step (not just Review) since staff use it to judge
    * additional charges while still on the Transport/Charges steps. */
+  function lineRate(ln) {
+    return useOverallDiscount && overallDiscount
+      ? Number(calcNetFromDisc(ln.unit_price, overallDiscount)) || 0
+      : (Number(ln.net_rate) || Number(calcNetFromDisc(ln.unit_price, ln.discount_percent || 0)) || 0);
+  }
+
   function wizardLinesTotals() {
-    let qty = 0, amount = 0;
+    let qty = 0, amount = 0, bookedQty = 0, bookedAmt = 0;
     for (const ln of processLines) {
+      const rate = lineRate(ln);
+      const booked = Number(ln.quantity_booked ?? ln.quantity_open) || 0;
+      bookedQty += booked;
+      bookedAmt += booked * rate;
       const q = Number(ln.quantity_to_ship) || 0;
       if (q <= 0) continue;
       qty += q;
-      // Mirror the "shownNet" logic used in the Step-1 table so this bar always matches
-      // what's on screen there (overall-discount mode ignores the per-line net_rate).
-      const rate = useOverallDiscount && overallDiscount
-        ? Number(calcNetFromDisc(ln.unit_price, overallDiscount)) || 0
-        : (Number(ln.net_rate) || Number(calcNetFromDisc(ln.unit_price, ln.discount_percent || 0)) || 0);
       amount += q * rate;
       const skipped = new Set((ln.skip_addon_ids || []).map(Number));
       for (const a of ln.addons || []) {
         if (skipped.has(Number(a.addon_product_id))) continue;
         const price = addonEachPrice(a);
         if (!(price > 0)) continue;
-        amount += price * (Number(a.quantity) || 1) * q;
+        const extra = price * (Number(a.quantity) || 1);
+        amount += extra * q;
+        bookedAmt += extra * booked;
       }
     }
     let extra = 0;
@@ -1987,7 +1994,7 @@ const CustomerOrders = (() => {
     }
     if (String(packagingCharges || "").trim() !== "") extra += Number(packagingCharges) || 0;
     for (const c of additionalCharges || []) extra += Number(c.amount) || 0;
-    return { qty, amount: amount + extra };
+    return { qty, amount: amount + extra, bookedQty, bookedAmt: bookedAmt + extra };
   }
 
   function reviewChargeRows(tot, chargeLabel) {
@@ -2014,10 +2021,8 @@ const CustomerOrders = (() => {
   function renderWizardTotalsBar() {
     const bar = document.getElementById("co-wizard-totals");
     if (!bar) return;
-    const { qty, amount } = wizardLinesTotals();
-    bar.innerHTML = qty > 0
-      ? `<span><span class="wtb-muted">Total qty</span>${qty}</span><span><span class="wtb-muted">Total amount</span>${fmtPrice(amount)}</span>`
-      : "";
+    const { qty, amount, bookedQty, bookedAmt } = wizardLinesTotals();
+    bar.innerHTML = `<span><span class="wtb-muted">Booked qty</span>${bookedQty}</span><span><span class="wtb-muted">Booked amount</span>${fmtPrice(bookedAmt)}</span><span><span class="wtb-muted">This bill qty</span>${qty}</span><span><span class="wtb-muted">This bill amount</span>${fmtPrice(amount)}</span>`;
   }
 
   function transportFieldsHtml() {
@@ -2078,14 +2083,12 @@ const CustomerOrders = (() => {
         : (ln.net_rate || calcNetFromDisc(ln.unit_price, ln.discount_percent || 0));
       const shownDisc = useOverallDiscount ? (overallDiscount || "") : (ln.discount_percent || "");
       const booked = Number(ln.quantity_booked ?? ln.quantity_open) || 0;
-      const going = Number(ln.quantity_to_ship) > 0;
       return `<tr>
-        <td><input type="checkbox" ${going ? "checked" : ""} onchange="CustomerOrders.toggleShipLine(${i}, this.checked)" /></td>
         <td><strong>${ctx.esc(ln.our_product_id)}</strong>${billAddonHtml(ln)}${orderMarkingForProduct(billableOrders, ln.catalog_product_id)}</td>
         <td>${ln.quantity_on_hand ?? "—"}</td>
         <td>${fmtPrice(ln.unit_price)}</td>
         <td>${booked}</td>
-        <td><input data-ship-for="${i}" type="number" class="input" style="width:72px;" min="0" value="${going ? ln.quantity_to_ship : ""}" placeholder="0" ${going ? "" : "disabled"} oninput="CustomerOrders.setShipQty(${i}, this.value)" /></td>
+        <td><input data-ship-for="${i}" type="number" class="input" style="width:72px;" min="0" value="${ln.quantity_to_ship ?? 0}" oninput="CustomerOrders.setShipQty(${i}, this.value)" /></td>
         <td><input data-disc-for="${i}" type="number" class="input" style="width:72px;" min="0" max="100" step="0.1" ${ro} value="${ctx.esc(shownDisc)}" oninput="CustomerOrders.setLineDisc(${i}, this.value)" /></td>
         <td><input data-net-for="${i}" type="number" class="input" style="width:88px;" min="0" step="0.01" ${ro} value="${ctx.esc(shownNet || "")}" oninput="CustomerOrders.setLineNetRate(${i}, this.value)" /></td>
         ${editBillId ? `<td><button type="button" class="btn btn-ghost btn-sm" onclick="CustomerOrders.removeProcessLine(${i})">Remove</button></td>` : ""}
@@ -2106,10 +2109,10 @@ const CustomerOrders = (() => {
         <label><input type="radio" name="co-disc-mode" ${discountEnabled && useOverallDiscount ? "checked" : ""} onchange="CustomerOrders.setDiscToggle('overall')" /> Overall %</label>
         ${discountEnabled && useOverallDiscount ? `<input class="input" style="width:80px;" placeholder="%" value="${ctx.esc(overallDiscount)}" oninput="CustomerOrders.setOverallDisc(this.value)" />` : ""}
       </div>
-      <p style="margin:0 0 8px;font-size:13px;color:var(--muted);">Nothing is selected. Tick an item to bill it. Booked qty stays visible. Type the qty that is going.</p>
+      <p style="margin:0 0 8px;font-size:13px;color:var(--muted);">Booked qty stays on the line. Qty starts at 0. Type a qty only for the items that are going.</p>
       <table class="data"><thead><tr>
-        <th></th><th>Item</th><th>Stock</th><th>Rate</th><th>Booked</th><th>Qty</th><th>Disc %</th><th>Net</th>${editBillId ? "<th></th>" : ""}
-      </tr></thead><tbody>${linesHtml || `<tr><td colspan="8" style="color:var(--muted);">No items</td></tr>`}</tbody></table>
+        <th>Item</th><th>Stock</th><th>Rate</th><th>Booked</th><th>Qty</th><th>Disc %</th><th>Net</th>${editBillId ? "<th></th>" : ""}
+      </tr></thead><tbody>${linesHtml || `<tr><td colspan="7" style="color:var(--muted);">No items</td></tr>`}</tbody></table>
       ${addProd}
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;">
         <div>
@@ -2185,7 +2188,7 @@ const CustomerOrders = (() => {
   }
 
   async function previewBill() {
-    if (!processLines.some(l => Number(l.quantity_to_ship) > 0)) return ctx.toast("Tick an item and enter the qty that is going", "error");
+    if (!processLines.some(l => Number(l.quantity_to_ship) > 0)) return ctx.toast("Enter the qty that is going", "error");
     if (!transportMode) return ctx.toast("Select mode of transport", "error");
     if (transportMode === "bus") {
       if (!freightAgentId) return ctx.toast("Select freight agent", "error");
@@ -2961,7 +2964,7 @@ const CustomerOrders = (() => {
       </div>`;
     footerEl.innerHTML = `
       <button class="btn btn-secondary" onclick="CustomerOrders.closeOfflineWizard()">Cancel</button>
-      <button class="btn btn-primary" onclick="CustomerOrders.previewOrder()">Preview</button>`;
+      <button class="btn btn-primary" ${offlineBusy ? "disabled" : ""} onclick="CustomerOrders.submitOffline()">${offlineBusy ? "Saving…" : "Save order"}</button>`;
     paintOrderLines();
     loadBookedOrders();
     const focusId = editing || offlineCustomerId ? "co-order-item" : "co-order-customer";

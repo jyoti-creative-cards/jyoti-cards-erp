@@ -566,7 +566,7 @@
         : (ln.net_rate || calcNetFromDisc(ln.unit_price, ln.discount_percent || 0));
       const shownDisc = useOverallDiscount ? (overallDiscount || "") : (ln.discount_percent || "");
       return `<tr>
-        <td><strong>${ctx.esc(ln.our_product_id)}</strong>${billAddonHtml(ln)}</td>
+        <td><strong>${ctx.esc(ln.our_product_id)}</strong>${billAddonHtml(ln)}${orderMarkingForProduct(billableOrders, ln.catalog_product_id)}</td>
         <td>${ln.quantity_on_hand ?? "—"}</td>
         <td>${fmtPrice(ln.unit_price)}</td>
         <td><input data-ship-for="${i}" type="number" class="input" style="width:72px;" min="0" value="${ln.quantity_to_ship ?? ""}" oninput="CustomerOrders.setShipQty(${i}, this.value)" /></td>
@@ -630,7 +630,6 @@
       </label>
       <label class="label">Narration</label>
       <textarea class="input" rows="2" oninput="CustomerOrders.setNarration(this.value)">${ctx.esc(narration)}</textarea>
-      ${customerNotes ? `<p style="font-size:13px;color:var(--muted);margin:8px 0 0;">Customer note: ${ctx.esc(customerNotes)}</p>` : ""}
     `;
     footerEl.innerHTML = `
       <button class="btn btn-secondary" onclick="CustomerOrders.closeProcessWizard()">Cancel</button>

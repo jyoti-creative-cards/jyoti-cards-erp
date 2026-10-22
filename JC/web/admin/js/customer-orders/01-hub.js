@@ -261,7 +261,23 @@
   function markingBanner(note) {
     const text = String(note || "").trim();
     if (!text) return "";
-    return `<div style="margin-top:6px;padding:6px 8px;background:#fee2e2;border:1px solid #dc2626;border-radius:6px;font-weight:700;font-size:13px;color:#b91c1c;">${ctx.esc(text)}</div>`;
+    const lower = text.toLowerCase();
+    if (lower === "order placed by admin (phone)" || lower === "offline order") return "";
+    return `<div style="margin-top:6px;padding:8px 10px;background:#fee2e2;border:1px solid #dc2626;border-radius:6px;font-weight:700;font-size:15px;color:#b91c1c;">Marking: ${ctx.esc(text)}</div>`;
+  }
+
+  function orderMarkingsBlock(orders) {
+    const html = (orders || []).map(order => markingBanner(order && order.customer_notes)).join("");
+    if (!html) return "";
+    return `<div style="margin:0 0 12px;">${html}</div>`;
+  }
+
+  function orderMarkingForProduct(orders, productId) {
+    const html = (orders || [])
+      .filter(order => (order.lines || []).some(ln => Number(ln.catalog_product_id) === Number(productId)))
+      .map(order => markingBanner(order.customer_notes))
+      .join("");
+    return html;
   }
 
   function calcNetFromDisc(rate, discPct) {

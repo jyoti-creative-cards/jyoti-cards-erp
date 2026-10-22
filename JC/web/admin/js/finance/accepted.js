@@ -1732,7 +1732,7 @@ const Finance = (() => {
     try {
       const bill = await ctx.api(`/customer-orders/bills/${billId}`, {}, 0);
       const lines = (bill.lines || []).map(ln => `<tr>
-        <td>${ctx.esc(ln.our_product_id)}${ln.marking ? ` <span style="color:#b91c1c;font-weight:700;">${ctx.esc(ln.marking)}</span>` : ""}</td>
+        <td>${ctx.esc(ln.our_product_id)}</td>
         <td>${ln.quantity_shipped}</td>
         <td>${fmtPrice(ln.unit_price)}</td>
         <td>${ln.discount_percent ? ctx.esc(String(ln.discount_percent)) + "%" : "—"}</td>

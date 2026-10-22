@@ -40,17 +40,6 @@ def get_process_lines(db: Session, customer_id: int) -> dict:
         .order_by(CustomerOpenLine.id.asc())
         .all()
     )
-    notes_parts: list[str] = []
-    received = (
-        db.query(CustomerOrder)
-        .filter(CustomerOrder.customer_id == customer_id, CustomerOrder.bucket == "received", CustomerOrder.is_open.is_(True))
-        .first()
-    )
-    if received:
-        for p in db.query(CustomerOrderPlacement).filter(CustomerOrderPlacement.customer_order_id == received.id).all():
-            if p.customer_notes:
-                notes_parts.append(p.customer_notes)
-
     product_ids = [row.catalog_product_id for row in rows]
     bal_map: dict[int, int] = {}
     if product_ids:
@@ -75,9 +64,16 @@ def get_process_lines(db: Session, customer_id: int) -> dict:
                 "addons": addon_map.get(int(row.catalog_product_id), []),
             }
         )
+    orders = billable_orders(db, customer_id)
+    skip_notes = {"order placed by admin (phone)", "offline order"}
+    notes_parts: list[str] = []
+    for order in orders:
+        note = (order.get("customer_notes") or "").strip()
+        if note and note.lower() not in skip_notes and note not in notes_parts:
+            notes_parts.append(note)
     return {
         "lines": out,
-        "orders": billable_orders(db, customer_id),
+        "orders": orders,
         "default_narration": " · ".join(notes_parts),
         "credit": credit_status(db, customer_id),
     }

@@ -339,7 +339,23 @@ const CustomerOrders = (() => {
   function markingBanner(note) {
     const text = String(note || "").trim();
     if (!text) return "";
-    return `<div style="margin-top:6px;padding:6px 8px;background:#fee2e2;border:1px solid #dc2626;border-radius:6px;font-weight:700;font-size:13px;color:#b91c1c;">${ctx.esc(text)}</div>`;
+    const lower = text.toLowerCase();
+    if (lower === "order placed by admin (phone)" || lower === "offline order") return "";
+    return `<div style="margin-top:6px;padding:8px 10px;background:#fee2e2;border:1px solid #dc2626;border-radius:6px;font-weight:700;font-size:15px;color:#b91c1c;">Marking: ${ctx.esc(text)}</div>`;
+  }
+
+  function orderMarkingsBlock(orders) {
+    const html = (orders || []).map(order => markingBanner(order && order.customer_notes)).join("");
+    if (!html) return "";
+    return `<div style="margin:0 0 12px;">${html}</div>`;
+  }
+
+  function orderMarkingForProduct(orders, productId) {
+    const html = (orders || [])
+      .filter(order => (order.lines || []).some(ln => Number(ln.catalog_product_id) === Number(productId)))
+      .map(order => markingBanner(order.customer_notes))
+      .join("");
+    return html;
   }
 
   function calcNetFromDisc(rate, discPct) {
@@ -840,7 +856,7 @@ const CustomerOrders = (() => {
         <div class="ord-hub-list">${lines.length ? lines.map(line => HubUI.partyCard({
           title: ctx.esc(line.our_product_id) + (line.marking ? ` <span class="badge badge-amber" style="font-size:9px;padding:1px 4px;">${ctx.esc(line.marking)}</span>` : ""),
           titleIsHtml: true,
-          meta: `${thumb((line.image_urls || [])[0])} Recv ${line.quantity_received} · To bill <strong>${line.quantity_open}</strong> · Billed ${line.quantity_billed} · ${fmtPrice(line.unit_price)}${addonsUnderHtml(line.addons, line.quantity_open)}`,
+          meta: `${thumb((line.image_urls || [])[0])} Recv ${line.quantity_received} · To bill <strong>${line.quantity_open}</strong> · Billed ${line.quantity_billed} · ${fmtPrice(line.unit_price)}${addonsUnderHtml(line.addons, line.quantity_open)}${orderMarkingForProduct(waiting, line.catalog_product_id)}`,
           pillHtml: "",
           primaryLabel: canWrite ? "Edit qty" : null,
           primaryOnclick: `CustomerOrders.editOpenLine(${line.id}, ${line.quantity_open})`,
@@ -914,7 +930,7 @@ const CustomerOrders = (() => {
         const receiptBit = b.transport_receipt_number ? ` · Rcpt ${ctx.esc(b.transport_receipt_number)}` : "";
         return HubUI.partyCard({
           title: b.display_name || `Bill ${b.bill_number}`,
-          meta: `${fmtPrice(b.grand_total)} · ${ctx.fmtDay(b.display_date || b.bill_date)}${modeLbl ? ` · ${modeLbl}` : ""}${chargeBit}${receiptBit}${(b.additional_charges || []).filter(c => Number(c.amount) > 0).map(c => ` · ${ctx.esc(c.name)} ${fmtPrice(c.amount)}`).join("")}${b.status && b.status !== "open" ? ` · ${ctx.esc(b.status)}` : ""}${b.narration ? `<div style="margin-top:4px;color:#b91c1c;font-weight:700;">${ctx.esc(b.narration)}</div>` : ""}`,
+          meta: `${fmtPrice(b.grand_total)} · ${ctx.fmtDay(b.display_date || b.bill_date)}${modeLbl ? ` · ${modeLbl}` : ""}${chargeBit}${receiptBit}${(b.additional_charges || []).filter(c => Number(c.amount) > 0).map(c => ` · ${ctx.esc(c.name)} ${fmtPrice(c.amount)}`).join("")}${b.status && b.status !== "open" ? ` · ${ctx.esc(b.status)}` : ""}${b.narration ? `<div style="margin-top:2px;">${ctx.esc(b.narration)}</div>` : ""}`,
           pillHtml: "",
           primaryLabel: canEditBill ? "Edit" : "Print",
           primaryOnclick: canEditBill
@@ -2025,7 +2041,7 @@ const CustomerOrders = (() => {
         : (ln.net_rate || calcNetFromDisc(ln.unit_price, ln.discount_percent || 0));
       const shownDisc = useOverallDiscount ? (overallDiscount || "") : (ln.discount_percent || "");
       return `<tr>
-        <td><strong>${ctx.esc(ln.our_product_id)}</strong>${billAddonHtml(ln)}</td>
+        <td><strong>${ctx.esc(ln.our_product_id)}</strong>${billAddonHtml(ln)}${orderMarkingForProduct(billableOrders, ln.catalog_product_id)}</td>
         <td>${ln.quantity_on_hand ?? "—"}</td>
         <td>${fmtPrice(ln.unit_price)}</td>
         <td><input data-ship-for="${i}" type="number" class="input" style="width:72px;" min="0" value="${ln.quantity_to_ship ?? ""}" oninput="CustomerOrders.setShipQty(${i}, this.value)" /></td>
@@ -2089,7 +2105,6 @@ const CustomerOrders = (() => {
       </label>
       <label class="label">Narration</label>
       <textarea class="input" rows="2" oninput="CustomerOrders.setNarration(this.value)">${ctx.esc(narration)}</textarea>
-      ${customerNotes ? `<p style="font-size:13px;color:var(--muted);margin:8px 0 0;">Customer note: ${ctx.esc(customerNotes)}</p>` : ""}
     `;
     footerEl.innerHTML = `
       <button class="btn btn-secondary" onclick="CustomerOrders.closeProcessWizard()">Cancel</button>

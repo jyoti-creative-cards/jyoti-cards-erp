@@ -157,10 +157,11 @@ def stock_journal_report(
 def stock_group_summary_report(
     from_date: Optional[date] = Query(None),
     to_date: Optional[date] = Query(None),
+    year_group: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_admin),
 ):
-    return ext.stock_group_summary(db, from_date, to_date)
+    return ext.stock_group_summary(db, from_date, to_date, year_group=year_group)
 
 
 @router.get("/stock/billed-items")

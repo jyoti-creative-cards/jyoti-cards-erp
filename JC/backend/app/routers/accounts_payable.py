@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.deps import AuthContext, require_admin, require_permission
+from app.services.cancel_key import require_cancel_key
 from app.models.vendor import Vendor
 from app.schemas.accounts_payable import (
     ApLedgerEntryOut,
@@ -282,7 +283,7 @@ def patch_ap_payment(
     return _ap_payment_out(db, entry.vendor_id, entry.id, auth=auth)
 
 
-@router.post("/payments/{entry_id}/reverse", response_model=ApLedgerEntryOut, status_code=status.HTTP_201_CREATED)
+@router.post("/payments/{entry_id}/reverse", response_model=ApLedgerEntryOut, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_cancel_key)])
 def reverse_ap_payment_endpoint(
     entry_id: int,
     body: PaymentReverseIn,
@@ -313,7 +314,7 @@ def reverse_ap_payment_endpoint(
     return _ap_payment_out(db, orig.vendor_id, entry.id, auth=auth)
 
 
-@router.post("/payments/{entry_id}/void", response_model=ApLedgerEntryOut, status_code=status.HTTP_201_CREATED)
+@router.post("/payments/{entry_id}/void", response_model=ApLedgerEntryOut, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_cancel_key)])
 def void_ap_payment_endpoint(
     entry_id: int,
     body: PaymentReverseIn,

@@ -40,15 +40,17 @@ def daybook(
     bills = bill_q.all()
     bill_parties = _customer_labels(db, {b.customer_id for b in bills})
     for b in bills:
+        cancelled = b.cancelled_at is not None
         rows.append(
             {
-                "kind": "sales",
-                "label": f"Sales bill {b.bill_number}",
+                "kind": "sales_cancel" if cancelled else "sales",
+                "label": f"Sales bill {b.bill_number}" + (" cancel" if cancelled else ""),
                 "party": bill_parties.get(b.customer_id) or f"#{b.customer_id}",
-                "amount": format(b.grand_total or Decimal("0"), "f"),
-                "signed": format(b.grand_total or Decimal("0"), "f"),
+                "amount": "0.00" if cancelled else format(b.grand_total or Decimal("0"), "f"),
+                "signed": "0.00" if cancelled else format(b.grand_total or Decimal("0"), "f"),
                 "ref_id": b.id,
                 "at": b.created_at.isoformat() if b.created_at else None,
+                "cancelled": cancelled,
             }
         )
 

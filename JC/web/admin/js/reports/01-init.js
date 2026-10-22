@@ -510,20 +510,22 @@
   async function renderDocList(body, path, title) {
     const data = await ctx.api(`/reports/${path}${rangeQs()}`, {}, 0);
     let items = (data.items || []).filter(it => matchSearch(it.doc_number, it.party_label));
-    const total = amountTotal(items);
+    const liveItems = items.filter(it => it.status !== "cancelled");
+    const total = amountTotal(liveItems);
     body.innerHTML = `
       <div class="fin-hub-strip" style="margin-bottom:16px;">
-        <div class="fin-stat"><span class="fin-stat-label">Bills</span><strong>${items.length}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">Bills</span><strong>${liveItems.length}</strong></div>
         <div class="fin-stat"><span class="fin-stat-label">Amount total</span><strong>${fmtPrice(total)}</strong></div>
+        ${items.length - liveItems.length ? `<div class="fin-stat"><span class="fin-stat-label">Cancelled</span><strong>${items.length - liveItems.length}</strong></div>` : ""}
       </div>
       ${items.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
         <th>Date</th><th>Number</th><th>Party</th><th>Amount</th>
       </tr></thead><tbody>
         ${items.map(it => `<tr class="clickable" onclick="Reports.openDoc('${it.doc_type}', ${it.id})">
           <td>${ctx.esc(it.date || "—")}</td>
-          <td><strong>${ctx.esc(it.doc_number || "—")}</strong></td>
+          <td><strong>${ctx.esc(it.doc_number || "—")}${it.status === "cancelled" ? " cancel" : ""}</strong></td>
           <td>${ctx.esc(it.party_label || "—")}</td>
-          <td>${fmtPrice(it.amount)}</td>
+          <td>${it.status === "cancelled" ? `<s>${fmtPrice(it.amount)}</s>` : fmtPrice(it.amount)}</td>
         </tr>`).join("")}
         <tr><td colspan="3"><strong>Total</strong></td><td><strong>${fmtPrice(total)}</strong></td></tr>
       </tbody></table></div>` : empty("No documents", "Widen the date range or clear search.")}`;
@@ -545,7 +547,7 @@
         <th>Bill</th><th>Party</th><th>City</th><th>Amount</th><th></th>
       </tr></thead><tbody>
         ${items.map(it => `<tr class="clickable" onclick="Reports.openDoc('sales_bill', ${it.id})">
-          <td><strong>${ctx.esc(it.doc_number || "—")}</strong></td>
+          <td><strong>${ctx.esc(it.doc_number || "—")}${it.status === "cancelled" ? " cancel" : ""}</strong></td>
           <td>${it.party_number ? `<span style="color:var(--muted);">#${ctx.esc(it.party_number)}</span> ` : ""}${ctx.esc(it.party_label || "—")}</td>
           <td>${ctx.esc(it.city_name || "—")}</td>
           <td>${it.status === "cancelled" ? `<s>${fmtPrice(it.amount)}</s>` : fmtPrice(it.amount)}</td>

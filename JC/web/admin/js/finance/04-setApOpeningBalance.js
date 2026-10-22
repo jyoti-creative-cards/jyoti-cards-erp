@@ -174,10 +174,13 @@
     const cid = customerId || currentCustomer;
     if (!cid) return;
     const label = mode === "void" ? "Void" : "Reverse";
+    const passKey = prompt("Your cancel key");
+    if (passKey == null || !String(passKey).trim()) return ctx.toast("Enter your cancel key", "error");
     const reason = prompt(`${label} this payment — reason (required):`);
     if (reason == null) return;
     if (!String(reason).trim()) return ctx.toast("Reason required", "error");
     if (!confirm(`${label} payment #${entryId}? Due will go back up.`)) return;
+    window.__jcCancelKey = String(passKey).trim();
     ctx.showLoading?.();
     try {
       await ctx.api(`/accounts-receivable/payments/${entryId}/${mode}`, {
@@ -201,10 +204,13 @@
     const vid = vendorId || currentVendor;
     if (!vid) return;
     const label = mode === "void" ? "Void" : "Reverse";
+    const passKey = prompt("Your cancel key");
+    if (passKey == null || !String(passKey).trim()) return ctx.toast("Enter your cancel key", "error");
     const reason = prompt(`${label} this payment — reason (required):`);
     if (reason == null) return;
     if (!String(reason).trim()) return ctx.toast("Reason required", "error");
     if (!confirm(`${label} payment #${entryId}? Due will go back up.`)) return;
+    window.__jcCancelKey = String(passKey).trim();
     ctx.showLoading?.();
     try {
       await ctx.api(`/accounts-payable/payments/${entryId}/${mode}`, {

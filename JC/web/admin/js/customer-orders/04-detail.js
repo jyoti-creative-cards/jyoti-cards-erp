@@ -399,9 +399,11 @@
     } catch (e) { ctx.toast(e.message, "error"); offlineEditPlacementId = null; }
   }
 
-  function promptReason(title, onOk) {
+  function promptReason(title, onOk, needKey = true) {
     document.getElementById("modal-title").textContent = title;
     document.getElementById("modal-body").innerHTML = `
+      ${needKey ? `<label class="label">Your cancel key</label>
+      <input class="input" id="co-cancel-key" type="password" autocomplete="off" placeholder="Your own key" style="width:100%;margin-bottom:12px;" />` : ""}
       <label class="label">Reason (required)</label>
       <textarea class="input" id="co-reason-input" rows="3" style="width:100%;"></textarea>`;
     document.getElementById("modal-footer").innerHTML = `
@@ -409,7 +411,10 @@
       <button class="btn btn-primary" id="co-reason-ok">Confirm</button>`;
     document.getElementById("co-reason-ok").onclick = () => {
       const reason = (document.getElementById("co-reason-input")?.value || "").trim();
+      const passKey = (document.getElementById("co-cancel-key")?.value || "").trim();
+      if (needKey && !passKey) return ctx.toast("Enter your cancel key", "error");
       if (!reason) return ctx.toast("Enter a reason", "error");
+      if (needKey) window.__jcCancelKey = passKey;
       App.closeModal();
       onOk(reason);
     };
@@ -618,7 +623,7 @@
         await openDetail(detailCustomerId, currentBucket);
       } catch (e) { ctx.toast(e.message, "error"); }
       finally { ctx.hideLoading?.(); }
-    });
+    }, false);
   }
 
   function cancelBill(billId) {

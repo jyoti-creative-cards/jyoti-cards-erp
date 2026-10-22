@@ -104,6 +104,7 @@
         <div><label class="label">Full Name *</label><input id="sm-name" class="input" placeholder="e.g. Rahul Sharma" /></div>
         <div><label class="label">Mobile Number (Login ID) *</label><input id="sm-phone" class="input" type="tel" maxlength="10" placeholder="10-digit mobile" />
           <p style="margin:6px 0 0;font-size:12px;color:var(--muted);">Password = last 4 digits by default. Sent via WhatsApp.</p></div>
+        <div><label class="label">Cancel key</label><input id="sm-cancel-key" class="input" autocomplete="off" placeholder="Their own key for cancel and void" /></div>
         <div><label class="label">Custom Password (optional)</label><input id="sm-password" class="input" placeholder="Leave blank to use last 4 digits of phone" />
           <p style="margin:6px 0 0;font-size:12px;color:var(--muted);">Set this if the phone number isn't real (e.g. no WhatsApp) — you'll need to share it yourself.</p></div>
         <div><label class="label">Permissions</label><div class="card" style="padding:16px;max-height:420px;overflow-y:auto;">${permCheckboxes([])}</div></div>

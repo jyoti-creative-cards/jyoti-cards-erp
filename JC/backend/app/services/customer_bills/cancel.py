@@ -122,6 +122,42 @@ def _cancel_received_qty(db: Session, customer_id: int, catalog_product_id: int,
                 )
             )
 
+def _drop_sale_from_orders(db: Session, customer_id: int, catalog_product_id: int, qty: int, skip_placement_id: int | None) -> None:
+    """Take the cancelled pieces off the order so it no longer shows as a sale."""
+    remaining = int(qty or 0)
+    if remaining <= 0:
+        return
+    rows = (
+        db.query(CustomerOrderLine, CustomerOrderPlacement)
+        .join(CustomerOrderPlacement, CustomerOrderPlacement.id == CustomerOrderLine.placement_id)
+        .join(CustomerOrder, CustomerOrder.id == CustomerOrderPlacement.customer_order_id)
+        .filter(
+            CustomerOrder.customer_id == customer_id,
+            CustomerOrderLine.catalog_product_id == catalog_product_id,
+            CustomerOrderLine.status == "active",
+            CustomerOrderLine.quantity_billed > 0,
+            CustomerOrderPlacement.deleted_at.is_(None),
+        )
+        .order_by(CustomerOrderPlacement.placed_at.asc(), CustomerOrderLine.id.asc())
+        .all()
+    )
+    for line, placement in rows:
+        if remaining <= 0:
+            break
+        if skip_placement_id and int(placement.id) == int(skip_placement_id):
+            continue
+        billed = int(line.quantity_billed or 0)
+        take = min(remaining, billed)
+        if take <= 0:
+            continue
+        line.quantity_billed = billed - take
+        line.quantity = max(0, int(line.quantity or 0) - take)
+        if line.quantity <= 0:
+            line.status = "cancelled"
+            line.cancel_reason = "bill cancelled"
+        remaining -= take
+
+
 def cancel_customer_bill(
     db: Session,
     *,
@@ -207,6 +243,7 @@ def cancel_customer_bill(
             if int(open_row.quantity_open or 0) <= 0 and int(open_row.quantity_billed or 0) <= 0:
                 open_row.status = "cancelled"
         _shrink_received_for_bill_delta(db, bill.customer_id, ln.catalog_product_id, qty)
+        _drop_sale_from_orders(db, bill.customer_id, ln.catalog_product_id, qty, bill.placement_id)
 
         ln.status = "closed"
         ln.close_reason = f"Bill cancelled — {reason}"[:500]

@@ -127,10 +127,11 @@ def daybook_pdf(
 def stock_summary_pdf(
     from_date: Optional[date] = Query(None),
     to_date: Optional[date] = Query(None),
+    year_group: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_admin),
 ):
-    pdf = render_stock_summary_pdf(db, from_date, to_date)
+    pdf = render_stock_summary_pdf(db, from_date, to_date, year_group=year_group)
     if from_date and to_date and from_date != to_date:
         name = f"stock_summary_{from_date.isoformat()}_{to_date.isoformat()}.pdf"
     elif from_date or to_date:

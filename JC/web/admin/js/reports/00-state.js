@@ -20,6 +20,8 @@ const Reports = (() => {
   let backLabel = "Back";
   let ageingSide = "ar";
   let journalReportKind = "all";
+  let stockYear = "";
+  let stockYears = null;
 
   const MODES = [
     { id: "today", label: "Today" },

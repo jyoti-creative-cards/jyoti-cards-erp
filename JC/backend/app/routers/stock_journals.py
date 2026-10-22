@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.deps import AuthContext, require_admin
+from app.services.cancel_key import require_cancel_key
 from app.models.catalog_product import CatalogProduct
 from app.models.stock import StockBalance
 from app.models.vendor import Vendor
@@ -128,7 +129,7 @@ def get_journal(
     return journal_svc.get_journal(db, journal_id)
 
 
-@router.post("/{journal_id}/void", response_model=JournalOut)
+@router.post("/{journal_id}/void", response_model=JournalOut, dependencies=[Depends(require_cancel_key)])
 def void_journal(
     journal_id: int,
     body: JournalVoidIn,

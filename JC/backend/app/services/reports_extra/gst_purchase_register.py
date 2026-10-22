@@ -298,7 +298,7 @@ def returns_register(db: Session, from_date: Optional[date], to_date: Optional[d
 
 def customer_wise_sales(db: Session, from_date: Optional[date], to_date: Optional[date]) -> list[dict]:
     start, end = _range_bounds(from_date, to_date)
-    q = db.query(CustomerBill).filter(CustomerBill.deleted_at.is_(None))
+    q = db.query(CustomerBill).filter(CustomerBill.deleted_at.is_(None), CustomerBill.cancelled_at.is_(None))
     if start:
         q = q.filter(CustomerBill.created_at >= start)
     if end:
@@ -395,6 +395,7 @@ def gst_sales_register(db: Session, from_date: Optional[date], to_date: Optional
     labels = _customer_labels(db, {b.customer_id for b in bills})
     out = []
     for b in bills:
+        cancelled = b.cancelled_at is not None
         out.append(
             {
                 "id": b.id,
@@ -403,11 +404,14 @@ def gst_sales_register(db: Session, from_date: Optional[date], to_date: Optional
                 "party_label": labels.get(b.customer_id) or f"Customer #{b.customer_id}",
                 "gst_enabled": bool(b.gst_enabled),
                 "gst_rate": _fmt(b.gst_rate_percent),
-                "taxable_value": _fmt(b.taxable_value),
-                "gst_amount": _fmt(b.gst_amount),
-                "grand_total": _fmt(b.grand_total),
+                "taxable_value": "0.00" if cancelled else _fmt(b.taxable_value),
+                "gst_amount": "0.00" if cancelled else _fmt(b.gst_amount),
+                "grand_total": "0.00" if cancelled else _fmt(b.grand_total),
+                "status": "cancelled" if cancelled else "open",
             }
         )
+    from app.services.report_parts.lists import _bill_serial
+    out.sort(key=lambda row: _bill_serial(row.get("doc_number")))
     return out
 
 def expense_by_category(db: Session, from_date: Optional[date], to_date: Optional[date]) -> list[dict]:

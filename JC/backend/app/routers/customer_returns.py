@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.deps import AuthContext, require_admin, require_permission
+from app.services.cancel_key import require_cancel_key
 from app.schemas.customer_return import (
     CustomerReturnCreate,
     CustomerReturnDetail,
@@ -104,7 +105,7 @@ def get_return(
     )
 
 
-@router.post("/{return_id}/void", dependencies=[Depends(require_admin)])
+@router.post("/{return_id}/void", dependencies=[Depends(require_admin), Depends(require_cancel_key)])
 def void_return_endpoint(
     return_id: int,
     body: VoidIn,

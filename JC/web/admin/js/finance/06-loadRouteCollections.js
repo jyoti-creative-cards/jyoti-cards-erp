@@ -638,8 +638,11 @@
   }
 
   async function voidJournal(id) {
+    const passKey = window.prompt("Your cancel key");
+    if (!passKey || !passKey.trim()) return ctx.toast("Enter your cancel key", "error");
     const reason = window.prompt("Reason to void this journal");
     if (!reason || !reason.trim()) return;
+    window.__jcCancelKey = passKey.trim();
     ctx.showLoading?.();
     try {
       await ctx.api(`/stock-journals/${id}/void`, { method: "POST", body: JSON.stringify({ reason: reason.trim() }) }, 0);

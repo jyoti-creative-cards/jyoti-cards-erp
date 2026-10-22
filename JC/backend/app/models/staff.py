@@ -16,6 +16,8 @@ class Staff(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     phone: Mapped[str] = mapped_column(String(32), nullable=False, unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Hashed cancel/void key. The person who types it is recorded as the actor.
+    cancel_key_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     permissions_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=sql_true())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

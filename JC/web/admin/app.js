@@ -173,6 +173,12 @@ const App = (() => {
     }
     const timeoutMs = typeof opts.timeoutMs === "number" ? opts.timeoutMs : (isGet ? 45000 : 90000);
     const { timeoutMs: _tm, ...fetchOpts } = opts;
+    const needsCancelKey = !isGet && /\/(?:cancel(?:-pending)?|void|reverse)(?:\?|$)/.test(path);
+    if (needsCancelKey) {
+      const key = (fetchOpts.headers && fetchOpts.headers["X-Cancel-Key"]) || window.__jcCancelKey || "";
+      fetchOpts.headers = { ...(fetchOpts.headers || {}), "X-Cancel-Key": key };
+      window.__jcCancelKey = "";
+    }
     const doFetch = async () => {
       const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
       const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;

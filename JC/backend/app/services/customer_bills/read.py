@@ -37,7 +37,7 @@ def get_process_lines(db: Session, customer_id: int) -> dict:
     rows = (
         db.query(CustomerOpenLine)
         .filter(CustomerOpenLine.customer_id == customer_id, CustomerOpenLine.status == "open", CustomerOpenLine.quantity_open > 0)
-        .order_by(CustomerOpenLine.our_product_id.asc())
+        .order_by(CustomerOpenLine.id.asc())
         .all()
     )
     notes_parts: list[str] = []

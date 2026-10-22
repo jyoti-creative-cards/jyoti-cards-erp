@@ -1,4 +1,5 @@
 from __future__ import annotations
+import re
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
@@ -18,11 +19,15 @@ from app.services.biz_date import ist_day_bounds_utc, ist_range_bounds_utc
 
 from app.services.report_parts.bounds import _batch_labels, _customer_labels, _payment_in_ist_range, _range_bounds, _vendor_labels
 
+def _bill_serial(number: str | None) -> tuple:
+    text = (number or "").strip()
+    match = re.search(r"(\d+)$", text)
+    prefix = text[: match.start()] if match else text
+    return (prefix.lower(), int(match.group(1)) if match else 0, text.lower())
+
+
 def list_sales(db: Session, from_date: Optional[date] = None, to_date: Optional[date] = None) -> list[dict]:
-    q = db.query(CustomerBill).filter(
-        CustomerBill.deleted_at.is_(None),
-        CustomerBill.cancelled_at.is_(None),
-    )
+    q = db.query(CustomerBill).filter(CustomerBill.deleted_at.is_(None))
     if from_date is not None or to_date is not None:
         start, end = _range_bounds(from_date, to_date)
         bill_parts = []
@@ -37,14 +42,15 @@ def list_sales(db: Session, from_date: Optional[date] = None, to_date: Optional[
             created_parts.append(CustomerBill.created_at <= end)
         q = q.filter(or_(and_(*bill_parts), and_(*created_parts)))
     bills = (
-        q.order_by(nulls_last(CustomerBill.bill_date.desc()), CustomerBill.id.desc())
-        .limit(500)
+        q.order_by(nulls_last(CustomerBill.bill_date.asc()), CustomerBill.id.asc())
+        .limit(2000)
         .all()
     )
     labels = _customer_labels(db, {b.customer_id for b in bills})
     out = []
     for b in bills:
         shown = b.bill_date or (b.created_at.date() if b.created_at else None)
+        cancelled = b.cancelled_at is not None
         out.append(
             {
                 "id": b.id,
@@ -55,8 +61,10 @@ def list_sales(db: Session, from_date: Optional[date] = None, to_date: Optional[
                 "amount": format(b.grand_total or Decimal("0"), "f"),
                 "date": shown.isoformat() if shown else None,
                 "created_at": b.created_at.isoformat() if b.created_at else None,
+                "status": "cancelled" if cancelled else "open",
             }
         )
+    out.sort(key=lambda row: _bill_serial(row.get("doc_number")))
     return out
 
 def list_purchases(db: Session, from_date: Optional[date] = None, to_date: Optional[date] = None) -> list[dict]:

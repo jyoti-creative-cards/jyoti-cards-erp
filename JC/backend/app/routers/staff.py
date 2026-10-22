@@ -22,6 +22,7 @@ from app.schemas.staff import (
     StaffUpdateResponse,
 )
 from app.services.activity import log_from_auth
+from app.services.cancel_key import set_cancel_key
 from app.services.passwords import hash_password
 from app.services.permissions import ALL_STAFF_PERMISSIONS, PERMISSION_GROUPS, dump_permissions, parse_permissions
 from app.services.soft_delete import apply_is_active
@@ -44,6 +45,7 @@ def _to_public(row: Staff) -> StaffPublic:
         phone=row.phone,
         permissions=sorted(parse_permissions(row.permissions_json)),
         is_active=row.is_active,
+        has_cancel_key=bool(row.cancel_key_hash),
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -109,6 +111,8 @@ def create_staff(
         # never re-expands permissions an admin intentionally narrowed.
         legacy_order_perms_migrated=True,
     )
+    if (body.cancel_key or "").strip():
+        set_cancel_key(db, row, body.cancel_key)
     db.add(row)
     try:
         db.commit()
@@ -154,6 +158,8 @@ def update_staff(
         row.permissions_json = dump_permissions(data["permissions"])
     if "is_active" in data and data["is_active"] is not None:
         apply_is_active(row, data["is_active"])
+    if data.get("cancel_key"):
+        set_cancel_key(db, row, data["cancel_key"])
     log_from_auth(db, auth, action="update", entity_type="staff", entity_id=row.id, entity_label=row.name)
     db.commit()
     db.refresh(row)

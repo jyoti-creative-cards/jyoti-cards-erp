@@ -228,7 +228,7 @@ def get_customer_order_detail(
         open_lines = (
             db.query(CustomerOpenLine)
             .filter(CustomerOpenLine.customer_id == customer_id, CustomerOpenLine.status == "open", CustomerOpenLine.quantity_open > 0)
-            .order_by(CustomerOpenLine.our_product_id.asc())
+            .order_by(CustomerOpenLine.id.asc())
             .all()
         )
         addon_map = billing_addons_for_products(

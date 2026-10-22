@@ -157,8 +157,11 @@
 
   async function voidReturn(returnId) {
     // Single dialog — entering a reason (or leaving it blank) and pressing OK confirms.
+    const passKey = prompt("Your cancel key");
+    if (passKey == null || !String(passKey).trim()) return ctx.toast("Enter your cancel key", "error");
     const reason = prompt("Void this return? Stock and AR credit will be reversed — moves to recycle bin, can be restored.\n\nReason (optional):", "");
     if (reason === null) return;
+    window.__jcCancelKey = String(passKey).trim();
     ctx.showLoading?.();
     try {
       await ctx.api(`/customer-returns/${returnId}/void`, { method: "POST", body: JSON.stringify({ reason: reason || null }) });

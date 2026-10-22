@@ -12,6 +12,7 @@ class StaffPublic(BaseModel):
     phone: str
     permissions: List[str]
     is_active: bool
+    has_cancel_key: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -21,6 +22,7 @@ class StaffCreate(BaseModel):
     phone: str = Field(..., min_length=10, max_length=15)
     permissions: List[str] = Field(default_factory=list)
     password: Optional[str] = Field(None, min_length=4, max_length=64)
+    cancel_key: Optional[str] = Field(None, min_length=2, max_length=40)
 
 
 class StaffUpdate(BaseModel):
@@ -28,6 +30,7 @@ class StaffUpdate(BaseModel):
     phone: Optional[str] = Field(None, min_length=10, max_length=15)
     permissions: Optional[List[str]] = None
     is_active: Optional[bool] = None
+    cancel_key: Optional[str] = Field(None, min_length=2, max_length=40)
 
 
 class StaffCreateResponse(StaffPublic):

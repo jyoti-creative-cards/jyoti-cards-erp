@@ -130,17 +130,31 @@
     return n < 0 ? `(-)${body}` : body;
   }
 
+  function setStockYear(value) {
+    stockYear = value || "";
+    loadChip();
+  }
+
+  function stockQs() {
+    return rangeQs(stockYear ? { year_group: stockYear } : {});
+  }
+
   async function shareStockSummary(print) {
     try {
+      const yearBit = stockYear ? `_${stockYear}` : "";
       const name = fromDate && toDate && fromDate !== toDate
-        ? `stock_summary_${fromDate}_${toDate}.pdf`
-        : `stock_summary_${fromDate || toDate || "all"}.pdf`;
-      await DocShare.openPdf(`/share/stock-summary/pdf${rangeQs()}`, { print: !!print, filename: name });
+        ? `stock_summary_${fromDate}_${toDate}${yearBit}.pdf`
+        : `stock_summary_${fromDate || toDate || "all"}${yearBit}.pdf`;
+      await DocShare.openPdf(`/share/stock-summary/pdf${stockQs()}`, { print: !!print, filename: name });
     } catch (e) { ctx.toast(e.message, "error"); }
   }
 
   async function renderItemOutward(body) {
-    const data = await ctx.api(`/reports/stock/group-summary${rangeQs()}`, {}, 0);
+    if (!stockYears) {
+      try { stockYears = await ctx.api("/catalog/year-groups", {}, 60000) || []; }
+      catch (_) { stockYears = []; }
+    }
+    const data = await ctx.api(`/reports/stock/group-summary${stockQs()}`, {}, 0);
     const items = (data.items || []).filter(it => matchSearch(it.particular, it.vendor_name));
     const sum = (key) => items.reduce((s, it) => s + (Number(it[key]) || 0), 0);
     const period = data.period || outwardPeriodLabel();
@@ -151,7 +165,15 @@
         pdfOnclick: "Reports.shareStockSummary(false)",
         excelOnclick: "Reports.exportCurrentExcel()",
       })}
-      <h2 class="report-print-title" style="position:absolute;left:-9999px;">Stock Summary · ${ctx.esc(period)}</h2>
+      <div class="rep-filters" style="margin-bottom:12px;">
+        <label class="label">Year group
+          <select class="input" onchange="Reports.setStockYear(this.value)">
+            <option value="">All years</option>
+            ${(stockYears || []).map(y => `<option value="${ctx.esc(y)}" ${stockYear === y ? "selected" : ""}>${ctx.esc(y)}</option>`).join("")}
+          </select>
+        </label>
+      </div>
+      <h2 class="report-print-title" style="position:absolute;left:-9999px;">Stock Summary · ${ctx.esc(period)}${stockYear ? ` · ${ctx.esc(stockYear)}` : ""}</h2>
       <p class="fin-panel-sub" style="margin:0 0 12px;">${ctx.esc(period)}. Same start and end date is one day. Total sales is a bill, or a confirmed order that is not billed yet. Closing rate is the purchase rate.</p>
       <div class="fin-hub-strip" style="margin-bottom:16px;">
         <div class="fin-stat"><span class="fin-stat-label">Items</span><strong>${items.length}</strong></div>
@@ -303,7 +325,7 @@
     </tr></thead><tbody>
       ${items.map(it => `<tr>
         <td>${ctx.esc(it.date || "—")}</td>
-        <td>${ctx.esc(it.doc_number || "—")}</td>
+        <td>${ctx.esc(it.doc_number || "—")}${it.status === "cancelled" ? " cancel" : ""}</td>
         <td>${ctx.esc(it.party_label || "—")}</td>
         <td>${it.gst_enabled ? `${it.gst_rate}%` : "Off"}</td>
         <td>${fmtPrice(it.taxable_value)}</td>

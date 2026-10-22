@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.deps import AuthContext, get_auth_context, require_admin, require_permission
+from app.services.cancel_key import require_cancel_key
 from app.models.catalog_alternative import CatalogAlternative
 from app.models.catalog_addon_link import CatalogAddonLink
 from app.models.catalog_product import CatalogProduct
@@ -404,7 +405,7 @@ def get_receipt_detail(
         data["received_by_name"] = receipt.received_by_name
     return data
 
-@router.post("/receipts/{receipt_id}/void", dependencies=[Depends(require_admin)])
+@router.post("/receipts/{receipt_id}/void", dependencies=[Depends(require_admin), Depends(require_cancel_key)])
 def void_receipt_endpoint(
     receipt_id: int,
     body: VoidIn,

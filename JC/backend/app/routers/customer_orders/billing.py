@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.deps import AuthContext, require_admin, require_permission
+from app.services.cancel_key import require_cancel_key
 from app.models.catalog_product import CatalogProduct
 from app.models.city import City
 from app.models.customer import Customer
@@ -267,7 +268,7 @@ def close_bill_line_endpoint(
     db.commit()
     return {"ok": True}
 
-@router.post("/bills/{bill_id}/cancel")
+@router.post("/bills/{bill_id}/cancel", dependencies=[Depends(require_cancel_key)])
 def cancel_bill_endpoint(
     bill_id: int,
     body: CancelRequest,
@@ -302,7 +303,7 @@ def cancel_bill_endpoint(
     response_cache.invalidate("catalog:")
     return {"ok": True, "bill_id": cancelled.id, "bill_number": cancelled.bill_number}
 
-@router.post("/bills/{bill_id}/void", dependencies=[Depends(require_admin)])
+@router.post("/bills/{bill_id}/void", dependencies=[Depends(require_admin), Depends(require_cancel_key)])
 def void_bill_endpoint(
     bill_id: int,
     body: VoidIn,

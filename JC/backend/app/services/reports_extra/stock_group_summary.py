@@ -131,6 +131,7 @@ def stock_group_summary(
     db: Session,
     from_date: Optional[date] = None,
     to_date: Optional[date] = None,
+    year_group: Optional[str] = None,
 ) -> dict:
     store: dict[int, _Row] = {}
     _add_sales(db, store, from_date, to_date)
@@ -153,6 +154,7 @@ def stock_group_summary(
         for v in db.query(Vendor).filter(Vendor.id.in_(vendor_ids)).all()
     } if vendor_ids else {}
 
+    wanted_year = (year_group or "").strip()
     items = []
     totals = {
         "sales_count": 0,
@@ -166,6 +168,8 @@ def stock_group_summary(
     for pid in active:
         row = store[pid]
         product = products.get(pid)
+        if wanted_year and (getattr(product, "year_group", None) or "").strip() != wanted_year:
+            continue
         buy = _d(product.buying_price) if product and product.buying_price is not None else Decimal("0")
         close_qty = _d(closing.get(pid, 0))
         close_value = _q2(close_qty * buy)
@@ -203,6 +207,7 @@ def stock_group_summary(
         "from_date": from_date.isoformat() if from_date else None,
         "to_date": to_date.isoformat() if to_date else None,
         "period": period_label(from_date, to_date),
+        "year_group": wanted_year or None,
         "printed_on": printed,
         "items": items,
         "totals": {key: (value if key == "sales_count" else _num(_q2(value))) for key, value in totals.items()},

@@ -124,6 +124,8 @@ const OrderMenus = (() => {
       body.innerHTML = `
         ${message ? `<p style="margin:0 0 12px;font-size:13px;color:var(--muted);">${ctx.esc(message)}</p>` : ""}
         ${detailsHtml || ""}
+        ${danger ? `<label class="label" style="margin-top:14px;">Your cancel key</label>
+        <input class="input" id="vo-confirm-key" type="password" autocomplete="off" placeholder="Your own key" style="width:100%;margin-bottom:8px;" />` : ""}
         ${showReason ? `<label class="label" style="margin-top:14px;">${ctx.esc(reasonLabel || (requireReason ? "Note (required)" : "Note (optional)"))}</label>
           <textarea class="input" id="vo-confirm-reason" rows="3" style="width:100%;" placeholder="Why?"></textarea>` : ""}`;
     }
@@ -148,6 +150,12 @@ const OrderMenus = (() => {
     // response closed the modal (e.g. two void-receipt calls → two stock reversals).
     const h = confirmHandler;
     if (!h?.onConfirm) return closeConfirm();
+    const keyEl = document.getElementById("vo-confirm-key");
+    if (keyEl) {
+      const passKey = (keyEl.value || "").trim();
+      if (!passKey) return h.ctx?.toast?.("Enter your cancel key", "error");
+      window.__jcCancelKey = passKey;
+    }
     let reason = "";
     if (h.showReason) {
       reason = (document.getElementById("vo-confirm-reason")?.value || "").trim();

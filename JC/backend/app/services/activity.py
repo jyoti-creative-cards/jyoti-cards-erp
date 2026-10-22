@@ -33,10 +33,16 @@ def log_activity(
 
 
 def log_from_auth(db: Session, auth, **kwargs) -> None:
+    from app.services.cancel_key import cancel_actor
+
+    staff = cancel_actor.get()
+    actor_type = "staff" if staff else auth.actor_type
+    actor_id = staff.id if staff else auth.actor_id
+    actor_name = staff.name if staff else auth.actor_name
     log_activity(
         db,
-        actor_type=auth.actor_type,
-        actor_id=auth.actor_id,
-        actor_name=auth.actor_name,
+        actor_type=actor_type,
+        actor_id=actor_id,
+        actor_name=actor_name,
         **kwargs,
     )

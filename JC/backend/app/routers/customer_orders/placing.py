@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.deps import AuthContext, require_admin, require_permission
+from app.services.cancel_key import require_cancel_key
 from app.models.catalog_product import CatalogProduct
 from app.models.city import City
 from app.models.customer import Customer
@@ -67,7 +68,7 @@ from app.services.void_service import void_customer_bill, void_customer_placemen
 
 from app.routers.customer_orders.router import router
 
-@router.post("/open-lines/{line_id}/cancel")
+@router.post("/open-lines/{line_id}/cancel", dependencies=[Depends(require_cancel_key)])
 def cancel_open_line_endpoint(
     line_id: int,
     body: CancelRequest,
@@ -217,7 +218,7 @@ def replace_placement_endpoint(
     enqueue_order_pdf(placement_id)
     return {"ok": True, "placement_id": placement_id}
 
-@router.post("/placements/{placement_id}/cancel")
+@router.post("/placements/{placement_id}/cancel", dependencies=[Depends(require_cancel_key)])
 def cancel_placement_endpoint(
     placement_id: int,
     body: CancelRequest,
@@ -310,7 +311,7 @@ def get_placement_detail(
         ],
     )
 
-@router.post("/placements/{placement_id}/void", dependencies=[Depends(require_admin)])
+@router.post("/placements/{placement_id}/void", dependencies=[Depends(require_admin), Depends(require_cancel_key)])
 def void_placement_endpoint(
     placement_id: int,
     body: VoidIn,

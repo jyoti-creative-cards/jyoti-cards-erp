@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.deps import AuthContext, get_auth_context, require_admin, require_permission
+from app.services.cancel_key import require_cancel_key
 from app.models.debit_note import DebitNote
 from app.models.stock import StockReceipt
 from app.models.vendor import Vendor
@@ -109,7 +110,7 @@ def create_debit_note_endpoint(
     return _debit_note_out(db, note, auth=auth)
 
 
-@router.post("/{note_id}/void")
+@router.post("/{note_id}/void", dependencies=[Depends(require_cancel_key)])
 def void_debit_note_endpoint(
     note_id: int,
     body: VoidIn,

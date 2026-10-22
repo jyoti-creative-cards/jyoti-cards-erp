@@ -64,9 +64,10 @@ def render_stock_summary_pdf(
     db: Session,
     from_date: Optional[date] = None,
     to_date: Optional[date] = None,
+    year_group: Optional[str] = None,
     page_rows: int = 22,
 ) -> bytes:
-    data = stock_group_summary(db, from_date, to_date)
+    data = stock_group_summary(db, from_date, to_date, year_group=year_group)
     return render_stock_summary_pdf_from(data, page_rows=page_rows)
 
 
@@ -99,7 +100,10 @@ def render_stock_summary_pdf_from(data: dict, page_rows: int = 22) -> bytes:
         story.append(Paragraph(f"Printed on {data.get('printed_on') or ''}", meta))
         story.append(Paragraph(COMPANY_NAME, title))
         story.append(Paragraph("Stock Summary", sub))
-        story.append(Paragraph(f"{data.get('period') or ''} · Page {index + 1}", sub))
+        period = data.get("period") or ""
+        if data.get("year_group"):
+            period = f"{period} · Year {data['year_group']}"
+        story.append(Paragraph(f"{period} · Page {index + 1}", sub))
         story.append(Spacer(1, 4))
         brought = None
         if index > 0:

@@ -474,8 +474,11 @@ const DebitNotes = (() => {
     if (!listCtx) return;
     const { vendorId, receiptId, receivingLines, onDone } = listCtx;
     // Single dialog — entering a reason (or leaving it blank) and pressing OK confirms.
+    const passKey = prompt("Your cancel key");
+    if (passKey == null || !String(passKey).trim()) return ctx.toast("Enter your cancel key", "error");
     const reason = prompt("Void this debit note? Moves to recycle bin, can be restored.\n\nReason (optional):", "");
     if (reason === null) return;
+    window.__jcCancelKey = String(passKey).trim();
     ctx.showLoading?.();
     try {
       await ctx.api(`/debit-notes/${noteId}/void`, { method: "POST", body: JSON.stringify({ reason: reason || null }) });

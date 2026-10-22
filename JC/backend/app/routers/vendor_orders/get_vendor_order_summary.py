@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.deps import AuthContext, require_permission
+from app.services.cancel_key import require_cancel_key
 from app.models.catalog_alternative import CatalogAlternative
 from app.models.catalog_product import CatalogProduct
 from app.models.city import City
@@ -235,7 +236,7 @@ def close_product_pending(
     db.commit()
     return get_vendor_order_summary(vendor_id, db, auth)
 
-@router.post("/vendor/{vendor_id}/products/{catalog_product_id}/cancel-pending", response_model=VendorOrderSummaryDetail)
+@router.post("/vendor/{vendor_id}/products/{catalog_product_id}/cancel-pending", response_model=VendorOrderSummaryDetail, dependencies=[Depends(require_cancel_key)])
 def cancel_product_pending(
     vendor_id: int,
     catalog_product_id: int,
@@ -264,7 +265,7 @@ def cancel_product_pending(
     db.commit()
     return get_vendor_order_summary(vendor_id, db, auth)
 
-@router.post("/open-lines/{line_id}/cancel", response_model=OpenVendorDetail)
+@router.post("/open-lines/{line_id}/cancel", response_model=OpenVendorDetail, dependencies=[Depends(require_cancel_key)])
 def cancel_open_line_endpoint(
     line_id: int,
     body: ReasonIn,

@@ -7,6 +7,7 @@
         <div><label class="label">Full Name *</label><input id="sm-name" class="input" value="${ctx.esc(s.name)}" /></div>
         <div><label class="label">Login ID (mobile)</label><input id="sm-phone" class="input" type="tel" maxlength="10" value="${ctx.esc(s.phone)}" />
           <p style="margin:6px 0 0;font-size:12px;color:var(--muted);">Changing this changes their login number too.</p></div>
+        <div><label class="label">Cancel key</label><input id="sm-cancel-key" class="input" autocomplete="off" placeholder="${s.has_cancel_key ? "Key is set. Type a new one to replace it." : "Set their cancel and void key"}" /></div>
         <div><label class="label">Permissions</label><div class="card" style="padding:16px;max-height:420px;overflow-y:auto;">${permCheckboxes(s.permissions)}</div></div>
         <div><button type="button" class="btn btn-secondary btn-sm" onclick="StaffMgmt.resetPassword(${s.id})">Reset Password</button></div>
       </div>`;
@@ -41,6 +42,8 @@
         const phone = document.getElementById("sm-phone")?.value.trim();
         const body = { name, permissions: collectPerms() };
         if (phone) body.phone = phone.replace(/\D/g, "");
+        const cancelKey = document.getElementById("sm-cancel-key")?.value.trim();
+        if (cancelKey) body.cancel_key = cancelKey;
         const res = await ctx.api(`/staff/${editingId}`, { method: "PATCH", body: JSON.stringify(body) });
         if (res.whatsapp_sent === true) {
           ctx.toast("Staff updated — login number change sent via WhatsApp", "success");
@@ -53,7 +56,8 @@
         const phone = document.getElementById("sm-phone")?.value.trim();
         if (!/^\d{10}$/.test(phone.replace(/\D/g, ""))) return ctx.toast("Phone must be 10 digits", "error");
         const password = document.getElementById("sm-password")?.value.trim();
-        const res = await ctx.api("/staff", { method: "POST", body: JSON.stringify({ name, phone: phone.replace(/\D/g, ""), permissions: collectPerms(), password: password || undefined }) });
+        const cancelKey = document.getElementById("sm-cancel-key")?.value.trim();
+        const res = await ctx.api("/staff", { method: "POST", body: JSON.stringify({ name, phone: phone.replace(/\D/g, ""), permissions: collectPerms(), password: password || undefined, cancel_key: cancelKey || undefined }) });
         if (res.whatsapp_sent) {
           ctx.toast("Created & WhatsApp sent!", "success");
         } else {

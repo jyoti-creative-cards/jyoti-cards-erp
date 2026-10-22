@@ -21,6 +21,8 @@ const Reports = (() => {
   let backLabel = "Back";
   let ageingSide = "ar";
   let journalReportKind = "all";
+  let stockYear = "";
+  let stockYears = null;
 
   const MODES = [
     { id: "today", label: "Today" },
@@ -594,20 +596,22 @@ const Reports = (() => {
   async function renderDocList(body, path, title) {
     const data = await ctx.api(`/reports/${path}${rangeQs()}`, {}, 0);
     let items = (data.items || []).filter(it => matchSearch(it.doc_number, it.party_label));
-    const total = amountTotal(items);
+    const liveItems = items.filter(it => it.status !== "cancelled");
+    const total = amountTotal(liveItems);
     body.innerHTML = `
       <div class="fin-hub-strip" style="margin-bottom:16px;">
-        <div class="fin-stat"><span class="fin-stat-label">Bills</span><strong>${items.length}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">Bills</span><strong>${liveItems.length}</strong></div>
         <div class="fin-stat"><span class="fin-stat-label">Amount total</span><strong>${fmtPrice(total)}</strong></div>
+        ${items.length - liveItems.length ? `<div class="fin-stat"><span class="fin-stat-label">Cancelled</span><strong>${items.length - liveItems.length}</strong></div>` : ""}
       </div>
       ${items.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
         <th>Date</th><th>Number</th><th>Party</th><th>Amount</th>
       </tr></thead><tbody>
         ${items.map(it => `<tr class="clickable" onclick="Reports.openDoc('${it.doc_type}', ${it.id})">
           <td>${ctx.esc(it.date || "—")}</td>
-          <td><strong>${ctx.esc(it.doc_number || "—")}</strong></td>
+          <td><strong>${ctx.esc(it.doc_number || "—")}${it.status === "cancelled" ? " cancel" : ""}</strong></td>
           <td>${ctx.esc(it.party_label || "—")}</td>
-          <td>${fmtPrice(it.amount)}</td>
+          <td>${it.status === "cancelled" ? `<s>${fmtPrice(it.amount)}</s>` : fmtPrice(it.amount)}</td>
         </tr>`).join("")}
         <tr><td colspan="3"><strong>Total</strong></td><td><strong>${fmtPrice(total)}</strong></td></tr>
       </tbody></table></div>` : empty("No documents", "Widen the date range or clear search.")}`;
@@ -629,7 +633,7 @@ const Reports = (() => {
         <th>Bill</th><th>Party</th><th>City</th><th>Amount</th><th></th>
       </tr></thead><tbody>
         ${items.map(it => `<tr class="clickable" onclick="Reports.openDoc('sales_bill', ${it.id})">
-          <td><strong>${ctx.esc(it.doc_number || "—")}</strong></td>
+          <td><strong>${ctx.esc(it.doc_number || "—")}${it.status === "cancelled" ? " cancel" : ""}</strong></td>
           <td>${it.party_number ? `<span style="color:var(--muted);">#${ctx.esc(it.party_number)}</span> ` : ""}${ctx.esc(it.party_label || "—")}</td>
           <td>${ctx.esc(it.city_name || "—")}</td>
           <td>${it.status === "cancelled" ? `<s>${fmtPrice(it.amount)}</s>` : fmtPrice(it.amount)}</td>
@@ -845,17 +849,31 @@ const Reports = (() => {
     return n < 0 ? `(-)${body}` : body;
   }
 
+  function setStockYear(value) {
+    stockYear = value || "";
+    loadChip();
+  }
+
+  function stockQs() {
+    return rangeQs(stockYear ? { year_group: stockYear } : {});
+  }
+
   async function shareStockSummary(print) {
     try {
+      const yearBit = stockYear ? `_${stockYear}` : "";
       const name = fromDate && toDate && fromDate !== toDate
-        ? `stock_summary_${fromDate}_${toDate}.pdf`
-        : `stock_summary_${fromDate || toDate || "all"}.pdf`;
-      await DocShare.openPdf(`/share/stock-summary/pdf${rangeQs()}`, { print: !!print, filename: name });
+        ? `stock_summary_${fromDate}_${toDate}${yearBit}.pdf`
+        : `stock_summary_${fromDate || toDate || "all"}${yearBit}.pdf`;
+      await DocShare.openPdf(`/share/stock-summary/pdf${stockQs()}`, { print: !!print, filename: name });
     } catch (e) { ctx.toast(e.message, "error"); }
   }
 
   async function renderItemOutward(body) {
-    const data = await ctx.api(`/reports/stock/group-summary${rangeQs()}`, {}, 0);
+    if (!stockYears) {
+      try { stockYears = await ctx.api("/catalog/year-groups", {}, 60000) || []; }
+      catch (_) { stockYears = []; }
+    }
+    const data = await ctx.api(`/reports/stock/group-summary${stockQs()}`, {}, 0);
     const items = (data.items || []).filter(it => matchSearch(it.particular, it.vendor_name));
     const sum = (key) => items.reduce((s, it) => s + (Number(it[key]) || 0), 0);
     const period = data.period || outwardPeriodLabel();
@@ -866,7 +884,15 @@ const Reports = (() => {
         pdfOnclick: "Reports.shareStockSummary(false)",
         excelOnclick: "Reports.exportCurrentExcel()",
       })}
-      <h2 class="report-print-title" style="position:absolute;left:-9999px;">Stock Summary · ${ctx.esc(period)}</h2>
+      <div class="rep-filters" style="margin-bottom:12px;">
+        <label class="label">Year group
+          <select class="input" onchange="Reports.setStockYear(this.value)">
+            <option value="">All years</option>
+            ${(stockYears || []).map(y => `<option value="${ctx.esc(y)}" ${stockYear === y ? "selected" : ""}>${ctx.esc(y)}</option>`).join("")}
+          </select>
+        </label>
+      </div>
+      <h2 class="report-print-title" style="position:absolute;left:-9999px;">Stock Summary · ${ctx.esc(period)}${stockYear ? ` · ${ctx.esc(stockYear)}` : ""}</h2>
       <p class="fin-panel-sub" style="margin:0 0 12px;">${ctx.esc(period)}. Same start and end date is one day. Total sales is a bill, or a confirmed order that is not billed yet. Closing rate is the purchase rate.</p>
       <div class="fin-hub-strip" style="margin-bottom:16px;">
         <div class="fin-stat"><span class="fin-stat-label">Items</span><strong>${items.length}</strong></div>
@@ -1018,7 +1044,7 @@ const Reports = (() => {
     </tr></thead><tbody>
       ${items.map(it => `<tr>
         <td>${ctx.esc(it.date || "—")}</td>
-        <td>${ctx.esc(it.doc_number || "—")}</td>
+        <td>${ctx.esc(it.doc_number || "—")}${it.status === "cancelled" ? " cancel" : ""}</td>
         <td>${ctx.esc(it.party_label || "—")}</td>
         <td>${it.gst_enabled ? `${it.gst_rate}%` : "Off"}</td>
         <td>${fmtPrice(it.taxable_value)}</td>
@@ -1420,6 +1446,6 @@ const Reports = (() => {
     setDatePreset, onRangeChange, onDayBillChange, setDayBillToday, onThresholdChange,
     openLedger, openStaffLedger, openExpenseLedger, addExpenseHead, addExpenseSubhead, openCashLedger, backFromLedger, openDoc,
     shareDaybook, waDaybook, shareStockSummary, shareAgeing, waAgeing, exportExcel,
-    printCurrent, exportCurrentExcel, setHideVoids, setJournalReportKind,
+    printCurrent, exportCurrentExcel, setHideVoids, setJournalReportKind, setStockYear,
   };
 })();

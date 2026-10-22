@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.deps import AuthContext, require_permission
+from app.services.cancel_key import require_cancel_key
 from app.models.catalog_alternative import CatalogAlternative
 from app.models.catalog_product import CatalogProduct
 from app.models.city import City
@@ -385,7 +386,7 @@ def create_placement(
     db.refresh(order)
     return _build_detail(db, order, auth=auth)
 
-@router.post("/placements/{placement_id}/cancel", response_model=VendorOrderDetail)
+@router.post("/placements/{placement_id}/cancel", response_model=VendorOrderDetail, dependencies=[Depends(require_cancel_key)])
 def cancel_placement(
     placement_id: int,
     body: ReasonIn,

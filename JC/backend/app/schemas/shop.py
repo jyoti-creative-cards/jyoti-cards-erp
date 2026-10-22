@@ -36,8 +36,8 @@ class ShopProductPublic(BaseModel):
     our_product_id: str
     image_url: str = ""
     selling_price: str = Field(default="0", description="Your buying price / our sell price (Rs.)")
-    # Portal-safe: never expose on-hand qty. "low_stock" is collapsed to in_stock.
-    stock_status: str = Field(..., description="in_stock | out_of_stock")
+    stock_status: str = Field(..., description="in_stock | low_stock | out_of_stock")
+    quantity_on_hand: int = 0
     category: Optional[str] = None
     year_group: Optional[str] = None
     addons: List[ShopAddonPublic] = []

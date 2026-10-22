@@ -27,6 +27,7 @@ export interface ShopProductPublic {
   image_url: string;
   selling_price: string;
   stock_status: string;
+  quantity_on_hand?: number;
   alternatives: ShopProductAlternativePublic[];
 }
 

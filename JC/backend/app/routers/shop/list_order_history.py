@@ -306,7 +306,7 @@ def product_search(
     addon_map = addon_snapshots_map(db, ids)
     need_alts = [
         p.id for p in rows
-        if stock_status_label(*stock.get(p.id, (0, 5))) == "out_of_stock"
+        if stock_status_label(*stock.get(p.id, (0, 5))) in ("out_of_stock", "low_stock")
     ]
     alt_map = _alternatives_batch(db, need_alts, stock)
     out = [
@@ -351,8 +351,9 @@ def _to_shop_product(
             )
             for a in addons
         ],
-        # Offer swaps only when truly unavailable — not on low stock.
-        alternatives=alts if raw_lbl == "out_of_stock" else [],
+        quantity_on_hand=max(0, int(qty or 0)),
+        # Swaps when the item is out, or running low.
+        alternatives=alts if raw_lbl in ("out_of_stock", "low_stock") else [],
     )
 
 @router.get("/products/suggestions", response_model=List[ShopSuggestionPublic])
@@ -561,9 +562,8 @@ def _image_url(prod: CatalogProduct | None) -> str:
     return _image_url_from_keys(prod.image_keys)
 
 def _portal_stock_status(qty: int, th: int) -> str:
-    """Dealer-facing stock: available vs not. Never leak low-stock or on-hand qty."""
-    lbl = stock_status_label(qty, th)
-    return "out_of_stock" if lbl == "out_of_stock" else "in_stock"
+    """Dealer-facing stock. Out, low, or in. The number stays off the label."""
+    return stock_status_label(qty, th)
 
 def _norm_q(q: str) -> str:
     s = unicodedata.normalize("NFKC", (q or "").strip())

@@ -702,6 +702,27 @@
 
       <!-- People -->
       <div id="view-people" class="view hidden">
+        <div id="order-taker-desk" class="hidden" style="max-width:720px;margin:24px auto;padding:0 16px 32px;">
+          <h2 style="margin:0 0 4px;">Book an order</h2>
+          <p style="margin:0 0 16px;color:var(--muted);">Search the customer, then create the order.</p>
+          <label class="label">Customer</label>
+          <input id="ot-customer" class="input" type="text" placeholder="Name, city, or number" autocomplete="off" oninput="App.onOrderTakerCustomer(this.value)" />
+          <div id="ot-customer-picked" style="margin:8px 0;font-weight:700;"></div>
+          <div id="ot-customer-matches"></div>
+          <button type="button" id="ot-create" class="btn btn-primary hidden" style="margin-top:12px;" onclick="App.openOrderTakerItems()">Create order</button>
+          <div id="ot-items" class="hidden" style="margin-top:20px;">
+            <label class="label">Item</label>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <input id="ot-item" class="input" type="text" placeholder="Item number" autocomplete="off" oninput="App.onOrderTakerItem(this.value)" />
+              <input id="ot-qty" class="input" type="number" min="1" placeholder="Qty" style="width:100px;" />
+            </div>
+            <div id="ot-item-matches"></div>
+            <div id="ot-lines" style="margin-top:12px;"></div>
+            <label class="label" style="margin-top:12px;">Marking</label>
+            <input id="ot-note" class="input" placeholder="Optional note for the person who bills this" />
+            <button type="button" class="btn btn-primary" style="margin-top:12px;" onclick="App.saveOrderTakerOrder()">Save order</button>
+          </div>
+        </div>
         <div id="people-hub" class="ui-hub">
           <div class="ui-hub-intro">
             <h2 class="ui-hub-title">People</h2>
@@ -1187,7 +1208,7 @@
   <script src="js/payment-modes.js?v=ui62"></script>
   <script src="js/freight-agents.js?v=ui66"></script>
   <script src="js/calculator.js?v=ui1"></script>
-  <script src="app.js?v=ui86"></script>
+  <script src="app.js?v=ui87"></script>
   <script src="js/whatsapp-inbox.js?v=ui2"></script>
 </body>
 </html>

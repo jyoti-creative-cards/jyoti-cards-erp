@@ -21,7 +21,7 @@ function availabilityLine(s: string): { title: string; hint: string } {
       hint: "We still have units, but quantity is running low.",
     };
   if (s === "out_of_stock")
-    return { title: "Not in stock right now", hint: "We do not have available units at the moment." };
+    return { title: "Out of stock", hint: "This item cannot be added to the bag." };
   return { title: "Unknown", hint: "" };
 }
 
@@ -284,13 +284,24 @@ export default function CustomerPortalPage() {
     }
   }, [token, shopQ]);
 
+  function canAddToBag(p: ShopProductPublic, qtyStr?: string) {
+    const onHand = Number(p.quantity_on_hand ?? 0);
+    if (p.stock_status === "out_of_stock" || onHand < 50) return false;
+    if (qtyStr != null && qtyStr !== "") {
+      const n = Math.floor(Number(qtyStr));
+      if (Number.isFinite(n) && n > onHand) return false;
+    }
+    return true;
+  }
+
   function addProductToCart(p: ShopProductPublic, qtyStr: string) {
-    if (p.stock_status === "out_of_stock") {
-      setOrderMsg("This item isn’t available to add right now.");
+    if (!canAddToBag(p, qtyStr)) {
+      setOrderMsg("Out of stock");
       return;
     }
     const n = Math.floor(Number(qtyStr));
-    const addQty = Number.isFinite(n) ? Math.max(50, Math.min(n, MAX_ORDER_QTY)) : 50;
+    const onHand = Number(p.quantity_on_hand ?? 0);
+    const addQty = Number.isFinite(n) ? Math.max(50, Math.min(n, onHand, MAX_ORDER_QTY)) : 50;
     setOrderMsg("");
     setCart((prev) => {
       const existing = prev[p.catalog_product_id];
@@ -676,7 +687,7 @@ export default function CustomerPortalPage() {
                 <div className="grid gap-6 px-5 pb-8 sm:grid-cols-2 sm:px-8">
                   {shopResults.map((p) => {
                     const avail = availabilityLine(p.stock_status);
-                    const canOrder = p.stock_status !== "out_of_stock";
+                    const canOrder = canAddToBag(p, qtyDraft[p.catalog_product_id] ?? "50");
                     return (
                       <article
                         key={p.catalog_product_id}
@@ -741,7 +752,7 @@ export default function CustomerPortalPage() {
                               onClick={() => addProductToCart(p, qtyDraft[p.catalog_product_id] ?? "50")}
                               className="rounded-xl bg-jc-accent px-5 py-2.5 text-sm font-semibold text-white shadow-md transition hover:bg-jc-accent-hover disabled:cursor-not-allowed disabled:bg-neutral-300"
                             >
-                              Add to bag
+                              {canOrder ? "Add to bag" : "Out of stock"}
                             </button>
                           </div>
                         </div>

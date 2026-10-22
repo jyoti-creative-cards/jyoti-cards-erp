@@ -104,7 +104,7 @@
     } else if (name === "people") {
       document.getElementById("view-people")?.classList.remove("hidden");
       document.getElementById("nav-people")?.classList.add("active");
-      if (orderTaker() && !peopleTab) showPeopleTab("customers");
+      if (orderTaker()) showOrderTakerDesk();
       else if (peopleTab) showPeopleTab(peopleTab);
       else showPeopleHub();
     } else if (name === "products") {

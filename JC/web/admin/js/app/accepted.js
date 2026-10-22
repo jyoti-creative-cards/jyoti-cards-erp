@@ -739,7 +739,7 @@ const App = (() => {
     } else if (name === "people") {
       document.getElementById("view-people")?.classList.remove("hidden");
       document.getElementById("nav-people")?.classList.add("active");
-      if (orderTaker() && !peopleTab) showPeopleTab("customers");
+      if (orderTaker()) showOrderTakerDesk();
       else if (peopleTab) showPeopleTab(peopleTab);
       else showPeopleHub();
     } else if (name === "products") {
@@ -1974,6 +1974,136 @@ const App = (() => {
     if (customerId) CustomerOrders.openCustomer?.(customerId, "open");
   }
 
+  var otCustomer = null;
+  var otLines = [];
+  var otParties = null;
+  var otItems = null;
+
+  function showOrderTakerDesk() {
+    document.getElementById("people-hub")?.classList.add("hidden");
+    document.getElementById("people-customers")?.classList.add("hidden");
+    document.getElementById("people-vendors")?.classList.add("hidden");
+    document.getElementById("order-taker-desk")?.classList.remove("hidden");
+    if (!otParties || !otItems) {
+      Promise.all([
+        api("/customers/entry-parties", {}, 0),
+        api("/stock/entry-items", {}, 0),
+      ]).then(([parties, items]) => {
+        otParties = parties || [];
+        otItems = items || [];
+      }).catch(e => toast(e.message, "error"));
+    }
+  }
+
+  function filterOtParties(q) {
+    const needle = String(q || "").trim().toLowerCase();
+    if (!needle) return [];
+    return (otParties || []).filter(c => {
+      const name = String(c.business_name || "").toLowerCase();
+      const city = String(c.city_name || "").toLowerCase();
+      const num = String(c.party_number || "");
+      return name.includes(needle) || city.includes(needle) || num.includes(needle);
+    }).slice(0, 12);
+  }
+
+  function onOrderTakerCustomer(val) {
+    const box = document.getElementById("ot-customer-matches");
+    if (!box) return;
+    const rows = filterOtParties(val);
+    box.innerHTML = rows.map(c =>
+      `<button type="button" class="btn btn-secondary btn-sm" style="display:block;width:100%;text-align:left;margin-top:4px;" onclick="App.pickOrderTakerCustomer(${c.id})">${esc(c.business_name || "")}${c.city_name ? " · " + esc(c.city_name) : ""}${c.party_number ? " · #" + c.party_number : ""}</button>`
+    ).join("") || (String(val || "").trim() ? `<p style="font-size:13px;color:var(--muted);margin:6px 0 0;">No match</p>` : "");
+  }
+
+  function pickOrderTakerCustomer(id) {
+    const c = (otParties || []).find(x => Number(x.id) === Number(id));
+    if (!c) return;
+    otCustomer = c;
+    const picked = document.getElementById("ot-customer-picked");
+    if (picked) picked.textContent = `${c.business_name || ""}${c.city_name ? " · " + c.city_name : ""}`;
+    const box = document.getElementById("ot-customer-matches");
+    if (box) box.innerHTML = "";
+    const input = document.getElementById("ot-customer");
+    if (input) input.value = "";
+    document.getElementById("ot-create")?.classList.remove("hidden");
+  }
+
+  function openOrderTakerItems() {
+    if (!otCustomer) return toast("Search a customer first", "error");
+    document.getElementById("ot-items")?.classList.remove("hidden");
+    document.getElementById("ot-item")?.focus();
+  }
+
+  function onOrderTakerItem(val) {
+    const box = document.getElementById("ot-item-matches");
+    if (!box) return;
+    const needle = String(val || "").trim().toLowerCase();
+    if (!needle) { box.innerHTML = ""; return; }
+    const rows = (otItems || []).filter(p => String(p.our_product_id || "").toLowerCase().includes(needle)).slice(0, 12);
+    box.innerHTML = rows.map(p => {
+      const onHand = Number(p.quantity_on_hand || 0);
+      if (onHand <= 0) {
+        return `<div style="margin-top:4px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;color:#b91c1c;font-weight:700;">${esc(p.our_product_id)} · Out of stock</div>`;
+      }
+      return `<button type="button" class="btn btn-secondary btn-sm" style="display:block;width:100%;text-align:left;margin-top:4px;" onclick="App.addOrderTakerItem(${p.catalog_product_id})">${esc(p.our_product_id)} · stock ${onHand}${p.selling_price ? " · ₹" + esc(p.selling_price) : ""}</button>`;
+    }).join("") || `<p style="font-size:13px;color:var(--muted);margin:6px 0 0;">No match</p>`;
+  }
+
+  function paintOrderTakerLines() {
+    const box = document.getElementById("ot-lines");
+    if (!box) return;
+    if (!otLines.length) { box.innerHTML = ""; return; }
+    box.innerHTML = `<table class="data"><thead><tr><th>Item</th><th>Qty</th><th></th></tr></thead><tbody>
+      ${otLines.map(l => `<tr><td>${esc(l.our_product_id)}</td><td>${l.quantity}</td><td><button type="button" class="btn btn-ghost btn-sm" onclick="App.removeOrderTakerLine(${l.catalog_product_id})">Remove</button></td></tr>`).join("")}
+    </tbody></table>`;
+  }
+
+  function addOrderTakerItem(id) {
+    const p = (otItems || []).find(x => Number(x.catalog_product_id) === Number(id));
+    if (!p) return;
+    if (Number(p.quantity_on_hand || 0) <= 0) return toast("Out of stock", "error");
+    const qty = Math.max(1, parseInt(String(document.getElementById("ot-qty")?.value || "1"), 10) || 1);
+    const existing = otLines.find(l => l.catalog_product_id === p.catalog_product_id);
+    if (existing) existing.quantity = qty;
+    else otLines.push({ catalog_product_id: p.catalog_product_id, our_product_id: p.our_product_id, quantity: qty });
+    const box = document.getElementById("ot-item-matches");
+    if (box) box.innerHTML = "";
+    const input = document.getElementById("ot-item");
+    if (input) input.value = "";
+    paintOrderTakerLines();
+    input?.focus();
+  }
+
+  function removeOrderTakerLine(id) {
+    otLines = otLines.filter(l => l.catalog_product_id !== id);
+    paintOrderTakerLines();
+  }
+
+  async function saveOrderTakerOrder() {
+    if (!otCustomer) return toast("Search a customer first", "error");
+    if (!otLines.length) return toast("Add at least one item", "error");
+    const today = new Date();
+    const placed = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    showLoading();
+    try {
+      await api(`/customer-orders/customer/${otCustomer.id}/offline`, {
+        method: "POST",
+        body: JSON.stringify({
+          lines: otLines.map(l => ({ catalog_product_id: l.catalog_product_id, quantity: l.quantity })),
+          narration: (document.getElementById("ot-note")?.value || "").trim() || null,
+          placed_on: placed,
+        }),
+      });
+      toast("Order booked", "success");
+      otLines = [];
+      paintOrderTakerLines();
+      const note = document.getElementById("ot-note");
+      if (note) note.value = "";
+      document.getElementById("ot-items")?.classList.add("hidden");
+    } catch (e) { toast(e.message, "error"); }
+    finally { hideLoading(); }
+  }
+
   function createCustomerOrder(customerId) {
     closeDetail();
     showView("selling");
@@ -2936,6 +3066,7 @@ const App = (() => {
     toggleCustomerLedgerRow, setCustomerRealOnly, showCustomerMoneyLedger, openSelling, billCustomer, collectCustomer, openCustomerMoney,
     loadRecycleBin, setRecycleTab, openRecycleDetail, restoreItem, purgeItem,
     addLookup, submitLookup, editLookup, deleteLookup, openCustomerLedgerEntry, createCustomerOrder,
+    onOrderTakerCustomer, pickOrderTakerCustomer, openOrderTakerItems, onOrderTakerItem, addOrderTakerItem, removeOrderTakerLine, saveOrderTakerOrder,
     closeModal, init, searchItemLookup, setWhatsappSends,
     downloadExportKind, downloadBackupZip,
     debouncedLoadCustomers, debouncedVendorSearch, debouncedCatalogSearch, debouncedAddonSearch, debouncedStockSearch,

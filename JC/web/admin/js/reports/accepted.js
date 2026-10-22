@@ -36,6 +36,7 @@ const Reports = (() => {
       { id: "daybook", label: "Daybook" },
       { id: "sales-book", label: "Sales book" },
       { id: "day-bills", label: "Day bills" },
+      { id: "transport", label: "Transport" },
       { id: "receipt-book", label: "Receipt book" },
       { id: "purchases", label: "Purchase bills" },
       { id: "payments", label: "Payments" },
@@ -43,6 +44,7 @@ const Reports = (() => {
     books: [
       { id: "sales-book", label: "Sales book" },
       { id: "day-bills", label: "Day bills" },
+      { id: "transport", label: "Transport" },
       { id: "receipt-book", label: "Receipt book" },
       { id: "daybook", label: "Daybook" },
       { id: "ledgers", label: "Ledgers" },
@@ -408,7 +410,7 @@ const Reports = (() => {
     if (!slot) return;
     const caret = (typeof OrdersUI !== "undefined" && OrdersUI.captureSearchCaret)
       ? OrdersUI.captureSearchCaret("reports-hub-search") : null;
-    const searchable = ["sales", "sales-book", "day-bills", "receipt-book", "daybook", "purchases", "payments", "ledgers", "ageing", "customer-sales", "vendor-purchases", "item-sales", "item-purchases", "stock-wise", "item-outward", "stock-journal", "valuation", "movers", "low", "returns", "debit-notes", "gst-sales", "gst-purchases", "cashbook", "expense-cat"].includes(chip);
+    const searchable = ["sales", "sales-book", "day-bills", "transport", "receipt-book", "daybook", "purchases", "payments", "ledgers", "ageing", "customer-sales", "vendor-purchases", "item-sales", "item-purchases", "stock-wise", "item-outward", "stock-journal", "valuation", "movers", "low", "returns", "debit-notes", "gst-sales", "gst-purchases", "cashbook", "expense-cat"].includes(chip);
     if (!searchable) { slot.innerHTML = ""; return; }
     const ph = chip === "day-bills" ? "Search bill, party, city…"
       : chip === "ledgers"
@@ -492,6 +494,7 @@ const Reports = (() => {
       if (chip === "daybook") await renderDaybook(body);
       else if (chip === "sales" || chip === "sales-book") await renderDocList(body, "sales", "Sales book");
       else if (chip === "day-bills") await renderDayBills(body);
+      else if (chip === "transport") await renderTransport(body);
       else if (chip === "receipt-book") await renderReceiptBook(body);
       else if (chip === "purchases") await renderDocList(body, "purchases", "Purchase bills");
       else if (chip === "payments") await renderPayments(body);
@@ -637,6 +640,48 @@ const Reports = (() => {
         </tr>`).join("")}
         <tr><td colspan="3"><strong>Total</strong></td><td><strong>${fmtPrice(total)}</strong></td></tr>
       </tbody></table></div>` : empty("No documents", "Widen the date range or clear search.")}`;
+  }
+
+  async function renderTransport(body) {
+    const data = await ctx.api(`/reports/transport-bills${rangeQs()}`, {}, 0);
+    let items = (data.items || []).filter(it => matchSearch(it.doc_number, it.party_label, it.receipt_number));
+    const qty = items.reduce((s, it) => s + (Number(it.quantity) || 0), 0);
+    const bills = items.reduce((s, it) => s + (Number(it.amount) || 0), 0);
+    const transport = items.reduce((s, it) => s + (Number(it.transport_charge) || 0), 0);
+    const gst = items.reduce((s, it) => s + (Number(it.gst_amount) || 0), 0);
+    body.innerHTML = `
+      <p class="fin-panel-sub" style="margin:0 0 12px;">Bills going by transport in these dates. One row is one party bill, for the evening builty. Transport charge is separate from the bill amount. Click a row to open the bill.</p>
+      <div class="fin-hub-strip" style="margin-bottom:16px;">
+        <div class="fin-stat"><span class="fin-stat-label">Bills</span><strong>${items.length}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">Qty</span><strong>${qty}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">Bill amount</span><strong>${fmtPrice(bills)}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">GST</span><strong>${fmtPrice(gst)}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">Transport</span><strong>${fmtPrice(transport)}</strong></div>
+      </div>
+      ${items.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
+        <th>Date</th><th>Bill</th><th>Party</th><th>Qty</th><th>Taxable</th><th>GST</th><th>Bill amount</th><th>Transport</th><th>Receipt</th>
+      </tr></thead><tbody>
+        ${items.map(it => `<tr class="clickable" onclick="Reports.openDoc('sales_bill', ${it.id})">
+          <td>${ctx.esc(it.date || "—")}</td>
+          <td><strong>${ctx.esc(it.doc_number || "—")}</strong></td>
+          <td>${ctx.esc(it.party_label || "—")}</td>
+          <td>${it.quantity || 0}</td>
+          <td>${fmtPrice(it.taxable_value)}</td>
+          <td>${fmtPrice(it.gst_amount)}</td>
+          <td>${fmtPrice(it.amount)}</td>
+          <td><strong>${fmtPrice(it.transport_charge)}</strong></td>
+          <td>${ctx.esc(it.receipt_number || "—")}</td>
+        </tr>`).join("")}
+        <tr>
+          <td colspan="3"><strong>Total</strong></td>
+          <td><strong>${qty}</strong></td>
+          <td></td>
+          <td><strong>${fmtPrice(gst)}</strong></td>
+          <td><strong>${fmtPrice(bills)}</strong></td>
+          <td><strong>${fmtPrice(transport)}</strong></td>
+          <td></td>
+        </tr>
+      </tbody></table></div>` : empty("No transport bills", "No bill in these dates is marked Transport.")}`;
   }
 
   async function renderDayBills(body) {

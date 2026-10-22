@@ -36,6 +36,7 @@ const Reports = (() => {
       { id: "daybook", label: "Daybook" },
       { id: "sales-book", label: "Sales book" },
       { id: "day-bills", label: "Day bills" },
+      { id: "transport", label: "Transport" },
       { id: "receipt-book", label: "Receipt book" },
       { id: "purchases", label: "Purchase bills" },
       { id: "payments", label: "Payments" },
@@ -43,6 +44,7 @@ const Reports = (() => {
     books: [
       { id: "sales-book", label: "Sales book" },
       { id: "day-bills", label: "Day bills" },
+      { id: "transport", label: "Transport" },
       { id: "receipt-book", label: "Receipt book" },
       { id: "daybook", label: "Daybook" },
       { id: "ledgers", label: "Ledgers" },

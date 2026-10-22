@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.models.accounts_payable import ApLedgerEntry
 from app.models.accounts_receivable import ArLedgerEntry
 from app.models.customer import Customer
-from app.models.customer_bill import CustomerBill
+from app.models.customer_bill import CustomerBill, CustomerBillLine
 from app.models.expense import Expense
 from app.models.freight_agent import FreightLedgerEntry
 from app.models.stock import StockBalance, StockLedger, StockReceipt
@@ -226,3 +226,65 @@ def list_day_bills(db: Session, day: date) -> dict:
         "amount_total": format(total, "f"),
         "items": items,
     }
+
+
+def list_transport_bills(db: Session, from_date: Optional[date] = None, to_date: Optional[date] = None) -> list[dict]:
+    """Bills going by transport, for the evening builty list."""
+    q = (
+        db.query(CustomerBill, Customer.business_name, Customer.payment_type, City.name)
+        .join(Customer, Customer.id == CustomerBill.customer_id)
+        .outerjoin(City, City.id == Customer.city_id)
+        .filter(
+            CustomerBill.deleted_at.is_(None),
+            CustomerBill.cancelled_at.is_(None),
+            CustomerBill.transport_mode == "transport",
+        )
+    )
+    if from_date is not None or to_date is not None:
+        start, end = _range_bounds(from_date, to_date)
+        bill_parts = []
+        if from_date is not None:
+            bill_parts.append(CustomerBill.bill_date >= from_date)
+        if to_date is not None:
+            bill_parts.append(CustomerBill.bill_date <= to_date)
+        created_parts = [CustomerBill.bill_date.is_(None)]
+        if start is not None:
+            created_parts.append(CustomerBill.created_at >= start)
+        if end is not None:
+            created_parts.append(CustomerBill.created_at <= end)
+        q = q.filter(or_(and_(*bill_parts), and_(*created_parts)))
+    rows = q.order_by(nulls_last(CustomerBill.bill_date.asc()), CustomerBill.id.asc()).limit(2000).all()
+    bill_ids = [bill.id for bill, _name, _pay, _city in rows]
+    qty_by_bill: dict[int, int] = {}
+    if bill_ids:
+        for bill_id, qty in (
+            db.query(CustomerBillLine.bill_id, CustomerBillLine.quantity_shipped)
+            .filter(CustomerBillLine.bill_id.in_(bill_ids), CustomerBillLine.status != "closed")
+            .all()
+        ):
+            qty_by_bill[int(bill_id)] = qty_by_bill.get(int(bill_id), 0) + int(qty or 0)
+    out = []
+    for bill, name, payment_type, city in rows:
+        shown = bill.bill_date or (bill.created_at.date() if bill.created_at else None)
+        party = name or f"Customer #{bill.customer_id}"
+        if city:
+            party = f"{party} - {city}"
+        if (payment_type or "").upper() == "CASH":
+            party = f"{party} (Cash)"
+        out.append(
+            {
+                "id": bill.id,
+                "doc_type": "sales_bill",
+                "doc_number": bill.bill_number,
+                "party_label": party,
+                "date": shown.isoformat() if shown else None,
+                "quantity": qty_by_bill.get(bill.id, 0),
+                "taxable_value": format(bill.taxable_value or Decimal("0"), "f"),
+                "gst_amount": format(bill.gst_amount or Decimal("0"), "f"),
+                "transport_charge": format(bill.freight_charges or Decimal("0"), "f"),
+                "amount": format(bill.grand_total or Decimal("0"), "f"),
+                "receipt_number": bill.transport_receipt_number or "",
+            }
+        )
+    out.sort(key=lambda row: ((row.get("date") or ""), _bill_serial(row.get("doc_number"))))
+    return out

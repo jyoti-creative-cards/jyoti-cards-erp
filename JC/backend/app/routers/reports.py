@@ -25,6 +25,16 @@ def day_bills_report(
     return svc.list_day_bills(db, day)
 
 
+@router.get("/transport-bills")
+def transport_bills_report(
+    from_date: Optional[date] = Query(None),
+    to_date: Optional[date] = Query(None),
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    return {"items": svc.list_transport_bills(db, from_date, to_date)}
+
+
 @router.get("/sales")
 def sales_report(
     from_date: Optional[date] = Query(None),

@@ -1665,6 +1665,10 @@ const CustomerOrders = (() => {
         ctx.toast("Nothing to bill yet. Qty must be in To bill (stock reserved). If still in Orders, wait for stock.", "error");
         return;
       }
+      processLines = processLines.map(l => {
+        const booked = Number(l.quantity_booked ?? l.quantity_open) || 0;
+        return { ...l, quantity_booked: booked, quantity_to_ship: 0 };
+      });
       discountEnabled = false;
       useOverallDiscount = false;
       overallDiscount = "";
@@ -1746,6 +1750,7 @@ const CustomerOrders = (() => {
         our_product_id: l.our_product_id,
         unit_price: l.unit_price,
         quantity_open: 999999,
+        quantity_booked: l.quantity_shipped,
         quantity_on_hand: "—",
         quantity_to_ship: l.quantity_shipped,
         discount_percent: l.discount_percent || "",
@@ -1904,8 +1909,11 @@ const CustomerOrders = (() => {
     renderProcessWizard();
   }
 
-  function clearShipQtys() {
-    for (const ln of processLines) ln.quantity_to_ship = 0;
+  function toggleShipLine(idx, on) {
+    const ln = processLines[idx];
+    if (!ln) return;
+    const booked = Number(ln.quantity_booked ?? ln.quantity_open) || 0;
+    ln.quantity_to_ship = on ? booked : 0;
     renderProcessWizard();
   }
 
@@ -2067,11 +2075,15 @@ const CustomerOrders = (() => {
         ? calcNetFromDisc(ln.unit_price, overallDiscount)
         : (ln.net_rate || calcNetFromDisc(ln.unit_price, ln.discount_percent || 0));
       const shownDisc = useOverallDiscount ? (overallDiscount || "") : (ln.discount_percent || "");
+      const booked = Number(ln.quantity_booked ?? ln.quantity_open) || 0;
+      const going = Number(ln.quantity_to_ship) > 0;
       return `<tr>
+        <td><input type="checkbox" ${going ? "checked" : ""} onchange="CustomerOrders.toggleShipLine(${i}, this.checked)" /></td>
         <td><strong>${ctx.esc(ln.our_product_id)}</strong>${billAddonHtml(ln)}${orderMarkingForProduct(billableOrders, ln.catalog_product_id)}</td>
         <td>${ln.quantity_on_hand ?? "—"}</td>
         <td>${fmtPrice(ln.unit_price)}</td>
-        <td><input data-ship-for="${i}" type="number" class="input" style="width:72px;" min="0" value="${ln.quantity_to_ship ?? ""}" oninput="CustomerOrders.setShipQty(${i}, this.value)" /></td>
+        <td>${booked}</td>
+        <td><input data-ship-for="${i}" type="number" class="input" style="width:72px;" min="0" value="${going ? ln.quantity_to_ship : ""}" placeholder="0" ${going ? "" : "disabled"} oninput="CustomerOrders.setShipQty(${i}, this.value)" /></td>
         <td><input data-disc-for="${i}" type="number" class="input" style="width:72px;" min="0" max="100" step="0.1" ${ro} value="${ctx.esc(shownDisc)}" oninput="CustomerOrders.setLineDisc(${i}, this.value)" /></td>
         <td><input data-net-for="${i}" type="number" class="input" style="width:88px;" min="0" step="0.01" ${ro} value="${ctx.esc(shownNet || "")}" oninput="CustomerOrders.setLineNetRate(${i}, this.value)" /></td>
         ${editBillId ? `<td><button type="button" class="btn btn-ghost btn-sm" onclick="CustomerOrders.removeProcessLine(${i})">Remove</button></td>` : ""}
@@ -2092,13 +2104,10 @@ const CustomerOrders = (() => {
         <label><input type="radio" name="co-disc-mode" ${discountEnabled && useOverallDiscount ? "checked" : ""} onchange="CustomerOrders.setDiscToggle('overall')" /> Overall %</label>
         ${discountEnabled && useOverallDiscount ? `<input class="input" style="width:80px;" placeholder="%" value="${ctx.esc(overallDiscount)}" oninput="CustomerOrders.setOverallDisc(this.value)" />` : ""}
       </div>
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:0 0 8px;">
-        <span style="font-size:13px;color:var(--muted);">Deselect all sets every qty to 0. Then type qty only for the items that are going.</span>
-        <button type="button" class="btn btn-secondary btn-sm" onclick="CustomerOrders.clearShipQtys()">Deselect all</button>
-      </div>
+      <p style="margin:0 0 8px;font-size:13px;color:var(--muted);">Nothing is selected. Tick an item to bill it. Booked qty stays visible. Type the qty that is going.</p>
       <table class="data"><thead><tr>
-        <th>Item</th><th>Stock</th><th>Rate</th><th>Qty</th><th>Disc %</th><th>Net</th>${editBillId ? "<th></th>" : ""}
-      </tr></thead><tbody>${linesHtml || `<tr><td colspan="6" style="color:var(--muted);">No items</td></tr>`}</tbody></table>
+        <th></th><th>Item</th><th>Stock</th><th>Rate</th><th>Booked</th><th>Qty</th><th>Disc %</th><th>Net</th>${editBillId ? "<th></th>" : ""}
+      </tr></thead><tbody>${linesHtml || `<tr><td colspan="8" style="color:var(--muted);">No items</td></tr>`}</tbody></table>
       ${addProd}
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;">
         <div>
@@ -3180,7 +3189,7 @@ const CustomerOrders = (() => {
     openEditBill, editLatestBill, promptEditBillNumber, saveBillNumber, enableDiscount, clearDiscount, setBillEditSearch, addBillEditProduct, removeProcessLine,
     openEditFromOpen,
     _detailCustomerId,
-    setShipQty, clearShipQtys, setLineDisc, setLineNetRate, setDiscToggle, setOverallDisc, skipBillAddon,
+    setShipQty, toggleShipLine, setLineDisc, setLineNetRate, setDiscToggle, setOverallDisc, skipBillAddon,
     setFreightAgent, setFreightCharges, setTransportMode, setTransportReceipt, setPackagingCharges,
     setGst, setGstRate, setBillSeries, setNarration, setEditBillNumber, setBillDate, setAddCharge, addChargeRow,
     setOfflinePlacedOn,

@@ -32,11 +32,11 @@ const Reports = (() => {
 
   const CHIPS = {
     today: [
+      { id: "transport", label: "Transport" },
       { id: "item-outward", label: "Daily stock" },
       { id: "daybook", label: "Daybook" },
       { id: "sales-book", label: "Sales book" },
       { id: "day-bills", label: "Day bills" },
-      { id: "transport", label: "Transport" },
       { id: "receipt-book", label: "Receipt book" },
       { id: "purchases", label: "Purchase bills" },
       { id: "payments", label: "Payments" },
@@ -65,6 +65,7 @@ const Reports = (() => {
       { id: "debit-notes", label: "Debit notes" },
     ],
     tax: [
+      { id: "transport", label: "Transport" },
       { id: "gst-sales", label: "GST sales" },
       { id: "gst-purchases", label: "GST purchase" },
       { id: "cashbook", label: "Cash book" },

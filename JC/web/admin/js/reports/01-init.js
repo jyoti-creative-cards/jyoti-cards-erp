@@ -60,6 +60,7 @@
     if (!body) return;
     body.innerHTML = HubUI.tileGrid([
       { letter: "T", tag: "Today", title: "What moved today?", desc: "Daily stock · sales · purchases · payments", onclick: "Reports.pickQuestion('today','item-outward')", className: "setup-tile-records" },
+      { letter: "R", tag: "Transport", title: "Who is going by transport?", desc: "Party · qty · bill amount · transport charge", onclick: "Reports.pickQuestion('today','transport')", className: "setup-tile-billing" },
       { letter: "B", tag: "Books", title: "Who owes us / we owe?", desc: "Due age · ledgers", onclick: "Reports.pickQuestion('books','ageing')", className: "setup-tile-billing" },
       { letter: "S", tag: "Stock", title: "What’s in stock?", desc: "Daily stock · stock wise · valuation", onclick: "Reports.pickQuestion('stock','item-outward')", className: "setup-tile-catalog" },
       { letter: "P", tag: "Tax", title: "Profit & tax?", desc: "P&L · GST · cash book", onclick: "Reports.pickQuestion('tax','pnl')", className: "setup-tile-delivery" },

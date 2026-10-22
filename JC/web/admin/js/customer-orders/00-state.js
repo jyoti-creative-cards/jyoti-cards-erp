@@ -39,7 +39,6 @@ const CustomerOrders = (() => {
   let customerNotes = "";
   let narration = "";
   let previewTotals = null;
-  let billReview = false;
   let processBusy = false;
   let forceCreditOverride = false;
   let editBillId = null;

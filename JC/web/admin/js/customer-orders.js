@@ -40,7 +40,6 @@ const CustomerOrders = (() => {
   let customerNotes = "";
   let narration = "";
   let previewTotals = null;
-  let billReview = false;
   let processBusy = false;
   let forceCreditOverride = false;
   let editBillId = null;
@@ -1624,7 +1623,6 @@ const CustomerOrders = (() => {
     selectedPlacementIds = [];
     processBusy = false;
     previewTotals = null;
-    billReview = false;
     forceCreditOverride = false;
     if (!quiet) ctx.showLoading?.();
     try {
@@ -1667,10 +1665,6 @@ const CustomerOrders = (() => {
         ctx.toast("Nothing to bill yet. Qty must be in To bill (stock reserved). If still in Orders, wait for stock.", "error");
         return;
       }
-      processLines = processLines.map(l => {
-        const booked = Number(l.quantity_booked ?? l.quantity_open) || 0;
-        return { ...l, quantity_booked: booked, quantity_to_ship: 0 };
-      });
       discountEnabled = false;
       useOverallDiscount = false;
       overallDiscount = "";
@@ -1718,7 +1712,6 @@ const CustomerOrders = (() => {
     processStep = 1;
     processBusy = false;
     previewTotals = null;
-    billReview = false;
     forceCreditOverride = false;
     ctx.showLoading?.();
     try {
@@ -1814,7 +1807,6 @@ const CustomerOrders = (() => {
   }
 
   function closeProcessWizard() {
-    billReview = false;
     document.getElementById("co-wizard")?.classList.add("hidden");
     editBillId = null;
     editBillNumber = "";
@@ -1913,14 +1905,6 @@ const CustomerOrders = (() => {
     renderProcessWizard();
   }
 
-  function toggleShipLine(idx, on) {
-    const ln = processLines[idx];
-    if (!ln) return;
-    const booked = Number(ln.quantity_booked ?? ln.quantity_open) || 0;
-    ln.quantity_to_ship = on ? booked : 0;
-    renderProcessWizard();
-  }
-
   function setShipQty(idx, val) {
     const ln = processLines[idx];
     if (!ln) return;
@@ -1967,31 +1951,22 @@ const CustomerOrders = (() => {
   /** Running qty/amount from the line items alone (pre-GST/pre-freight/pre-charges) —
    * kept visible on every wizard step (not just Review) since staff use it to judge
    * additional charges while still on the Transport/Charges steps. */
-  function lineRate(ln) {
-    return useOverallDiscount && overallDiscount
-      ? Number(calcNetFromDisc(ln.unit_price, overallDiscount)) || 0
-      : (Number(ln.net_rate) || Number(calcNetFromDisc(ln.unit_price, ln.discount_percent || 0)) || 0);
-  }
-
   function wizardLinesTotals() {
-    let qty = 0, amount = 0, bookedQty = 0, bookedAmt = 0;
+    let qty = 0, amount = 0;
     for (const ln of processLines) {
-      const rate = lineRate(ln);
-      const booked = Number(ln.quantity_booked ?? ln.quantity_open) || 0;
-      bookedQty += booked;
-      bookedAmt += booked * rate;
       const q = Number(ln.quantity_to_ship) || 0;
       if (q <= 0) continue;
       qty += q;
+      const rate = useOverallDiscount && overallDiscount
+        ? Number(calcNetFromDisc(ln.unit_price, overallDiscount)) || 0
+        : (Number(ln.net_rate) || Number(calcNetFromDisc(ln.unit_price, ln.discount_percent || 0)) || 0);
       amount += q * rate;
       const skipped = new Set((ln.skip_addon_ids || []).map(Number));
       for (const a of ln.addons || []) {
         if (skipped.has(Number(a.addon_product_id))) continue;
         const price = addonEachPrice(a);
         if (!(price > 0)) continue;
-        const extra = price * (Number(a.quantity) || 1);
-        amount += extra * q;
-        bookedAmt += extra * booked;
+        amount += price * (Number(a.quantity) || 1) * q;
       }
     }
     let extra = 0;
@@ -2000,7 +1975,7 @@ const CustomerOrders = (() => {
     }
     if (String(packagingCharges || "").trim() !== "") extra += Number(packagingCharges) || 0;
     for (const c of additionalCharges || []) extra += Number(c.amount) || 0;
-    return { qty, amount: amount + extra, bookedQty, bookedAmt: bookedAmt + extra };
+    return { qty, amount: amount + extra };
   }
 
   function reviewChargeRows(tot, chargeLabel) {
@@ -2027,8 +2002,10 @@ const CustomerOrders = (() => {
   function renderWizardTotalsBar() {
     const bar = document.getElementById("co-wizard-totals");
     if (!bar) return;
-    const { qty, amount, bookedQty, bookedAmt } = wizardLinesTotals();
-    bar.innerHTML = `<span><span class="wtb-muted">Booked qty</span>${bookedQty}</span><span><span class="wtb-muted">Booked amount</span>${fmtPrice(bookedAmt)}</span><span><span class="wtb-muted">This bill qty</span>${qty}</span><span><span class="wtb-muted">This bill amount</span>${fmtPrice(amount)}</span>`;
+    const { qty, amount } = wizardLinesTotals();
+    bar.innerHTML = qty > 0
+      ? `<span><span class="wtb-muted">Total qty</span>${qty}</span><span><span class="wtb-muted">Total amount</span>${fmtPrice(amount)}</span>`
+      : "";
   }
 
   function transportFieldsHtml() {
@@ -2061,10 +2038,6 @@ const CustomerOrders = (() => {
     stepsEl.innerHTML = "";
     renderWizardTotalsBar();
     const title = document.getElementById("co-wizard-title");
-    if (billReview) {
-      renderBillReview(bodyEl, footerEl, title);
-      return;
-    }
     if (title) title.textContent = editBillId ? `Edit ${editBillNumber || "bill"}` : "Bill";
     const lineDiscLocked = !discountEnabled || useOverallDiscount;
     const ro = lineDiscLocked ? "readonly" : "";
@@ -2088,13 +2061,11 @@ const CustomerOrders = (() => {
         ? calcNetFromDisc(ln.unit_price, overallDiscount)
         : (ln.net_rate || calcNetFromDisc(ln.unit_price, ln.discount_percent || 0));
       const shownDisc = useOverallDiscount ? (overallDiscount || "") : (ln.discount_percent || "");
-      const booked = Number(ln.quantity_booked ?? ln.quantity_open) || 0;
       return `<tr>
         <td><strong>${ctx.esc(ln.our_product_id)}</strong>${billAddonHtml(ln)}${orderMarkingForProduct(billableOrders, ln.catalog_product_id)}</td>
         <td>${ln.quantity_on_hand ?? "—"}</td>
         <td>${fmtPrice(ln.unit_price)}</td>
-        <td>${booked}</td>
-        <td><input data-ship-for="${i}" type="number" class="input" style="width:72px;" min="0" value="${ln.quantity_to_ship ?? 0}" oninput="CustomerOrders.setShipQty(${i}, this.value)" /></td>
+        <td><input data-ship-for="${i}" type="number" class="input" style="width:72px;" min="0" value="${ln.quantity_to_ship ?? ""}" oninput="CustomerOrders.setShipQty(${i}, this.value)" /></td>
         <td><input data-disc-for="${i}" type="number" class="input" style="width:72px;" min="0" max="100" step="0.1" ${ro} value="${ctx.esc(shownDisc)}" oninput="CustomerOrders.setLineDisc(${i}, this.value)" /></td>
         <td><input data-net-for="${i}" type="number" class="input" style="width:88px;" min="0" step="0.01" ${ro} value="${ctx.esc(shownNet || "")}" oninput="CustomerOrders.setLineNetRate(${i}, this.value)" /></td>
         ${editBillId ? `<td><button type="button" class="btn btn-ghost btn-sm" onclick="CustomerOrders.removeProcessLine(${i})">Remove</button></td>` : ""}
@@ -2115,10 +2086,9 @@ const CustomerOrders = (() => {
         <label><input type="radio" name="co-disc-mode" ${discountEnabled && useOverallDiscount ? "checked" : ""} onchange="CustomerOrders.setDiscToggle('overall')" /> Overall %</label>
         ${discountEnabled && useOverallDiscount ? `<input class="input" style="width:80px;" placeholder="%" value="${ctx.esc(overallDiscount)}" oninput="CustomerOrders.setOverallDisc(this.value)" />` : ""}
       </div>
-      <p style="margin:0 0 8px;font-size:13px;color:var(--muted);">Booked qty stays on the line. Qty starts at 0. Type a qty only for the items that are going.</p>
       <table class="data"><thead><tr>
-        <th>Item</th><th>Stock</th><th>Rate</th><th>Booked</th><th>Qty</th><th>Disc %</th><th>Net</th>${editBillId ? "<th></th>" : ""}
-      </tr></thead><tbody>${linesHtml || `<tr><td colspan="7" style="color:var(--muted);">No items</td></tr>`}</tbody></table>
+        <th>Item</th><th>Stock</th><th>Rate</th><th>Qty</th><th>Disc %</th><th>Net</th>${editBillId ? "<th></th>" : ""}
+      </tr></thead><tbody>${linesHtml || `<tr><td colspan="6" style="color:var(--muted);">No items</td></tr>`}</tbody></table>
       ${addProd}
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;">
         <div>
@@ -2159,64 +2129,7 @@ const CustomerOrders = (() => {
     `;
     footerEl.innerHTML = `
       <button class="btn btn-secondary" onclick="CustomerOrders.closeProcessWizard()">Cancel</button>
-      <button class="btn btn-primary" onclick="CustomerOrders.previewBill()">Preview</button>`;
-  }
-
-  function renderBillReview(bodyEl, footerEl, title) {
-    if (title) title.textContent = "Preview bill";
-    const tot = previewTotals || {};
-    const apiLines = Array.isArray(tot.lines) ? tot.lines : [];
-    const lines = apiLines.length ? apiLines : processLines.filter(l => Number(l.quantity_to_ship) > 0).map(l => ({
-      our_product_id: l.our_product_id,
-      quantity: l.quantity_to_ship,
-      line_total: (Number(l.quantity_to_ship) || 0) * (Number(l.net_rate) || Number(l.unit_price) || 0),
-    }));
-    const mode = transportMode === "bus" ? "Bus" : transportMode === "transport" ? "Transport" : transportMode === "self_pickup" ? "Self-pickup" : "—";
-    const agent = freightAgents.find(a => String(a.id) === String(freightAgentId));
-    bodyEl.innerHTML = `
-      <p style="margin:0 0 12px;"><strong>${ctx.esc(processContext?.customer_name || "")}</strong>${processContext?.city_name ? " · " + ctx.esc(processContext.city_name) : ""}</p>
-      <p style="margin:0 0 12px;font-size:13px;color:var(--muted);">${ctx.esc(billDate || "")} · ${ctx.esc(mode)}${agent ? " · " + ctx.esc(agent.name) : ""}${transportReceiptNumber ? " · " + ctx.esc(transportReceiptNumber) : ""}</p>
-      ${narration ? `<p style="margin:0 0 12px;color:#b91c1c;font-weight:700;">${ctx.esc(narration)}</p>` : ""}
-      <table class="data"><thead><tr><th>Item</th><th>Qty</th><th>Amount</th></tr></thead><tbody>
-        ${lines.map(ln => `<tr>
-          <td>${ctx.esc(ln.our_product_id || ln.name || "")}</td>
-          <td>${ln.quantity ?? ""}</td>
-          <td>${fmtPrice(ln.line_total)}</td>
-        </tr>`).join("")}
-        ${Number(tot.freight_charges) > 0 ? `<tr><td colspan="2">${mode === "Bus" ? "Freight" : "Transport"}</td><td>${fmtPrice(tot.freight_charges)}</td></tr>` : ""}
-        ${Number(tot.packaging_charges) > 0 ? `<tr><td colspan="2">Packing</td><td>${fmtPrice(tot.packaging_charges)}</td></tr>` : ""}
-        ${Number(tot.gst_amount) > 0 ? `<tr><td colspan="2">GST</td><td>${fmtPrice(tot.gst_amount)}</td></tr>` : ""}
-        <tr style="font-weight:700;border-top:2px solid var(--border);"><td colspan="2">Grand total</td><td>${fmtPrice(tot.rounded_grand_total || tot.grand_total)}</td></tr>
-      </tbody></table>`;
-    footerEl.innerHTML = `
-      <button class="btn btn-secondary" onclick="CustomerOrders.backFromBillPreview()">Go back</button>
       <button class="btn btn-primary" ${processBusy ? "disabled" : ""} onclick="CustomerOrders.submitProcess()">${processBusy ? "Saving…" : "Save bill"}</button>`;
-  }
-
-  async function previewBill() {
-    if (!processLines.some(l => Number(l.quantity_to_ship) > 0)) return ctx.toast("Enter the qty that is going", "error");
-    if (!transportMode) return ctx.toast("Select mode of transport", "error");
-    if (transportMode === "bus") {
-      if (!freightAgentId) return ctx.toast("Select freight agent", "error");
-      if (String(freightCharges || "").trim() === "") return ctx.toast("Enter freight charges", "error");
-    }
-    if (transportMode === "transport" && String(freightCharges || "").trim() === "") return ctx.toast("Enter transport charges", "error");
-    if (!editBillId && !billSeriesId) return ctx.toast("Select bill series", "error");
-    ctx.showLoading?.();
-    try {
-      const url = editBillId
-        ? `/customer-orders/bills/${editBillId}/edit-preview`
-        : `/customer-orders/customer/${detailCustomerId}/process/preview`;
-      previewTotals = await ctx.api(url, { method: "POST", body: JSON.stringify(buildProcessBody()) });
-      billReview = true;
-      renderProcessWizard();
-    } catch (e) { ctx.toast(e.message, "error"); }
-    finally { ctx.hideLoading?.(); }
-  }
-
-  function backFromBillPreview() {
-    billReview = false;
-    renderProcessWizard();
   }
 
   function setForceCredit(v) { forceCreditOverride = !!v; renderProcessWizard(); }
@@ -3298,12 +3211,12 @@ const CustomerOrders = (() => {
     openEditBill, editLatestBill, promptEditBillNumber, saveBillNumber, enableDiscount, clearDiscount, setBillEditSearch, addBillEditProduct, removeProcessLine,
     openEditFromOpen,
     _detailCustomerId,
-    setShipQty, toggleShipLine, setLineDisc, setLineNetRate, setDiscToggle, setOverallDisc, skipBillAddon,
+    setShipQty, setLineDisc, setLineNetRate, setDiscToggle, setOverallDisc, skipBillAddon,
     setFreightAgent, setFreightCharges, setTransportMode, setTransportReceipt, setPackagingCharges,
     setGst, setGstRate, setBillSeries, setNarration, setEditBillNumber, setBillDate, setAddCharge, addChargeRow,
     setOfflinePlacedOn,
     setForceCredit,
-    processNext, processBack, previewBill, backFromBillPreview, submitProcess, toggleBillOrder, toggleAllBillOrders,
+    processNext, processBack, submitProcess, toggleBillOrder, toggleAllBillOrders,
     confirmOrder, _doConfirm, cancelOpenLine, cancelPlacement, cancelCustomerOpen, cancelEntireReceived, cancelAllOpen, editOpenLine, editReceivedLine, deleteReceivedLine, openEditPlacement, closeBillLine, cancelBill, voidBill, voidPlacement, openBillDoc, shareBillWhatsApp, uploadBillQr, resetBillQr,
     openOfflineWizard, closeOfflineWizard, renderOfflineWizard,
     pickOfflineCustomer, onOfflineCustomerSearch, setOfflineNotes, previewOrder, backFromOrderPreview,

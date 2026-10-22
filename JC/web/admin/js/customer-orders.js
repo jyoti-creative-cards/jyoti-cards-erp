@@ -850,14 +850,15 @@ const CustomerOrders = (() => {
           </div>`;
         }).join("")}
       </div>` : "";
+      const canBill = canWrite && (lines.length || waiting.length);
       el.innerHTML = `
         ${cashWarningHtml(currentOrder)}
-        ${waitingHtml}
-        ${canWrite && lines.length ? `<div class="ui-toolbar" style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn btn-primary btn-sm" onclick="CustomerOrders.processOrder()">Create Bill</button>
+        ${canBill ? `<div class="ui-toolbar" style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-primary" onclick="CustomerOrders.processOrder()">Create Bill</button>
           <button class="btn btn-secondary btn-sm" onclick="CustomerOrders.openEditFromOpen()">Edit order</button>
           <button class="btn btn-danger btn-sm" onclick="CustomerOrders.cancelCustomerOpen(${detailCustomerId})">Cancel entire order</button>
         </div>` : ""}
+        ${waitingHtml}
         <div class="ord-hub-list">${lines.length ? lines.map(line => HubUI.partyCard({
           title: ctx.esc(line.our_product_id) + (line.marking ? ` <span class="badge badge-amber" style="font-size:9px;padding:1px 4px;">${ctx.esc(line.marking)}</span>` : ""),
           titleIsHtml: true,
@@ -1645,6 +1646,21 @@ const CustomerOrders = (() => {
         skip_addon_ids: [],
       }));
       if (billableOrders.length) applySelectedOrders();
+      if (!processLines.length && billableOrders.length) {
+        processLines = billableOrders.flatMap(order => (order.lines || []).map(ln => ({
+          catalog_product_id: ln.catalog_product_id,
+          our_product_id: ln.our_product_id,
+          unit_price: ln.unit_price,
+          quantity_open: Number(ln.quantity) || 0,
+          quantity_to_ship: Number(ln.quantity) || 0,
+          quantity_on_hand: ln.quantity_on_hand,
+          discount_percent: "",
+          net_rate: calcNetFromDisc(ln.unit_price, 0),
+          discSource: "",
+          addons: ln.addons || [],
+          skip_addon_ids: [],
+        }))).filter(l => l.quantity_to_ship > 0);
+      }
       if (!processLines.length) {
         ctx.toast("Nothing to bill yet. Qty must be in To bill (stock reserved). If still in Orders, wait for stock.", "error");
         return;
@@ -2847,7 +2863,15 @@ const CustomerOrders = (() => {
       <strong style="color:#b91c1c;">Already booked. Bill this. Do not make a new order if they only want part of it billed.</strong>
       ${notes.length ? `<div style="color:#b91c1c;font-weight:700;margin-top:4px;">${ctx.esc(notes.join(" · "))}</div>` : ""}
       ${rows}
+      <button type="button" class="btn btn-primary" style="margin-top:10px;width:100%;" onclick="CustomerOrders.billBookedOrder()">Bill this order</button>
     </div>`;
+  }
+
+  function billBookedOrder() {
+    const id = offlineCustomerId;
+    if (!id) return;
+    closeOfflineWizard();
+    processFromHub(id, "open");
   }
 
   async function loadBookedOrders() {
@@ -3143,7 +3167,7 @@ const CustomerOrders = (() => {
     openSlidePanel, closeSlidePanel, toggleCardMore, closeAllCardMore,
     goToDispatch, goCollectPayment, setDispatchStatus, setDispatchAgent, pickParcel, reassignParcel, submitParcelReassign,
     showCreateMenu, showCreateMenuFromCustomer, openCloseBatch,
-    processOrder, processFromHub, billNow, closeProcessWizard, renderProcessWizard,
+    processOrder, processFromHub, billNow, billBookedOrder, closeProcessWizard, renderProcessWizard,
     openEditBill, editLatestBill, promptEditBillNumber, saveBillNumber, enableDiscount, clearDiscount, setBillEditSearch, addBillEditProduct, removeProcessLine,
     openEditFromOpen,
     _detailCustomerId,

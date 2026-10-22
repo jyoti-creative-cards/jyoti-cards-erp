@@ -3698,3 +3698,18 @@ table.data tr.filter-row th { padding: 6px 8px; background: #fff; border-bottom:
   .wa-threads, .wa-chat { min-height: 40vh; }
 }
 
+.ot-item-row { display: flex; gap: 8px; align-items: center; }
+.ot-item-row #ot-item { flex: 1; min-width: 0; }
+.ot-item-row #ot-qty { width: 100px; }
+@media (max-width: 800px) {
+  #app.order-taker #sidebar { display: none; }
+  #app.order-taker #main,
+  #app.order-taker #main.shift-expanded,
+  #app.order-taker #main.shift-collapsed { margin-left: 0; padding: 12px 12px 28px; }
+  #order-taker-desk { max-width: none !important; margin: 0 !important; padding: 0 0 16px !important; }
+  #order-taker-desk .input { font-size: 16px; width: 100%; }
+  #order-taker-desk .btn-primary { width: 100%; }
+  #order-taker-desk .ot-item-row { flex-direction: column; align-items: stretch; }
+  #order-taker-desk .ot-item-row #ot-qty { width: 100%; }
+}
+

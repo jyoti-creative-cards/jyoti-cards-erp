@@ -9,7 +9,7 @@
     openSlidePanel, closeSlidePanel, toggleCardMore, closeAllCardMore,
     goToDispatch, goCollectPayment, setDispatchStatus, setDispatchAgent, pickParcel, reassignParcel, submitParcelReassign,
     showCreateMenu, showCreateMenuFromCustomer, openCloseBatch,
-    processOrder, processFromHub, billNow, closeProcessWizard, renderProcessWizard,
+    processOrder, processFromHub, billNow, billBookedOrder, closeProcessWizard, renderProcessWizard,
     openEditBill, editLatestBill, promptEditBillNumber, saveBillNumber, enableDiscount, clearDiscount, setBillEditSearch, addBillEditProduct, removeProcessLine,
     openEditFromOpen,
     _detailCustomerId,

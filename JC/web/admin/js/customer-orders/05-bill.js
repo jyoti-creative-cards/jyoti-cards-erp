@@ -164,6 +164,21 @@
         skip_addon_ids: [],
       }));
       if (billableOrders.length) applySelectedOrders();
+      if (!processLines.length && billableOrders.length) {
+        processLines = billableOrders.flatMap(order => (order.lines || []).map(ln => ({
+          catalog_product_id: ln.catalog_product_id,
+          our_product_id: ln.our_product_id,
+          unit_price: ln.unit_price,
+          quantity_open: Number(ln.quantity) || 0,
+          quantity_to_ship: Number(ln.quantity) || 0,
+          quantity_on_hand: ln.quantity_on_hand,
+          discount_percent: "",
+          net_rate: calcNetFromDisc(ln.unit_price, 0),
+          discSource: "",
+          addons: ln.addons || [],
+          skip_addon_ids: [],
+        }))).filter(l => l.quantity_to_ship > 0);
+      }
       if (!processLines.length) {
         ctx.toast("Nothing to bill yet. Qty must be in To bill (stock reserved). If still in Orders, wait for stock.", "error");
         return;

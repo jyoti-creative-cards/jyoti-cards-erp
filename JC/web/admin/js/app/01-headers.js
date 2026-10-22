@@ -35,6 +35,7 @@
     const lookup = lookupDesk();
     const taker = orderTaker();
     document.getElementById("app")?.classList.toggle("lookup-only", lookup);
+    document.getElementById("app")?.classList.toggle("order-taker", taker);
     const moreTitle = document.querySelector("#more-hub .ui-hub-title");
     const moreSub = document.querySelector("#more-hub .ui-hub-sub");
     if (moreTitle) moreTitle.textContent = desk ? "Print sticker" : "More";

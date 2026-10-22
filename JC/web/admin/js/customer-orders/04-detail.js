@@ -69,14 +69,15 @@
           </div>`;
         }).join("")}
       </div>` : "";
+      const canBill = canWrite && (lines.length || waiting.length);
       el.innerHTML = `
         ${cashWarningHtml(currentOrder)}
-        ${waitingHtml}
-        ${canWrite && lines.length ? `<div class="ui-toolbar" style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn btn-primary btn-sm" onclick="CustomerOrders.processOrder()">Create Bill</button>
+        ${canBill ? `<div class="ui-toolbar" style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-primary" onclick="CustomerOrders.processOrder()">Create Bill</button>
           <button class="btn btn-secondary btn-sm" onclick="CustomerOrders.openEditFromOpen()">Edit order</button>
           <button class="btn btn-danger btn-sm" onclick="CustomerOrders.cancelCustomerOpen(${detailCustomerId})">Cancel entire order</button>
         </div>` : ""}
+        ${waitingHtml}
         <div class="ord-hub-list">${lines.length ? lines.map(line => HubUI.partyCard({
           title: ctx.esc(line.our_product_id) + (line.marking ? ` <span class="badge badge-amber" style="font-size:9px;padding:1px 4px;">${ctx.esc(line.marking)}</span>` : ""),
           titleIsHtml: true,

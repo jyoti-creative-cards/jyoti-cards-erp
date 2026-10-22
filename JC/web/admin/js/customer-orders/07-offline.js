@@ -242,7 +242,15 @@
       <strong style="color:#b91c1c;">Already booked. Bill this. Do not make a new order if they only want part of it billed.</strong>
       ${notes.length ? `<div style="color:#b91c1c;font-weight:700;margin-top:4px;">${ctx.esc(notes.join(" · "))}</div>` : ""}
       ${rows}
+      <button type="button" class="btn btn-primary" style="margin-top:10px;width:100%;" onclick="CustomerOrders.billBookedOrder()">Bill this order</button>
     </div>`;
+  }
+
+  function billBookedOrder() {
+    const id = offlineCustomerId;
+    if (!id) return;
+    closeOfflineWizard();
+    processFromHub(id, "open");
   }
 
   async function loadBookedOrders() {

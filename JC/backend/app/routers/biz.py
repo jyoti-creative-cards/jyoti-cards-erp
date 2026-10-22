@@ -10,16 +10,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.deps import AuthContext, get_auth_context
 from app.services import biz_analyst as biz
 
 router = APIRouter(prefix="/biz", tags=["biz"])
-
-
-def _reader(auth: AuthContext = Depends(get_auth_context)) -> AuthContext:
-    if getattr(auth, "is_lookup_only", lambda: False)():
-        raise HTTPException(403, "permission denied")
-    return auth
 
 
 def _rate(raw: Optional[str]) -> Optional[Decimal]:
@@ -34,7 +27,6 @@ def biz_home(
     from_date: Optional[date] = Query(None),
     to_date: Optional[date] = Query(None),
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(_reader),
 ):
     return biz.home(db, from_date, to_date)
 
@@ -48,7 +40,6 @@ def biz_drill(
     rate_min: Optional[str] = Query(None),
     rate_max: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(_reader),
 ):
     return biz.drill(db, metric, group, from_date, to_date, _rate(rate_min), _rate(rate_max))
 
@@ -57,7 +48,6 @@ def biz_drill(
 def biz_items(
     q: str = Query(""),
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(_reader),
 ):
     return {"items": biz.search_items(db, q)}
 
@@ -68,7 +58,6 @@ def biz_item(
     from_date: Optional[date] = Query(None),
     to_date: Optional[date] = Query(None),
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(_reader),
 ):
     row = biz.item_summary(db, product_id, from_date, to_date)
     if not row:
@@ -82,7 +71,6 @@ def biz_item_customers(
     from_date: Optional[date] = Query(None),
     to_date: Optional[date] = Query(None),
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(_reader),
 ):
     return {"rows": biz.item_customers(db, product_id, from_date, to_date)}
 
@@ -93,7 +81,6 @@ def biz_item_suppliers(
     from_date: Optional[date] = Query(None),
     to_date: Optional[date] = Query(None),
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(_reader),
 ):
     return {"rows": biz.item_suppliers(db, product_id, from_date, to_date)}
 
@@ -102,7 +89,6 @@ def biz_item_suppliers(
 def biz_bill(
     bill_id: int,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(_reader),
 ):
     row = biz.customer_bill(db, bill_id)
     if not row:
@@ -114,7 +100,6 @@ def biz_bill(
 def biz_receipt(
     receipt_id: int,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(_reader),
 ):
     row = biz.supplier_receipt(db, receipt_id)
     if not row:

@@ -1,6 +1,4 @@
-const tokenKey = "jc_biz_token";
 const state = {
-  token: localStorage.getItem(tokenKey) || "",
   mode: "party",
   from: monthStart(),
   to: today(),
@@ -58,17 +56,9 @@ async function api(path, opts) {
     ...opts,
     headers: {
       "Content-Type": "application/json",
-      ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
       ...((opts && opts.headers) || {}),
     },
   });
-  if (res.status === 401 && !path.includes("/auth/staff/login")) {
-    state.token = "";
-    localStorage.removeItem(tokenKey);
-    state.screen = "login";
-    render();
-    throw new Error("Sign in again");
-  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(typeof data.detail === "string" ? data.detail : "Could not load");
   return data;
@@ -85,26 +75,6 @@ function dates() {
 function readDates() {
   state.from = document.getElementById("from")?.value || state.from;
   state.to = document.getElementById("to")?.value || state.to;
-}
-
-async function login(phone, password) {
-  const data = await api("/api/v1/auth/staff/login", {
-    method: "POST",
-    body: JSON.stringify({ phone, password }),
-  });
-  state.token = data.access_token;
-  localStorage.setItem(tokenKey, state.token);
-  state.screen = "home";
-  state.error = "";
-}
-
-function loginView() {
-  return `<h1>JC Books</h1>
-    <p class="muted">Staff login. Same mobile and password as the admin app.</p>
-    <label>Mobile or name<input id="phone" autocomplete="username" /></label>
-    <label>Password<input id="password" type="password" autocomplete="current-password" /></label>
-    ${state.error ? `<p class="err">${esc(state.error)}</p>` : ""}
-    <button class="primary" id="go">Sign in</button>`;
 }
 
 function homeView(data) {
@@ -246,12 +216,6 @@ function restore(prev) {
   state.mode = prev.mode;
 }
 function bind() {
-  document.getElementById("go")?.addEventListener("click", async () => {
-    try {
-      await login(document.getElementById("phone").value.trim(), document.getElementById("password").value);
-      await showHome();
-    } catch (e) { state.error = e.message; render(); }
-  });
   document.querySelectorAll("[data-mode]").forEach((btn) => btn.addEventListener("click", () => {
     state.mode = btn.getAttribute("data-mode");
     state.screen = state.mode === "items" ? "search" : "home";
@@ -321,7 +285,6 @@ function bind() {
 }
 
 async function render() {
-  if (!state.token) return renderShell(loginView());
   try {
     if (state.screen === "home") {
       const data = await api(`/api/v1/biz/home${qs()}`);
@@ -350,7 +313,6 @@ async function render() {
     if (state.screen === "bill") return renderShell(docView(await api(`/api/v1/biz/bills/${state.billId}`), "bill"));
     if (state.screen === "receipt") return renderShell(docView(await api(`/api/v1/biz/receipts/${state.receiptId}`), "receipt"));
   } catch (e) {
-    if (!state.token) return;
     renderShell(`<button class="back" id="back">Back</button><p class="err">${esc(e.message)}</p>`);
   }
 }

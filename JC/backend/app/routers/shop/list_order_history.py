@@ -241,6 +241,14 @@ def list_my_orders(
         )
     return out
 
+# Customers only shop the current catalogue. Older year groups stay in the office.
+PORTAL_YEAR_GROUP = "2026-27"
+
+
+def _portal_year(query):
+    return query.filter(CatalogProduct.year_group == PORTAL_YEAR_GROUP)
+
+
 def _alternatives_batch(db: Session, parent_ids: list[int], stock: dict[int, tuple[int, int]]) -> dict[int, List[ShopAlternativePublic]]:
     if not parent_ids:
         return {}
@@ -260,7 +268,7 @@ def _alternatives_batch(db: Session, parent_ids: list[int], stock: dict[int, tup
     grouped: dict[int, List[ShopAlternativePublic]] = {pid: [] for pid in parent_ids}
     for row in rows:
         alt_prod = alts.get(row.alternative_product_id)
-        if not alt_prod:
+        if not alt_prod or (alt_prod.year_group or "").strip() != PORTAL_YEAR_GROUP:
             continue
         qty, th = stock.get(alt_prod.id, (0, 5))
         lbl = _portal_stock_status(qty, th)
@@ -381,7 +389,7 @@ def product_suggestions(
 def _query_products(db: Session, raw: str, limit: int) -> list[CatalogProduct]:
     # Customers search our item number only. Vendor codes stay off this search.
     exact_ours = (
-        db.query(CatalogProduct)
+        _portal_year(db.query(CatalogProduct))
         .filter(
             CatalogProduct.is_active.is_(True),
             CatalogProduct.deleted_at.is_(None),
@@ -393,7 +401,7 @@ def _query_products(db: Session, raw: str, limit: int) -> list[CatalogProduct]:
     if exact_ours and len(raw) >= 2:
         return _rank_products(exact_ours, raw)[:limit]
     rows = (
-        db.query(CatalogProduct)
+        _portal_year(db.query(CatalogProduct))
         .filter(CatalogProduct.is_active.is_(True), CatalogProduct.deleted_at.is_(None), _match(raw))
         .limit(80)
         .all()

@@ -31,7 +31,7 @@ jobs:
         run: |
           set -euo pipefail
           URL=$(vercel --prod --yes --token "$VERCEL_TOKEN" \
-            --build-env BACKEND_URL=https://jc-api-production.up.railway.app \
+            --build-env BACKEND_URL=https://jyoti-jc-api.fly.dev \
             | tee /tmp/vercel-deploy.log | tail -n 1)
           echo "Deployed: $URL"
           # Pin production domain (prevents alias drift to stale deployment).

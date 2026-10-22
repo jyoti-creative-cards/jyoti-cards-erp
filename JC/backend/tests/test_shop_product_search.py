@@ -23,12 +23,19 @@ def test_search_returns_the_item_number_not_only_the_vendor_code():
     db.add(vendor)
     db.flush()
     db.add(CatalogProduct(
-        our_product_id="9073 CARD", vendor_id=vendor.id, vendor_product_id="6734", image_keys=[],
+        our_product_id="9073 CARD", vendor_id=vendor.id, vendor_product_id="6734",
+        year_group="2026-27", image_keys=[],
     ))
     db.add(CatalogProduct(
-        our_product_id="6734 BOX PATRIKA", vendor_id=vendor.id, vendor_product_id="G-42", image_keys=[],
+        our_product_id="6734 BOX PATRIKA", vendor_id=vendor.id, vendor_product_id="G-42",
+        year_group="2026-27", image_keys=[],
+    ))
+    db.add(CatalogProduct(
+        our_product_id="6734 OLD PATRIKA", vendor_id=vendor.id, vendor_product_id="OLD",
+        year_group="2015-25", image_keys=[],
     ))
     db.commit()
     found = _query_products(db, "6734", 20)
     assert [row.our_product_id for row in found] == ["6734 BOX PATRIKA"]
     assert _query_products(db, "G-42", 20) == []
+    assert _query_products(db, "6734 OLD", 20) == []

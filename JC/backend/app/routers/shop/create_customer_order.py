@@ -65,11 +65,12 @@ def create_customer_order(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Add at least one item")
 
     from app.services.pricing import effective_selling_price
+    from app.routers.shop.list_order_history import PORTAL_YEAR_GROUP
 
     prepared = []
     for catalog_product_id, quantity in requested:
         prod = db.get(CatalogProduct, catalog_product_id)
-        if not prod or not prod.is_active or prod.deleted_at:
+        if not prod or not prod.is_active or prod.deleted_at or (prod.year_group or "").strip() != PORTAL_YEAR_GROUP:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="product not found")
         bal = db.query(StockBalance).filter(StockBalance.catalog_product_id == prod.id).first()
         on_hand = int(bal.quantity_on_hand) if bal else 0

@@ -149,6 +149,65 @@ def close_received_order_if_fully_billed(db: Session, customer_id: int) -> None:
     received.is_open = False
     received.updated_at = datetime.now(timezone.utc)
 
+
+def settle_confirmed_after_bill(db: Session, customer_id: int) -> None:
+    """A confirmed order that is fully billed leaves the Confirmed list.
+
+    Billing reduces the open tally. If that tally is still higher than the pieces
+    left on the confirmed order, pull it down. A placement whose every line is
+    billed is marked billed so it is not offered again.
+    """
+    open_order = get_open_customer_order(db, customer_id, "open")
+    if open_order is None:
+        return
+    unbilled: dict[int, int] = {}
+    seen: set[int] = set()
+    placements = (
+        db.query(CustomerOrderPlacement)
+        .filter(
+            CustomerOrderPlacement.customer_order_id == open_order.id,
+            CustomerOrderPlacement.deleted_at.is_(None),
+            CustomerOrderPlacement.status == "open",
+        )
+        .all()
+    )
+    if not placements:
+        return
+    for placement in placements:
+        lines = (
+            db.query(CustomerOrderLine)
+            .filter(
+                CustomerOrderLine.placement_id == placement.id,
+                CustomerOrderLine.status == "active",
+            )
+            .all()
+        )
+        fully = bool(lines)
+        for ln in lines:
+            cid = int(ln.catalog_product_id)
+            seen.add(cid)
+            left = int(ln.quantity or 0) - int(ln.quantity_billed or 0)
+            if left > 0:
+                fully = False
+                unbilled[cid] = unbilled.get(cid, 0) + left
+        if fully:
+            placement.status = "billed"
+    if not unbilled:
+        open_order.is_open = False
+        open_order.updated_at = datetime.now(timezone.utc)
+    rows = (
+        db.query(CustomerOpenLine)
+        .filter(CustomerOpenLine.customer_id == customer_id, CustomerOpenLine.status == "open")
+        .all()
+    )
+    for row in rows:
+        cid = int(row.catalog_product_id)
+        if cid not in seen:
+            continue
+        real = int(unbilled.get(cid, 0))
+        if int(row.quantity_open or 0) > real:
+            row.quantity_open = real
+
 def get_open_unbilled_placement(db: Session, customer_id: int) -> CustomerOrderPlacement | None:
     """Latest open received placement with no billed lines — dealer’s one active order."""
     received = get_open_customer_order(db, customer_id, "received")

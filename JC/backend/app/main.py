@@ -72,9 +72,29 @@ async def block_item_lookup_account(request, call_next):
                 if perms == {"items.lookup"}:
                     from starlette.responses import JSONResponse
                     return JSONResponse({"detail": "permission denied"}, status_code=403)
+                order_only = {"customers.read", "customer_orders.read", "customer_orders.write"}
+                if perms and "customer_orders.write" in perms and perms <= order_only:
+                    if not _order_taker_allowed(request.method, path):
+                        from starlette.responses import JSONResponse
+                        return JSONResponse({"detail": "permission denied"}, status_code=403)
         except Exception:
             pass
     return await call_next(request)
+
+
+def _order_taker_allowed(method: str, path: str) -> bool:
+    """Book a customer order. Search the customer and the item. Nothing else."""
+    if path.startswith("/api/v1/auth"):
+        return True
+    if method == "GET" and path.startswith("/api/v1/customers"):
+        return True
+    if method == "GET" and path.startswith("/api/v1/stock/entry-items"):
+        return True
+    if method == "GET" and path.startswith("/api/v1/customer-orders/customer/"):
+        return "/bills/" not in path and "/process" not in path
+    if method == "POST" and path.startswith("/api/v1/customer-orders/customer/"):
+        return path.endswith("/offline") or path.endswith("/offline/preview")
+    return False
 
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(customers.router, prefix="/api/v1")

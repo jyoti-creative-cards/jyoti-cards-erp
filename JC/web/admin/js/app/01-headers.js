@@ -8,8 +8,14 @@
   function lookupDesk() {
     return authMode === "staff" && permissions.size === 1 && permissions.has("items.lookup");
   }
+  function orderTaker() {
+    if (authMode !== "staff" || !permissions.has("customer_orders.write")) return false;
+    const allowed = new Set(["customers.read", "customer_orders.read", "customer_orders.write"]);
+    for (const key of permissions) if (!allowed.has(key)) return false;
+    return true;
+  }
   function isAdmin() {
-    if (lookupDesk()) return false;
+    if (lookupDesk() || orderTaker()) return false;
     return authMode === "admin" || authMode === "staff";
   }
   function can(perm) { return isAdmin() || permissions.has(perm); }
@@ -27,16 +33,17 @@
     const showReturns = canRead("returns");
     const desk = stickerDesk();
     const lookup = lookupDesk();
+    const taker = orderTaker();
     document.getElementById("app")?.classList.toggle("lookup-only", lookup);
     const moreTitle = document.querySelector("#more-hub .ui-hub-title");
     const moreSub = document.querySelector("#more-hub .ui-hub-sub");
     if (moreTitle) moreTitle.textContent = desk ? "Print sticker" : "More";
     if (moreSub) moreSub.textContent = desk ? "Search a party number and print." : "History, reports, setup, and safety — when you need them.";
-    document.getElementById("nav-today")?.classList.toggle("hidden", desk || lookup);
+    document.getElementById("nav-today")?.classList.toggle("hidden", desk || lookup || taker);
     document.getElementById("nav-people")?.classList.toggle("hidden", desk || lookup || !showPeople);
-    document.getElementById("nav-products")?.classList.toggle("hidden", desk || lookup || !showProducts);
-    document.getElementById("nav-money")?.classList.toggle("hidden", desk || lookup || !(isAdmin() || can("finance.write") || canRead("ar") || canRead("ap")));
-    document.getElementById("nav-more")?.classList.toggle("hidden", lookup);
+    document.getElementById("nav-products")?.classList.toggle("hidden", desk || lookup || taker || !showProducts);
+    document.getElementById("nav-money")?.classList.toggle("hidden", desk || lookup || taker || !(isAdmin() || can("finance.write") || canRead("ar") || canRead("ap")));
+    document.getElementById("nav-more")?.classList.toggle("hidden", lookup || taker);
     document.getElementById("more-tile-buying")?.classList.toggle("hidden", !showBuying);
     document.getElementById("more-tile-selling")?.classList.toggle("hidden", !showSelling);
     document.getElementById("more-tile-returns")?.classList.toggle("hidden", !showReturns);
@@ -375,6 +382,13 @@
       if (stickerDesk()) {
         showView("more");
         try { Sticker.open(); } catch (e) { /* sticker script */ }
+        return;
+      }
+      if (orderTaker()) {
+        showView("people");
+        try { await refreshAll(); } catch (e) {
+          toast(e?.message || "Failed to load data — try hard refresh", "error");
+        }
         return;
       }
       showView("today");

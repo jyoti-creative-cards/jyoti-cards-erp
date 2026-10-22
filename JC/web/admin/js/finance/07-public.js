@@ -7,7 +7,7 @@
     setApTab, toggleBill, addDebitNote, editDebitNote, voidDebitNote,
     openCustomerAr, setArTab, openArSettle, closeArSettle, submitArSettle, onArSettleAmount,
     toggleCollectDateLock, onCollectDateInput,
-    undoArPayment, undoApPayment, setRealEntriesOnly,
+    undoArPayment, undoApPayment, setRealEntriesOnly, viewCustomerBill,
     shareArStatement, shareApStatement,
     setArOpeningBalance, setApOpeningBalance, saveArOpeningBalance, saveApOpeningBalance,
     openExpenseForm, onExpenseHeadChange, addExpenseHead, addExpenseSubhead, editExpense, saveExpenseEdit, closeExpenseForm, submitExpense, deleteExpense, onExpenseFilterChange, clearExpenseFilters,

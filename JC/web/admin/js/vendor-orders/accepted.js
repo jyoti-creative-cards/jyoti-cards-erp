@@ -1668,53 +1668,17 @@ const VendorOrders = (() => {
           <div class="vo-wiz-count-pill">${wizardLines.length} selected</div>
         </div>
         ${cartHtml}
-        <div class="vo-wiz-search-wrap">
+        <div class="vo-wiz-search-wrap" style="display:flex;gap:8px;align-items:center;">
           <span class="vo-wiz-search-icon" aria-hidden="true">⌕</span>
-          <input id="vo-product-search" class="input vo-wiz-search" type="search" placeholder="Search product ID, category…" value="${ctx.esc(wizardProductSearch)}" oninput="VendorOrders.onProductSearch(this.value)" onkeydown="VendorOrders.onProductSearchKey(event)" onfocus="this.select()" autocomplete="off" />
-          ${wizardProductSearch ? `<button type="button" class="vo-wiz-search-clear" onclick="VendorOrders.onProductSearch('')">×</button>` : ""}
+          <input id="vo-product-search" class="input vo-wiz-search" type="text" placeholder="Search product ID, category…" value="${ctx.esc(wizardProductSearch)}" oninput="VendorOrders.onProductSearch(this.value)" onkeydown="VendorOrders.onProductSearchKey(event)" autocomplete="off" />
+          <input id="vo-add-qty" class="input" type="number" min="1" placeholder="Qty" style="width:88px;" />
+          <button type="button" id="vo-search-clear" class="vo-wiz-search-clear" style="${wizardProductSearch ? "" : "display:none"}" onclick="VendorOrders.onProductSearch('')">×</button>
         </div>
         <div class="vo-wiz-product-meta">
-          <span>Showing ${list.length} of ${wizardProducts.length}${wizardProductSearch ? " (search + selected)" : ""}</span>
-          ${wizardProductSearch && !shown.length ? `<button type="button" class="btn btn-ghost btn-sm" onclick="VendorOrders.onProductSearch('')">Clear search</button>` : ""}
+          <span id="vo-product-meta">Showing ${list.length} of ${wizardProducts.length}${wizardProductSearch ? " (search)" : ""}</span>
         </div>
         <div class="vo-wiz-products" id="vo-product-list">
-          ${list.length ? list.map(p => {
-            const line = wizardLines.find(l => l.catalog_product_id === p.id);
-            const qty = line ? line.quantity : 1;
-            const checked = !!line;
-            const img = (p.image_urls && p.image_urls[0]) || "";
-            const alts = (p.alternatives || []).map(a =>
-              `<button type="button" class="vo-alt-chip" onclick="event.stopPropagation();VendorOrders.swapProduct(${p.id},${a.catalog_product_id})">${ctx.esc(a.our_product_id)} · ${fmtPrice(a.buying_price)}</button>`
-            ).join("");
-            return `<div class="vo-wiz-product ${checked ? "selected" : ""}" onclick="VendorOrders.pickWizardProduct(${p.id})">
-              <div class="vo-wiz-product-main">
-                <input type="checkbox" ${checked ? "checked" : ""} onclick="event.stopPropagation();VendorOrders.toggleWizardProduct(${p.id}, this.checked)" />
-                ${thumb(img)}
-                <div class="vo-wiz-product-info">
-                  <strong>${ctx.esc(p.our_product_id)}${p.vendor_product_id ? ` / (${ctx.esc(p.vendor_product_id)})` : ""}</strong>
-                  <span class="vo-wiz-product-sub">${p.category ? ctx.esc(p.category) : "Product"}</span>
-                  <span class="vo-wiz-product-price">${fmtPrice(p.buying_price)}</span>
-                  ${alts ? `<div class="vo-alt-row" onclick="event.stopPropagation()">${alts}</div>` : ""}
-                </div>
-              </div>
-              <div class="vo-wiz-qty" onclick="event.stopPropagation()">
-                <label>Qty</label>
-                <div class="vo-wiz-qty-controls">
-                  <button type="button" class="vo-wiz-qty-btn" ${checked ? "" : "disabled"} onclick="VendorOrders.bumpWizardQty(${p.id}, -1)">−</button>
-                  <input type="number" min="1" class="input vo-wiz-qty-input" data-qty-for="${p.id}" value="${qty}" ${checked ? "" : "disabled"} onchange="VendorOrders.setWizardQty(${p.id}, this.value)" onkeydown="VendorOrders.onWizardQtyKey(event)" onclick="event.stopPropagation()" />
-                  <button type="button" class="vo-wiz-qty-btn" ${checked ? "" : "disabled"} onclick="VendorOrders.bumpWizardQty(${p.id}, 1)">+</button>
-                </div>
-              </div>
-            </div>`;
-          }).join("") : HubUI.emptyState({
-            title: !wizardProducts.length ? "No products yet" : "No matches",
-            sub: !wizardProducts.length
-              ? "No products for this vendor yet."
-              : `No products match “${wizardProductSearch}”.`,
-            ctaHtml: wizardProductSearch
-              ? `<button type="button" class="btn btn-secondary" onclick="VendorOrders.onProductSearch('')">Clear search</button>`
-              : "",
-          })}
+          ${wizardProductCards(list)}
         </div>`;
       footerEl.innerHTML = `
         <button class="btn btn-secondary" onclick="VendorOrders.wizardBack()">← Back</button>
@@ -1786,18 +1750,67 @@ const VendorOrders = (() => {
     });
   }
 
+  function pendingAddQty() {
+    const n = parseInt(String(document.getElementById("vo-add-qty")?.value || "").trim(), 10);
+    return Number.isFinite(n) && n > 0 ? n : 1;
+  }
+
+  function wizardProductCards(list) {
+    if (!list.length) {
+      return HubUI.emptyState({
+        title: !wizardProducts.length ? "No products yet" : "No matches",
+        sub: !wizardProducts.length
+          ? "No products for this vendor yet."
+          : `No products match “${wizardProductSearch}”.`,
+        ctaHtml: wizardProductSearch
+          ? `<button type="button" class="btn btn-secondary" onclick="VendorOrders.onProductSearch('')">Clear search</button>`
+          : "",
+      });
+    }
+    return list.map(p => {
+      const line = wizardLines.find(l => l.catalog_product_id === p.id);
+      const qty = line ? line.quantity : 1;
+      const checked = !!line;
+      const img = (p.image_urls && p.image_urls[0]) || "";
+      const alts = (p.alternatives || []).map(a =>
+        `<button type="button" class="vo-alt-chip" onclick="event.stopPropagation();VendorOrders.swapProduct(${p.id},${a.catalog_product_id})">${ctx.esc(a.our_product_id)} · ${fmtPrice(a.buying_price)}</button>`
+      ).join("");
+      return `<div class="vo-wiz-product ${checked ? "selected" : ""}" onclick="VendorOrders.pickWizardProduct(${p.id})">
+        <div class="vo-wiz-product-main">
+          <input type="checkbox" ${checked ? "checked" : ""} onclick="event.stopPropagation();VendorOrders.toggleWizardProduct(${p.id}, this.checked)" />
+          ${thumb(img)}
+          <div class="vo-wiz-product-info">
+            <strong>${ctx.esc(p.our_product_id)}${p.vendor_product_id ? ` (${ctx.esc(p.vendor_product_id)})` : ""}</strong>
+            <span class="vo-wiz-product-sub">${p.category ? ctx.esc(p.category) : "Product"}</span>
+            <span class="vo-wiz-product-price">${fmtPrice(p.buying_price)}</span>
+            ${alts ? `<div class="vo-alt-row" onclick="event.stopPropagation()">${alts}</div>` : ""}
+          </div>
+        </div>
+        <div class="vo-wiz-qty" onclick="event.stopPropagation()">
+          <label>Qty</label>
+          <div class="vo-wiz-qty-controls">
+            <button type="button" class="vo-wiz-qty-btn" ${checked ? "" : "disabled"} onclick="VendorOrders.bumpWizardQty(${p.id}, -1)">−</button>
+            <input type="number" min="1" class="input vo-wiz-qty-input" data-qty-for="${p.id}" value="${qty}" ${checked ? "" : "disabled"} onchange="VendorOrders.setWizardQty(${p.id}, this.value)" onkeydown="VendorOrders.onWizardQtyKey(event)" onclick="event.stopPropagation()" />
+            <button type="button" class="vo-wiz-qty-btn" ${checked ? "" : "disabled"} onclick="VendorOrders.bumpWizardQty(${p.id}, 1)">+</button>
+          </div>
+        </div>
+      </div>`;
+    }).join("");
+  }
+
   function onProductSearch(val) {
-    const prev = document.getElementById("vo-product-search");
-    const start = prev?.selectionStart;
     wizardProductSearch = val || "";
-    renderWizard().then(() => {
-      const inp = document.getElementById("vo-product-search");
-      if (!inp) return;
-      inp.focus();
-      if (typeof start === "number") {
-        try { inp.setSelectionRange(start, start); } catch (_) {}
-      }
-    });
+    const listEl = document.getElementById("vo-product-list");
+    if (!listEl) {
+      renderWizard();
+      return;
+    }
+    const shown = filterWizardProducts();
+    listEl.innerHTML = wizardProductCards(shown);
+    const meta = document.getElementById("vo-product-meta");
+    if (meta) meta.textContent = `Showing ${shown.length} of ${wizardProducts.length}${wizardProductSearch ? " (search)" : ""}`;
+    const clear = document.getElementById("vo-search-clear");
+    if (clear) clear.style.display = wizardProductSearch ? "" : "none";
   }
 
   function pickVendor(id) {
@@ -1818,19 +1831,23 @@ const VendorOrders = (() => {
 
   function toggleWizardProduct(productId, checked) {
     if (checked) {
-      if (!wizardLines.find(l => l.catalog_product_id === productId)) {
-        wizardLines.push({ catalog_product_id: productId, quantity: 1 });
-      }
-      focusQtyProductId = productId;
+      const qty = pendingAddQty();
+      const line = wizardLines.find(l => l.catalog_product_id === productId);
+      if (!line) wizardLines.push({ catalog_product_id: productId, quantity: qty });
+      else line.quantity = qty;
+      focusQtyProductId = null;
+      wizardProductSearch = "";
     } else {
       wizardLines = wizardLines.filter(l => l.catalog_product_id !== productId);
       focusQtyProductId = null;
     }
-    renderWizard();
+    Promise.resolve(renderWizard()).then(() => document.getElementById("vo-product-search")?.focus());
   }
 
   function pickWizardProduct(productId) {
-    if (wizardLines.some(l => l.catalog_product_id === productId)) {
+    const typed = String(document.getElementById("vo-add-qty")?.value || "").trim();
+    const existing = wizardLines.find(l => l.catalog_product_id === productId);
+    if (existing && !typed) {
       const el = document.querySelector(`[data-qty-for="${productId}"]`);
       if (el) { el.disabled = false; el.focus(); el.select(); }
       return;

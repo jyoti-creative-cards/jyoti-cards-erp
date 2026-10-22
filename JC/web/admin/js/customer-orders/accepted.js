@@ -339,7 +339,7 @@ const CustomerOrders = (() => {
   function markingBanner(note) {
     const text = String(note || "").trim();
     if (!text) return "";
-    return `<div style="margin-top:6px;padding:6px 8px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;font-weight:700;font-size:13px;">${ctx.esc(text)}</div>`;
+    return `<div style="margin-top:6px;padding:6px 8px;background:#fee2e2;border:1px solid #dc2626;border-radius:6px;font-weight:700;font-size:13px;color:#b91c1c;">${ctx.esc(text)}</div>`;
   }
 
   function calcNetFromDisc(rate, discPct) {
@@ -914,7 +914,7 @@ const CustomerOrders = (() => {
         const receiptBit = b.transport_receipt_number ? ` · Rcpt ${ctx.esc(b.transport_receipt_number)}` : "";
         return HubUI.partyCard({
           title: b.display_name || `Bill ${b.bill_number}`,
-          meta: `${fmtPrice(b.grand_total)} · ${ctx.fmtDay(b.display_date || b.bill_date)}${modeLbl ? ` · ${modeLbl}` : ""}${chargeBit}${receiptBit}${(b.additional_charges || []).filter(c => Number(c.amount) > 0).map(c => ` · ${ctx.esc(c.name)} ${fmtPrice(c.amount)}`).join("")}${b.status && b.status !== "open" ? ` · ${ctx.esc(b.status)}` : ""}${b.narration ? `<div style="margin-top:2px;">${ctx.esc(b.narration)}</div>` : ""}`,
+          meta: `${fmtPrice(b.grand_total)} · ${ctx.fmtDay(b.display_date || b.bill_date)}${modeLbl ? ` · ${modeLbl}` : ""}${chargeBit}${receiptBit}${(b.additional_charges || []).filter(c => Number(c.amount) > 0).map(c => ` · ${ctx.esc(c.name)} ${fmtPrice(c.amount)}`).join("")}${b.status && b.status !== "open" ? ` · ${ctx.esc(b.status)}` : ""}${b.narration ? `<div style="margin-top:4px;color:#b91c1c;font-weight:700;">${ctx.esc(b.narration)}</div>` : ""}`,
           pillHtml: "",
           primaryLabel: canEditBill ? "Edit" : "Print",
           primaryOnclick: canEditBill
@@ -970,7 +970,7 @@ const CustomerOrders = (() => {
         if (ctx.isAdmin?.()) more.push({ label: "Void (recycle bin)", onclick: `CustomerOrders.voidPlacement(${p.id})`, danger: true });
         return HubUI.partyCard({
           title: p.display_name || `Order #${p.id}`,
-          meta: `${ctx.fmtDay(p.display_date)}${p.customer_notes ? ` · ${ctx.esc(p.customer_notes)}` : ""}${p.cancel_reason ? `<div style="color:var(--danger);margin-top:2px;">Cancelled: ${ctx.esc(p.cancel_reason)}</div>` : ""}`,
+          meta: `${ctx.fmtDay(p.display_date)}${p.customer_notes ? `<div style="margin-top:4px;color:#b91c1c;font-weight:700;">${ctx.esc(p.customer_notes)}</div>` : ""}${p.cancel_reason ? `<div style="color:var(--danger);margin-top:2px;">Cancelled: ${ctx.esc(p.cancel_reason)}</div>` : ""}`,
           pillHtml: p.cancel_reason ? HubUI.pill("Cancelled", "danger") : "",
           primaryLabel: canEdit ? "Edit" : null,
           primaryOnclick: canEdit ? `CustomerOrders.openEditPlacement(${p.id})` : "",
@@ -1003,7 +1003,7 @@ const CustomerOrders = (() => {
       </tbody></table>`;
       return HubUI.partyCard({
         title: p.display_name || `Placement #${p.id}`,
-        meta: `${ctx.fmtDay(p.display_date)}${p.customer_notes ? ` · ${ctx.esc(p.customer_notes)}` : ""}${p.cancel_reason ? `<div style="color:var(--danger);margin-top:2px;">Cancelled: ${ctx.esc(p.cancel_reason)}</div>` : ""}`,
+        meta: `${ctx.fmtDay(p.display_date)}${p.customer_notes ? `<div style="margin-top:4px;color:#b91c1c;font-weight:700;">${ctx.esc(p.customer_notes)}</div>` : ""}${p.cancel_reason ? `<div style="color:var(--danger);margin-top:2px;">Cancelled: ${ctx.esc(p.cancel_reason)}</div>` : ""}`,
         pillHtml: currentBucket === "cancelled" || p.cancel_reason || p.status === "cancelled"
           ? HubUI.pill("Cancelled", "danger")
           : HubUI.pill(currentBucket === "closed" || p.status === "closed" ? "Closed" : "History", "muted"),
@@ -1387,24 +1387,40 @@ const CustomerOrders = (() => {
   }
 
   function cancelBill(billId) {
-    // Same fix as voidBill below: promptReason's modal already states the
-    // consequence and has its own Confirm/Cancel — a second native confirm() after
-    // it was a redundant double dialog that silently swallowed the reason on Cancel.
-    promptReason("Cancel bill — stock is released back to available. This qty drops off the order; place a fresh order to sell it again. Freight cleared.", async (reason) => {
+    document.getElementById("modal-title").textContent = "Cancel this bill";
+    document.getElementById("modal-body").innerHTML = `
+      <label class="label">Your cancel key</label>
+      <input class="input" id="co-cancel-key" type="password" autocomplete="off" placeholder="Your own key" style="width:100%;margin-bottom:12px;" />
+      <label class="label">Reason (required)</label>
+      <textarea class="input" id="co-reason-input" rows="3" style="width:100%;"></textarea>
+      <p style="font-size:13px;color:var(--muted);margin:10px 0 0;">Cancel only the bill when the order is right and the bill is wrong, such as transport or charges. The order stays booked. Cancel the complete order when this sale should not stay.</p>`;
+    document.getElementById("modal-footer").innerHTML = `
+      <button class="btn btn-secondary" onclick="App.closeModal()">Back</button>
+      <button class="btn btn-secondary" id="co-cancel-bill-only">Cancel bill, keep order</button>
+      <button class="btn btn-danger" id="co-cancel-bill-all">Cancel complete order</button>`;
+    const go = (keepOrder) => {
+      const reason = (document.getElementById("co-reason-input")?.value || "").trim();
+      const passKey = (document.getElementById("co-cancel-key")?.value || "").trim();
+      if (!passKey) return ctx.toast("Enter your cancel key", "error");
+      if (!reason) return ctx.toast("Enter a reason", "error");
+      window.__jcCancelKey = passKey;
+      App.closeModal();
       ctx.showLoading?.();
-      try {
-        await ctx.api(`/customer-orders/bills/${billId}/cancel`, {
-          method: "POST",
-          body: JSON.stringify({ reason }),
-        });
-        ctx.toast("Bill cancelled — stock released", "success");
+      ctx.api(`/customer-orders/bills/${billId}/cancel`, {
+        method: "POST",
+        body: JSON.stringify({ reason, keep_order: keepOrder }),
+      }).then(async () => {
+        ctx.toast(keepOrder ? "Bill cancelled. Order stays booked." : "Bill and order cancelled. Stock released.", "success");
         ctx.invalidateCache?.("/customer-orders");
         ctx.invalidateCache?.("/freight-agents");
         ctx.invalidateCache?.("/stock");
-        await openDetail(detailCustomerId, "open");
-      } catch (e) { ctx.toast(e.message, "error"); }
-      finally { ctx.hideLoading?.(); }
-    });
+        await openDetail(detailCustomerId, keepOrder ? "open" : "open");
+      }).catch(e => ctx.toast(e.message, "error"))
+        .finally(() => ctx.hideLoading?.());
+    };
+    document.getElementById("co-cancel-bill-only").onclick = () => go(true);
+    document.getElementById("co-cancel-bill-all").onclick = () => go(false);
+    document.getElementById("modal").classList.remove("hidden");
   }
 
   function voidBill(billId) {
@@ -2675,6 +2691,7 @@ const CustomerOrders = (() => {
     if (input) input.value = "";
     const box = document.getElementById("co-order-customer-matches");
     if (box) box.innerHTML = "";
+    loadBookedOrders();
     document.getElementById("co-order-item")?.focus();
   }
 
@@ -2771,6 +2788,7 @@ const CustomerOrders = (() => {
         <input id="co-order-customer" class="input" type="text" placeholder="Name, city, or number" autocomplete="off" oninput="CustomerOrders.onOfflineCustomerSearch(this.value)" />
         <div id="co-order-customer-picked" style="margin:6px 0;font-weight:600;">${picked ? ctx.esc((picked.business_name || "") + (picked.city_name ? " · " + picked.city_name : "")) : ""}</div>
         <div id="co-order-customer-matches"></div>`}
+      <div id="co-order-booked"></div>
       <label class="label">Item number</label>
       <input id="co-order-item" class="input" type="text" placeholder="Type the item number" autocomplete="off" oninput="CustomerOrders.onOfflineSearchInput(this.value)" onkeydown="CustomerOrders.onOfflineSearchKey(event)" />
       <div id="co-order-item-matches"></div>
@@ -2782,16 +2800,46 @@ const CustomerOrders = (() => {
         </div>
         <div>
           <label class="label">Marking</label>
-          <input id="co-order-note" class="input" style="border:2px solid #f59e0b;background:#fffbeb;font-weight:600;" placeholder="Hold. Do not bill. Bill after 5 days." value="${ctx.esc(offlineNotes || "")}" oninput="CustomerOrders.setOfflineNotes(this.value)" />
-          <p style="margin:4px 0 0;font-size:12px;color:#92400e;">Shown to the person who creates the bill. Use it when the quantity should stay reserved.</p>
+          <input id="co-order-note" class="input" style="border:2px solid #dc2626;background:#fef2f2;font-weight:700;color:#b91c1c;" placeholder="Hold. Do not bill. Bill after 5 days." value="${ctx.esc(offlineNotes || "")}" oninput="CustomerOrders.setOfflineNotes(this.value)" />
+          <p style="margin:4px 0 0;font-size:12px;color:#b91c1c;">Shown in red on the bill. Use it when the quantity should stay reserved.</p>
         </div>
       </div>`;
     footerEl.innerHTML = `
       <button class="btn btn-secondary" onclick="CustomerOrders.closeOfflineWizard()">Cancel</button>
       <button class="btn btn-primary" ${offlineBusy ? "disabled" : ""} onclick="CustomerOrders.submitOffline()">${offlineBusy ? "Saving…" : "Save order"}</button>`;
     paintOrderLines();
+    loadBookedOrders();
     const focusId = editing || offlineCustomerId ? "co-order-item" : "co-order-customer";
     document.getElementById(focusId)?.focus();
+  }
+
+  function bookedOrdersHtml(detail) {
+    const lines = detail?.open_lines || [];
+    const notes = (detail?.placements || []).map(p => p.customer_notes).filter(Boolean);
+    if (!lines.length && !notes.length) {
+      return `<p style="font-size:13px;color:var(--muted);margin:6px 0 10px;">No confirmed order waiting for this customer.</p>`;
+    }
+    const rows = lines.map(ln => `<div style="display:flex;justify-content:space-between;gap:8px;font-size:13px;padding:4px 0;border-bottom:1px solid #fecaca;"><strong>${ctx.esc(ln.our_product_id)}</strong><span>${ln.quantity_open} booked</span></div>`).join("");
+    return `<div style="margin:8px 0 12px;padding:8px 10px;background:#fef2f2;border:1px solid #dc2626;border-radius:8px;">
+      <strong style="color:#b91c1c;">Already booked. Bill this. Do not make a new order if they only want part of it billed.</strong>
+      ${notes.length ? `<div style="color:#b91c1c;font-weight:700;margin-top:4px;">${ctx.esc(notes.join(" · "))}</div>` : ""}
+      ${rows}
+    </div>`;
+  }
+
+  async function loadBookedOrders() {
+    const box = document.getElementById("co-order-booked");
+    if (!box) return;
+    if (!offlineCustomerId) { box.innerHTML = ""; return; }
+    box.innerHTML = `<p style="font-size:13px;color:var(--muted);margin:6px 0 10px;">Checking booked orders…</p>`;
+    try {
+      const detail = await ctx.api(`/customer-orders/customer/${offlineCustomerId}?bucket=open`, {}, 0);
+      const still = document.getElementById("co-order-booked");
+      if (still) still.innerHTML = bookedOrdersHtml(detail);
+    } catch (_) {
+      const still = document.getElementById("co-order-booked");
+      if (still) still.innerHTML = "";
+    }
   }
 
   function paintOrderLines() {

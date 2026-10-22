@@ -34,12 +34,14 @@ const Products = (() => {
     return city ? `${name} · ${city}` : name;
   }
 
+  function idWithVendor(it) {
+    const id = ctx.esc(it.our_product_id || "");
+    return it.vendor_product_id ? `${id} (${ctx.esc(it.vendor_product_id)})` : id;
+  }
+
   function itemIdHtml(it) {
     const year = it.year_group ? `<span class="prod-year-pill">${ctx.esc(it.year_group)}</span>` : "";
-    const vid = it.vendor_product_id
-      ? `<div class="prod-card-vsku">Vendor # ${ctx.esc(it.vendor_product_id)}</div>`
-      : "";
-    return `<div class="prod-card-id-row"><div class="prod-card-id">${ctx.esc(it.our_product_id)}</div>${year}</div>${vid}`;
+    return `<div class="prod-card-id-row"><div class="prod-card-id">${idWithVendor(it)}</div>${year}</div>`;
   }
 
   function hasRealSell(it) {
@@ -862,7 +864,7 @@ const Products = (() => {
           ${rows.map(it => `<tr data-bulk-id="${it.id}">
             <td>${listThumb(it)}</td>
             <td>
-              <strong class="prod-list-id">${ctx.esc(it.our_product_id)}</strong>
+              <strong class="prod-list-id">${idWithVendor(it)}</strong>
               ${it.year_group ? `<span class="prod-year-pill">${ctx.esc(it.year_group)}</span>` : ""}
               <div class="prod-list-sub prod-price-missing">Sell not set</div>
             </td>
@@ -924,9 +926,8 @@ const Products = (() => {
           return `<tr class="clickable" onclick="Products.openItem('${it.kind}', ${it.id})">
           <td>${listThumb(it)}</td>
           <td>
-            <strong class="prod-list-id">${ctx.esc(it.our_product_id)}</strong>
+            <strong class="prod-list-id">${idWithVendor(it)}</strong>
             ${it.year_group ? `<span class="prod-year-pill">${ctx.esc(it.year_group)}</span>` : ""}
-            ${it.vendor_product_id ? `<div class="prod-list-sub">Vendor # ${ctx.esc(it.vendor_product_id)}</div>` : ""}
             ${it.marking ? `<div class="prod-list-sub"><span class="badge badge-blue" style="font-size:10px;">${ctx.esc(it.marking)}</span></div>` : ""}
           </td>
           <td><span class="badge ${it.kind === "addon" ? "badge-amber" : "badge-blue"}">${it.kind === "addon" ? "Add-on" : "Product"}</span></td>

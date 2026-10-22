@@ -368,12 +368,36 @@ const Reports = (() => {
     setTimeout(() => { try { w.print(); } catch (_) {} }, 200);
   }
 
+  function excelXml(text) {
+    return String(text || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+
+  function excelCell(text) {
+    const clean = String(text || "").replace(/\s+/g, " ").trim();
+    const numeric = clean.replace(/^\(-\)/, "-").replace(/,/g, "").replace(/\s*pcs\s*/gi, "").trim();
+    if (/^-?\d+(\.\d+)?$/.test(numeric)) {
+      return `<Cell><Data ss:Type="Number">${numeric}</Data></Cell>`;
+    }
+    return `<Cell><Data ss:Type="String">${excelXml(clean)}</Data></Cell>`;
+  }
+
   function exportCurrentExcel() {
     const root = reportPrintRoot();
     const tables = reportTables(root);
     if (!tables.length) return ctx.toast?.("Nothing to export", "error");
-    const html = `<html><head><meta charset="utf-8"></head><body>${tables.map(t => t.outerHTML).join("<br>")}</body></html>`;
-    const blob = new Blob([html], { type: "application/vnd.ms-excel" });
+    const rows = [];
+    tables.forEach((table, index) => {
+      if (index) rows.push("<Row></Row>");
+      table.querySelectorAll("tr").forEach(tr => {
+        const cells = [...tr.children]
+          .filter(td => td.tagName === "TD" || td.tagName === "TH")
+          .map(td => excelCell((td.innerText || "").replace(/\s+/g, " ").trim()))
+          .join("");
+        rows.push(`<Row>${cells}</Row>`);
+      });
+    });
+    const xml = `<?xml version="1.0"?>\n<?mso-application progid="Excel.Sheet"?>\n<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Worksheet ss:Name="Report"><Table>${rows.join("")}</Table></Worksheet></Workbook>`;
+    const blob = new Blob([xml], { type: "application/vnd.ms-excel" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = `${String(chip || "report").replace(/[^a-z0-9_-]+/gi, "-")}.xls`;
@@ -837,14 +861,18 @@ const Reports = (() => {
   function tallyCell(raw, pcs) {
     if (raw == null || raw === "" || Number(raw) === 0) return "";
     const n = Number(raw);
-    const abs = Math.abs(n).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const abs = Math.abs(n).toLocaleString("en-IN", pcs
+      ? { maximumFractionDigits: 0 }
+      : { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const body = pcs ? `${abs} pcs` : abs;
     return n < 0 ? `(-)${body}` : body;
   }
 
   function tallyTotal(raw, pcs) {
     const n = Number(raw) || 0;
-    const abs = Math.abs(n).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const abs = Math.abs(n).toLocaleString("en-IN", pcs
+      ? { maximumFractionDigits: 0 }
+      : { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const body = pcs ? `${abs} pcs` : abs;
     return n < 0 ? `(-)${body}` : body;
   }

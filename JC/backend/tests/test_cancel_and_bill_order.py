@@ -15,7 +15,8 @@ from app.models.customer_order import CustomerOpenLine, CustomerOrder, CustomerO
 from app.models.staff import Staff
 from app.models.vendor import Vendor
 from app.services.cancel_key import set_cancel_key, staff_for_key
-from app.services.customer_bills.cancel import _drop_sale_from_orders
+from app.services.customer_bills.cancel import _drop_sale_from_orders, _return_billed_qty_to_order
+from app.services.customer_selling.confirm import settle_confirmed_after_bill
 from app.services.customer_bills.read import get_process_lines
 from app.services.passwords import hash_password
 from app.services.report_parts.lists import list_sales
@@ -117,6 +118,78 @@ def test_cancelled_qty_leaves_the_order(db):
     assert line.quantity_billed == 0
     assert line.quantity == 0
     assert line.status == "cancelled"
+
+
+def test_keep_order_puts_qty_back_on_the_booking(db):
+    vendor, customer = _party(db)
+    product = _product(db, vendor, "KEEP", "2026")
+    order = CustomerOrder(customer_id=customer.id, bucket="open", status="open", is_open=False)
+    db.add(order)
+    db.flush()
+    placement = CustomerOrderPlacement(customer_order_id=order.id, status="billed", placed_at=WHEN)
+    db.add(placement)
+    db.flush()
+    line = CustomerOrderLine(
+        placement_id=placement.id,
+        catalog_product_id=product.id,
+        our_product_id=product.our_product_id,
+        quantity=10,
+        quantity_billed=10,
+        unit_price=Decimal("8"),
+        status="active",
+    )
+    db.add(line)
+    db.add(CustomerOpenLine(
+        customer_id=customer.id, catalog_product_id=product.id, our_product_id="KEEP",
+        quantity_received=10, quantity_open=0, quantity_billed=10, unit_price=Decimal("8"), status="open",
+    ))
+    db.commit()
+    _return_billed_qty_to_order(db, customer.id, product.id, 10, None)
+    db.flush()
+    db.refresh(line)
+    db.refresh(placement)
+    db.refresh(order)
+    open_row = db.query(CustomerOpenLine).filter(CustomerOpenLine.customer_id == customer.id).one()
+    assert line.quantity == 10
+    assert line.quantity_billed == 0
+    assert line.status == "active"
+    assert placement.status == "open"
+    assert order.is_open is True
+    assert open_row.quantity_open == 10
+    assert open_row.quantity_billed == 0
+
+
+def test_fully_billed_confirmed_order_leaves_the_list(db):
+    vendor, customer = _party(db)
+    product = _product(db, vendor, "BILLED", "2026")
+    order = CustomerOrder(customer_id=customer.id, bucket="open", status="open", is_open=True)
+    db.add(order)
+    db.flush()
+    placement = CustomerOrderPlacement(customer_order_id=order.id, status="open", placed_at=WHEN)
+    db.add(placement)
+    db.flush()
+    db.add(CustomerOrderLine(
+        placement_id=placement.id,
+        catalog_product_id=product.id,
+        our_product_id=product.our_product_id,
+        quantity=4,
+        quantity_billed=4,
+        unit_price=Decimal("8"),
+        status="active",
+    ))
+    db.add(CustomerOpenLine(
+        customer_id=customer.id, catalog_product_id=product.id, our_product_id="BILLED",
+        quantity_received=4, quantity_open=4, quantity_billed=4, unit_price=Decimal("8"), status="open",
+    ))
+    db.commit()
+    settle_confirmed_after_bill(db, customer.id)
+    db.flush()
+    db.refresh(order)
+    db.refresh(placement)
+    open_row = db.query(CustomerOpenLine).filter(CustomerOpenLine.customer_id == customer.id).one()
+    assert placement.status == "billed"
+    assert order.is_open is False
+    assert open_row.quantity_open == 0
 
 
 def test_bill_lines_stay_in_punch_order(db):

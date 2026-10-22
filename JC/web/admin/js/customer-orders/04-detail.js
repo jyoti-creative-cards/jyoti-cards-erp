@@ -154,7 +154,7 @@
         const receiptBit = b.transport_receipt_number ? ` · Rcpt ${ctx.esc(b.transport_receipt_number)}` : "";
         return HubUI.partyCard({
           title: b.display_name || `Bill ${b.bill_number}`,
-          meta: `${fmtPrice(b.grand_total)} · ${ctx.fmtDay(b.display_date || b.bill_date)}${modeLbl ? ` · ${modeLbl}` : ""}${chargeBit}${receiptBit}${(b.additional_charges || []).filter(c => Number(c.amount) > 0).map(c => ` · ${ctx.esc(c.name)} ${fmtPrice(c.amount)}`).join("")}${b.status && b.status !== "open" ? ` · ${ctx.esc(b.status)}` : ""}${b.narration ? `<div style="margin-top:2px;">${ctx.esc(b.narration)}</div>` : ""}`,
+          meta: `${fmtPrice(b.grand_total)} · ${ctx.fmtDay(b.display_date || b.bill_date)}${modeLbl ? ` · ${modeLbl}` : ""}${chargeBit}${receiptBit}${(b.additional_charges || []).filter(c => Number(c.amount) > 0).map(c => ` · ${ctx.esc(c.name)} ${fmtPrice(c.amount)}`).join("")}${b.status && b.status !== "open" ? ` · ${ctx.esc(b.status)}` : ""}${b.narration ? `<div style="margin-top:4px;color:#b91c1c;font-weight:700;">${ctx.esc(b.narration)}</div>` : ""}`,
           pillHtml: "",
           primaryLabel: canEditBill ? "Edit" : "Print",
           primaryOnclick: canEditBill
@@ -210,7 +210,7 @@
         if (ctx.isAdmin?.()) more.push({ label: "Void (recycle bin)", onclick: `CustomerOrders.voidPlacement(${p.id})`, danger: true });
         return HubUI.partyCard({
           title: p.display_name || `Order #${p.id}`,
-          meta: `${ctx.fmtDay(p.display_date)}${p.customer_notes ? ` · ${ctx.esc(p.customer_notes)}` : ""}${p.cancel_reason ? `<div style="color:var(--danger);margin-top:2px;">Cancelled: ${ctx.esc(p.cancel_reason)}</div>` : ""}`,
+          meta: `${ctx.fmtDay(p.display_date)}${p.customer_notes ? `<div style="margin-top:4px;color:#b91c1c;font-weight:700;">${ctx.esc(p.customer_notes)}</div>` : ""}${p.cancel_reason ? `<div style="color:var(--danger);margin-top:2px;">Cancelled: ${ctx.esc(p.cancel_reason)}</div>` : ""}`,
           pillHtml: p.cancel_reason ? HubUI.pill("Cancelled", "danger") : "",
           primaryLabel: canEdit ? "Edit" : null,
           primaryOnclick: canEdit ? `CustomerOrders.openEditPlacement(${p.id})` : "",
@@ -243,7 +243,7 @@
       </tbody></table>`;
       return HubUI.partyCard({
         title: p.display_name || `Placement #${p.id}`,
-        meta: `${ctx.fmtDay(p.display_date)}${p.customer_notes ? ` · ${ctx.esc(p.customer_notes)}` : ""}${p.cancel_reason ? `<div style="color:var(--danger);margin-top:2px;">Cancelled: ${ctx.esc(p.cancel_reason)}</div>` : ""}`,
+        meta: `${ctx.fmtDay(p.display_date)}${p.customer_notes ? `<div style="margin-top:4px;color:#b91c1c;font-weight:700;">${ctx.esc(p.customer_notes)}</div>` : ""}${p.cancel_reason ? `<div style="color:var(--danger);margin-top:2px;">Cancelled: ${ctx.esc(p.cancel_reason)}</div>` : ""}`,
         pillHtml: currentBucket === "cancelled" || p.cancel_reason || p.status === "cancelled"
           ? HubUI.pill("Cancelled", "danger")
           : HubUI.pill(currentBucket === "closed" || p.status === "closed" ? "Closed" : "History", "muted"),
@@ -627,24 +627,40 @@
   }
 
   function cancelBill(billId) {
-    // Same fix as voidBill below: promptReason's modal already states the
-    // consequence and has its own Confirm/Cancel — a second native confirm() after
-    // it was a redundant double dialog that silently swallowed the reason on Cancel.
-    promptReason("Cancel bill — stock is released back to available. This qty drops off the order; place a fresh order to sell it again. Freight cleared.", async (reason) => {
+    document.getElementById("modal-title").textContent = "Cancel this bill";
+    document.getElementById("modal-body").innerHTML = `
+      <label class="label">Your cancel key</label>
+      <input class="input" id="co-cancel-key" type="password" autocomplete="off" placeholder="Your own key" style="width:100%;margin-bottom:12px;" />
+      <label class="label">Reason (required)</label>
+      <textarea class="input" id="co-reason-input" rows="3" style="width:100%;"></textarea>
+      <p style="font-size:13px;color:var(--muted);margin:10px 0 0;">Cancel only the bill when the order is right and the bill is wrong, such as transport or charges. The order stays booked. Cancel the complete order when this sale should not stay.</p>`;
+    document.getElementById("modal-footer").innerHTML = `
+      <button class="btn btn-secondary" onclick="App.closeModal()">Back</button>
+      <button class="btn btn-secondary" id="co-cancel-bill-only">Cancel bill, keep order</button>
+      <button class="btn btn-danger" id="co-cancel-bill-all">Cancel complete order</button>`;
+    const go = (keepOrder) => {
+      const reason = (document.getElementById("co-reason-input")?.value || "").trim();
+      const passKey = (document.getElementById("co-cancel-key")?.value || "").trim();
+      if (!passKey) return ctx.toast("Enter your cancel key", "error");
+      if (!reason) return ctx.toast("Enter a reason", "error");
+      window.__jcCancelKey = passKey;
+      App.closeModal();
       ctx.showLoading?.();
-      try {
-        await ctx.api(`/customer-orders/bills/${billId}/cancel`, {
-          method: "POST",
-          body: JSON.stringify({ reason }),
-        });
-        ctx.toast("Bill cancelled — stock released", "success");
+      ctx.api(`/customer-orders/bills/${billId}/cancel`, {
+        method: "POST",
+        body: JSON.stringify({ reason, keep_order: keepOrder }),
+      }).then(async () => {
+        ctx.toast(keepOrder ? "Bill cancelled. Order stays booked." : "Bill and order cancelled. Stock released.", "success");
         ctx.invalidateCache?.("/customer-orders");
         ctx.invalidateCache?.("/freight-agents");
         ctx.invalidateCache?.("/stock");
-        await openDetail(detailCustomerId, "open");
-      } catch (e) { ctx.toast(e.message, "error"); }
-      finally { ctx.hideLoading?.(); }
-    });
+        await openDetail(detailCustomerId, keepOrder ? "open" : "open");
+      }).catch(e => ctx.toast(e.message, "error"))
+        .finally(() => ctx.hideLoading?.());
+    };
+    document.getElementById("co-cancel-bill-only").onclick = () => go(true);
+    document.getElementById("co-cancel-bill-all").onclick = () => go(false);
+    document.getElementById("modal").classList.remove("hidden");
   }
 
   function voidBill(billId) {

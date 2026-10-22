@@ -72,6 +72,10 @@
       if (currentViewName !== "lookup") showView("lookup", { replace: true });
       return;
     }
+    if (orderTaker() && resolved !== "people") {
+      if (currentViewName !== "people") showView("people", { replace: true });
+      return;
+    }
     if (stickerDesk() && resolved !== "more") {
       if (currentViewName !== "more") showView("more", { replace: true });
       try { Sticker.open(); } catch (e) { /* sticker script */ }
@@ -100,7 +104,8 @@
     } else if (name === "people") {
       document.getElementById("view-people")?.classList.remove("hidden");
       document.getElementById("nav-people")?.classList.add("active");
-      if (peopleTab) showPeopleTab(peopleTab);
+      if (orderTaker() && !peopleTab) showPeopleTab("customers");
+      else if (peopleTab) showPeopleTab(peopleTab);
       else showPeopleHub();
     } else if (name === "products") {
       document.getElementById("view-products")?.classList.remove("hidden");

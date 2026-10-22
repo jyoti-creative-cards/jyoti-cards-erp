@@ -11,12 +11,14 @@
     return city ? `${name} · ${city}` : name;
   }
 
+  function idWithVendor(it) {
+    const id = ctx.esc(it.our_product_id || "");
+    return it.vendor_product_id ? `${id} (${ctx.esc(it.vendor_product_id)})` : id;
+  }
+
   function itemIdHtml(it) {
     const year = it.year_group ? `<span class="prod-year-pill">${ctx.esc(it.year_group)}</span>` : "";
-    const vid = it.vendor_product_id
-      ? `<div class="prod-card-vsku">Vendor # ${ctx.esc(it.vendor_product_id)}</div>`
-      : "";
-    return `<div class="prod-card-id-row"><div class="prod-card-id">${ctx.esc(it.our_product_id)}</div>${year}</div>${vid}`;
+    return `<div class="prod-card-id-row"><div class="prod-card-id">${idWithVendor(it)}</div>${year}</div>`;
   }
 
   function hasRealSell(it) {

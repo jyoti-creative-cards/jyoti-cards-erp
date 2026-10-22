@@ -261,7 +261,7 @@
   function markingBanner(note) {
     const text = String(note || "").trim();
     if (!text) return "";
-    return `<div style="margin-top:6px;padding:6px 8px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;font-weight:700;font-size:13px;">${ctx.esc(text)}</div>`;
+    return `<div style="margin-top:6px;padding:6px 8px;background:#fee2e2;border:1px solid #dc2626;border-radius:6px;font-weight:700;font-size:13px;color:#b91c1c;">${ctx.esc(text)}</div>`;
   }
 
   function calcNetFromDisc(rate, discPct) {

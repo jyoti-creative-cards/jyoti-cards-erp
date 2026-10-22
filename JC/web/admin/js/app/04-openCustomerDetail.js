@@ -91,14 +91,19 @@
     // Everyday jobs: phone/offline order + bill + their order list.
     if (canSell) {
       bits.push(`<button class="btn btn-primary btn-sm" onclick="App.createCustomerOrder(${id})">Order</button>`);
-      bits.push(`<button class="btn btn-secondary btn-sm" onclick="App.billCustomer(${id})">Bill</button>`);
-      bits.push(`<button class="btn btn-secondary btn-sm" onclick="App.openSelling(${id})">Orders</button>`);
+      if (!orderTaker()) {
+        bits.push(`<button class="btn btn-secondary btn-sm" onclick="App.billCustomer(${id})">Bill</button>`);
+        bits.push(`<button class="btn btn-secondary btn-sm" onclick="App.openSelling(${id})">Orders</button>`);
+      }
+    }
+    if (canSeeAr) {
+      bits.push(`<button class="btn btn-secondary btn-sm" onclick="App.showCustomerMoneyLedger(${id})">Ledger</button>`);
     }
     if (due && canCollectAr) {
       bits.push(`<button class="btn btn-secondary btn-sm" onclick="App.collectCustomer(${id})">Collect</button>`);
     }
     const more = [];
-    if (canSell) {
+    if (canSell && !orderTaker()) {
       more.push(`<button type="button" onclick="App.closeDetail();App.showView('returns');Returns.openCreate?.(${id})">Return</button>`);
     }
     if (canCollectAr && !due) more.push(`<button type="button" onclick="App.collectCustomer(${id})">Collect</button>`);
@@ -143,6 +148,38 @@
       if (wrap) wrap.innerHTML = renderCustomerStatement(id);
     } catch (e) {
       if (wrap) wrap.innerHTML = `<p style="color:var(--danger);font-size:13px;">${esc(e.message)}</p>`;
+    }
+  }
+
+  async function showCustomerMoneyLedger(id) {
+    const wrap = document.getElementById("customer-ledger-wrap");
+    if (!wrap) return;
+    wrap.innerHTML = `<p style="color:var(--muted);font-size:13px;">Loading ledger…</p>`;
+    try {
+      const ar = await api(`/accounts-receivable/customer/${id}`, {}, 0);
+      const rows = (ar?.entries || []).slice().sort((a, b) => String(b.display_date || b.created_at || "").localeCompare(String(a.display_date || a.created_at || "")));
+      if (!rows.length) {
+        wrap.innerHTML = `<p style="color:var(--muted);font-size:13px;">No bills or payments yet.</p>`;
+        return;
+      }
+      wrap.innerHTML = `<div class="card table-wrap"><table class="data"><thead><tr>
+        <th>When</th><th>What</th><th>Detail</th><th>Amount</th><th>Balance</th><th></th>
+      </tr></thead><tbody>
+        ${rows.map(e => {
+          const kind = { bill: "Bill", credit_note: "Credit", opening_balance: "Opening", payment: "Payment", payment_reversal: "Reversal" }[e.entry_type] || e.entry_type;
+          const view = e.bill_id ? `<button type="button" class="btn btn-ghost btn-sm" onclick="Finance.viewCustomerBill(${e.bill_id})">View detail</button>` : "";
+          return `<tr>
+            <td style="font-size:12px;">${fmtDay(e.display_date || e.value_date || e.created_at)}</td>
+            <td>${esc(kind)}</td>
+            <td>${esc(e.display_name || e.description || "")}</td>
+            <td>${fmtPersonMoney(e.signed_amount)}</td>
+            <td><strong>${fmtPersonMoney(e.running_balance)}</strong></td>
+            <td>${view}</td>
+          </tr>`;
+        }).join("")}
+      </tbody></table></div>`;
+    } catch (e) {
+      wrap.innerHTML = `<p style="color:var(--danger);font-size:13px;">${esc(e.message)}</p>`;
     }
   }
 

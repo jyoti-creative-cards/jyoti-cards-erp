@@ -158,12 +158,70 @@ def _drop_sale_from_orders(db: Session, customer_id: int, catalog_product_id: in
         remaining -= take
 
 
+def _return_billed_qty_to_order(
+    db: Session, customer_id: int, catalog_product_id: int, qty: int, skip_placement_id: int | None
+) -> None:
+    """Put a cancelled bill's pieces back on the original order. Stock stays reserved."""
+    remaining = int(qty or 0)
+    if remaining <= 0:
+        return
+    rows = (
+        db.query(CustomerOrderLine, CustomerOrderPlacement)
+        .join(CustomerOrderPlacement, CustomerOrderPlacement.id == CustomerOrderLine.placement_id)
+        .join(CustomerOrder, CustomerOrder.id == CustomerOrderPlacement.customer_order_id)
+        .filter(
+            CustomerOrder.customer_id == customer_id,
+            CustomerOrderLine.catalog_product_id == catalog_product_id,
+            CustomerOrderLine.status == "active",
+            CustomerOrderLine.quantity_billed > 0,
+            CustomerOrderPlacement.deleted_at.is_(None),
+        )
+        .order_by(CustomerOrderPlacement.placed_at.asc(), CustomerOrderLine.id.asc())
+        .all()
+    )
+    for line, placement in rows:
+        if remaining <= 0:
+            break
+        if skip_placement_id and int(placement.id) == int(skip_placement_id):
+            continue
+        billed = int(line.quantity_billed or 0)
+        take = min(remaining, billed)
+        if take <= 0:
+            continue
+        line.quantity_billed = billed - take
+        if int(line.quantity or 0) > int(line.quantity_billed or 0) and placement.status == "billed":
+            placement.status = "open"
+            parent = db.get(CustomerOrder, placement.customer_order_id)
+            if parent is not None and parent.bucket == "open":
+                parent.is_open = True
+        remaining -= take
+    open_row = (
+        db.query(CustomerOpenLine)
+        .filter(
+            CustomerOpenLine.customer_id == customer_id,
+            CustomerOpenLine.catalog_product_id == catalog_product_id,
+        )
+        .first()
+    )
+    if open_row and int(open_row.quantity_billed or 0) > 0:
+        give = min(int(qty), int(open_row.quantity_billed or 0))
+        open_row.quantity_billed = int(open_row.quantity_billed or 0) - give
+        open_row.quantity_open = int(open_row.quantity_open or 0) + give
+        open_row.status = "open"
+        held = int(open_row.quantity_open or 0) + int(open_row.quantity_billed or 0)
+        if int(open_row.quantity_received or 0) < held:
+            open_row.quantity_received = held
+        order = get_or_create_customer_order(db, customer_id, "open", "open")
+        order.is_open = True
+
+
 def cancel_customer_bill(
     db: Session,
     *,
     bill_id: int,
     reason: str,
     actor_name: str,
+    keep_order: bool = False,
 ) -> CustomerBill:
     """Cancel a bill: AR cleared, freight cleared, stock released back to on-hand.
 
@@ -207,43 +265,49 @@ def cancel_customer_bill(
             ln.closed_at = datetime.now(timezone.utc)
             continue
 
-        # Release the stock this bill line held — whether it came from a portal
-        # reservation (at order time) or an offline sale (at bill time), the deal is
-        # off: give the units back to on-hand.
-        from app.services.catalog_addons import kept_addon_ids_for_customer_product
-
-        restore_stock(
-            db,
-            catalog_product_id=ln.catalog_product_id,
-            our_product_id=ln.our_product_id,
-            quantity=qty,
-            reference_id=bill.id,
-            reference_type="customer_bill",
-            party=customer_name,
-            notes=f"Bill {bill.bill_number} cancelled — stock released",
-            only_addon_ids=kept_addon_ids_for_customer_product(db, bill.customer_id, ln.catalog_product_id),
-        )
-
-        # Drop the qty from the customer's outstanding order (do not reopen it — see
-        # docstring). Reduce billed/received tallies only; quantity_open is untouched.
-        open_row = (
-            db.query(CustomerOpenLine)
-            .filter(
-                CustomerOpenLine.customer_id == bill.customer_id,
-                CustomerOpenLine.catalog_product_id == ln.catalog_product_id,
+        if keep_order:
+            # Wrong bill, right order. Leave the reservation. Put the qty back to booked.
+            _return_billed_qty_to_order(
+                db, bill.customer_id, ln.catalog_product_id, qty, bill.placement_id
             )
-            .first()
-        )
-        if open_row:
-            open_row.quantity_billed = max(0, int(open_row.quantity_billed or 0) - qty)
-            open_row.quantity_received = max(
-                int(open_row.quantity_open or 0),
-                int(open_row.quantity_received or 0) - qty,
+        else:
+            # Release the stock this bill line held — whether it came from a portal
+            # reservation (at order time) or an offline sale (at bill time), the deal is
+            # off: give the units back to on-hand.
+            from app.services.catalog_addons import kept_addon_ids_for_customer_product
+
+            restore_stock(
+                db,
+                catalog_product_id=ln.catalog_product_id,
+                our_product_id=ln.our_product_id,
+                quantity=qty,
+                reference_id=bill.id,
+                reference_type="customer_bill",
+                party=customer_name,
+                notes=f"Bill {bill.bill_number} cancelled — stock released",
+                only_addon_ids=kept_addon_ids_for_customer_product(db, bill.customer_id, ln.catalog_product_id),
             )
-            if int(open_row.quantity_open or 0) <= 0 and int(open_row.quantity_billed or 0) <= 0:
-                open_row.status = "cancelled"
-        _shrink_received_for_bill_delta(db, bill.customer_id, ln.catalog_product_id, qty)
-        _drop_sale_from_orders(db, bill.customer_id, ln.catalog_product_id, qty, bill.placement_id)
+
+            # Drop the qty from the customer's outstanding order (do not reopen it — see
+            # docstring). Reduce billed/received tallies only; quantity_open is untouched.
+            open_row = (
+                db.query(CustomerOpenLine)
+                .filter(
+                    CustomerOpenLine.customer_id == bill.customer_id,
+                    CustomerOpenLine.catalog_product_id == ln.catalog_product_id,
+                )
+                .first()
+            )
+            if open_row:
+                open_row.quantity_billed = max(0, int(open_row.quantity_billed or 0) - qty)
+                open_row.quantity_received = max(
+                    int(open_row.quantity_open or 0),
+                    int(open_row.quantity_received or 0) - qty,
+                )
+                if int(open_row.quantity_open or 0) <= 0 and int(open_row.quantity_billed or 0) <= 0:
+                    open_row.status = "cancelled"
+            _shrink_received_for_bill_delta(db, bill.customer_id, ln.catalog_product_id, qty)
+            _drop_sale_from_orders(db, bill.customer_id, ln.catalog_product_id, qty, bill.placement_id)
 
         ln.status = "closed"
         ln.close_reason = f"Bill cancelled — {reason}"[:500]

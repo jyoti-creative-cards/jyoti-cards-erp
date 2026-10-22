@@ -118,14 +118,18 @@
   function tallyCell(raw, pcs) {
     if (raw == null || raw === "" || Number(raw) === 0) return "";
     const n = Number(raw);
-    const abs = Math.abs(n).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const abs = Math.abs(n).toLocaleString("en-IN", pcs
+      ? { maximumFractionDigits: 0 }
+      : { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const body = pcs ? `${abs} pcs` : abs;
     return n < 0 ? `(-)${body}` : body;
   }
 
   function tallyTotal(raw, pcs) {
     const n = Number(raw) || 0;
-    const abs = Math.abs(n).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const abs = Math.abs(n).toLocaleString("en-IN", pcs
+      ? { maximumFractionDigits: 0 }
+      : { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const body = pcs ? `${abs} pcs` : abs;
     return n < 0 ? `(-)${body}` : body;
   }

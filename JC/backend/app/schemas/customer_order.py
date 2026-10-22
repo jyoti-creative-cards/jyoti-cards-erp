@@ -153,6 +153,7 @@ class CustomerOrderDetail(BaseModel):
 
 class CancelRequest(BaseModel):
     reason: str = Field(..., min_length=1, max_length=2000)
+    keep_order: bool = False
 
 
 class EditQtyIn(BaseModel):

@@ -45,8 +45,14 @@ const App = (() => {
   function lookupDesk() {
     return authMode === "staff" && permissions.size === 1 && permissions.has("items.lookup");
   }
+  function orderTaker() {
+    if (authMode !== "staff" || !permissions.has("customer_orders.write")) return false;
+    const allowed = new Set(["customers.read", "customer_orders.read", "customer_orders.write"]);
+    for (const key of permissions) if (!allowed.has(key)) return false;
+    return true;
+  }
   function isAdmin() {
-    if (lookupDesk()) return false;
+    if (lookupDesk() || orderTaker()) return false;
     return authMode === "admin" || authMode === "staff";
   }
   function can(perm) { return isAdmin() || permissions.has(perm); }
@@ -64,16 +70,17 @@ const App = (() => {
     const showReturns = canRead("returns");
     const desk = stickerDesk();
     const lookup = lookupDesk();
+    const taker = orderTaker();
     document.getElementById("app")?.classList.toggle("lookup-only", lookup);
     const moreTitle = document.querySelector("#more-hub .ui-hub-title");
     const moreSub = document.querySelector("#more-hub .ui-hub-sub");
     if (moreTitle) moreTitle.textContent = desk ? "Print sticker" : "More";
     if (moreSub) moreSub.textContent = desk ? "Search a party number and print." : "History, reports, setup, and safety — when you need them.";
-    document.getElementById("nav-today")?.classList.toggle("hidden", desk || lookup);
+    document.getElementById("nav-today")?.classList.toggle("hidden", desk || lookup || taker);
     document.getElementById("nav-people")?.classList.toggle("hidden", desk || lookup || !showPeople);
-    document.getElementById("nav-products")?.classList.toggle("hidden", desk || lookup || !showProducts);
-    document.getElementById("nav-money")?.classList.toggle("hidden", desk || lookup || !(isAdmin() || can("finance.write") || canRead("ar") || canRead("ap")));
-    document.getElementById("nav-more")?.classList.toggle("hidden", lookup);
+    document.getElementById("nav-products")?.classList.toggle("hidden", desk || lookup || taker || !showProducts);
+    document.getElementById("nav-money")?.classList.toggle("hidden", desk || lookup || taker || !(isAdmin() || can("finance.write") || canRead("ar") || canRead("ap")));
+    document.getElementById("nav-more")?.classList.toggle("hidden", lookup || taker);
     document.getElementById("more-tile-buying")?.classList.toggle("hidden", !showBuying);
     document.getElementById("more-tile-selling")?.classList.toggle("hidden", !showSelling);
     document.getElementById("more-tile-returns")?.classList.toggle("hidden", !showReturns);
@@ -414,6 +421,13 @@ const App = (() => {
         try { Sticker.open(); } catch (e) { /* sticker script */ }
         return;
       }
+      if (orderTaker()) {
+        showView("people");
+        try { await refreshAll(); } catch (e) {
+          toast(e?.message || "Failed to load data — try hard refresh", "error");
+        }
+        return;
+      }
       showView("today");
       try {
         await refreshAll();
@@ -693,6 +707,10 @@ const App = (() => {
       if (currentViewName !== "lookup") showView("lookup", { replace: true });
       return;
     }
+    if (orderTaker() && resolved !== "people") {
+      if (currentViewName !== "people") showView("people", { replace: true });
+      return;
+    }
     if (stickerDesk() && resolved !== "more") {
       if (currentViewName !== "more") showView("more", { replace: true });
       try { Sticker.open(); } catch (e) { /* sticker script */ }
@@ -721,7 +739,8 @@ const App = (() => {
     } else if (name === "people") {
       document.getElementById("view-people")?.classList.remove("hidden");
       document.getElementById("nav-people")?.classList.add("active");
-      if (peopleTab) showPeopleTab(peopleTab);
+      if (orderTaker() && !peopleTab) showPeopleTab("customers");
+      else if (peopleTab) showPeopleTab(peopleTab);
       else showPeopleHub();
     } else if (name === "products") {
       document.getElementById("view-products")?.classList.remove("hidden");
@@ -1647,14 +1666,19 @@ const App = (() => {
     // Everyday jobs: phone/offline order + bill + their order list.
     if (canSell) {
       bits.push(`<button class="btn btn-primary btn-sm" onclick="App.createCustomerOrder(${id})">Order</button>`);
-      bits.push(`<button class="btn btn-secondary btn-sm" onclick="App.billCustomer(${id})">Bill</button>`);
-      bits.push(`<button class="btn btn-secondary btn-sm" onclick="App.openSelling(${id})">Orders</button>`);
+      if (!orderTaker()) {
+        bits.push(`<button class="btn btn-secondary btn-sm" onclick="App.billCustomer(${id})">Bill</button>`);
+        bits.push(`<button class="btn btn-secondary btn-sm" onclick="App.openSelling(${id})">Orders</button>`);
+      }
+    }
+    if (canSeeAr) {
+      bits.push(`<button class="btn btn-secondary btn-sm" onclick="App.showCustomerMoneyLedger(${id})">Ledger</button>`);
     }
     if (due && canCollectAr) {
       bits.push(`<button class="btn btn-secondary btn-sm" onclick="App.collectCustomer(${id})">Collect</button>`);
     }
     const more = [];
-    if (canSell) {
+    if (canSell && !orderTaker()) {
       more.push(`<button type="button" onclick="App.closeDetail();App.showView('returns');Returns.openCreate?.(${id})">Return</button>`);
     }
     if (canCollectAr && !due) more.push(`<button type="button" onclick="App.collectCustomer(${id})">Collect</button>`);
@@ -1699,6 +1723,38 @@ const App = (() => {
       if (wrap) wrap.innerHTML = renderCustomerStatement(id);
     } catch (e) {
       if (wrap) wrap.innerHTML = `<p style="color:var(--danger);font-size:13px;">${esc(e.message)}</p>`;
+    }
+  }
+
+  async function showCustomerMoneyLedger(id) {
+    const wrap = document.getElementById("customer-ledger-wrap");
+    if (!wrap) return;
+    wrap.innerHTML = `<p style="color:var(--muted);font-size:13px;">Loading ledger…</p>`;
+    try {
+      const ar = await api(`/accounts-receivable/customer/${id}`, {}, 0);
+      const rows = (ar?.entries || []).slice().sort((a, b) => String(b.display_date || b.created_at || "").localeCompare(String(a.display_date || a.created_at || "")));
+      if (!rows.length) {
+        wrap.innerHTML = `<p style="color:var(--muted);font-size:13px;">No bills or payments yet.</p>`;
+        return;
+      }
+      wrap.innerHTML = `<div class="card table-wrap"><table class="data"><thead><tr>
+        <th>When</th><th>What</th><th>Detail</th><th>Amount</th><th>Balance</th><th></th>
+      </tr></thead><tbody>
+        ${rows.map(e => {
+          const kind = { bill: "Bill", credit_note: "Credit", opening_balance: "Opening", payment: "Payment", payment_reversal: "Reversal" }[e.entry_type] || e.entry_type;
+          const view = e.bill_id ? `<button type="button" class="btn btn-ghost btn-sm" onclick="Finance.viewCustomerBill(${e.bill_id})">View detail</button>` : "";
+          return `<tr>
+            <td style="font-size:12px;">${fmtDay(e.display_date || e.value_date || e.created_at)}</td>
+            <td>${esc(kind)}</td>
+            <td>${esc(e.display_name || e.description || "")}</td>
+            <td>${fmtPersonMoney(e.signed_amount)}</td>
+            <td><strong>${fmtPersonMoney(e.running_balance)}</strong></td>
+            <td>${view}</td>
+          </tr>`;
+        }).join("")}
+      </tbody></table></div>`;
+    } catch (e) {
+      wrap.innerHTML = `<p style="color:var(--danger);font-size:13px;">${esc(e.message)}</p>`;
     }
   }
 
@@ -2877,7 +2933,7 @@ const App = (() => {
     openCustomerDetail, closeDetail, openCustomerEdit, closeEditModal, saveCustomer,
     deleteCustomer, toggleCustomerActive, restoreCustomer, sendCredentials,
     setCustomerStatusTab, toggleInactiveCustomers, toggleMissingPhoneFilter, setCustomerOpeningBalance, saveCustomerOpeningBalance,
-    toggleCustomerLedgerRow, setCustomerRealOnly, openSelling, billCustomer, collectCustomer, openCustomerMoney,
+    toggleCustomerLedgerRow, setCustomerRealOnly, showCustomerMoneyLedger, openSelling, billCustomer, collectCustomer, openCustomerMoney,
     loadRecycleBin, setRecycleTab, openRecycleDetail, restoreItem, purgeItem,
     addLookup, submitLookup, editLookup, deleteLookup, openCustomerLedgerEntry, createCustomerOrder,
     closeModal, init, searchItemLookup, setWhatsappSends,

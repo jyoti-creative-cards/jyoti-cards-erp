@@ -109,6 +109,7 @@
     if (input) input.value = "";
     const box = document.getElementById("co-order-customer-matches");
     if (box) box.innerHTML = "";
+    loadBookedOrders();
     document.getElementById("co-order-item")?.focus();
   }
 
@@ -205,6 +206,7 @@
         <input id="co-order-customer" class="input" type="text" placeholder="Name, city, or number" autocomplete="off" oninput="CustomerOrders.onOfflineCustomerSearch(this.value)" />
         <div id="co-order-customer-picked" style="margin:6px 0;font-weight:600;">${picked ? ctx.esc((picked.business_name || "") + (picked.city_name ? " · " + picked.city_name : "")) : ""}</div>
         <div id="co-order-customer-matches"></div>`}
+      <div id="co-order-booked"></div>
       <label class="label">Item number</label>
       <input id="co-order-item" class="input" type="text" placeholder="Type the item number" autocomplete="off" oninput="CustomerOrders.onOfflineSearchInput(this.value)" onkeydown="CustomerOrders.onOfflineSearchKey(event)" />
       <div id="co-order-item-matches"></div>
@@ -216,16 +218,46 @@
         </div>
         <div>
           <label class="label">Marking</label>
-          <input id="co-order-note" class="input" style="border:2px solid #f59e0b;background:#fffbeb;font-weight:600;" placeholder="Hold. Do not bill. Bill after 5 days." value="${ctx.esc(offlineNotes || "")}" oninput="CustomerOrders.setOfflineNotes(this.value)" />
-          <p style="margin:4px 0 0;font-size:12px;color:#92400e;">Shown to the person who creates the bill. Use it when the quantity should stay reserved.</p>
+          <input id="co-order-note" class="input" style="border:2px solid #dc2626;background:#fef2f2;font-weight:700;color:#b91c1c;" placeholder="Hold. Do not bill. Bill after 5 days." value="${ctx.esc(offlineNotes || "")}" oninput="CustomerOrders.setOfflineNotes(this.value)" />
+          <p style="margin:4px 0 0;font-size:12px;color:#b91c1c;">Shown in red on the bill. Use it when the quantity should stay reserved.</p>
         </div>
       </div>`;
     footerEl.innerHTML = `
       <button class="btn btn-secondary" onclick="CustomerOrders.closeOfflineWizard()">Cancel</button>
       <button class="btn btn-primary" ${offlineBusy ? "disabled" : ""} onclick="CustomerOrders.submitOffline()">${offlineBusy ? "Saving…" : "Save order"}</button>`;
     paintOrderLines();
+    loadBookedOrders();
     const focusId = editing || offlineCustomerId ? "co-order-item" : "co-order-customer";
     document.getElementById(focusId)?.focus();
+  }
+
+  function bookedOrdersHtml(detail) {
+    const lines = detail?.open_lines || [];
+    const notes = (detail?.placements || []).map(p => p.customer_notes).filter(Boolean);
+    if (!lines.length && !notes.length) {
+      return `<p style="font-size:13px;color:var(--muted);margin:6px 0 10px;">No confirmed order waiting for this customer.</p>`;
+    }
+    const rows = lines.map(ln => `<div style="display:flex;justify-content:space-between;gap:8px;font-size:13px;padding:4px 0;border-bottom:1px solid #fecaca;"><strong>${ctx.esc(ln.our_product_id)}</strong><span>${ln.quantity_open} booked</span></div>`).join("");
+    return `<div style="margin:8px 0 12px;padding:8px 10px;background:#fef2f2;border:1px solid #dc2626;border-radius:8px;">
+      <strong style="color:#b91c1c;">Already booked. Bill this. Do not make a new order if they only want part of it billed.</strong>
+      ${notes.length ? `<div style="color:#b91c1c;font-weight:700;margin-top:4px;">${ctx.esc(notes.join(" · "))}</div>` : ""}
+      ${rows}
+    </div>`;
+  }
+
+  async function loadBookedOrders() {
+    const box = document.getElementById("co-order-booked");
+    if (!box) return;
+    if (!offlineCustomerId) { box.innerHTML = ""; return; }
+    box.innerHTML = `<p style="font-size:13px;color:var(--muted);margin:6px 0 10px;">Checking booked orders…</p>`;
+    try {
+      const detail = await ctx.api(`/customer-orders/customer/${offlineCustomerId}?bucket=open`, {}, 0);
+      const still = document.getElementById("co-order-booked");
+      if (still) still.innerHTML = bookedOrdersHtml(detail);
+    } catch (_) {
+      const still = document.getElementById("co-order-booked");
+      if (still) still.innerHTML = "";
+    }
   }
 
   function paintOrderLines() {

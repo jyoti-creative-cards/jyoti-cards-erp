@@ -37,13 +37,30 @@ def _indian(value: Decimal) -> str:
     return f"(-){text}" if negative else text
 
 
+def _whole(value: Decimal) -> str:
+    negative = value < 0
+    whole = f"{abs(int(value.to_integral_value()))}"
+    if len(whole) <= 3:
+        grouped = whole
+    else:
+        head, tail = whole[:-3], whole[-3:]
+        parts: list[str] = []
+        while len(head) > 2:
+            parts.append(head[-2:])
+            head = head[:-2]
+        if head:
+            parts.append(head)
+        grouped = ",".join(reversed(parts)) + "," + tail
+    return f"(-){grouped}" if negative else grouped
+
+
 def _qty(raw, *, always: bool = False) -> str:
     if raw is None or raw == "":
-        return "0.00 pcs" if always else ""
+        return "0 pcs" if always else ""
     number = Decimal(str(raw))
     if number == 0 and not always:
         return ""
-    return f"{_indian(number)} pcs"
+    return f"{_whole(number)} pcs"
 
 
 def _amt(raw, *, always: bool = False) -> str:

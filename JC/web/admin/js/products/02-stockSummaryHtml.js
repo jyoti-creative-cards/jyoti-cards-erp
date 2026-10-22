@@ -262,7 +262,7 @@
           ${rows.map(it => `<tr data-bulk-id="${it.id}">
             <td>${listThumb(it)}</td>
             <td>
-              <strong class="prod-list-id">${ctx.esc(it.our_product_id)}</strong>
+              <strong class="prod-list-id">${idWithVendor(it)}</strong>
               ${it.year_group ? `<span class="prod-year-pill">${ctx.esc(it.year_group)}</span>` : ""}
               <div class="prod-list-sub prod-price-missing">Sell not set</div>
             </td>
@@ -324,9 +324,8 @@
           return `<tr class="clickable" onclick="Products.openItem('${it.kind}', ${it.id})">
           <td>${listThumb(it)}</td>
           <td>
-            <strong class="prod-list-id">${ctx.esc(it.our_product_id)}</strong>
+            <strong class="prod-list-id">${idWithVendor(it)}</strong>
             ${it.year_group ? `<span class="prod-year-pill">${ctx.esc(it.year_group)}</span>` : ""}
-            ${it.vendor_product_id ? `<div class="prod-list-sub">Vendor # ${ctx.esc(it.vendor_product_id)}</div>` : ""}
             ${it.marking ? `<div class="prod-list-sub"><span class="badge badge-blue" style="font-size:10px;">${ctx.esc(it.marking)}</span></div>` : ""}
           </td>
           <td><span class="badge ${it.kind === "addon" ? "badge-amber" : "badge-blue"}">${it.kind === "addon" ? "Add-on" : "Product"}</span></td>

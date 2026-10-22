@@ -32,6 +32,7 @@ from app.services.customer_order_flow import (
     _get_or_create_open_line,
     close_received_order_if_fully_billed,
     get_or_create_customer_order,
+    settle_confirmed_after_bill,
     reserve_stock,
     restore_stock,
 )
@@ -277,6 +278,7 @@ def process_customer_bill(
         created_at=ar_posted_at,
     )
     _persist_totals_addons(db, bill)
+    settle_confirmed_after_bill(db, customer_id)
     billed_order.updated_at = entered_at
     freeze_card(db, "customer_bill", bill)
     response_cache.invalidate("stock:")

@@ -103,11 +103,48 @@
         return `<tr>
         <td style="font-size:12px;">${fmtDocDate(e.display_date || e.value_date || e.created_at)}</td>
         <td><span class="badge ${badgeCls}">${typeLabel}</span></td>
-        <td>${ctx.esc(e.display_name || e.description)}${e.return_id ? ` <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();Returns.openReturn(${e.return_id})">View</button>` : ""}</td>
+        <td>${ctx.esc(e.display_name || e.description)}${moneyDocButton(e)}</td>
         <td>${fmtPrice(e.signed_amount)}</td>
         <td><strong>${fmtPrice(e.running_balance)}</strong></td>
       </tr>`;}).join("")}
     </tbody></table></div>`;
+  }
+
+  function moneyDocButton(e) {
+    if (e.return_id) return ` <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();Returns.openReturn(${e.return_id})">View</button>`;
+    if (e.bill_id) return ` <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();Finance.viewCustomerBill(${e.bill_id})">View detail</button>`;
+    return "";
+  }
+
+  async function viewCustomerBill(billId) {
+    try {
+      const bill = await ctx.api(`/customer-orders/bills/${billId}`, {}, 0);
+      const lines = (bill.lines || []).map(ln => `<tr>
+        <td>${ctx.esc(ln.our_product_id)}${ln.marking ? ` <span style="color:#b91c1c;font-weight:700;">${ctx.esc(ln.marking)}</span>` : ""}</td>
+        <td>${ln.quantity_shipped}</td>
+        <td>${fmtPrice(ln.unit_price)}</td>
+        <td>${ln.discount_percent ? ctx.esc(String(ln.discount_percent)) + "%" : "—"}</td>
+        <td>${fmtPrice(ln.net_rate)}</td>
+        <td>${fmtPrice(ln.line_total)}</td>
+      </tr>`).join("");
+      const charges = (bill.additional_charges || []).filter(c => Number(c.amount) > 0)
+        .map(c => `<div>${ctx.esc(c.name)} ${fmtPrice(c.amount)}</div>`).join("");
+      const html = `<div class="card" style="padding:12px;margin-bottom:12px;">
+        <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+          <div><strong>${ctx.esc(bill.display_name || bill.bill_number || "Bill")}</strong>
+            <div style="font-size:13px;color:var(--muted);">${ctx.esc(fmtDocDate(bill.display_date || bill.bill_date || bill.created_at))}${bill.status ? " · " + ctx.esc(bill.status) : ""}</div>
+            ${bill.narration ? `<div style="margin-top:4px;color:#b91c1c;font-weight:700;">${ctx.esc(bill.narration)}</div>` : ""}
+          </div>
+          <div style="text-align:right;"><div style="font-size:12px;color:var(--muted);">Total</div><strong>${fmtPrice(bill.grand_total)}</strong></div>
+        </div>
+        ${Number(bill.freight_charges) > 0 ? `<div style="margin-top:8px;font-size:13px;">Transport ${fmtPrice(bill.freight_charges)}${bill.transport_receipt_number ? " · " + ctx.esc(bill.transport_receipt_number) : ""}</div>` : ""}
+        ${charges ? `<div style="margin-top:4px;font-size:13px;">${charges}</div>` : ""}
+      </div>
+      <div class="card table-wrap"><table class="data"><thead><tr>
+        <th>Item</th><th>Qty</th><th>Rate</th><th>Disc</th><th>Net</th><th>Total</th>
+      </tr></thead><tbody>${lines || `<tr><td colspan="6">No lines</td></tr>`}</tbody></table></div>`;
+      ctx.openDetail?.(`Bill ${bill.bill_number || billId}`, html, ctx.detailFooterChild ? ctx.detailFooterChild() : `<button class="btn btn-secondary" onclick="App.detailBack()">← Back</button>`, "lg", { push: true });
+    } catch (e) { ctx.toast(e.message, "error"); }
   }
 
   function renderArLedgerFlat() {
@@ -121,7 +158,7 @@
           return `<tr>
           <td style="font-size:12px;">${fmtDocDate(e.display_date || e.value_date || e.created_at)}</td>
           <td><span class="badge ${badgeCls}">${typeLabel}</span></td>
-          <td>${ctx.esc(e.display_name || e.description)}${e.return_id ? ` <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();Returns.openReturn(${e.return_id})">View</button>` : ""}</td>
+          <td>${ctx.esc(e.display_name || e.description)}${moneyDocButton(e)}</td>
           <td>${fmtPrice(e.signed_amount)}</td>
           <td><strong>${fmtPrice(e.running_balance)}</strong></td>
         </tr>`;}).join("")}

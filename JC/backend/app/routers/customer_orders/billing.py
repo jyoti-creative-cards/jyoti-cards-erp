@@ -285,6 +285,7 @@ def cancel_bill_endpoint(
             bill_id=bill_id,
             reason=body.reason,
             actor_name=auth.actor_name,
+            keep_order=bool(body.keep_order),
         )
     except HTTPException:
         raise

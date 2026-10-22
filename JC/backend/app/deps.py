@@ -32,9 +32,20 @@ class AuthContext:
         """One staff account that may only search an item number for its photo and stock."""
         return self.actor_type == "staff" and self.permissions == {"items.lookup"}
 
+    def is_order_taker(self) -> bool:
+        """Salesperson who may only book a customer order. Nothing else."""
+        allowed = {"customers.read", "customer_orders.read", "customer_orders.write"}
+        return (
+            self.actor_type == "staff"
+            and "customer_orders.write" in self.permissions
+            and self.permissions <= allowed
+        )
+
     def has(self, perm: str) -> bool:
         if self.is_lookup_only():
             return perm == "items.lookup"
+        if self.is_order_taker():
+            return perm in self.permissions
         # Every other signed-in person has full access for now. Restrictions come
         # back one account at a time when asked.
         return True

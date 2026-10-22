@@ -1898,6 +1898,11 @@ const CustomerOrders = (() => {
     renderProcessWizard();
   }
 
+  function clearShipQtys() {
+    for (const ln of processLines) ln.quantity_to_ship = 0;
+    renderProcessWizard();
+  }
+
   function setShipQty(idx, val) {
     const ln = processLines[idx];
     if (!ln) return;
@@ -2080,6 +2085,10 @@ const CustomerOrders = (() => {
         <label><input type="radio" name="co-disc-mode" ${discountEnabled && !useOverallDiscount ? "checked" : ""} onchange="CustomerOrders.setDiscToggle('line')" /> Per item</label>
         <label><input type="radio" name="co-disc-mode" ${discountEnabled && useOverallDiscount ? "checked" : ""} onchange="CustomerOrders.setDiscToggle('overall')" /> Overall %</label>
         ${discountEnabled && useOverallDiscount ? `<input class="input" style="width:80px;" placeholder="%" value="${ctx.esc(overallDiscount)}" oninput="CustomerOrders.setOverallDisc(this.value)" />` : ""}
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:0 0 8px;">
+        <span style="font-size:13px;color:var(--muted);">Deselect all sets every qty to 0. Then type qty only for the items that are going.</span>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="CustomerOrders.clearShipQtys()">Deselect all</button>
       </div>
       <table class="data"><thead><tr>
         <th>Item</th><th>Stock</th><th>Rate</th><th>Qty</th><th>Disc %</th><th>Net</th>${editBillId ? "<th></th>" : ""}
@@ -3162,7 +3171,7 @@ const CustomerOrders = (() => {
     openEditBill, editLatestBill, promptEditBillNumber, saveBillNumber, enableDiscount, clearDiscount, setBillEditSearch, addBillEditProduct, removeProcessLine,
     openEditFromOpen,
     _detailCustomerId,
-    setShipQty, setLineDisc, setLineNetRate, setDiscToggle, setOverallDisc, skipBillAddon,
+    setShipQty, clearShipQtys, setLineDisc, setLineNetRate, setDiscToggle, setOverallDisc, skipBillAddon,
     setFreightAgent, setFreightCharges, setTransportMode, setTransportReceipt, setPackagingCharges,
     setGst, setGstRate, setBillSeries, setNarration, setEditBillNumber, setBillDate, setAddCharge, addChargeRow,
     setOfflinePlacedOn,

@@ -2085,6 +2085,41 @@ const App = (() => {
     paintOrderTakerLines();
   }
 
+  function previewOrderTakerOrder() {
+    if (!otCustomer) return toast("Search a customer first", "error");
+    if (!otLines.length) return toast("Add at least one item", "error");
+    const note = (document.getElementById("ot-note")?.value || "").trim();
+    const box = document.getElementById("ot-review");
+    document.getElementById("ot-items")?.classList.add("hidden");
+    if (!box) return;
+    box.classList.remove("hidden");
+    box.innerHTML = `
+      <p style="margin:0 0 8px;font-size:13px;color:var(--muted);">Check this order, then save.</p>
+      <p style="margin:0 0 12px;"><strong>${esc(otCustomer.business_name || "")}</strong>${otCustomer.city_name ? " · " + esc(otCustomer.city_name) : ""}</p>
+      ${note ? `<p style="margin:0 0 12px;color:#b91c1c;font-weight:700;">${esc(note)}</p>` : ""}
+      <table class="data"><thead><tr><th>Item</th><th>Qty</th></tr></thead><tbody>
+        ${otLines.map(l => `<tr><td>${esc(l.our_product_id)}</td><td>${l.quantity}</td></tr>`).join("")}
+      </tbody></table>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
+        <button type="button" class="btn btn-secondary" onclick="App.backFromOrderTakerPreview()">Go back</button>
+        <button type="button" class="btn btn-primary" onclick="App.saveOrderTakerOrder()">Save order</button>
+      </div>`;
+  }
+
+  function backFromOrderTakerPreview() {
+    document.getElementById("ot-review")?.classList.add("hidden");
+    document.getElementById("ot-items")?.classList.remove("hidden");
+  }
+
+  function cancelOrderTakerItems() {
+    otLines = [];
+    paintOrderTakerLines();
+    document.getElementById("ot-items")?.classList.add("hidden");
+    document.getElementById("ot-review")?.classList.add("hidden");
+    const note = document.getElementById("ot-note");
+    if (note) note.value = "";
+  }
+
   async function saveOrderTakerOrder() {
     if (!otCustomer) return toast("Search a customer first", "error");
     if (!otLines.length) return toast("Add at least one item", "error");
@@ -3075,7 +3110,7 @@ const App = (() => {
     toggleCustomerLedgerRow, setCustomerRealOnly, showCustomerMoneyLedger, openSelling, billCustomer, collectCustomer, openCustomerMoney,
     loadRecycleBin, setRecycleTab, openRecycleDetail, restoreItem, purgeItem,
     addLookup, submitLookup, editLookup, deleteLookup, openCustomerLedgerEntry, createCustomerOrder,
-    onOrderTakerCustomer, pickOrderTakerCustomer, openOrderTakerItems, onOrderTakerItem, addOrderTakerItem, removeOrderTakerLine, saveOrderTakerOrder,
+    onOrderTakerCustomer, pickOrderTakerCustomer, openOrderTakerItems, onOrderTakerItem, addOrderTakerItem, removeOrderTakerLine, previewOrderTakerOrder, backFromOrderTakerPreview, cancelOrderTakerItems, saveOrderTakerOrder,
     closeModal, init, searchItemLookup, setWhatsappSends,
     downloadExportKind, downloadBackupZip,
     debouncedLoadCustomers, debouncedVendorSearch, debouncedCatalogSearch, debouncedAddonSearch, debouncedStockSearch,

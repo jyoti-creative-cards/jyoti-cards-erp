@@ -39,6 +39,7 @@ const CustomerOrders = (() => {
   let customerNotes = "";
   let narration = "";
   let previewTotals = null;
+  let billReview = false;
   let processBusy = false;
   let forceCreditOverride = false;
   let editBillId = null;
@@ -1617,6 +1618,7 @@ const CustomerOrders = (() => {
     selectedPlacementIds = [];
     processBusy = false;
     previewTotals = null;
+    billReview = false;
     forceCreditOverride = false;
     if (!quiet) ctx.showLoading?.();
     try {
@@ -1710,6 +1712,7 @@ const CustomerOrders = (() => {
     processStep = 1;
     processBusy = false;
     previewTotals = null;
+    billReview = false;
     forceCreditOverride = false;
     ctx.showLoading?.();
     try {
@@ -1805,6 +1808,7 @@ const CustomerOrders = (() => {
   }
 
   function closeProcessWizard() {
+    billReview = false;
     document.getElementById("co-wizard")?.classList.add("hidden");
     editBillId = null;
     editBillNumber = "";
@@ -2046,6 +2050,10 @@ const CustomerOrders = (() => {
     stepsEl.innerHTML = "";
     renderWizardTotalsBar();
     const title = document.getElementById("co-wizard-title");
+    if (billReview) {
+      renderBillReview(bodyEl, footerEl, title);
+      return;
+    }
     if (title) title.textContent = editBillId ? `Edit ${editBillNumber || "bill"}` : "Bill";
     const lineDiscLocked = !discountEnabled || useOverallDiscount;
     const ro = lineDiscLocked ? "readonly" : "";
@@ -2142,7 +2150,64 @@ const CustomerOrders = (() => {
     `;
     footerEl.innerHTML = `
       <button class="btn btn-secondary" onclick="CustomerOrders.closeProcessWizard()">Cancel</button>
+      <button class="btn btn-primary" onclick="CustomerOrders.previewBill()">Preview</button>`;
+  }
+
+  function renderBillReview(bodyEl, footerEl, title) {
+    if (title) title.textContent = "Preview bill";
+    const tot = previewTotals || {};
+    const apiLines = Array.isArray(tot.lines) ? tot.lines : [];
+    const lines = apiLines.length ? apiLines : processLines.filter(l => Number(l.quantity_to_ship) > 0).map(l => ({
+      our_product_id: l.our_product_id,
+      quantity: l.quantity_to_ship,
+      line_total: (Number(l.quantity_to_ship) || 0) * (Number(l.net_rate) || Number(l.unit_price) || 0),
+    }));
+    const mode = transportMode === "bus" ? "Bus" : transportMode === "transport" ? "Transport" : transportMode === "self_pickup" ? "Self-pickup" : "—";
+    const agent = freightAgents.find(a => String(a.id) === String(freightAgentId));
+    bodyEl.innerHTML = `
+      <p style="margin:0 0 12px;"><strong>${ctx.esc(processContext?.customer_name || "")}</strong>${processContext?.city_name ? " · " + ctx.esc(processContext.city_name) : ""}</p>
+      <p style="margin:0 0 12px;font-size:13px;color:var(--muted);">${ctx.esc(billDate || "")} · ${ctx.esc(mode)}${agent ? " · " + ctx.esc(agent.name) : ""}${transportReceiptNumber ? " · " + ctx.esc(transportReceiptNumber) : ""}</p>
+      ${narration ? `<p style="margin:0 0 12px;color:#b91c1c;font-weight:700;">${ctx.esc(narration)}</p>` : ""}
+      <table class="data"><thead><tr><th>Item</th><th>Qty</th><th>Amount</th></tr></thead><tbody>
+        ${lines.map(ln => `<tr>
+          <td>${ctx.esc(ln.our_product_id || ln.name || "")}</td>
+          <td>${ln.quantity ?? ""}</td>
+          <td>${fmtPrice(ln.line_total)}</td>
+        </tr>`).join("")}
+        ${Number(tot.freight_charges) > 0 ? `<tr><td colspan="2">${mode === "Bus" ? "Freight" : "Transport"}</td><td>${fmtPrice(tot.freight_charges)}</td></tr>` : ""}
+        ${Number(tot.packaging_charges) > 0 ? `<tr><td colspan="2">Packing</td><td>${fmtPrice(tot.packaging_charges)}</td></tr>` : ""}
+        ${Number(tot.gst_amount) > 0 ? `<tr><td colspan="2">GST</td><td>${fmtPrice(tot.gst_amount)}</td></tr>` : ""}
+        <tr style="font-weight:700;border-top:2px solid var(--border);"><td colspan="2">Grand total</td><td>${fmtPrice(tot.rounded_grand_total || tot.grand_total)}</td></tr>
+      </tbody></table>`;
+    footerEl.innerHTML = `
+      <button class="btn btn-secondary" onclick="CustomerOrders.backFromBillPreview()">Go back</button>
       <button class="btn btn-primary" ${processBusy ? "disabled" : ""} onclick="CustomerOrders.submitProcess()">${processBusy ? "Saving…" : "Save bill"}</button>`;
+  }
+
+  async function previewBill() {
+    if (!processLines.some(l => Number(l.quantity_to_ship) > 0)) return ctx.toast("Tick an item and enter the qty that is going", "error");
+    if (!transportMode) return ctx.toast("Select mode of transport", "error");
+    if (transportMode === "bus") {
+      if (!freightAgentId) return ctx.toast("Select freight agent", "error");
+      if (String(freightCharges || "").trim() === "") return ctx.toast("Enter freight charges", "error");
+    }
+    if (transportMode === "transport" && String(freightCharges || "").trim() === "") return ctx.toast("Enter transport charges", "error");
+    if (!editBillId && !billSeriesId) return ctx.toast("Select bill series", "error");
+    ctx.showLoading?.();
+    try {
+      const url = editBillId
+        ? `/customer-orders/bills/${editBillId}/edit-preview`
+        : `/customer-orders/customer/${detailCustomerId}/process/preview`;
+      previewTotals = await ctx.api(url, { method: "POST", body: JSON.stringify(buildProcessBody()) });
+      billReview = true;
+      renderProcessWizard();
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  function backFromBillPreview() {
+    billReview = false;
+    renderProcessWizard();
   }
 
   function setForceCredit(v) { forceCreditOverride = !!v; renderProcessWizard(); }
@@ -2696,6 +2761,7 @@ const CustomerOrders = (() => {
     offlineNotes = "";
     offlinePlacedOn = localToday();
     offlinePreview = null;
+    offlineReview = false;
     offlineBusy = false;
     offlineCustomers = [];
     document.getElementById("co-offline-wizard")?.classList.remove("hidden");
@@ -2744,7 +2810,41 @@ const CustomerOrders = (() => {
     document.getElementById("co-order-item")?.focus();
   }
 
+  function previewOrder() {
+    const notesEl = document.getElementById("co-order-note");
+    if (notesEl) offlineNotes = notesEl.value || "";
+    const dateEl = document.getElementById("co-order-date");
+    if (dateEl && dateEl.value) offlinePlacedOn = dateEl.value;
+    if (!offlineCustomerId) return ctx.toast("Select a customer", "error");
+    if (!offlineLines.some(l => Number(l.quantity) > 0)) return ctx.toast("Add at least one item", "error");
+    offlineReview = true;
+    renderOfflineWizard();
+  }
+
+  function backFromOrderPreview() {
+    offlineReview = false;
+    renderOfflineWizard();
+  }
+
+  function renderOrderReview(bodyEl, footerEl) {
+    const lines = offlineLines.filter(l => Number(l.quantity) > 0);
+    const total = lines.reduce((s, l) => s + (Number(l.selling_price) || 0) * (Number(l.quantity) || 0), 0);
+    bodyEl.innerHTML = `
+      <p style="margin:0 0 8px;font-size:13px;color:var(--muted);">Check this order, then save.</p>
+      <p style="margin:0 0 12px;"><strong>${ctx.esc(offlineCustomerName || "")}</strong></p>
+      <p style="margin:0 0 12px;font-size:13px;">${ctx.esc(offlinePlacedOn || "")}</p>
+      ${offlineNotes ? `<p style="margin:0 0 12px;color:#b91c1c;font-weight:700;">${ctx.esc(offlineNotes)}</p>` : ""}
+      <table class="data"><thead><tr><th>Item</th><th>Qty</th><th>Rate</th></tr></thead><tbody>
+        ${lines.map(l => `<tr><td>${ctx.esc(l.our_product_id)}</td><td>${l.quantity}</td><td>${fmtPrice(l.selling_price)}</td></tr>`).join("")}
+      </tbody></table>
+      <p style="margin:8px 0 0;font-weight:700;">${fmtPrice(total)}</p>`;
+    footerEl.innerHTML = `
+      <button class="btn btn-secondary" onclick="CustomerOrders.backFromOrderPreview()">Go back</button>
+      <button class="btn btn-primary" ${offlineBusy ? "disabled" : ""} onclick="CustomerOrders.submitOffline()">${offlineBusy ? "Saving…" : "Save order"}</button>`;
+  }
+
   function closeOfflineWizard() {
+    offlineReview = false;
     document.getElementById("co-offline-wizard")?.classList.add("hidden");
     offlineEditPlacementId = null;
   }
@@ -2823,11 +2923,17 @@ const CustomerOrders = (() => {
     }).join("");
   }
 
+  let offlineReview = false;
+
   function renderOfflineWizard() {
     const bodyEl = document.getElementById("co-offline-body");
     const footerEl = document.getElementById("co-offline-footer");
     const stepsEl = document.getElementById("co-offline-steps");
     if (!bodyEl || !footerEl) return;
+    if (offlineReview) {
+      renderOrderReview(bodyEl, footerEl);
+      return;
+    }
     if (stepsEl) stepsEl.innerHTML = "";
     const editing = !!offlineEditPlacementId;
     const picked = offlinePicked;
@@ -2855,7 +2961,7 @@ const CustomerOrders = (() => {
       </div>`;
     footerEl.innerHTML = `
       <button class="btn btn-secondary" onclick="CustomerOrders.closeOfflineWizard()">Cancel</button>
-      <button class="btn btn-primary" ${offlineBusy ? "disabled" : ""} onclick="CustomerOrders.submitOffline()">${offlineBusy ? "Saving…" : "Save order"}</button>`;
+      <button class="btn btn-primary" onclick="CustomerOrders.previewOrder()">Preview</button>`;
     paintOrderLines();
     loadBookedOrders();
     const focusId = editing || offlineCustomerId ? "co-order-item" : "co-order-customer";
@@ -3185,10 +3291,10 @@ const CustomerOrders = (() => {
     setGst, setGstRate, setBillSeries, setNarration, setEditBillNumber, setBillDate, setAddCharge, addChargeRow,
     setOfflinePlacedOn,
     setForceCredit,
-    processNext, processBack, submitProcess, toggleBillOrder, toggleAllBillOrders,
+    processNext, processBack, previewBill, backFromBillPreview, submitProcess, toggleBillOrder, toggleAllBillOrders,
     confirmOrder, _doConfirm, cancelOpenLine, cancelPlacement, cancelCustomerOpen, cancelEntireReceived, cancelAllOpen, editOpenLine, editReceivedLine, deleteReceivedLine, openEditPlacement, closeBillLine, cancelBill, voidBill, voidPlacement, openBillDoc, shareBillWhatsApp, uploadBillQr, resetBillQr,
     openOfflineWizard, closeOfflineWizard, renderOfflineWizard,
-    pickOfflineCustomer, onOfflineCustomerSearch, setOfflineNotes,
+    pickOfflineCustomer, onOfflineCustomerSearch, setOfflineNotes, previewOrder, backFromOrderPreview,
     onOfflineSearchInput, onOfflineSearchKey, onOfflineQtyKey, toggleOfflineProduct, pickOfflineProduct, removeOfflineLine, skipOfflineAddon,
     setOfflineQty, bumpOfflineQty, offlineNext, offlineBack, submitOffline,
   };

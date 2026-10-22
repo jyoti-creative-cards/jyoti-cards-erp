@@ -65,6 +65,7 @@
     offlineNotes = "";
     offlinePlacedOn = localToday();
     offlinePreview = null;
+    offlineReview = false;
     offlineBusy = false;
     offlineCustomers = [];
     document.getElementById("co-offline-wizard")?.classList.remove("hidden");
@@ -113,7 +114,41 @@
     document.getElementById("co-order-item")?.focus();
   }
 
+  function previewOrder() {
+    const notesEl = document.getElementById("co-order-note");
+    if (notesEl) offlineNotes = notesEl.value || "";
+    const dateEl = document.getElementById("co-order-date");
+    if (dateEl && dateEl.value) offlinePlacedOn = dateEl.value;
+    if (!offlineCustomerId) return ctx.toast("Select a customer", "error");
+    if (!offlineLines.some(l => Number(l.quantity) > 0)) return ctx.toast("Add at least one item", "error");
+    offlineReview = true;
+    renderOfflineWizard();
+  }
+
+  function backFromOrderPreview() {
+    offlineReview = false;
+    renderOfflineWizard();
+  }
+
+  function renderOrderReview(bodyEl, footerEl) {
+    const lines = offlineLines.filter(l => Number(l.quantity) > 0);
+    const total = lines.reduce((s, l) => s + (Number(l.selling_price) || 0) * (Number(l.quantity) || 0), 0);
+    bodyEl.innerHTML = `
+      <p style="margin:0 0 8px;font-size:13px;color:var(--muted);">Check this order, then save.</p>
+      <p style="margin:0 0 12px;"><strong>${ctx.esc(offlineCustomerName || "")}</strong></p>
+      <p style="margin:0 0 12px;font-size:13px;">${ctx.esc(offlinePlacedOn || "")}</p>
+      ${offlineNotes ? `<p style="margin:0 0 12px;color:#b91c1c;font-weight:700;">${ctx.esc(offlineNotes)}</p>` : ""}
+      <table class="data"><thead><tr><th>Item</th><th>Qty</th><th>Rate</th></tr></thead><tbody>
+        ${lines.map(l => `<tr><td>${ctx.esc(l.our_product_id)}</td><td>${l.quantity}</td><td>${fmtPrice(l.selling_price)}</td></tr>`).join("")}
+      </tbody></table>
+      <p style="margin:8px 0 0;font-weight:700;">${fmtPrice(total)}</p>`;
+    footerEl.innerHTML = `
+      <button class="btn btn-secondary" onclick="CustomerOrders.backFromOrderPreview()">Go back</button>
+      <button class="btn btn-primary" ${offlineBusy ? "disabled" : ""} onclick="CustomerOrders.submitOffline()">${offlineBusy ? "Saving…" : "Save order"}</button>`;
+  }
+
   function closeOfflineWizard() {
+    offlineReview = false;
     document.getElementById("co-offline-wizard")?.classList.add("hidden");
     offlineEditPlacementId = null;
   }
@@ -192,11 +227,17 @@
     }).join("");
   }
 
+  let offlineReview = false;
+
   function renderOfflineWizard() {
     const bodyEl = document.getElementById("co-offline-body");
     const footerEl = document.getElementById("co-offline-footer");
     const stepsEl = document.getElementById("co-offline-steps");
     if (!bodyEl || !footerEl) return;
+    if (offlineReview) {
+      renderOrderReview(bodyEl, footerEl);
+      return;
+    }
     if (stepsEl) stepsEl.innerHTML = "";
     const editing = !!offlineEditPlacementId;
     const picked = offlinePicked;
@@ -224,7 +265,7 @@
       </div>`;
     footerEl.innerHTML = `
       <button class="btn btn-secondary" onclick="CustomerOrders.closeOfflineWizard()">Cancel</button>
-      <button class="btn btn-primary" ${offlineBusy ? "disabled" : ""} onclick="CustomerOrders.submitOffline()">${offlineBusy ? "Saving…" : "Save order"}</button>`;
+      <button class="btn btn-primary" onclick="CustomerOrders.previewOrder()">Preview</button>`;
     paintOrderLines();
     loadBookedOrders();
     const focusId = editing || offlineCustomerId ? "co-order-item" : "co-order-customer";

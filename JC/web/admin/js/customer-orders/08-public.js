@@ -18,10 +18,10 @@
     setGst, setGstRate, setBillSeries, setNarration, setEditBillNumber, setBillDate, setAddCharge, addChargeRow,
     setOfflinePlacedOn,
     setForceCredit,
-    processNext, processBack, submitProcess, toggleBillOrder, toggleAllBillOrders,
+    processNext, processBack, previewBill, backFromBillPreview, submitProcess, toggleBillOrder, toggleAllBillOrders,
     confirmOrder, _doConfirm, cancelOpenLine, cancelPlacement, cancelCustomerOpen, cancelEntireReceived, cancelAllOpen, editOpenLine, editReceivedLine, deleteReceivedLine, openEditPlacement, closeBillLine, cancelBill, voidBill, voidPlacement, openBillDoc, shareBillWhatsApp, uploadBillQr, resetBillQr,
     openOfflineWizard, closeOfflineWizard, renderOfflineWizard,
-    pickOfflineCustomer, onOfflineCustomerSearch, setOfflineNotes,
+    pickOfflineCustomer, onOfflineCustomerSearch, setOfflineNotes, previewOrder, backFromOrderPreview,
     onOfflineSearchInput, onOfflineSearchKey, onOfflineQtyKey, toggleOfflineProduct, pickOfflineProduct, removeOfflineLine, skipOfflineAddon,
     setOfflineQty, bumpOfflineQty, offlineNext, offlineBack, submitOffline,
   };

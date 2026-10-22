@@ -723,8 +723,12 @@
             <div id="ot-lines" style="margin-top:12px;"></div>
             <label class="label" style="margin-top:12px;">Marking</label>
             <input id="ot-note" class="input" placeholder="Optional note for the person who bills this" />
-            <button type="button" class="btn btn-primary" style="margin-top:12px;" onclick="App.saveOrderTakerOrder()">Save order</button>
+            <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
+              <button type="button" class="btn btn-secondary" onclick="App.cancelOrderTakerItems()">Cancel</button>
+              <button type="button" class="btn btn-primary" onclick="App.previewOrderTakerOrder()">Preview</button>
+            </div>
           </div>
+          <div id="ot-review" class="hidden" style="margin-top:16px;"></div>
         </div>
         <div id="people-hub" class="ui-hub">
           <div class="ui-hub-intro">
@@ -1198,7 +1202,7 @@
   <script src="js/staff.js?v=ui81"></script>
   <script src="js/vendor-orders.js?v=ui85"></script>
   <script src="js/share.js?v=ui63"></script>
-  <script src="js/customer-orders.js?v=ui119"></script>
+  <script src="js/customer-orders.js?v=ui120"></script>
   <script src="js/returns.js?v=ui74"></script>
   <script src="js/debit-notes.js?v=ui74"></script>
   <script src="js/stock.js?v=ui93"></script>
@@ -1211,7 +1215,7 @@
   <script src="js/payment-modes.js?v=ui62"></script>
   <script src="js/freight-agents.js?v=ui66"></script>
   <script src="js/calculator.js?v=ui1"></script>
-  <script src="app.js?v=ui88"></script>
+  <script src="app.js?v=ui89"></script>
   <script src="js/whatsapp-inbox.js?v=ui2"></script>
 </body>
 </html>

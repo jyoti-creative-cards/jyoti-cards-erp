@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.db.session import init_db
-from app.routers import addons, activity, auth, catalog, customers, recycle_bin, routes, staff, stats, stock, stock_journals, vendor_orders, vendors, debit_notes, accounts_payable, shop, customer_orders, customer_returns, bill_series, freight_agents, expenses, accounts_receivable, documents, finance, reports, dashboard, share, export, payment_modes, whatsapp_inbox, items_lookup, runtime_settings
+from app.routers import addons, activity, auth, biz, catalog, customers, recycle_bin, routes, staff, stats, stock, stock_journals, vendor_orders, vendors, debit_notes, accounts_payable, shop, customer_orders, customer_returns, bill_series, freight_agents, expenses, accounts_receivable, documents, finance, reports, dashboard, share, export, payment_modes, whatsapp_inbox, items_lookup, runtime_settings
 from app.services.observability import setup_observability
 
 # Real format (with request-id correlation) is installed by setup_observability()
@@ -103,12 +103,17 @@ app.include_router(accounts_receivable.router, prefix="/api/v1")
 app.include_router(documents.router, prefix="/api/v1")
 app.include_router(finance.router, prefix="/api/v1")
 app.include_router(reports.router, prefix="/api/v1")
+app.include_router(biz.router, prefix="/api/v1")
 app.include_router(dashboard.router, prefix="/api/v1")
 app.include_router(share.router, prefix="/api/v1")
 app.include_router(export.router, prefix="/api/v1")
 app.include_router(whatsapp_inbox.router, prefix="/api/v1")
 app.include_router(items_lookup.router, prefix="/api/v1")
 app.include_router(runtime_settings.router, prefix="/api/v1")
+
+_books = Path(__file__).resolve().parent / "static" / "biz"
+if _books.is_dir():
+    app.mount("/books", StaticFiles(directory=_books, html=True), name="books")
 
 
 @app.get("/health")

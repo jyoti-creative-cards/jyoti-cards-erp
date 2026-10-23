@@ -239,6 +239,53 @@ def test_pdf_carries_the_page_total_and_closes_on_the_last_page():
     assert "Vendor" in text
 
 
+def test_long_vendor_stays_on_one_line_and_the_sheet_fills():
+    items = []
+    for i in range(50):
+        items.append({
+            "particular": f"ITEM {i}",
+            "vendor_name": "DEV PRINT & PACK PRIVATE LIMITED",
+            "sales_count": 1,
+            "in_qty": None,
+            "in_rate": None,
+            "in_value": None,
+            "out_qty": "20.00",
+            "out_rate": "5.00",
+            "out_value": "100.00",
+            "close_qty": "9.00",
+            "close_rate": "2.00",
+            "close_value": "18.00",
+        })
+    pdf = render_stock_summary_pdf_from({
+        "period": "For 19-Oct-26",
+        "printed_on": "19-Oct-26 at 20:08",
+        "items": items,
+        "totals": {
+            "sales_count": 50,
+            "in_qty": "0.00",
+            "in_value": "0.00",
+            "out_qty": "1000.00",
+            "out_value": "5000.00",
+            "close_qty": "450.00",
+            "close_value": "900.00",
+        },
+    })
+    reader = PdfReader(BytesIO(pdf))
+    assert len(reader.pages) >= 2
+    text = "\n".join((page.extract_text() or "") for page in reader.pages)
+    assert "DEV PRINT & PACK PRIVATE LIMITED" in text
+    bottoms = []
+    for page in reader.pages[:-1]:
+        ys = []
+        def visitor(text, cm, tm, fontDict, fontSize, ys=ys):
+            if (text or "").strip():
+                ys.append(cm[1] * tm[4] + cm[3] * tm[5] + cm[5])
+        page.extract_text(visitor_text=visitor)
+        bottoms.append(min(ys))
+    assert max(bottoms) - min(bottoms) < 8
+    assert max(bottoms) < 50
+
+
 def test_one_day_pdf_names_the_item(db):
     vendor, product, customer = _world(db)
     _bill(db, customer, product, 4, "28.00", DAY, WHEN, "B1")

@@ -15,6 +15,7 @@ from app.deps import AuthContext, require_admin, require_permission
 from app.models.catalog_product import CatalogProduct
 from app.models.city import City
 from app.models.customer import Customer
+from app.models.commission_agent import CommissionAgent
 from app.models.customer_bill import CustomerBill, CustomerBillLine
 from app.models.customer_order import CustomerOpenLine, CustomerOrder, CustomerOrderLine, CustomerOrderPlacement
 from app.schemas.customer_order import (
@@ -150,6 +151,7 @@ def serialize_customer_bill(
     else:
         bill_status = "open"
     entries = _price_entries(bill)
+    commission_agent = db.get(CommissionAgent, bill.commission_agent_id) if bill.commission_agent_id else None
     return CustomerBillOut(
         id=bill.id,
         bill_number=bill.bill_number,
@@ -177,6 +179,8 @@ def serialize_customer_bill(
         deleted_at=bill.deleted_at,
         deleted_reason=bill.deleted_reason,
         hide_discount_column=_hide_discount_column(bill, entries),
+        commission_agent_id=bill.commission_agent_id,
+        commission_agent_name=commission_agent.name if commission_agent else None,
         has_custom_qr=bool(bill.payment_qr_key),
         lines=[
             CustomerBillLineOut(

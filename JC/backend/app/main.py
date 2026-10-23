@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.db.session import init_db
-from app.routers import addons, activity, auth, biz, catalog, customers, recycle_bin, routes, staff, stats, stock, stock_journals, vendor_orders, vendors, debit_notes, accounts_payable, shop, customer_orders, customer_returns, bill_series, freight_agents, expenses, accounts_receivable, documents, finance, reports, dashboard, share, export, payment_modes, whatsapp_inbox, items_lookup, runtime_settings
+from app.routers import addons, activity, auth, biz, catalog, customers, recycle_bin, routes, staff, stats, stock, stock_journals, vendor_orders, vendors, debit_notes, accounts_payable, shop, customer_orders, customer_returns, bill_series, freight_agents, commission_agents, expenses, accounts_receivable, documents, finance, reports, dashboard, share, export, payment_modes, whatsapp_inbox, items_lookup, runtime_settings
 from app.services.observability import setup_observability
 
 # Real format (with request-id correlation) is installed by setup_observability()
@@ -118,6 +118,7 @@ app.include_router(customer_returns.router, prefix="/api/v1")
 app.include_router(bill_series.router, prefix="/api/v1")
 app.include_router(payment_modes.router, prefix="/api/v1")
 app.include_router(freight_agents.router, prefix="/api/v1")
+app.include_router(commission_agents.router, prefix="/api/v1")
 app.include_router(expenses.router, prefix="/api/v1")
 app.include_router(accounts_receivable.router, prefix="/api/v1")
 app.include_router(documents.router, prefix="/api/v1")

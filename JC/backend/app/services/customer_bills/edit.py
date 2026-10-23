@@ -15,7 +15,7 @@ from app.models.customer_bill import CustomerBill, CustomerBillLine
 from app.models.customer_order import CustomerOpenLine, CustomerOrder, CustomerOrderLine, CustomerOrderPlacement
 from app.models.stock import StockBalance
 from app.models.freight_agent import FreightAgent
-from app.services.ar_ledger import post_bill_entry, update_bill_ledger_amount
+from app.services.commission_ledger import sync_bill_due
 from app.services.bill_series_alloc import allocate_bill_number, resolve_bill_number
 from app.services.catalog_addons import (
     apply_billing_addons_to_totals,
@@ -372,9 +372,9 @@ def edit_customer_bill(
         actor_name=actor_name,
     )
 
-    update_bill_ledger_amount(
+    sync_bill_due(
         db,
-        bill_id=bill.id,
+        bill=bill,
         amount=new_grand,
         description=f"Bill {bill.bill_number} (edited) — ₹{new_grand}",
         value_date=ledger_value_date,

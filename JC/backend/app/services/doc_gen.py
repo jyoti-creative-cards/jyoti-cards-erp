@@ -393,6 +393,14 @@ def generate_customer_bill_document(
     # Outstanding already includes this bill — shown on the PDF. Credit limit is
     # internal-only and is intentionally not sent to render_customer_bill_pdf.
     outstanding = float(ar["outstanding"])
+    agent_name = None
+    agent_phone = None
+    if bill.commission_agent_id:
+        from app.models.commission_agent import CommissionAgent
+        agent = db.get(CommissionAgent, bill.commission_agent_id)
+        if agent and not agent.deleted_at:
+            agent_name = agent.name
+            agent_phone = agent.phone
     pdf = render_customer_bill_pdf(
         bill_id=bill.id,
         order_id=bill.placement_id or bill.id,
@@ -418,6 +426,8 @@ def generate_customer_bill_document(
         copies=copies,
         with_labels=with_labels,
         payment_qr=_bill_payment_qr(bill),
+        agent_name=agent_name,
+        agent_phone=agent_phone,
     )
     if not persist:
         bill._pdf_bytes = pdf

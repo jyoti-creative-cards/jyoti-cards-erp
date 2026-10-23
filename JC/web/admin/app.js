@@ -3089,7 +3089,7 @@ const App = (() => {
 
 // @slice 07-public
   return {
-    login, staffLogin, setLoginTab, logout, toggleSidebar, showView, goBack, updateGlobalBack,
+    api, toast, login, staffLogin, setLoginTab, logout, toggleSidebar, showView, goBack, updateGlobalBack,
     showPeopleHub, showPeopleTab, renderPeopleCustomerSearch, renderPeopleVendorSearch, showSetupHub, showSetupTab,
     showMoreHub, showMoreSafety,
     setOrdersType,

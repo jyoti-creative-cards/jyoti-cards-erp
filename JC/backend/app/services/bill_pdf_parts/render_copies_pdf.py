@@ -124,6 +124,8 @@ def render_copies_pdf(
     credit_limit: float | None = None,
     outstanding: float | None = None,
     payment_qr: bytes | None = None,
+    agent_name: str | None = None,
+    agent_phone: str | None = None,
 ) -> bytes:
     del credit_limit, outstanding, order_id
     copies = max(1, min(int(copies or 1), 4))
@@ -168,6 +170,8 @@ def render_copies_pdf(
         payment_type=payment_type,
         marker_1=marker_1,
         marker_2=marker_2,
+        agent_name=agent_name,
+        agent_phone=agent_phone,
     )
     pages = _paginate(running, closing, len(photos), table_top)
 
@@ -188,6 +192,8 @@ def render_copies_pdf(
         payment_type=payment_type,
         marker_1=marker_1,
         marker_2=marker_2,
+        agent_name=agent_name,
+        agent_phone=agent_phone,
     )
     buf = BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
@@ -354,6 +360,8 @@ def render_customer_bill_pdf(
     copies: int = 2,
     with_labels: bool = True,
     payment_qr: bytes | None = None,
+    agent_name: str | None = None,
+    agent_phone: str | None = None,
 ) -> bytes:
     del credit_limit, outstanding
     return render_copies_pdf(
@@ -371,6 +379,8 @@ def render_customer_bill_pdf(
         payment_type=payment_type,
         marker_1=marker_1,
         marker_2=marker_2,
+        agent_name=agent_name,
+        agent_phone=agent_phone,
         totals=totals,
         generated_at=generated_at,
         printed_at=printed_at,

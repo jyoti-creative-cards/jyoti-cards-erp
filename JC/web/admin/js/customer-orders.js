@@ -1730,7 +1730,12 @@ const CustomerOrders = (() => {
         return;
       }
       detailCustomerId = bill.customer_id || detailCustomerId;
-      processContext = { customer_id: bill.customer_id, customer_name: currentOrder?.customer_name || "" };
+      processContext = {
+        customer_id: bill.customer_id,
+        customer_name: currentOrder?.customer_name || "",
+        commission_agent_name: bill.commission_agent_name || "",
+        commission_agent_id: bill.commission_agent_id || null,
+      };
       // City wasn't already on hand here (bill/detail payloads don't carry it) — fetch
       // it separately for the review screen's "Customer / City" line. Best-effort only.
       ctx.api(`/customers/${bill.customer_id}`, {}, 30000).then(c => {
@@ -2076,7 +2081,7 @@ const CustomerOrders = (() => {
       <input id="co-bill-edit-search" class="input" placeholder="Item number" oninput="CustomerOrders.setBillEditSearch(this.value)" />
       <div id="co-bill-edit-matches"></div>` : "";
     bodyEl.innerHTML = `
-      <p style="margin:0 0 12px;"><strong>${processContext?.party_number ? "#" + processContext.party_number + " " : ""}${ctx.esc(processContext?.customer_name || "")}</strong>${partyMarkerBadgesHtml(processContext)}</p>
+      ${processContext?.commission_agent_name ? `<p style="margin:0 0 12px;padding:12px;background:#fef3c7;border:2px solid #d97706;border-radius:12px;"><span style="display:block;font-size:12px;font-weight:700;letter-spacing:.04em;">BILL ON</span><strong style="font-size:22px;">${ctx.esc(processContext.commission_agent_name)}</strong><span style="display:block;margin-top:4px;font-size:13px;color:#92400e;">Party ${ctx.esc(processContext?.customer_name || "")} is printed small. The due sits on this agent.</span></p>` : `<p style="margin:0 0 12px;"><strong>${processContext?.party_number ? "#" + processContext.party_number + " " : ""}${ctx.esc(processContext?.customer_name || "")}</strong>${partyMarkerBadgesHtml(processContext)}</p>`}
       ${cashWarningHtml(processContext)}
       ${!editBillId ? creditBannerHtml(processContext?.credit) : ""}
       ${ordersHtml}

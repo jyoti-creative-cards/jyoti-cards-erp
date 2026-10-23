@@ -105,6 +105,10 @@ def get_process_context(
             )
         )
     city = db.get(City, customer.city_id) if customer.city_id else None
+    from app.services.commission_ledger import live_agent_id
+    from app.models.commission_agent import CommissionAgent
+    agent_id = live_agent_id(db, customer)
+    agent = db.get(CommissionAgent, agent_id) if agent_id else None
     return ProcessContextOut(
         customer_id=customer_id,
         customer_name=customer.business_name,
@@ -117,6 +121,8 @@ def get_process_context(
         payment_type=getattr(customer, "payment_type", None),
         city_name=city.name if city else None,
         orders=[BillableOrderOut(**row) for row in ctx.get("orders") or []],
+        commission_agent_id=agent.id if agent else None,
+        commission_agent_name=agent.name if agent else None,
     )
 
 @router.post("/customer/{customer_id}/process/preview")

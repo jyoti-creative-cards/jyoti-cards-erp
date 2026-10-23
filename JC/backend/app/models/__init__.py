@@ -20,6 +20,7 @@ from app.models.customer_order import CustomerOrder, CustomerOrderLine, Customer
 from app.models.customer_bill import CustomerBill, CustomerBillLine
 from app.models.bill_series import BillSeries
 from app.models.freight_agent import FreightAgent, FreightLedgerEntry
+from app.models.commission_agent import CommissionAgent, CommissionLedgerEntry
 from app.models.expense import Expense, ExpenseHead, ExpenseSubhead
 from app.models.stock_journal import StockJournal, StockJournalLine
 from app.models.accounts_receivable import CustomerArAccount, ArLedgerEntry

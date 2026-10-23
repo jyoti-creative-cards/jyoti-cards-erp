@@ -216,12 +216,13 @@ def create_customer_return(
             only_addon_ids=kept_addon_ids_for_customer_product(db, customer_id, p["catalog_product_id"]),
         )
 
-    post_credit_note_entry(
+    _post_return_credit(
         db,
+        prepared=prepared,
+        credit=credit,
         customer_id=customer_id,
         return_id=ret.id,
-        amount=credit,
-        description=f"Credit note {ret.return_number} — ₹{credit}",
+        return_number=ret.return_number,
         actor_type=actor_type,
         actor_id=actor_id,
         actor_name=actor_name,
@@ -233,6 +234,77 @@ def create_customer_return(
         pass
 
     return ret
+
+
+def _post_return_credit(
+    db: Session,
+    *,
+    prepared: list,
+    credit: Decimal,
+    customer_id: int,
+    return_id: int,
+    return_number: str,
+    actor_type: str,
+    actor_id: Optional[int],
+    actor_name: str,
+) -> None:
+    """A return of an agent's bill reduces that agent's ledger. A normal bill stays on the party."""
+    from app.services.commission_ledger import post_agent_credit
+
+    if credit <= 0:
+        return
+    bill_ids = {int(p["bill_id"]) for p in prepared}
+    bills = {b.id: b for b in db.query(CustomerBill).filter(CustomerBill.id.in_(bill_ids)).all()} if bill_ids else {}
+    agents = set()
+    for p in prepared:
+        bill = bills.get(int(p["bill_id"]))
+        agents.add(bill.commission_agent_id if bill else None)
+    description = f"Credit note {return_number} — ₹{credit}"
+    if agents == {None}:
+        post_credit_note_entry(
+            db, customer_id=customer_id, return_id=return_id, amount=credit,
+            description=description, actor_type=actor_type, actor_id=actor_id, actor_name=actor_name,
+        )
+        return
+    if len(agents) == 1:
+        agent_id = next(iter(agents))
+        post_agent_credit(
+            db, agent_id=agent_id, customer_id=customer_id, return_id=return_id, amount=credit,
+            description=description, actor_type=actor_type, actor_id=actor_id, actor_name=actor_name,
+        )
+        return
+    total = sum((_d(p["line_calculated"]) for p in prepared), Decimal("0"))
+    if total <= 0:
+        post_credit_note_entry(
+            db, customer_id=customer_id, return_id=return_id, amount=credit,
+            description=description, actor_type=actor_type, actor_id=actor_id, actor_name=actor_name,
+        )
+        return
+    agent_parts: dict[int, Decimal] = {}
+    party_part = Decimal("0")
+    running = Decimal("0")
+    for index, p in enumerate(prepared):
+        share = (credit * _d(p["line_calculated"]) / total).quantize(Decimal("0.01"))
+        if index == len(prepared) - 1:
+            share = (credit - running).quantize(Decimal("0.01"))
+        running += share
+        bill = bills.get(int(p["bill_id"]))
+        agent_id = bill.commission_agent_id if bill else None
+        if agent_id:
+            agent_parts[agent_id] = agent_parts.get(agent_id, Decimal("0")) + share
+        else:
+            party_part += share
+    if party_part > 0:
+        post_credit_note_entry(
+            db, customer_id=customer_id, return_id=return_id, amount=party_part,
+            description=description, actor_type=actor_type, actor_id=actor_id, actor_name=actor_name,
+        )
+    for agent_id, part in agent_parts.items():
+        if part > 0:
+            post_agent_credit(
+                db, agent_id=agent_id, customer_id=customer_id, return_id=return_id, amount=part,
+                description=description, actor_type=actor_type, actor_id=actor_id, actor_name=actor_name,
+            )
 
 
 def list_returns_by_customer(db: Session) -> list[dict]:

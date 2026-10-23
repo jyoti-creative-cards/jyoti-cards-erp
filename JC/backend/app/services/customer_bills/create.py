@@ -15,7 +15,7 @@ from app.models.customer_bill import CustomerBill, CustomerBillLine
 from app.models.customer_order import CustomerOpenLine, CustomerOrder, CustomerOrderLine, CustomerOrderPlacement
 from app.models.stock import StockBalance
 from app.models.freight_agent import FreightAgent
-from app.services.ar_ledger import post_bill_entry, update_bill_ledger_amount
+from app.services.commission_ledger import post_customer_bill_due
 from app.services.bill_series_alloc import allocate_bill_number, resolve_bill_number
 from app.services.catalog_addons import (
     apply_billing_addons_to_totals,
@@ -265,12 +265,12 @@ def process_customer_bill(
         db, bill, customer_name=customer_name, actor_name=actor_name,
     )
 
-    post_bill_entry(
+    post_customer_bill_due(
         db,
-        customer_id=customer_id,
-        bill_id=bill.id,
+        bill=bill,
+        customer=db.get(Customer, customer_id),
         amount=grand,
-        description=f"Bill {bill_number} — ₹{grand}",
+        description=f"Bill {bill_number} — {customer_name} — ₹{grand}",
         actor_type=actor_type,
         actor_id=actor_id,
         actor_name=actor_name,

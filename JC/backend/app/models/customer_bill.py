@@ -25,6 +25,9 @@ class CustomerBill(Base):
     gst_rate_percent: Mapped[Decimal] = mapped_column(Numeric(6, 2), nullable=False, default=0, server_default="0")
     discount_percent: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 2), nullable=True)
     freight_agent_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("jc_freight_agents.id", ondelete="SET NULL"), nullable=True)
+    commission_agent_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("jc_commission_agents.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     freight_charges: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 2), nullable=True)
     transport_mode: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     transport_receipt_number: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)

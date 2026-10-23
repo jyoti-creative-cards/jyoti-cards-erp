@@ -133,6 +133,8 @@ class CustomerBillOut(BaseModel):
     deleted_reason: Optional[str] = None
     hide_discount_column: bool = False
     has_custom_qr: bool = False
+    commission_agent_id: Optional[int] = None
+    commission_agent_name: Optional[str] = None
     lines: List[CustomerBillLineOut] = []
 
 
@@ -261,6 +263,8 @@ class ProcessContextOut(BaseModel):
     payment_type: Optional[str] = None
     city_name: Optional[str] = None
     orders: List[BillableOrderOut] = []
+    commission_agent_id: Optional[int] = None
+    commission_agent_name: Optional[str] = None
 
 
 class OfflineLineIn(BaseModel):

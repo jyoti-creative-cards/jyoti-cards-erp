@@ -79,6 +79,8 @@ def _draw_header(
     payment_type: str | None = None,
     marker_1: str | None = None,
     marker_2: str | None = None,
+    agent_name: str | None = None,
+    agent_phone: str | None = None,
 ) -> float:
     """Draw the Tally header. Returns the table-top y measured from the top of the page."""
     # Same corner on every printed bill, for the pin.
@@ -126,8 +128,19 @@ def _draw_header(
     marks = [m for m in (_txt(marker_1, 40), _txt(marker_2, 40)) if m]
     if marks:
         name = f"{name}  {'  '.join(marks)}"
-    party_lines.append(("Party : ", name, True))
-    phone = _txt(customer_phone, 40)
+    agent = _txt(agent_name, 40)
+    phone = _txt(agent_phone, 40) if agent else _txt(customer_phone, 40)
+    if agent:
+        top = 116.0
+        c.setFont("Helvetica-Bold", 14)
+        c.drawCentredString(PAGE_W / 2, _y(top), agent)
+        top += 16
+        c.setFont("Helvetica", 8)
+        c.drawCentredString(PAGE_W / 2, _y(top), f"Party : {name}")
+        top += 12
+    else:
+        party_lines.append(("Party : ", name, True))
+        phone = _txt(customer_phone, 40)
     if phone:
         party_lines.append(("", phone, False))
     person = _txt(customer_company, 60)
@@ -144,22 +157,24 @@ def _draw_header(
     elif pay == "CREDIT":
         party_lines.append(("", "Credit", True))
 
-    top = 116.0
-    for prefix, text, bold in party_lines:
-        font = "Helvetica-Bold" if bold else "Helvetica"
-        c.setFont("Helvetica", 9)
-        pw = c.stringWidth(prefix, "Helvetica", 9) if prefix else 0
-        c.setFont(font, 9)
-        tw = c.stringWidth(text, font, 9)
-        x = (PAGE_W - (pw + tw)) / 2
-        if prefix:
+    if agent:
+        top += 6
+    else:
+        top = 116.0
+        for prefix, text, bold in party_lines:
+            font = "Helvetica-Bold" if bold else "Helvetica"
             c.setFont("Helvetica", 9)
-            c.drawString(x, _y(top), prefix)
-        c.setFont(font, 9)
-        c.drawString(x + pw, _y(top), text)
-        top += 13
-
-    top += 6
+            pw = c.stringWidth(prefix, "Helvetica", 9) if prefix else 0
+            c.setFont(font, 9)
+            tw = c.stringWidth(text, font, 9)
+            x = (PAGE_W - (pw + tw)) / 2
+            if prefix:
+                c.setFont("Helvetica", 9)
+                c.drawString(x, _y(top), prefix)
+            c.setFont(font, 9)
+            c.drawString(x + pw, _y(top), text)
+            top += 13
+        top += 6
     if phone:
         c.setFont("Helvetica", 9)
         label = "Contact : "

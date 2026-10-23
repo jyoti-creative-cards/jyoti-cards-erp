@@ -168,8 +168,9 @@ function itemView(data, rows) {
   } else {
     body = `<div class="list">${(rows || []).map((row) => {
       const idAttr = state.tab === "customer" ? `data-bill="${row.bill_id}"` : `data-receipt="${row.receipt_id}"`;
+      const city = state.tab === "customer" && row.city ? ` · ${esc(row.city)}` : "";
       return `<button class="hit" ${idAttr}>
-        <strong>${esc(row.party)}</strong>
+        <strong>${esc(row.party)}${city}</strong>
         <span class="muted">${esc(row.date)} · ${esc(row.bill_number || row.receipt_number || "")} · ${esc(qty(row.qty))} · ${inr(row.rate)}</span>
         <b>${inr(row.amount)}</b>
       </button>`;

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.models.accounts_payable import ApLedgerEntry
 from app.models.accounts_receivable import ArLedgerEntry
 from app.models.catalog_product import CatalogProduct
+from app.models.city import City
 from app.models.customer import Customer
 from app.models.customer_bill import CustomerBill, CustomerBillLine
 from app.models.expense import Expense
@@ -371,6 +372,19 @@ def _names(db, model, ids) -> dict[int, str]:
     return {row.id: row.business_name for row in db.query(model).filter(model.id.in_(ids)).all()}
 
 
+def _customer_cities(db, ids) -> dict[int, str]:
+    ids = {int(i) for i in ids if i}
+    if not ids:
+        return {}
+    rows = (
+        db.query(Customer.id, City.name)
+        .outerjoin(City, City.id == Customer.city_id)
+        .filter(Customer.id.in_(ids))
+        .all()
+    )
+    return {customer_id: (name or "").strip() for customer_id, name in rows}
+
+
 def search_items(db: Session, query: str) -> list[dict]:
     text = (query or "").strip()
     if not text:
@@ -496,7 +510,9 @@ def item_customers(db, product_id, from_date, to_date) -> list[dict]:
         )
         .all()
     )
-    names = _names(db, Customer, {bills[ln.bill_id].customer_id for ln in lines if ln.bill_id in bills})
+    customer_ids = {bills[ln.bill_id].customer_id for ln in lines if ln.bill_id in bills}
+    names = _names(db, Customer, customer_ids)
+    cities = _customer_cities(db, customer_ids)
     rows = []
     for ln in lines:
         bill = bills[ln.bill_id]
@@ -508,6 +524,7 @@ def item_customers(db, product_id, from_date, to_date) -> list[dict]:
             "bill_number": bill.bill_number,
             "date": bill.bill_date.isoformat() if bill.bill_date else _day(bill.created_at),
             "party": names.get(bill.customer_id) or f"Customer #{bill.customer_id}",
+            "city": cities.get(bill.customer_id, ""),
             "qty": _money(qty),
             "rate": _money(rate),
             "amount": _money(value),

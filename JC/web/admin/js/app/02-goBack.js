@@ -112,6 +112,10 @@
       document.getElementById("nav-products")?.classList.add("active");
       Products.showHub();
       updateHubCounts();
+    } else if (name === "party-ledger") {
+      document.getElementById("view-party-ledger")?.classList.remove("hidden");
+      document.getElementById("nav-party-ledger")?.classList.add("active");
+      document.getElementById("party-ledger-q")?.focus();
     } else if (name === "money") {
       if (!isAdmin() && !can("finance.write") && !canRead("ar") && !canRead("ap")) {
         showView("today", { replace: true });
@@ -492,5 +496,74 @@
       Vendors.load();
     }
   }
+
+  function openShortcut(mode) {
+    if (document.getElementById("app")?.classList.contains("hidden")) return;
+    shortcutMode = mode;
+    const box = document.getElementById("shortcut-box");
+    const title = document.getElementById("shortcut-title");
+    const input = document.getElementById("shortcut-q");
+    const hits = document.getElementById("shortcut-hits");
+    if (!box) return;
+    if (title) title.textContent = mode === "bill" ? "Create bill" : "Open item";
+    if (input) {
+      input.value = "";
+      input.placeholder = mode === "bill" ? "Party name or code" : "Item number";
+    }
+    if (hits) hits.innerHTML = "";
+    box.classList.remove("hidden");
+    input?.focus();
+  }
+
+  function closeShortcut() {
+    shortcutMode = "";
+    document.getElementById("shortcut-box")?.classList.add("hidden");
+  }
+
+  async function onShortcutSearch(val) {
+    const hits = document.getElementById("shortcut-hits");
+    if (!hits) return;
+    const q = String(val || "").trim();
+    if (q.length < 1) { hits.innerHTML = ""; return; }
+    if (shortcutMode === "bill") {
+      await ensurePartyLedgerParties();
+      const rows = filterPartyLedger(q);
+      hits.innerHTML = rows.map(c =>
+        `<button type="button" class="btn btn-secondary" style="display:block;width:100%;text-align:left;margin-top:6px;" onclick="App.pickShortcut(${c.id})">${esc(c.business_name || "")}${c.city_name ? " · " + esc(c.city_name) : ""}${c.party_number ? " · #" + c.party_number : ""}</button>`
+      ).join("") || `<p style="color:var(--muted);">No match</p>`;
+      return;
+    }
+    if (!partyLedgerParties) partyLedgerParties = [];
+    if (!window._shortcutItems) {
+      window._shortcutItems = await api("/stock/entry-items", {}, 0) || [];
+    }
+    const needle = q.toLowerCase();
+    const rows = window._shortcutItems.filter(p => String(p.our_product_id || "").toLowerCase().includes(needle)).slice(0, 12);
+    hits.innerHTML = rows.map(p =>
+      `<button type="button" class="btn btn-secondary" style="display:block;width:100%;text-align:left;margin-top:6px;" onclick="App.pickShortcut(${p.catalog_product_id})">${esc(p.our_product_id)} · stock ${p.quantity_on_hand ?? 0}</button>`
+    ).join("") || `<p style="color:var(--muted);">No match</p>`;
+  }
+
+  function pickShortcut(id) {
+    const mode = shortcutMode;
+    closeShortcut();
+    if (mode === "bill") billCustomer(id);
+    else {
+      showView("products");
+      Products.openProductDetail?.(id);
+    }
+  }
+
+  document.addEventListener("keydown", (e) => {
+    if (!e.altKey || e.ctrlKey || e.metaKey) return;
+    if (document.getElementById("app")?.classList.contains("hidden")) return;
+    const code = e.code;
+    if (code !== "KeyC" && code !== "KeyB" && code !== "KeyS" && code !== "KeyL") return;
+    e.preventDefault();
+    if (code === "KeyC") CustomerOrders.openOfflineWizard?.();
+    else if (code === "KeyB") openShortcut("bill");
+    else if (code === "KeyS") openShortcut("item");
+    else if (code === "KeyL") showView("money");
+  });
 
   // ── Data ──────────────────────────────────────────────────────────

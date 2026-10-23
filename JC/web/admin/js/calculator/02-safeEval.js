@@ -77,12 +77,9 @@
     if (isOpen()) close(); else open();
   }
 
-  // Single always-on listener (cheap: one comparison per keydown). Alt+C toggles from
-  // anywhere, even while typing in a form field. Digit/operator keys only feed the
-  // calculator while it's open AND no other input/textarea/select has focus, so normal
-  // typing elsewhere on the page is never hijacked.
+  // Alt+K toggles the calculator. Alt+C is create order.
   document.addEventListener("keydown", (e) => {
-    if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === "c" || e.key === "C")) {
+    if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === "KeyK") {
       e.preventDefault();
       toggle();
       return;

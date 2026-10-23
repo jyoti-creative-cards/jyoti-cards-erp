@@ -44,6 +44,8 @@
     document.getElementById("nav-people")?.classList.toggle("hidden", desk || lookup || taker || !showPeople);
     document.getElementById("nav-products")?.classList.toggle("hidden", desk || lookup || taker || !showProducts);
     document.getElementById("nav-money")?.classList.toggle("hidden", desk || lookup || taker || !(isAdmin() || can("finance.write") || canRead("ar") || canRead("ap")));
+    document.getElementById("nav-quick")?.classList.toggle("hidden", desk || lookup || taker || !(isAdmin() || can("finance.write") || canRead("ar") || canRead("ap")));
+    document.getElementById("nav-party-ledger")?.classList.toggle("hidden", desk || lookup || taker || !(isAdmin() || canRead("customers")));
     document.getElementById("nav-more")?.classList.toggle("hidden", lookup || taker);
     document.getElementById("more-tile-buying")?.classList.toggle("hidden", !showBuying);
     document.getElementById("more-tile-selling")?.classList.toggle("hidden", !showSelling);

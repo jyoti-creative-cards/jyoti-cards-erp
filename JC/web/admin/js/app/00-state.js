@@ -30,6 +30,11 @@ const App = (() => {
   let editingCustomerId = null;
   let customerLedger = [];
   let customerLedgerExpanded = null;
+  let customerLedgerOpenIds = new Set();
+  let customerLedgerExpandAll = false;
+  let partyLedgerCustomerId = null;
+  let partyLedgerParties = null;
+  let shortcutMode = "";
   let customerRealOnly = true;
   let customerAr = null;
   let viewStack = [];

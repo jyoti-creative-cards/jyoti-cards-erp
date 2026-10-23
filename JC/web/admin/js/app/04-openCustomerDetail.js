@@ -2,6 +2,8 @@
     const c = await api(`/customers/${id}`);
     detailMode = "customer"; detailId = id;
     customerLedgerExpanded = null;
+    customerLedgerOpenIds = new Set();
+    customerLedgerExpandAll = false;
     customerAr = null;
     customerLedger = [];
     let tab = opts.tab || "activity";
@@ -185,8 +187,7 @@
 
   function setCustomerRealOnly(on) {
     customerRealOnly = !!on;
-    const wrap = document.getElementById("customer-ledger-wrap");
-    if (wrap && detailId) wrap.innerHTML = renderCustomerStatement(detailId);
+    repaintLedgers();
   }
 
   function customerRealBar() {
@@ -216,7 +217,7 @@
 
     group("Orders", orders, (e) => {
       const d = e.details || {};
-      const open = customerLedgerExpanded === e.id;
+      const open = ledgerRowOpen(e.id);
       const lines = d.lines || [];
       return `<div class="vled-card ${open ? "is-open" : ""}">
         <button type="button" class="vled-head" onclick="App.toggleCustomerLedgerRow('${e.id}')">
@@ -224,7 +225,7 @@
             <div class="vled-title">${e.event_type === "order_cancelled" ? "Cancelled" : "Placed"} · #${d.placement_id || "—"}</div>
             <div class="vled-meta">${fmtDate(e.occurred_at)} · ${lines.length} lines · ${esc(e.summary || "")}</div>
           </div>
-          <span class="vled-chevron">${open ? "▾" : "▸"}</span>
+          <span class="vled-chevron">${open ? "Hide" : "View detail"}</span>
         </button>
         ${open ? `<div class="vled-body">
           <table class="data fin-mini"><thead><tr><th>Product</th><th>Qty</th><th>Rate</th></tr></thead><tbody>
@@ -239,7 +240,7 @@
 
     group("Bills / sold", bills, (e) => {
       const d = e.details || {};
-      const open = customerLedgerExpanded === e.id;
+      const open = ledgerRowOpen(e.id);
       const lines = d.lines || [];
       return `<div class="vled-card ${open ? "is-open" : ""}">
         <button type="button" class="vled-head" onclick="App.toggleCustomerLedgerRow('${e.id}')">
@@ -247,7 +248,7 @@
             <div class="vled-title">Bill ${esc(d.bill_number || "")}</div>
             <div class="vled-meta">${fmtDate(e.occurred_at)} · ${fmtPersonMoney(d.grand_total)} · ${lines.length} lines</div>
           </div>
-          <span class="vled-chevron">${open ? "▾" : "▸"}</span>
+          <span class="vled-chevron">${open ? "Hide" : "View detail"}</span>
         </button>
         ${open ? `<div class="vled-body">
           <table class="data fin-mini"><thead><tr><th>Product</th><th>Qty</th><th>Amount</th></tr></thead><tbody>
@@ -263,16 +264,19 @@
 
     group("Payments", payments, (e) => {
       const d = e.details || {};
-      const open = customerLedgerExpanded === e.id;
+      const open = ledgerRowOpen(e.id);
       return `<div class="vled-card ${open ? "is-open" : ""}">
         <button type="button" class="vled-head" onclick="App.toggleCustomerLedgerRow('${e.id}')">
           <div>
             <div class="vled-title">Collected ${esc(d.payment_ref || "")}</div>
             <div class="vled-meta">${fmtDate(e.occurred_at)} · ${fmtPersonMoney(d.amount)}${d.comment ? ` · ${esc(d.comment)}` : ""}</div>
           </div>
-          <span class="vled-chevron">${open ? "▾" : "▸"}</span>
+          <span class="vled-chevron">${open ? "Hide" : "View detail"}</span>
         </button>
         ${open ? `<div class="vled-body">
+          <div class="vled-meta" style="margin-bottom:8px;">
+            Ref ${esc(d.payment_ref || "—")} · ${fmtPersonMoney(d.amount)}${d.comment ? ` · ${esc(d.comment)}` : ""}${d.payment_mode ? ` · ${esc(d.payment_mode)}` : ""}
+          </div>
           <div class="vled-actions">
             ${isAdmin() && d.ledger_entry_id && !d.reversed ? `
               <button class="btn btn-secondary btn-sm" onclick="Finance.undoArPayment(${d.ledger_entry_id},'reverse',${customerId})">Reverse</button>
@@ -288,7 +292,7 @@
 
     group("Returns", returns, (e) => {
       const d = e.details || {};
-      const open = customerLedgerExpanded === e.id;
+      const open = ledgerRowOpen(e.id);
       const lines = d.lines || [];
       return `<div class="vled-card ${open ? "is-open" : ""}">
         <button type="button" class="vled-head" onclick="App.toggleCustomerLedgerRow('${e.id}')">
@@ -296,7 +300,7 @@
             <div class="vled-title">Return ${esc(d.return_number || "")}</div>
             <div class="vled-meta">${fmtDate(e.occurred_at)} · Credit ${fmtPersonMoney(d.credit_amount)}</div>
           </div>
-          <span class="vled-chevron">${open ? "▾" : "▸"}</span>
+          <span class="vled-chevron">${open ? "Hide" : "View detail"}</span>
         </button>
         ${open ? `<div class="vled-body">
           <table class="data fin-mini"><thead><tr><th>Product</th><th>Qty</th><th>Amount</th></tr></thead><tbody>
@@ -321,13 +325,154 @@
     const emptyNote = customerLedger.length
       ? `<p style="color:var(--muted);font-size:13px;">No real entries. Uncheck Real entries only to see voids.</p>`
       : `<p style="color:var(--muted);font-size:13px;">Nothing yet. Place an order or bill this customer.</p>`;
-    return `<div class="detail-section"><h4>Activity</h4>${customerRealBar()}${sections.length ? sections.join("") : emptyNote}</div>`;
+    return `<div class="detail-section"><h4>Activity</h4>${customerRealBar()}<button type="button" class="btn btn-secondary btn-sm" style="margin:0 0 10px 8px;" onclick="App.setCustomerLedgerDetails(${customerLedgerExpandAll ? "false" : "true"})">${customerLedgerExpandAll ? "Hide details" : "View details"}</button>${sections.length ? sections.join("") : emptyNote}</div>`;
+  }
+
+  function ledgerRowOpen(entryId) {
+    if (customerLedgerExpandAll) return true;
+    return customerLedgerOpenIds.has(String(entryId));
+  }
+
+  function repaintLedgers() {
+    const wrap = document.getElementById("customer-ledger-wrap");
+    if (wrap && detailId) wrap.innerHTML = renderCustomerStatement(detailId);
+    const view = document.getElementById("view-party-ledger");
+    const page = document.getElementById("party-ledger-body");
+    if (page && view && !view.classList.contains("hidden") && partyLedgerCustomerId) {
+      page.innerHTML = renderCustomerStatement(partyLedgerCustomerId);
+    }
+  }
+
+  function setCustomerLedgerDetails(on) {
+    customerLedgerExpandAll = !!on;
+    if (!on) customerLedgerOpenIds = new Set();
+    repaintLedgers();
   }
 
   function toggleCustomerLedgerRow(entryId) {
-    customerLedgerExpanded = customerLedgerExpanded === entryId ? null : entryId;
-    const wrap = document.getElementById("customer-ledger-wrap");
-    if (wrap && detailId) wrap.innerHTML = renderCustomerStatement(detailId);
+    const key = String(entryId);
+    if (customerLedgerExpandAll) {
+      customerLedgerExpandAll = false;
+      customerLedgerOpenIds = new Set(customerLedger.map(e => String(e.id)));
+      customerLedgerOpenIds.delete(key);
+    } else if (customerLedgerOpenIds.has(key)) {
+      customerLedgerOpenIds.delete(key);
+    } else {
+      customerLedgerOpenIds.add(key);
+    }
+    repaintLedgers();
+  }
+
+  async function ensurePartyLedgerParties() {
+    if (partyLedgerParties) return partyLedgerParties;
+    partyLedgerParties = await api("/customers/entry-parties", {}, 0) || [];
+    return partyLedgerParties;
+  }
+
+  function filterPartyLedger(q) {
+    const needle = String(q || "").trim().toLowerCase();
+    if (!needle) return [];
+    const digits = needle.replace(/\D/g, "");
+    return (partyLedgerParties || []).filter(c => {
+      const name = String(c.business_name || "").toLowerCase();
+      const city = String(c.city_name || "").toLowerCase();
+      const num = String(c.party_number || "");
+      const phone = String(c.phone || "");
+      return name.includes(needle) || city.includes(needle) || (num && num.includes(needle)) || (digits && phone.includes(digits));
+    }).slice(0, 12);
+  }
+
+  async function onPartyLedgerSearch(val) {
+    const box = document.getElementById("party-ledger-matches");
+    if (!box) return;
+    try { await ensurePartyLedgerParties(); }
+    catch (e) { box.innerHTML = `<p style="color:var(--danger);">${esc(e.message)}</p>`; return; }
+    const rows = filterPartyLedger(val);
+    box.innerHTML = rows.map(c =>
+      `<button type="button" class="btn btn-secondary" style="display:block;width:100%;text-align:left;margin-top:6px;" onclick="App.pickPartyLedger(${c.id})">${esc(c.business_name || "")}${c.city_name ? " · " + esc(c.city_name) : ""}${c.party_number ? " · #" + c.party_number : ""}</button>`
+    ).join("") || (String(val || "").trim() ? `<p style="color:var(--muted);margin:8px 0 0;">No match</p>` : "");
+  }
+
+  async function pickPartyLedger(id) {
+    const c = (partyLedgerParties || []).find(x => Number(x.id) === Number(id));
+    partyLedgerCustomerId = Number(id);
+    customerLedgerOpenIds = new Set();
+    customerLedgerExpandAll = false;
+    const picked = document.getElementById("party-ledger-picked");
+    if (picked) picked.textContent = c ? `${c.business_name || ""}${c.city_name ? " · " + c.city_name : ""}` : "";
+    const box = document.getElementById("party-ledger-matches");
+    if (box) box.innerHTML = "";
+    const input = document.getElementById("party-ledger-q");
+    if (input) input.value = "";
+    const tools = document.getElementById("party-ledger-tools");
+    if (tools) tools.classList.remove("hidden");
+    const page = document.getElementById("party-ledger-body");
+    if (page) page.innerHTML = `<p style="color:var(--muted);">Loading ledger…</p>`;
+    try {
+      const ledgerRes = await api(`/customers/${id}/ledger`, {}, 0);
+      customerLedger = ledgerRes.items || [];
+      if (page) page.innerHTML = renderCustomerStatement(id);
+    } catch (e) {
+      if (page) page.innerHTML = `<p style="color:var(--danger);">${esc(e.message)}</p>`;
+    }
+  }
+
+  function partyLedgerRows() {
+    const lines = [];
+    lines.push(["When", "Type", "Title", "Detail", "Product", "Qty", "Rate", "Amount"]);
+    const visible = customerLedger.filter(e => {
+      if (!customerRealOnly) return true;
+      if (e.event_type === "order_cancelled") return false;
+      if (e.event_type === "customer_bill" && String(e.title || "").toLowerCase().startsWith("cancelled")) return false;
+      if (e.event_type === "ar_payment" && e.details?.reversed) return false;
+      return true;
+    });
+    for (const e of visible) {
+      const d = e.details || {};
+      const kind = e.event_type === "order_placed" ? "Order" : e.event_type === "order_cancelled" ? "Cancelled order" : e.event_type === "customer_bill" ? "Bill" : e.event_type === "ar_payment" ? "Payment" : e.event_type === "customer_return" ? "Return" : e.event_type === "ar_opening" ? "Opening" : e.event_type;
+      lines.push([fmtDate(e.occurred_at), kind, e.title || "", e.summary || "", "", "", "", ""]);
+      for (const l of d.lines || []) {
+        lines.push(["", "", "", "", l.our_product_id || "", l.quantity ?? "", l.unit_price ?? l.selling_price ?? "", l.billed_amount ?? ""]);
+      }
+      if (e.event_type === "ar_payment") {
+        lines.push(["", "", d.payment_ref || "", d.comment || "", "", "", "", d.amount || ""]);
+      }
+    }
+    return lines;
+  }
+
+  function excelXml(text) {
+    return String(text ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  function exportPartyLedger() {
+    if (!partyLedgerCustomerId) return toast("Select a party first", "error");
+    const rows = partyLedgerRows().map(cols => `<Row>${cols.map(col => {
+      const clean = String(col ?? "").replace(/\s+/g, " ").trim();
+      const numeric = clean.replace(/,/g, "");
+      if (/^-?\d+(\.\d+)?$/.test(numeric)) return `<Cell><Data ss:Type="Number">${numeric}</Data></Cell>`;
+      return `<Cell><Data ss:Type="String">${excelXml(clean)}</Data></Cell>`;
+    }).join("")}</Row>`).join("");
+    const xml = `<?xml version="1.0"?>\n<?mso-application progid="Excel.Sheet"?>\n<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Worksheet ss:Name="Ledger"><Table>${rows}</Table></Worksheet></Workbook>`;
+    const blob = new Blob([xml], { type: "application/vnd.ms-excel" });
+    const a = document.createElement("a");
+    const name = (document.getElementById("party-ledger-picked")?.textContent || "party-ledger").replace(/[^a-z0-9]+/gi, "-");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${name || "party-ledger"}.xls`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  function printPartyLedger() {
+    if (!partyLedgerCustomerId) return toast("Select a party first", "error");
+    const body = partyLedgerRows().map((cols, i) => `<tr>${cols.map(col => `<${i ? "td" : "th"}>${esc(col)}</${i ? "td" : "th"}>`).join("")}</tr>`).join("");
+    const title = document.getElementById("party-ledger-picked")?.textContent || "Party ledger";
+    const w = window.open("", "_blank");
+    if (!w) return toast("Allow pop-ups to print", "error");
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>body{font-family:sans-serif;font-size:12px} table{border-collapse:collapse;width:100%} td,th{border:1px solid #ccc;padding:4px 6px;text-align:left}</style></head><body><h1>${esc(title)}</h1><table>${body}</table></body></html>`);
+    w.document.close();
+    w.focus();
+    setTimeout(() => { try { w.print(); } catch (_) {} }, 200);
   }
 
   function openSelling(customerId, bucket = "open") {

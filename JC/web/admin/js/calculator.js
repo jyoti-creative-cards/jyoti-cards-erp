@@ -16,7 +16,7 @@ const Calculator = (() => {
     const btn = document.createElement("button");
     btn.id = "calc-launcher";
     btn.type = "button";
-    btn.title = "Calculator (Alt+C)";
+    btn.title = "Calculator (Alt+K)";
     btn.textContent = "🧮";
     btn.onclick = toggle;
     document.body.appendChild(btn);
@@ -100,7 +100,7 @@ const Calculator = (() => {
         <button type="button" onclick="Calculator.press('.')">.</button>
         <button type="button" class="calc-eq" onclick="Calculator.evaluate()">=</button>
       </div>
-      <div id="calc-hint">Alt+C to toggle · Esc to close</div>
+      <div id="calc-hint">Alt+K to toggle · Esc to close</div>
     `;
     document.body.appendChild(panel);
     makeDraggable(panel, panel.querySelector("#calc-head"));
@@ -220,12 +220,9 @@ const Calculator = (() => {
     if (isOpen()) close(); else open();
   }
 
-  // Single always-on listener (cheap: one comparison per keydown). Alt+C toggles from
-  // anywhere, even while typing in a form field. Digit/operator keys only feed the
-  // calculator while it's open AND no other input/textarea/select has focus, so normal
-  // typing elsewhere on the page is never hijacked.
+  // Alt+K toggles the calculator. Alt+C is create order.
   document.addEventListener("keydown", (e) => {
-    if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === "c" || e.key === "C")) {
+    if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === "KeyK") {
       e.preventDefault();
       toggle();
       return;

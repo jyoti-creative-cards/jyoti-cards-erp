@@ -283,7 +283,8 @@
         const isStockProduct = mainTab === "stock" && it.kind === "product";
         const showsAddonStock = it.kind === "addon";
         const st = (isStockProduct || showsAddonStock) ? stockStatusMeta(it.stock_status) : null;
-        return `<button type="button" class="prod-card${st ? ` prod-card-stock ${st.cls}` : ""}" onclick="Products.openItem('${it.kind}', ${it.id})">
+        const canOrder = it.kind === "product" && (ctx.can?.("customer_orders.write") || ctx.isAdmin?.());
+        return `<div class="prod-card${st ? ` prod-card-stock ${st.cls}` : ""}" onclick="Products.openItem('${it.kind}', ${it.id})">
           <div class="prod-card-media">
             ${cardImage(it)}
             ${st
@@ -302,8 +303,9 @@
               <span class="prod-card-qty-label">on hand</span>
             </div>` : ""}
             ${priceFootHtml(it, { stockMode: isStockProduct })}
+            ${canOrder ? `<button type="button" class="btn btn-primary btn-sm prod-card-order" onclick="event.stopPropagation();Products.bookThisProduct(${it.id})">Create order</button>` : ""}
           </div>
-        </button>`;
+        </div>`;
       }).join("");
       el.innerHTML = `${summary}<div class="prod-grid">${cards}</div>${loadMoreHtml()}`;
     } else {
@@ -318,6 +320,7 @@
         ${mainTab === "stock" ? "<th>On hand</th><th>Status</th>" : ""}
         <th>Sell</th>
         <th>Buy</th>
+        <th></th>
       </tr></thead><tbody>
         ${items.map(it => {
           const st = it.stock_status ? stockStatusMeta(it.stock_status) : null;
@@ -337,6 +340,7 @@
           <td>${st ? `<span class="badge ${st.cls === "is-ok" ? "badge-green" : st.cls === "is-low" ? "badge-amber" : st.cls === "is-neg" ? "badge-red" : "badge-gray"}">${st.label}</span>` : "—"}</td>` : ""}
           <td class="prod-list-price">${it.kind === "product" ? (hasRealSell(it) ? fmtPrice(it.selling_price) : '<span class="prod-price-missing">Not set</span>') : "—"}</td>
           <td class="prod-list-price is-buy">${it.buying_price != null && it.buying_price !== "" ? fmtPrice(it.buying_price) : "—"}</td>
+          <td onclick="event.stopPropagation()">${it.kind === "product" && (ctx.can?.("customer_orders.write") || ctx.isAdmin?.()) ? `<button type="button" class="btn btn-primary btn-sm" onclick="Products.bookThisProduct(${it.id})">Create order</button>` : ""}</td>
         </tr>`;
         }).join("")}
       </tbody></table></div>${loadMoreHtml()}`;

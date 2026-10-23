@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>JC Admin — Jyoti Creative</title>
-  <link rel="stylesheet" href="styles.css?v=ui67" />
+  <link rel="stylesheet" href="styles.css?v=ui68" />
 </head>
 <body>
   <div id="toasts"></div>
@@ -52,6 +52,8 @@
         <button class="nav-item" id="nav-people" onclick="App.showView('people')"><span class="nav-letter">P</span><span class="nav-text">People</span></button>
         <button class="nav-item" id="nav-products" onclick="App.showView('products')"><span class="nav-letter">R</span><span class="nav-text">Products</span></button>
         <button class="nav-item" id="nav-money" onclick="App.showView('money')"><span class="nav-letter">M</span><span class="nav-text">Money</span></button>
+        <button class="nav-item" id="nav-quick" onclick="App.showView('money');Finance.openQuickEntry()"><span class="nav-letter">Q</span><span class="nav-text">Quick entry</span></button>
+        <button class="nav-item" id="nav-party-ledger" onclick="App.showView('party-ledger')"><span class="nav-letter">Ld</span><span class="nav-text">Party ledger</span></button>
         <button class="nav-item" id="nav-more" onclick="App.showView('more')"><span class="nav-letter">···</span><span class="nav-text">More</span></button>
         <!-- Kept for deep-links / permissions; hidden from primary nav -->
         <button class="nav-item hidden" id="nav-home" onclick="App.showView('today')" aria-hidden="true"></button>
@@ -615,6 +617,20 @@
         </div>
       </div>
 
+      <div id="view-party-ledger" class="view hidden" style="max-width:920px;">
+        <h2 style="margin:0 0 8px;">Party ledger</h2>
+        <p style="margin:0 0 12px;color:var(--muted);">Same activity you see when you open a party.</p>
+        <label class="label">Party name or code</label>
+        <input id="party-ledger-q" class="input" placeholder="Name, city, or number" autocomplete="off" oninput="App.onPartyLedgerSearch(this.value)" />
+        <div id="party-ledger-matches"></div>
+        <p id="party-ledger-picked" style="margin:12px 0 0;font-weight:700;"></p>
+        <div id="party-ledger-tools" class="hidden" style="display:flex;gap:8px;margin:12px 0;">
+          <button type="button" class="btn btn-secondary" onclick="App.printPartyLedger()">Print</button>
+          <button type="button" class="btn btn-secondary" onclick="App.exportPartyLedger()">Export Excel</button>
+        </div>
+        <div id="party-ledger-body"></div>
+      </div>
+
       <!-- Finance -->
       <div id="view-finance" class="view hidden">
         <div id="finance-hub" class="fin-page">
@@ -623,7 +639,6 @@
               <h2 class="ui-hub-title">Money</h2>
               <p class="ui-hub-sub" id="finance-hub-sub">Collect, pay, and track cash</p>
             </div>
-            <button type="button" class="btn btn-primary btn-sm" onclick="Finance.openQuickEntry()">Quick entry</button>
             <button type="button" class="btn btn-secondary btn-sm" onclick="CommissionAgents.open()">Commission agents</button>
             <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.showHub()">Refresh</button>
           </div>
@@ -1098,6 +1113,14 @@
   </div>
 
   <!-- Customer offline wizard -->
+  <div id="shortcut-box" class="modal-overlay hidden">
+    <div class="modal" style="max-width:480px;width:100%;padding:20px;">
+      <h3 id="shortcut-title" style="margin:0 0 12px;">Find</h3>
+      <input id="shortcut-q" class="input" autocomplete="off" oninput="App.onShortcutSearch(this.value)" />
+      <div id="shortcut-hits"></div>
+      <button type="button" class="btn btn-secondary" style="margin-top:12px;" onclick="App.closeShortcut()">Close</button>
+    </div>
+  </div>
   <div id="co-offline-wizard" class="modal-overlay co-entry hidden">
     <div class="modal" onclick="event.stopPropagation()">
       <div class="modal-header"><h3 style="margin:0;">Place order</h3><button class="btn-ghost" onclick="CustomerOrders.closeOfflineWizard()">✕</button></div>
@@ -1199,7 +1222,7 @@
   <script src="js/vendors.js?v=ui86"></script>
   <script src="js/catalog.js?v=ui81"></script>
   <script src="js/addon-products.js?v=ui98"></script>
-  <script src="js/products.js?v=ui91"></script>
+  <script src="js/products.js?v=ui92"></script>
   <script src="js/staff.js?v=ui81"></script>
   <script src="js/vendor-orders.js?v=ui85"></script>
   <script src="js/share.js?v=ui63"></script>
@@ -1215,8 +1238,8 @@
   <script src="js/bill-series.js?v=ui67"></script>
   <script src="js/payment-modes.js?v=ui62"></script>
   <script src="js/freight-agents.js?v=ui66"></script>
-  <script src="js/calculator.js?v=ui1"></script>
-  <script src="app.js?v=ui92"></script>
+  <script src="js/calculator.js?v=ui2"></script>
+  <script src="app.js?v=ui93"></script>
   <script src="js/commission-agents.js?v=ui1"></script>
   <script src="js/whatsapp-inbox.js?v=ui2"></script>
 </body>

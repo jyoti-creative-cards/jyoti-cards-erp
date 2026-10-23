@@ -4,7 +4,7 @@
     const btn = document.createElement("button");
     btn.id = "calc-launcher";
     btn.type = "button";
-    btn.title = "Calculator (Alt+C)";
+    btn.title = "Calculator (Alt+K)";
     btn.textContent = "🧮";
     btn.onclick = toggle;
     document.body.appendChild(btn);
@@ -88,7 +88,7 @@
         <button type="button" onclick="Calculator.press('.')">.</button>
         <button type="button" class="calc-eq" onclick="Calculator.evaluate()">=</button>
       </div>
-      <div id="calc-hint">Alt+C to toggle · Esc to close</div>
+      <div id="calc-hint">Alt+K to toggle · Esc to close</div>
     `;
     document.body.appendChild(panel);
     makeDraggable(panel, panel.querySelector("#calc-head"));

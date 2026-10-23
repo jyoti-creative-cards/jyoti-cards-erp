@@ -885,7 +885,8 @@ const Products = (() => {
         const isStockProduct = mainTab === "stock" && it.kind === "product";
         const showsAddonStock = it.kind === "addon";
         const st = (isStockProduct || showsAddonStock) ? stockStatusMeta(it.stock_status) : null;
-        return `<button type="button" class="prod-card${st ? ` prod-card-stock ${st.cls}` : ""}" onclick="Products.openItem('${it.kind}', ${it.id})">
+        const canOrder = it.kind === "product" && (ctx.can?.("customer_orders.write") || ctx.isAdmin?.());
+        return `<div class="prod-card${st ? ` prod-card-stock ${st.cls}` : ""}" onclick="Products.openItem('${it.kind}', ${it.id})">
           <div class="prod-card-media">
             ${cardImage(it)}
             ${st
@@ -904,8 +905,9 @@ const Products = (() => {
               <span class="prod-card-qty-label">on hand</span>
             </div>` : ""}
             ${priceFootHtml(it, { stockMode: isStockProduct })}
+            ${canOrder ? `<button type="button" class="btn btn-primary btn-sm prod-card-order" onclick="event.stopPropagation();Products.bookThisProduct(${it.id})">Create order</button>` : ""}
           </div>
-        </button>`;
+        </div>`;
       }).join("");
       el.innerHTML = `${summary}<div class="prod-grid">${cards}</div>${loadMoreHtml()}`;
     } else {
@@ -920,6 +922,7 @@ const Products = (() => {
         ${mainTab === "stock" ? "<th>On hand</th><th>Status</th>" : ""}
         <th>Sell</th>
         <th>Buy</th>
+        <th></th>
       </tr></thead><tbody>
         ${items.map(it => {
           const st = it.stock_status ? stockStatusMeta(it.stock_status) : null;
@@ -939,6 +942,7 @@ const Products = (() => {
           <td>${st ? `<span class="badge ${st.cls === "is-ok" ? "badge-green" : st.cls === "is-low" ? "badge-amber" : st.cls === "is-neg" ? "badge-red" : "badge-gray"}">${st.label}</span>` : "—"}</td>` : ""}
           <td class="prod-list-price">${it.kind === "product" ? (hasRealSell(it) ? fmtPrice(it.selling_price) : '<span class="prod-price-missing">Not set</span>') : "—"}</td>
           <td class="prod-list-price is-buy">${it.buying_price != null && it.buying_price !== "" ? fmtPrice(it.buying_price) : "—"}</td>
+          <td onclick="event.stopPropagation()">${it.kind === "product" && (ctx.can?.("customer_orders.write") || ctx.isAdmin?.()) ? `<button type="button" class="btn btn-primary btn-sm" onclick="Products.bookThisProduct(${it.id})">Create order</button>` : ""}</td>
         </tr>`;
         }).join("")}
       </tbody></table></div>${loadMoreHtml()}`;
@@ -1156,14 +1160,11 @@ const Products = (() => {
         <div class="prod-detail-pane" data-pane="catalog" style="${sec === "catalog" ? "" : "display:none;"}">${catalogPane}</div>
         <div class="prod-detail-pane" data-pane="addons" style="${sec === "addons" ? "" : "display:none;"}">${addonPane}</div>
         <div class="prod-detail-pane" data-pane="alts" style="${sec === "alts" ? "" : "display:none;"}">${altPane}</div>`,
-        `${(ctx.can?.("customer_orders.write") || ctx.isAdmin?.())
-          ? `<button type="button" class="btn btn-primary" onclick="Products.bookThisProduct(${id})">Create order</button>`
-          : ""}
-         ${(ctx.canWrite?.("catalog") || ctx.isAdmin?.())
+        `${(ctx.canWrite?.("catalog") || ctx.isAdmin?.())
           ? `<button class="btn btn-danger btn-sm" onclick="Catalog.deleteProduct(${id})">Delete</button>
              <button type="button" class="btn btn-secondary btn-sm" onclick="event.stopPropagation();Catalog.openEdit(${id}, '${sec}')">Edit</button>`
           : ""}
-         <button class="btn btn-secondary" style="flex:1;" onclick="App.closeDetail()">Close</button>`,
+         <button class="btn btn-primary" style="flex:1;" onclick="App.closeDetail()">Close</button>`,
         "lg"
       );
 

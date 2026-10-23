@@ -2666,9 +2666,10 @@ const CustomerOrders = (() => {
     return scored.slice(0, 12).map(x => x.p);
   }
 
-  async function openOfflineWizard(presetCustomerId) {
+  async function openOfflineWizard(presetCustomerId, presetProductId) {
     const hasPreset = arguments.length > 0 && presetCustomerId != null && presetCustomerId !== "";
     const cid = hasPreset ? presetCustomerId : null;
+    const productId = presetProductId != null && presetProductId !== "" ? Number(presetProductId) : 0;
     offlineEditPlacementId = null;
     offlineStep = 1;
     offlineCustomerId = null;
@@ -2699,6 +2700,23 @@ const CustomerOrders = (() => {
         offlinePicked = c;
       } else {
         offlineCustomerId = cid;
+      }
+    }
+    if (productId) {
+      const p = (entryItems || []).find(x => Number(x.catalog_product_id) === productId);
+      if (!p) ctx.toast("That item is not on the order list", "error");
+      else if (!offlineLines.some(l => l.catalog_product_id === p.catalog_product_id)) {
+        offlineLines.push({
+          catalog_product_id: p.catalog_product_id,
+          our_product_id: p.our_product_id,
+          quantity: 1,
+          min_qty: 0,
+          selling_price: p.selling_price,
+          quantity_on_hand: p.quantity_on_hand,
+          addons: (p.addons && p.addons.length) ? p.addons : (p.priced_addons || []),
+          priced_addons: p.priced_addons || [],
+          skip_addon_ids: [],
+        });
       }
     }
     renderOfflineWizard();

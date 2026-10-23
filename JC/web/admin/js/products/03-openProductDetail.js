@@ -1,3 +1,12 @@
+  function bookThisProduct(id) {
+    if (typeof App !== "undefined" && App.closeDetail) App.closeDetail();
+    if (typeof CustomerOrders !== "undefined" && CustomerOrders.openOfflineWizard) {
+      CustomerOrders.openOfflineWizard(null, id);
+      return;
+    }
+    ctx.toast("Order form is not open", "error");
+  }
+
   async function openProductDetail(id, section = "stock") {
     const sec = ["stock", "catalog", "addons", "alts"].includes(section) ? section : "stock";
     ctx.showLoading?.();
@@ -167,11 +176,14 @@
         <div class="prod-detail-pane" data-pane="catalog" style="${sec === "catalog" ? "" : "display:none;"}">${catalogPane}</div>
         <div class="prod-detail-pane" data-pane="addons" style="${sec === "addons" ? "" : "display:none;"}">${addonPane}</div>
         <div class="prod-detail-pane" data-pane="alts" style="${sec === "alts" ? "" : "display:none;"}">${altPane}</div>`,
-        `${(ctx.canWrite?.("catalog") || ctx.isAdmin?.())
+        `${(ctx.can?.("customer_orders.write") || ctx.isAdmin?.())
+          ? `<button type="button" class="btn btn-primary" onclick="Products.bookThisProduct(${id})">Create order</button>`
+          : ""}
+         ${(ctx.canWrite?.("catalog") || ctx.isAdmin?.())
           ? `<button class="btn btn-danger btn-sm" onclick="Catalog.deleteProduct(${id})">Delete</button>
              <button type="button" class="btn btn-secondary btn-sm" onclick="event.stopPropagation();Catalog.openEdit(${id}, '${sec}')">Edit</button>`
           : ""}
-         <button class="btn btn-primary" style="flex:1;" onclick="App.closeDetail()">Close</button>`,
+         <button class="btn btn-secondary" style="flex:1;" onclick="App.closeDetail()">Close</button>`,
         "lg"
       );
 

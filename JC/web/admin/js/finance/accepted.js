@@ -1513,6 +1513,7 @@ const Finance = (() => {
         title: arDetail.customer_label,
         sub: `Collect · ${dueLine}`,
         actionsHtml: `
+            ${(ctx.can?.("customer_orders.write") || ctx.isAdmin?.()) ? `<button class="btn btn-primary" onclick="CustomerOrders.openOfflineWizard(${currentCustomer})">Create order</button>` : ""}
             ${(ctx.isAdmin?.() || ctx.can?.("ar.write")) ? `<button class="btn btn-primary" onclick="Finance.openArSettle()">Collect</button>` : ""}
             <button class="btn btn-secondary" onclick="Finance.shareArStatement()">Print / PDF / WA</button>
             ${ctx.isAdmin?.() ? `<button class="btn btn-secondary" onclick="Finance.setArOpeningBalance()">Set opening</button>` : ""}

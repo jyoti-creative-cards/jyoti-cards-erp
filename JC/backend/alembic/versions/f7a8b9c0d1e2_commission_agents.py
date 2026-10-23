@@ -1,7 +1,7 @@
 """Commission agents: party orders, agent dues.
 
 Revision ID: f7a8b9c0d1e2
-Revises: e5f6a7b8c9d0
+Revises: e1f2a3b4c5d6
 """
 from typing import Sequence, Union
 
@@ -9,7 +9,7 @@ from alembic import op
 
 
 revision: str = "f7a8b9c0d1e2"
-down_revision: Union[str, Sequence[str], None] = "e5f6a7b8c9d0"
+down_revision: Union[str, Sequence[str], None] = "e1f2a3b4c5d6"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

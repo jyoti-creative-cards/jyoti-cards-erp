@@ -1324,20 +1324,26 @@ const CustomerOrders = (() => {
       if (!lines.length) return ctx.toast("No open lines", "error");
       const hasBilled = lines.some(l => Number(l.quantity_billed) > 0);
       promptReason(hasBilled ? "Cancel remaining" : "Cancel entire order", async (reason) => {
+        const cancelKey = window.__jcCancelKey || "";
         ctx.showLoading?.();
         let ok = 0;
         let failed = 0;
+        let failMsg = "";
         try {
           for (const line of lines) {
             try {
               await ctx.api(`/customer-orders/open-lines/${line.id}/cancel`, {
                 method: "POST",
+                headers: { "X-Cancel-Key": cancelKey },
                 body: JSON.stringify({ reason }),
               });
               ok += 1;
-            } catch (_) { failed += 1; }
+            } catch (e) {
+              failed += 1;
+              if (!failMsg) failMsg = e.message || "";
+            }
           }
-          if (failed) ctx.toast(`Cancelled ${ok}, failed ${failed}`, "error");
+          if (failed) ctx.toast(`Cancelled ${ok}, failed ${failed}${failMsg ? " — " + failMsg : ""}`, "error");
           else ctx.toast(hasBilled ? `Remaining cancelled ${ok} — billed kept` : `Order cancelled (${ok})`, "success");
           ctx.invalidateCache?.("/customer-orders");
           ctx.invalidateCache?.("/stock");
@@ -1369,20 +1375,26 @@ const CustomerOrders = (() => {
       if (!placements.length) return ctx.toast("Nothing open to cancel", "error");
       const hasBilled = placements.some(p => (p.lines || []).some(ln => Number(ln.quantity_billed) > 0));
       promptReason(hasBilled ? "Cancel remaining on this order" : "Cancel entire order", async (reason) => {
+        const cancelKey = window.__jcCancelKey || "";
         ctx.showLoading?.();
         let ok = 0;
         let failed = 0;
+        let failMsg = "";
         try {
           for (const p of placements) {
             try {
               await ctx.api(`/customer-orders/placements/${p.id}/cancel`, {
                 method: "POST",
+                headers: { "X-Cancel-Key": cancelKey },
                 body: JSON.stringify({ reason }),
               });
               ok += 1;
-            } catch (_) { failed += 1; }
+            } catch (e) {
+              failed += 1;
+              if (!failMsg) failMsg = e.message || "";
+            }
           }
-          if (failed) ctx.toast(`Cancelled ${ok}, failed ${failed}`, "error");
+          if (failed) ctx.toast(`Cancelled ${ok}, failed ${failed}${failMsg ? " — " + failMsg : ""}`, "error");
           else ctx.toast(hasBilled ? "Remaining cancelled — billed kept" : "Order cancelled", "success");
           ctx.invalidateCache?.("/customer-orders");
           ctx.invalidateCache?.("/stock");

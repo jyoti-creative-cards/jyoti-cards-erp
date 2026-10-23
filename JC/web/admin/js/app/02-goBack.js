@@ -505,10 +505,10 @@
     const input = document.getElementById("shortcut-q");
     const hits = document.getElementById("shortcut-hits");
     if (!box) return;
-    if (title) title.textContent = mode === "bill" ? "Create bill" : "Open item";
+    if (title) title.textContent = mode === "bill" ? "Create bill" : mode === "ledger" ? "Party ledger" : "Open item";
     if (input) {
       input.value = "";
-      input.placeholder = mode === "bill" ? "Party name or code" : "Item number";
+      input.placeholder = mode === "item" ? "Item number" : "Party name or code";
     }
     if (hits) hits.innerHTML = "";
     box.classList.remove("hidden");
@@ -525,7 +525,7 @@
     if (!hits) return;
     const q = String(val || "").trim();
     if (q.length < 1) { hits.innerHTML = ""; return; }
-    if (shortcutMode === "bill") {
+    if (shortcutMode === "bill" || shortcutMode === "ledger") {
       await ensurePartyLedgerParties();
       const rows = filterPartyLedger(q);
       hits.innerHTML = rows.map(c =>
@@ -548,7 +548,10 @@
     const mode = shortcutMode;
     closeShortcut();
     if (mode === "bill") billCustomer(id);
-    else {
+    else if (mode === "ledger") {
+      showView("party-ledger");
+      pickPartyLedger(id);
+    } else {
       showView("products");
       Products.openProductDetail?.(id);
     }
@@ -563,7 +566,7 @@
     if (code === "KeyC") CustomerOrders.openOfflineWizard?.();
     else if (code === "KeyB") openShortcut("bill");
     else if (code === "KeyS") openShortcut("item");
-    else if (code === "KeyL") showView("money");
+    else if (code === "KeyL") openShortcut("ledger");
   });
 
   // ── Data ──────────────────────────────────────────────────────────

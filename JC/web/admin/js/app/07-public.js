@@ -14,7 +14,7 @@
     toggleCustomerLedgerRow, setCustomerRealOnly, showCustomerMoneyLedger, openSelling, billCustomer, collectCustomer, openCustomerMoney,
     loadRecycleBin, setRecycleTab, openRecycleDetail, restoreItem, purgeItem,
     addLookup, submitLookup, editLookup, deleteLookup, openCustomerLedgerEntry, createCustomerOrder,
-    onOrderTakerCustomer, pickOrderTakerCustomer, openOrderTakerItems, onOrderTakerItem, addOrderTakerItem, removeOrderTakerLine, previewOrderTakerOrder, backFromOrderTakerPreview, cancelOrderTakerItems, saveOrderTakerOrder,
+    onOrderTakerCustomer, pickOrderTakerCustomer, clearOrderTakerCustomer, onOrderTakerItem, addOrderTakerItem, removeOrderTakerLine, saveOrderTakerOrder,
     closeModal, init, searchItemLookup, setWhatsappSends,
     downloadExportKind, downloadBackupZip,
     debouncedLoadCustomers, debouncedVendorSearch, debouncedCatalogSearch, debouncedAddonSearch, debouncedStockSearch,

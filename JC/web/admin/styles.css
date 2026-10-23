@@ -3698,18 +3698,18 @@ table.data tr.filter-row th { padding: 6px 8px; background: #fff; border-bottom:
   .wa-threads, .wa-chat { min-height: 40vh; }
 }
 
-.ot-item-row { display: flex; gap: 8px; align-items: center; }
-.ot-item-row #ot-item { flex: 1; min-width: 0; }
-.ot-item-row #ot-qty { width: 100px; }
-@media (max-width: 800px) {
-  #app.order-taker #sidebar { display: none; }
-  #app.order-taker #main,
-  #app.order-taker #main.shift-expanded,
-  #app.order-taker #main.shift-collapsed { margin-left: 0; padding: 12px 12px 28px; }
-  #order-taker-desk { max-width: none !important; margin: 0 !important; padding: 0 0 16px !important; }
-  #order-taker-desk .input { font-size: 16px; width: 100%; }
-  #order-taker-desk .btn-primary { width: 100%; }
-  #order-taker-desk .ot-item-row { flex-direction: column; align-items: stretch; }
-  #order-taker-desk .ot-item-row #ot-qty { width: 100%; }
-}
+#app.order-taker #sidebar { display: none; }
+#app.order-taker #main,
+#app.order-taker #main.shift-expanded,
+#app.order-taker #main.shift-collapsed { margin-left: 0; padding: 12px 12px 32px; }
+#order-taker-desk { max-width: 520px; margin: 0 auto; padding: 4px 0 24px; }
+#order-taker-desk .ot-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+#order-taker-desk h2 { margin: 0; font-size: 22px; }
+#order-taker-desk .input { font-size: 16px; width: 100%; min-height: 48px; }
+#order-taker-desk .btn-primary { width: 100%; min-height: 52px; margin-top: 16px; font-size: 17px; }
+#order-taker-desk .ot-hit { display: block; width: 100%; text-align: left; margin-top: 8px; min-height: 48px; font-size: 16px; }
+#order-taker-desk .ot-party { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 8px 0 16px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: #fff; }
+#order-taker-desk .ot-kicker { font-size: 12px; color: var(--muted); font-weight: 600; }
+#order-taker-desk .ot-out { margin-top: 8px; padding: 12px; border: 1px solid #fecaca; border-radius: 10px; color: #b91c1c; font-weight: 700; }
+#order-taker-desk #ot-lines { margin-top: 16px; }
 

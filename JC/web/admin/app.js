@@ -80,7 +80,7 @@ const App = (() => {
     if (moreTitle) moreTitle.textContent = desk ? "Print sticker" : "More";
     if (moreSub) moreSub.textContent = desk ? "Search a party number and print." : "History, reports, setup, and safety — when you need them.";
     document.getElementById("nav-today")?.classList.toggle("hidden", desk || lookup || taker);
-    document.getElementById("nav-people")?.classList.toggle("hidden", desk || lookup || !showPeople);
+    document.getElementById("nav-people")?.classList.toggle("hidden", desk || lookup || taker || !showPeople);
     document.getElementById("nav-products")?.classList.toggle("hidden", desk || lookup || taker || !showProducts);
     document.getElementById("nav-money")?.classList.toggle("hidden", desk || lookup || taker || !(isAdmin() || can("finance.write") || canRead("ar") || canRead("ap")));
     document.getElementById("nav-more")?.classList.toggle("hidden", lookup || taker);
@@ -2004,40 +2004,68 @@ const App = (() => {
   function filterOtParties(q) {
     const needle = String(q || "").trim().toLowerCase();
     if (!needle) return [];
+    const digits = needle.replace(/\D/g, "");
+    const phoneNeedle = digits.length >= 4 ? digits.slice(-10) : "";
     return (otParties || []).filter(c => {
       const name = String(c.business_name || "").toLowerCase();
       const city = String(c.city_name || "").toLowerCase();
+      const alias = String(c.alias || "").toLowerCase();
       const num = String(c.party_number || "");
-      return name.includes(needle) || city.includes(needle) || num.includes(needle);
+      const phone = String(c.phone || "").replace(/\D/g, "");
+      return name.includes(needle) || city.includes(needle) || alias.includes(needle)
+        || (num && needle.replace(/\D/g, "") && num.includes(needle.replace(/\D/g, "")))
+        || (phoneNeedle && phone.includes(phoneNeedle));
     }).slice(0, 12);
+  }
+
+  function partyLabel(c) {
+    return `${c.business_name || ""}${c.city_name ? " · " + c.city_name : ""}`;
   }
 
   function onOrderTakerCustomer(val) {
     const box = document.getElementById("ot-customer-matches");
     if (!box) return;
+    if (!otParties) {
+      box.innerHTML = `<p style="font-size:14px;color:var(--muted);margin:8px 0 0;">Loading customers…</p>`;
+      return;
+    }
     const rows = filterOtParties(val);
     box.innerHTML = rows.map(c =>
-      `<button type="button" class="btn btn-secondary btn-sm" style="display:block;width:100%;text-align:left;margin-top:4px;" onclick="App.pickOrderTakerCustomer(${c.id})">${esc(c.business_name || "")}${c.city_name ? " · " + esc(c.city_name) : ""}${c.party_number ? " · #" + c.party_number : ""}</button>`
-    ).join("") || (String(val || "").trim() ? `<p style="font-size:13px;color:var(--muted);margin:6px 0 0;">No match</p>` : "");
+      `<button type="button" class="btn btn-secondary ot-hit" onclick="App.pickOrderTakerCustomer(${c.id})">${esc(partyLabel(c))}${c.phone ? "<br><span style='font-weight:500;color:var(--muted);'>" + esc(c.phone) + "</span>" : ""}</button>`
+    ).join("") || (String(val || "").trim() ? `<p style="font-size:14px;color:var(--muted);margin:8px 0 0;">No match</p>` : "");
   }
 
   function pickOrderTakerCustomer(id) {
     const c = (otParties || []).find(x => Number(x.id) === Number(id));
     if (!c) return;
     otCustomer = c;
+    otLines = [];
+    paintOrderTakerLines();
     const picked = document.getElementById("ot-customer-picked");
-    if (picked) picked.textContent = `${c.business_name || ""}${c.city_name ? " · " + c.city_name : ""}`;
+    if (picked) picked.textContent = partyLabel(c);
     const box = document.getElementById("ot-customer-matches");
     if (box) box.innerHTML = "";
     const input = document.getElementById("ot-customer");
     if (input) input.value = "";
-    document.getElementById("ot-create")?.classList.remove("hidden");
+    const item = document.getElementById("ot-item");
+    if (item) item.value = "";
+    const qty = document.getElementById("ot-qty");
+    if (qty) qty.value = "";
+    document.getElementById("ot-pick")?.classList.add("hidden");
+    document.getElementById("ot-book")?.classList.remove("hidden");
+    item?.focus();
   }
 
-  function openOrderTakerItems() {
-    if (!otCustomer) return toast("Search a customer first", "error");
-    document.getElementById("ot-items")?.classList.remove("hidden");
-    document.getElementById("ot-item")?.focus();
+  function clearOrderTakerCustomer() {
+    otCustomer = null;
+    otLines = [];
+    paintOrderTakerLines();
+    const matches = document.getElementById("ot-item-matches");
+    if (matches) matches.innerHTML = "";
+    document.getElementById("ot-book")?.classList.add("hidden");
+    document.getElementById("ot-pick")?.classList.remove("hidden");
+    const input = document.getElementById("ot-customer");
+    if (input) { input.value = ""; input.focus(); }
   }
 
   function onOrderTakerItem(val) {
@@ -2049,10 +2077,10 @@ const App = (() => {
     box.innerHTML = rows.map(p => {
       const onHand = Number(p.quantity_on_hand || 0);
       if (onHand <= 0) {
-        return `<div style="margin-top:4px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;color:#b91c1c;font-weight:700;">${esc(p.our_product_id)} · Out of stock</div>`;
+        return `<div class="ot-out">${esc(p.our_product_id)} · Out of stock</div>`;
       }
-      return `<button type="button" class="btn btn-secondary btn-sm" style="display:block;width:100%;text-align:left;margin-top:4px;" onclick="App.addOrderTakerItem(${p.catalog_product_id})">${esc(p.our_product_id)} · stock ${onHand}${p.selling_price ? " · ₹" + esc(p.selling_price) : ""}</button>`;
-    }).join("") || `<p style="font-size:13px;color:var(--muted);margin:6px 0 0;">No match</p>`;
+      return `<button type="button" class="btn btn-secondary ot-hit" onclick="App.addOrderTakerItem(${p.catalog_product_id})">${esc(p.our_product_id)} · ${onHand} in stock</button>`;
+    }).join("") || `<p style="font-size:14px;color:var(--muted);margin:8px 0 0;">No match</p>`;
   }
 
   function paintOrderTakerLines() {
@@ -2067,8 +2095,11 @@ const App = (() => {
   function addOrderTakerItem(id) {
     const p = (otItems || []).find(x => Number(x.catalog_product_id) === Number(id));
     if (!p) return;
-    if (Number(p.quantity_on_hand || 0) <= 0) return toast("Out of stock", "error");
-    const qty = Math.max(1, parseInt(String(document.getElementById("ot-qty")?.value || "1"), 10) || 1);
+    const onHand = Number(p.quantity_on_hand || 0);
+    if (onHand <= 0) return toast("Out of stock", "error");
+    const qty = parseInt(String(document.getElementById("ot-qty")?.value || ""), 10);
+    if (!qty || qty < 1) return toast("Type the quantity", "error");
+    if (qty > onHand) return toast("Only " + onHand + " in stock", "error");
     const existing = otLines.find(l => l.catalog_product_id === p.catalog_product_id);
     if (existing) existing.quantity = qty;
     else otLines.push({ catalog_product_id: p.catalog_product_id, our_product_id: p.our_product_id, quantity: qty });
@@ -2076,6 +2107,8 @@ const App = (() => {
     if (box) box.innerHTML = "";
     const input = document.getElementById("ot-item");
     if (input) input.value = "";
+    const qtyBox = document.getElementById("ot-qty");
+    if (qtyBox) qtyBox.value = "";
     paintOrderTakerLines();
     input?.focus();
   }
@@ -2085,43 +2118,8 @@ const App = (() => {
     paintOrderTakerLines();
   }
 
-  function previewOrderTakerOrder() {
-    if (!otCustomer) return toast("Search a customer first", "error");
-    if (!otLines.length) return toast("Add at least one item", "error");
-    const note = (document.getElementById("ot-note")?.value || "").trim();
-    const box = document.getElementById("ot-review");
-    document.getElementById("ot-items")?.classList.add("hidden");
-    if (!box) return;
-    box.classList.remove("hidden");
-    box.innerHTML = `
-      <p style="margin:0 0 8px;font-size:13px;color:var(--muted);">Check this order, then save.</p>
-      <p style="margin:0 0 12px;"><strong>${esc(otCustomer.business_name || "")}</strong>${otCustomer.city_name ? " · " + esc(otCustomer.city_name) : ""}</p>
-      ${note ? `<p style="margin:0 0 12px;color:#b91c1c;font-weight:700;">${esc(note)}</p>` : ""}
-      <table class="data"><thead><tr><th>Item</th><th>Qty</th></tr></thead><tbody>
-        ${otLines.map(l => `<tr><td>${esc(l.our_product_id)}</td><td>${l.quantity}</td></tr>`).join("")}
-      </tbody></table>
-      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
-        <button type="button" class="btn btn-secondary" onclick="App.backFromOrderTakerPreview()">Go back</button>
-        <button type="button" class="btn btn-primary" onclick="App.saveOrderTakerOrder()">Save order</button>
-      </div>`;
-  }
-
-  function backFromOrderTakerPreview() {
-    document.getElementById("ot-review")?.classList.add("hidden");
-    document.getElementById("ot-items")?.classList.remove("hidden");
-  }
-
-  function cancelOrderTakerItems() {
-    otLines = [];
-    paintOrderTakerLines();
-    document.getElementById("ot-items")?.classList.add("hidden");
-    document.getElementById("ot-review")?.classList.add("hidden");
-    const note = document.getElementById("ot-note");
-    if (note) note.value = "";
-  }
-
   async function saveOrderTakerOrder() {
-    if (!otCustomer) return toast("Search a customer first", "error");
+    if (!otCustomer) return toast("Search the customer first", "error");
     if (!otLines.length) return toast("Add at least one item", "error");
     const today = new Date();
     const placed = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
@@ -2131,16 +2129,12 @@ const App = (() => {
         method: "POST",
         body: JSON.stringify({
           lines: otLines.map(l => ({ catalog_product_id: l.catalog_product_id, quantity: l.quantity })),
-          narration: (document.getElementById("ot-note")?.value || "").trim() || null,
+          narration: null,
           placed_on: placed,
         }),
       });
       toast("Order booked", "success");
-      otLines = [];
-      paintOrderTakerLines();
-      const note = document.getElementById("ot-note");
-      if (note) note.value = "";
-      document.getElementById("ot-items")?.classList.add("hidden");
+      clearOrderTakerCustomer();
     } catch (e) { toast(e.message, "error"); }
     finally { hideLoading(); }
   }
@@ -3110,7 +3104,7 @@ const App = (() => {
     toggleCustomerLedgerRow, setCustomerRealOnly, showCustomerMoneyLedger, openSelling, billCustomer, collectCustomer, openCustomerMoney,
     loadRecycleBin, setRecycleTab, openRecycleDetail, restoreItem, purgeItem,
     addLookup, submitLookup, editLookup, deleteLookup, openCustomerLedgerEntry, createCustomerOrder,
-    onOrderTakerCustomer, pickOrderTakerCustomer, openOrderTakerItems, onOrderTakerItem, addOrderTakerItem, removeOrderTakerLine, previewOrderTakerOrder, backFromOrderTakerPreview, cancelOrderTakerItems, saveOrderTakerOrder,
+    onOrderTakerCustomer, pickOrderTakerCustomer, clearOrderTakerCustomer, onOrderTakerItem, addOrderTakerItem, removeOrderTakerLine, saveOrderTakerOrder,
     closeModal, init, searchItemLookup, setWhatsappSends,
     downloadExportKind, downloadBackupZip,
     debouncedLoadCustomers, debouncedVendorSearch, debouncedCatalogSearch, debouncedAddonSearch, debouncedStockSearch,

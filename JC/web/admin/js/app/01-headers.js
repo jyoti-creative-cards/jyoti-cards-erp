@@ -41,7 +41,7 @@
     if (moreTitle) moreTitle.textContent = desk ? "Print sticker" : "More";
     if (moreSub) moreSub.textContent = desk ? "Search a party number and print." : "History, reports, setup, and safety — when you need them.";
     document.getElementById("nav-today")?.classList.toggle("hidden", desk || lookup || taker);
-    document.getElementById("nav-people")?.classList.toggle("hidden", desk || lookup || !showPeople);
+    document.getElementById("nav-people")?.classList.toggle("hidden", desk || lookup || taker || !showPeople);
     document.getElementById("nav-products")?.classList.toggle("hidden", desk || lookup || taker || !showProducts);
     document.getElementById("nav-money")?.classList.toggle("hidden", desk || lookup || taker || !(isAdmin() || can("finance.write") || canRead("ar") || canRead("ap")));
     document.getElementById("nav-more")?.classList.toggle("hidden", lookup || taker);

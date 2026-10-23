@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>JC Admin — Jyoti Creative</title>
-  <link rel="stylesheet" href="styles.css?v=ui66" />
+  <link rel="stylesheet" href="styles.css?v=ui67" />
 </head>
 <body>
   <div id="toasts"></div>
@@ -702,33 +702,32 @@
 
       <!-- People -->
       <div id="view-people" class="view hidden">
-        <div id="order-taker-desk" class="hidden" style="max-width:720px;margin:24px auto;padding:0 16px 32px;">
-          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
-            <h2 style="margin:0;">Book an order</h2>
+        <div id="order-taker-desk" class="hidden">
+          <div class="ot-top">
+            <h2>Book an order</h2>
             <button type="button" class="btn btn-secondary btn-sm" onclick="App.logout()">Logout</button>
           </div>
-          <p style="margin:8px 0 16px;color:var(--muted);">Search the customer, then create the order.</p>
-          <label class="label">Customer</label>
-          <input id="ot-customer" class="input" type="text" placeholder="Name, city, or number" autocomplete="off" oninput="App.onOrderTakerCustomer(this.value)" />
-          <div id="ot-customer-picked" style="margin:8px 0;font-weight:700;"></div>
-          <div id="ot-customer-matches"></div>
-          <button type="button" id="ot-create" class="btn btn-primary hidden" style="margin-top:12px;" onclick="App.openOrderTakerItems()">Create order</button>
-          <div id="ot-items" class="hidden" style="margin-top:20px;">
-            <label class="label">Item</label>
-            <div class="ot-item-row">
-              <input id="ot-item" class="input" type="text" placeholder="Item number" autocomplete="off" oninput="App.onOrderTakerItem(this.value)" />
-              <input id="ot-qty" class="input" type="number" min="1" inputmode="numeric" placeholder="Qty" />
-            </div>
-            <div id="ot-item-matches"></div>
-            <div id="ot-lines" style="margin-top:12px;"></div>
-            <label class="label" style="margin-top:12px;">Marking</label>
-            <input id="ot-note" class="input" placeholder="Optional note for the person who bills this" />
-            <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
-              <button type="button" class="btn btn-secondary" onclick="App.cancelOrderTakerItems()">Cancel</button>
-              <button type="button" class="btn btn-primary" onclick="App.saveOrderTakerOrder()">Save order</button>
-            </div>
+          <div id="ot-pick">
+            <label class="label">Customer on the call</label>
+            <input id="ot-customer" class="input" type="text" placeholder="Name, city, or phone" autocomplete="off" oninput="App.onOrderTakerCustomer(this.value)" />
+            <div id="ot-customer-matches"></div>
           </div>
-          <div id="ot-review" class="hidden" style="margin-top:16px;"></div>
+          <div id="ot-book" class="hidden">
+            <div class="ot-party">
+              <div>
+                <div class="ot-kicker">Customer</div>
+                <strong id="ot-customer-picked"></strong>
+              </div>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="App.clearOrderTakerCustomer()">Change</button>
+            </div>
+            <label class="label">Item</label>
+            <input id="ot-item" class="input" type="text" placeholder="Item number" autocomplete="off" oninput="App.onOrderTakerItem(this.value)" />
+            <label class="label">Quantity</label>
+            <input id="ot-qty" class="input" type="number" min="1" inputmode="numeric" placeholder="How many" />
+            <div id="ot-item-matches"></div>
+            <div id="ot-lines"></div>
+            <button type="button" class="btn btn-primary" onclick="App.saveOrderTakerOrder()">Create order</button>
+          </div>
         </div>
         <div id="people-hub" class="ui-hub">
           <div class="ui-hub-intro">
@@ -1215,7 +1214,7 @@
   <script src="js/payment-modes.js?v=ui62"></script>
   <script src="js/freight-agents.js?v=ui66"></script>
   <script src="js/calculator.js?v=ui1"></script>
-  <script src="app.js?v=ui90"></script>
+  <script src="app.js?v=ui91"></script>
   <script src="js/whatsapp-inbox.js?v=ui2"></script>
 </body>
 </html>

@@ -150,8 +150,15 @@
 
       ctx.openDetail(ourId, `
         <div class="profile-hero prod-detail-hero" style="margin:-24px -24px 16px;border-radius:0;">
-          <h2>${ctx.esc(ourId)}${year ? ` <span class="prod-year-pill">${ctx.esc(year)}</span>` : ""}</h2>
-          <p>${ctx.esc(vendorName)}${vendorCity ? ` · ${ctx.esc(vendorCity)}` : ""}</p>
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
+            <div style="min-width:0;">
+              <h2>${ctx.esc(ourId)}${year ? ` <span class="prod-year-pill">${ctx.esc(year)}</span>` : ""}</h2>
+              <p>${ctx.esc(vendorName)}${vendorCity ? ` · ${ctx.esc(vendorCity)}` : ""}</p>
+            </div>
+            ${(ctx.can?.("customer_orders.write") || ctx.isAdmin?.())
+              ? `<button type="button" class="btn btn-primary" onclick="Products.bookThisProduct(${id})">Create order</button>`
+              : ""}
+          </div>
           <div class="profile-meta">
             <span class="badge badge-green">Sell ${sell != null && sell !== "" ? fmtPrice(sell) : "—"}</span>
             <span class="badge badge-blue">Buy ${buy != null ? fmtPrice(buy) : "—"}</span>

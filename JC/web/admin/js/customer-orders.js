@@ -1491,6 +1491,7 @@ const CustomerOrders = (() => {
           quantity: Number(l.quantity_to_ship),
         };
         row.skip_addon_ids = (l.skip_addon_ids || []).map(Number);
+        if (l.direct) row.direct = true;
         if (discOn && !useOverallDiscount) {
           const hasPct = l.discount_percent !== "" && l.discount_percent != null && Number.isFinite(Number(l.discount_percent));
           const hasNet = l.net_rate !== "" && l.net_rate != null && Number.isFinite(Number(l.net_rate));
@@ -1660,10 +1661,6 @@ const CustomerOrders = (() => {
           addons: ln.addons || [],
           skip_addon_ids: [],
         }))).filter(l => l.quantity_to_ship > 0);
-      }
-      if (!processLines.length) {
-        ctx.toast("Nothing to bill yet. Qty must be in To bill (stock reserved). If still in Orders, wait for stock.", "error");
-        return;
       }
       discountEnabled = false;
       useOverallDiscount = false;
@@ -1886,11 +1883,18 @@ const CustomerOrders = (() => {
     if (processLines.some(l => l.catalog_product_id === catalogProductId)) {
       return ctx.toast("Already on bill", "error");
     }
+    const direct = !editBillId;
+    if (direct) {
+      const booked = (processContext?.lines || []).some(l => Number(l.catalog_product_id) === Number(catalogProductId) && Number(l.quantity_open) > 0);
+      if (booked) return ctx.toast("Already booked — tick that order", "error");
+      if (!(Number(p.quantity_on_hand) > 0)) return ctx.toast("Out of stock", "error");
+      if (p.selling_price == null || p.selling_price === "") return ctx.toast("Sell price not set", "error");
+    }
     processLines.push({
       catalog_product_id: p.catalog_product_id,
       our_product_id: p.our_product_id,
       unit_price: p.selling_price,
-      quantity_open: 999999,
+      quantity_open: direct ? Number(p.quantity_on_hand) || 0 : 999999,
       quantity_on_hand: p.quantity_on_hand ?? 0,
       quantity_to_ship: "",
       discount_percent: "",
@@ -1898,14 +1902,17 @@ const CustomerOrders = (() => {
       discSource: "",
       addons: (p.addons && p.addons.length) ? p.addons : (p.priced_addons || []),
       skip_addon_ids: [],
+      direct,
     });
     billEditSearch = "";
     renderProcessWizard();
   }
 
   function removeProcessLine(idx) {
-    if (!editBillId) return;
-    if (processLines.length <= 1) return ctx.toast("Bill needs at least one product", "error");
+    const ln = processLines[idx];
+    if (!ln) return;
+    if (!editBillId && !ln.direct) return;
+    if (editBillId && processLines.length <= 1) return ctx.toast("Bill needs at least one product", "error");
     processLines.splice(idx, 1);
     renderProcessWizard();
   }
@@ -1919,7 +1926,8 @@ const CustomerOrders = (() => {
       return;
     }
     let q = Math.max(0, parseInt(val, 10) || 0);
-    if (!editBillId) q = Math.min(ln.quantity_open, q);
+    if (ln.direct) q = Math.min(Number(ln.quantity_on_hand) || 0, q);
+    else if (!editBillId) q = Math.min(Number(ln.quantity_open) || 0, q);
     ln.quantity_to_ship = q;
     renderWizardTotalsBar();
   }
@@ -2067,19 +2075,19 @@ const CustomerOrders = (() => {
         : (ln.net_rate || calcNetFromDisc(ln.unit_price, ln.discount_percent || 0));
       const shownDisc = useOverallDiscount ? (overallDiscount || "") : (ln.discount_percent || "");
       return `<tr>
-        <td><strong>${ctx.esc(ln.our_product_id)}</strong>${billAddonHtml(ln)}${orderMarkingForProduct(billableOrders, ln.catalog_product_id)}</td>
+        <td><strong>${ctx.esc(ln.our_product_id)}</strong>${ln.direct ? ` <span style="font-size:12px;color:var(--muted);">direct</span>` : ""}${billAddonHtml(ln)}${orderMarkingForProduct(billableOrders, ln.catalog_product_id)}</td>
         <td>${ln.quantity_on_hand ?? "—"}</td>
         <td>${fmtPrice(ln.unit_price)}</td>
         <td><input data-ship-for="${i}" type="number" class="input" style="width:72px;" min="0" value="${ln.quantity_to_ship ?? ""}" oninput="CustomerOrders.setShipQty(${i}, this.value)" /></td>
         <td><input data-disc-for="${i}" type="number" class="input" style="width:72px;" min="0" max="100" step="0.1" ${ro} value="${ctx.esc(shownDisc)}" oninput="CustomerOrders.setLineDisc(${i}, this.value)" /></td>
         <td><input data-net-for="${i}" type="number" class="input" style="width:88px;" min="0" step="0.01" ${ro} value="${ctx.esc(shownNet || "")}" oninput="CustomerOrders.setLineNetRate(${i}, this.value)" /></td>
-        ${editBillId ? `<td><button type="button" class="btn btn-ghost btn-sm" onclick="CustomerOrders.removeProcessLine(${i})">Remove</button></td>` : ""}
+        ${(editBillId || ln.direct) ? `<td><button type="button" class="btn btn-ghost btn-sm" onclick="CustomerOrders.removeProcessLine(${i})">Remove</button></td>` : "<td></td>"}
       </tr>`;
     }).join("");
-    const addProd = editBillId ? `
-      <label class="label">Add item</label>
+    const addProd = `
+      <label class="label">Add products</label>
       <input id="co-bill-edit-search" class="input" placeholder="Item number" oninput="CustomerOrders.setBillEditSearch(this.value)" />
-      <div id="co-bill-edit-matches"></div>` : "";
+      <div id="co-bill-edit-matches"></div>`;
     bodyEl.innerHTML = `
       ${processContext?.commission_agent_name ? `<p style="margin:0 0 12px;padding:12px;background:#fef3c7;border:2px solid #d97706;border-radius:12px;"><span style="display:block;font-size:12px;font-weight:700;letter-spacing:.04em;">BILL ON</span><strong style="font-size:22px;">${ctx.esc(processContext.commission_agent_name)}</strong><span style="display:block;margin-top:4px;font-size:13px;color:#92400e;">Party ${ctx.esc(processContext?.customer_name || "")} is printed small. The due sits on this agent.</span></p>` : `<p style="margin:0 0 12px;"><strong>${processContext?.party_number ? "#" + processContext.party_number + " " : ""}${ctx.esc(processContext?.customer_name || "")}</strong>${partyMarkerBadgesHtml(processContext)}</p>`}
       ${cashWarningHtml(processContext)}
@@ -2092,8 +2100,8 @@ const CustomerOrders = (() => {
         ${discountEnabled && useOverallDiscount ? `<input class="input" style="width:80px;" placeholder="%" value="${ctx.esc(overallDiscount)}" oninput="CustomerOrders.setOverallDisc(this.value)" />` : ""}
       </div>
       <table class="data"><thead><tr>
-        <th>Item</th><th>Stock</th><th>Rate</th><th>Qty</th><th>Disc %</th><th>Net</th>${editBillId ? "<th></th>" : ""}
-      </tr></thead><tbody>${linesHtml || `<tr><td colspan="6" style="color:var(--muted);">No items</td></tr>`}</tbody></table>
+        <th>Item</th><th>Stock</th><th>Rate</th><th>Qty</th><th>Disc %</th><th>Net</th><th></th>
+      </tr></thead><tbody>${linesHtml || `<tr><td colspan="7" style="color:var(--muted);">No items. Add a product below.</td></tr>`}</tbody></table>
       ${addProd}
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;">
         <div>
@@ -2327,6 +2335,7 @@ const CustomerOrders = (() => {
   }
 
   function applySelectedOrders() {
+    const direct = processLines.filter(l => l.direct);
     const chosen = new Set(selectedPlacementIds.map(Number));
     const qty = {};
     for (const order of billableOrders) {
@@ -2336,7 +2345,7 @@ const CustomerOrders = (() => {
         qty[cid] = (qty[cid] || 0) + Number(ln.quantity || 0);
       }
     }
-    processLines = (processContext?.lines || []).filter(l => qty[l.catalog_product_id] > 0).map(l => {
+    const booked = (processContext?.lines || []).filter(l => qty[l.catalog_product_id] > 0).map(l => {
       const q = Math.min(Number(l.quantity_open) || 0, qty[l.catalog_product_id] || 0);
       return {
         ...l,
@@ -2347,8 +2356,11 @@ const CustomerOrders = (() => {
         discSource: "",
         addons: l.addons || [],
         skip_addon_ids: l.skip_addon_ids || [],
+        direct: false,
       };
     }).filter(l => l.quantity_open > 0);
+    const bookedIds = new Set(booked.map(l => Number(l.catalog_product_id)));
+    processLines = booked.concat(direct.filter(l => !bookedIds.has(Number(l.catalog_product_id))));
     return processLines.length > 0;
   }
 

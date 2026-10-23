@@ -168,6 +168,7 @@ class ProcessLineIn(BaseModel):
     discount_percent: Optional[float] = None
     net_rate: Optional[float] = None  # used only when discount_percent is omitted
     skip_addon_ids: List[int] = []
+    direct: bool = False
 
 
 class AdditionalChargeIn(BaseModel):

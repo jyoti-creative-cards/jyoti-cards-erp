@@ -96,9 +96,47 @@ def process_customer_bill(
     selected_ids = [int(x) for x in (placement_ids or []) if int(x) > 0]
     allowed = _unbilled_qty_on_placements(db, customer_id, selected_ids) if selected_ids else None
 
+    direct_ids: set[int] = set()
     for ln in ship_lines:
         cid = int(ln["catalog_product_id"])
         qty = int(ln["quantity_to_ship"])
+        if ln.get("direct"):
+            product = db.get(CatalogProduct, cid)
+            if not product or product.deleted_at or not product.is_active:
+                raise HTTPException(400, "product not found")
+            open_row = open_map.get(cid)
+            if open_row and int(open_row.quantity_open or 0) > 0:
+                raise HTTPException(400, f"{product.our_product_id} is already booked — tick that order")
+            from app.services.pricing import effective_selling_price
+            price = effective_selling_price(product.buying_price, product.selling_price)
+            if price is None:
+                raise HTTPException(400, f"sell price not set for {product.our_product_id}")
+            balance = (
+                db.query(StockBalance)
+                .filter(StockBalance.catalog_product_id == cid)
+                .with_for_update()
+                .first()
+            )
+            on_hand = int(balance.quantity_on_hand or 0) if balance else 0
+            if qty > on_hand:
+                raise HTTPException(400, f"only {on_hand} in stock for {product.our_product_id}")
+            bill_items.append({
+                "catalog_product_id": cid,
+                "our_product_id": product.our_product_id,
+                "name": product.our_product_id,
+                "quantity": qty,
+                "unit_price": str(price),
+            })
+            direct_ids.add(cid)
+            if not use_overall:
+                ov: dict = {"catalog_product_id": cid}
+                if ln.get("net_rate") is not None and str(ln.get("net_rate")).strip() != "":
+                    ov["override_price"] = ln["net_rate"]
+                if ln.get("discount_percent") is not None:
+                    ov["discount_percent"] = ln["discount_percent"]
+                if "override_price" in ov or "discount_percent" in ov:
+                    item_overrides.append(ov)
+            continue
         row = open_map.get(cid)
         if not row or qty > row.quantity_open:
             raise HTTPException(400, f"cannot ship more than open qty for product {cid}")
@@ -247,12 +285,36 @@ def process_customer_bill(
             )
         )
         open_row = open_map.get(cid)
-        if open_row:
+        if cid in direct_ids:
+            add_stock(
+                db,
+                catalog_product_id=cid,
+                our_product_id=sku,
+                quantity=-qty,
+                entry_type="sold",
+                reference_type="customer_bill",
+                reference_id=bill.id,
+                party=customer_name,
+                notes=f"Direct bill {bill_number}",
+            )
+            from app.services.addon_stock import deduct_addons_for_product
+            kept = [int(a.get("addon_product_id")) for a in (addon_map.get(cid) or []) if a.get("addon_product_id")]
+            deduct_addons_for_product(
+                db,
+                catalog_product_id=cid,
+                units=qty,
+                reference_type="customer_bill",
+                reference_id=bill.id,
+                party=customer_name,
+                note=f"Direct bill {bill_number}",
+                only_addon_ids=kept,
+            )
+        elif open_row:
             open_row.quantity_open = max(0, open_row.quantity_open - qty)
             open_row.quantity_billed += qty
             if open_row.quantity_open <= 0:
                 open_row.status = "open"
-        billed_qty[cid] = billed_qty.get(cid, 0) + qty
+            billed_qty[cid] = billed_qty.get(cid, 0) + qty
 
     if selected_ids:
         _apply_billed_qtys_to_placements(db, customer_id, billed_qty, selected_ids)

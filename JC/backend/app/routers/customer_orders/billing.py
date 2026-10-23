@@ -142,17 +142,35 @@ def preview_process_bill(
     for ln in body.lines:
         if ln.quantity_to_ship <= 0:
             continue
-        row = open_map.get(ln.catalog_product_id)
-        if not row:
-            raise HTTPException(400, f"invalid product {ln.catalog_product_id}")
-        if ln.quantity_to_ship > row.quantity_open:
-            raise HTTPException(400, f"cannot ship more than open for {row.our_product_id}")
-        bill_items.append({
-            "catalog_product_id": ln.catalog_product_id,
-            "our_product_id": row.our_product_id,
-            "quantity": ln.quantity_to_ship,
-            "unit_price": str(row.unit_price),
-        })
+        if ln.direct:
+            product = db.get(CatalogProduct, ln.catalog_product_id)
+            if not product or product.deleted_at or not product.is_active:
+                raise HTTPException(400, "product not found")
+            row = open_map.get(ln.catalog_product_id)
+            if row and int(row.quantity_open or 0) > 0:
+                raise HTTPException(400, f"{product.our_product_id} is already booked — tick that order")
+            from app.services.pricing import effective_selling_price
+            price = effective_selling_price(product.buying_price, product.selling_price)
+            if price is None:
+                raise HTTPException(400, f"sell price not set for {product.our_product_id}")
+            bill_items.append({
+                "catalog_product_id": ln.catalog_product_id,
+                "our_product_id": product.our_product_id,
+                "quantity": ln.quantity_to_ship,
+                "unit_price": str(price),
+            })
+        else:
+            row = open_map.get(ln.catalog_product_id)
+            if not row:
+                raise HTTPException(400, f"invalid product {ln.catalog_product_id}")
+            if ln.quantity_to_ship > row.quantity_open:
+                raise HTTPException(400, f"cannot ship more than open for {row.our_product_id}")
+            bill_items.append({
+                "catalog_product_id": ln.catalog_product_id,
+                "our_product_id": row.our_product_id,
+                "quantity": ln.quantity_to_ship,
+                "unit_price": str(row.unit_price),
+            })
         if not use_overall:
             ov: dict = {"catalog_product_id": ln.catalog_product_id}
             if ln.net_rate is not None:

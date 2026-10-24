@@ -1994,13 +1994,15 @@ const Stock = (() => {
   function stockPieceTotals(rows) {
     let purchase = 0;
     let sales = 0;
+    let other = 0;
     for (const e of rows || []) {
-      const qty = Math.abs(Number(e.quantity_delta) || 0);
+      const qty = Number(e.quantity_delta) || 0;
       const bucket = stockMoveBucket(e);
       if (bucket === "purchase") purchase += qty;
-      else if (bucket === "sales") sales += qty;
+      else if (bucket === "sales") sales += -qty;
+      else if (bucket === "other") other += qty;
     }
-    return { purchase, sales };
+    return { purchase, sales, other };
   }
 
   function setLedgerKind(kind) {
@@ -2057,7 +2059,7 @@ const Stock = (() => {
           Hide void entries
         </label>
       </div>
-      <p style="margin:0 0 8px;font-size:13px;"><strong>Purchase total ${totals.purchase}</strong> · <strong>Sale total ${totals.sales}</strong></p>
+      <p style="margin:0 0 8px;font-size:13px;"><strong>Purchase total ${totals.purchase}</strong> · <strong>Sale total ${totals.sales}</strong>${totals.other ? ` · <strong>Other ${totals.other}</strong>` : ""}</p>
       <div class="table-wrap"><table class="data history-table"><thead><tr>
         <th>Date</th><th>Party</th><th>Qty</th><th>Bill</th><th>Balance</th><th>Type</th>
       </tr></thead><tbody>${body}</tbody></table></div>

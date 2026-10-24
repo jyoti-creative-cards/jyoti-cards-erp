@@ -102,8 +102,7 @@ def get_stock_detail(
     ledger_rows = (
         db.query(StockLedger)
         .filter(StockLedger.catalog_product_id == catalog_product_id)
-        .order_by(StockLedger.created_at.desc())
-        .limit(100)
+        .order_by(StockLedger.created_at.desc(), StockLedger.id.desc())
         .all()
     )
     from app.services.stock_receipt import annotate_stock_ledger

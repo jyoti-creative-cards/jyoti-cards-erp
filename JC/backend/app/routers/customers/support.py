@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 import logging
 import re
 from datetime import datetime, timezone
@@ -186,6 +187,31 @@ def _to_public_many(
         )
     return out
 
+def friendly_whatsapp_error(raw: str) -> str:
+    """Turn a Graph error into one sentence. Creating the party still succeeded."""
+    text = str(raw or "").strip()
+    code = ""
+    if text.startswith("{") or text.startswith("["):
+        try:
+            data = json.loads(text)
+            err = data.get("error") if isinstance(data, dict) else None
+            if isinstance(err, dict):
+                code = str(err.get("code") or "")
+                text = str(err.get("message") or text)
+        except json.JSONDecodeError:
+            pass
+    if "133010" in code or "133010" in text or "not registered" in text.lower():
+        return "Party saved. WhatsApp is not registered (133010), so the login message was not sent."
+    if "WHATSAPP_DISABLE" in text:
+        return "Party saved. WhatsApp sends are switched off."
+    if "missing WA credentials" in text:
+        return "Party saved. WhatsApp is not set up."
+    short = " ".join(text.split())
+    if len(short) > 160:
+        short = short[:160]
+    return f"Party saved. WhatsApp was not sent. {short}" if short else "Party saved. WhatsApp was not sent."
+
+
 def _send_whatsapp(name: str, phone: str, plain: str) -> tuple[bool, Optional[str]]:
     s = get_settings()
     suffix = (s.customer_portal_url_button_suffix or "").strip()
@@ -200,7 +226,7 @@ def _send_whatsapp(name: str, phone: str, plain: str) -> tuple[bool, Optional[st
         return True, None
     err = str(result.get("error") or "unknown error")
     logger.error("WhatsApp failed for %s: %s", phone, err)
-    return False, err
+    return False, friendly_whatsapp_error(err)
 
 def _route_from_city(db: Session, city_id: Optional[int]) -> Optional[int]:
     if not city_id:

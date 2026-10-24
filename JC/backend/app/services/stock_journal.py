@@ -184,6 +184,19 @@ def resolve_lines(db: Session, body: JournalIn) -> tuple[list[dict], list[str], 
                 "amount": _q(rate * int(ln.quantity)),
             })
         total = _q(sum((row["amount"] for row in drafted), Decimal("0")))
+    elif body.kind == "direct_in":
+        if not body.lines:
+            raise HTTPException(400, "Add the items and quantities to put in.")
+        for ln in body.lines:
+            product = _product(db, ln.catalog_product_id)
+            rate = _buying_rate(product, ln.rate, required=False)
+            drafted.append({
+                "product": product,
+                "quantity_delta": int(ln.quantity),
+                "rate": rate,
+                "amount": _q(rate * int(ln.quantity)),
+            })
+        total = _q(sum((row["amount"] for row in drafted), Decimal("0")))
     else:
         if body.album and body.lines:
             raise HTTPException(400, "Use either an album or item lines, not both.")
@@ -310,12 +323,7 @@ def post_journal(db: Session, body: JournalIn, auth: AuthContext) -> JournalOut:
         journal_date=body.journal_date,
         kind=body.kind,
         narration=(body.narration or "").strip() or None,
-        expense_category=(
-            (body.expense_category or "").strip().lower() or None
-            if body.kind == "transfer"
-            else (body.expense_category or ("direct out" if body.kind == "direct_out" else "sample catalogues")).strip().lower()
-            or ("direct out" if body.kind == "direct_out" else "sample catalogues")
-        ),
+        expense_category=_journal_category(body),
         total_cost=total,
         created_by_name=auth.actor_name or "Admin",
         created_at=when,
@@ -556,10 +564,22 @@ def void_journal(db: Session, journal_id: int, reason: str, auth: AuthContext) -
     return _journal_out(db, journal)
 
 
+def _journal_category(body: JournalIn) -> str | None:
+    if body.kind == "transfer":
+        return (body.expense_category or "").strip().lower() or None
+    if body.kind == "direct_in":
+        return "stock in"
+    if body.kind == "direct_out":
+        return "direct out"
+    fallback = "sample catalogues"
+    return (body.expense_category or fallback).strip().lower() or fallback
+
+
 _KIND_LABEL = {
     "transfer": "Move to new item",
     "consumption": "Sampling",
-    "direct_out": "Direct out",
+    "direct_out": "Stock out",
+    "direct_in": "Stock in",
 }
 
 

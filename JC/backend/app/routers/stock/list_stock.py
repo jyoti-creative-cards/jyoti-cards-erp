@@ -245,10 +245,44 @@ def list_stock(
 
 @router.get("/entry-items")
 def entry_items(
+    q: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_any_permission("customer_orders.read", "customer_orders.write", "stock.read")),
 ) -> list[dict]:
-    """Item numbers for the order form. The page filters this list locally."""
+    """Item numbers for the order form. A query returns a short match list."""
+    needle = (q or "").replace("\x00", "").strip()
+    if needle:
+        like = f"%{needle.lower()}%"
+        prefix = f"{needle.lower()}%"
+        rows = (
+            db.query(CatalogProduct, StockBalance.quantity_on_hand)
+            .outerjoin(StockBalance, StockBalance.catalog_product_id == CatalogProduct.id)
+            .filter(
+                CatalogProduct.is_active.is_(True),
+                CatalogProduct.deleted_at.is_(None),
+                func.lower(CatalogProduct.our_product_id).like(like),
+            )
+            .order_by(
+                case((func.lower(CatalogProduct.our_product_id).like(prefix), 0), else_=1),
+                CatalogProduct.our_product_id.asc(),
+                CatalogProduct.id.asc(),
+            )
+            .limit(12)
+            .all()
+        )
+        out = []
+        for product, qty in rows:
+            price = effective_selling_price(product.buying_price, product.selling_price)
+            out.append({
+                "catalog_product_id": product.id,
+                "our_product_id": product.our_product_id,
+                "year_group": product.year_group,
+                "selling_price": format(price, "f") if price is not None else None,
+                "quantity_on_hand": int(qty or 0),
+                "addons": [],
+                "priced_addons": [],
+            })
+        return out
     cached = response_cache.get("stock:entry-items:v1")
     if cached is not None:
         return cached

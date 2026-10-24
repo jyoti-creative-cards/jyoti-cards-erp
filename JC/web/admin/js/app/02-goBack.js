@@ -533,12 +533,16 @@
       ).join("") || `<p style="color:var(--muted);">No match</p>`;
       return;
     }
-    if (!partyLedgerParties) partyLedgerParties = [];
-    if (!window._shortcutItems) {
-      window._shortcutItems = await api("/stock/entry-items", {}, 0) || [];
+    const seq = ++shortcutSearchSeq;
+    hits.innerHTML = `<p style="color:var(--muted);">Searching…</p>`;
+    let rows = [];
+    try {
+      rows = await api(`/stock/entry-items?q=${encodeURIComponent(q)}`, {}, 0) || [];
+    } catch (e) {
+      if (seq === shortcutSearchSeq) hits.innerHTML = `<p style="color:var(--danger);">${esc(e.message)}</p>`;
+      return;
     }
-    const needle = q.toLowerCase();
-    const rows = window._shortcutItems.filter(p => String(p.our_product_id || "").toLowerCase().includes(needle)).slice(0, 12);
+    if (seq !== shortcutSearchSeq) return;
     hits.innerHTML = rows.map(p =>
       `<button type="button" class="btn btn-secondary" style="display:block;width:100%;text-align:left;margin-top:6px;" onclick="App.pickShortcut(${p.catalog_product_id})">${esc(p.our_product_id)} · stock ${p.quantity_on_hand ?? 0}</button>`
     ).join("") || `<p style="color:var(--muted);">No match</p>`;

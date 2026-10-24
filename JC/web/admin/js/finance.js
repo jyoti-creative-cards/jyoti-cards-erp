@@ -3009,8 +3009,8 @@ const Finance = (() => {
       body.from_product_id = f.from_id;
       body.to_product_id = f.to_id;
       body.quantity = Number(f.quantity) || null;
-    } else if (f.kind === "direct_out") {
-      body.expense_category = "direct out";
+    } else if (f.kind === "direct_out" || f.kind === "direct_in") {
+      body.expense_category = f.kind === "direct_in" ? "stock in" : "direct out";
       body.lines = (f.lines || []).filter(l => Number(l.quantity) > 0).map(l => ({
         catalog_product_id: l.catalog_product_id,
         quantity: Number(l.quantity) || 0,
@@ -3042,6 +3042,27 @@ const Finance = (() => {
   }
 
   let journalCategories = [];
+  let journalLedger = "all";
+
+  function journalKindLabel(kind) {
+    if (kind === "transfer") return "Move";
+    if (kind === "direct_out") return "Stock out";
+    if (kind === "direct_in") return "Stock in";
+    return "Samples";
+  }
+
+  function setJournalLedger(mode) {
+    journalLedger = mode || "all";
+    renderJournal();
+  }
+
+  function journalsForLedger() {
+    const rows = journals || [];
+    if (journalLedger === "in") return rows.filter(j => j.kind === "direct_in");
+    if (journalLedger === "out") return rows.filter(j => j.kind === "direct_out");
+    if (journalLedger === "stock") return rows.filter(j => j.kind === "direct_in" || j.kind === "direct_out");
+    return rows;
+  }
 
   async function loadJournals() {
     if (!journalForm) journalForm = blankJournalForm();
@@ -3069,20 +3090,23 @@ const Finance = (() => {
     const hitList = (hits, which) => hitButtons(hits, which);
     const transfer = f.kind === "transfer";
     const direct = f.kind === "direct_out";
+    const inward = f.kind === "direct_in";
+    const stockMove = direct || inward;
     const preview = f.preview;
     el.innerHTML = `
       <div class="card" style="padding:16px;display:grid;gap:12px;margin-bottom:16px;">
         <div style="display:flex;gap:16px;flex-wrap:wrap;">
           <label style="display:flex;gap:6px;align-items:center;"><input type="radio" name="fj-kind" ${transfer ? "checked" : ""} onchange="Finance.setJournalKind('transfer')" /> Move to new item</label>
           <label style="display:flex;gap:6px;align-items:center;"><input type="radio" name="fj-kind" ${f.kind === "consumption" ? "checked" : ""} onchange="Finance.setJournalKind('consumption')" /> Sample catalogues</label>
-          <label style="display:flex;gap:6px;align-items:center;"><input type="radio" name="fj-kind" ${direct ? "checked" : ""} onchange="Finance.setJournalKind('direct_out')" /> Direct out</label>
+          <label style="display:flex;gap:6px;align-items:center;"><input type="radio" name="fj-kind" ${direct ? "checked" : ""} onchange="Finance.setJournalKind('direct_out')" /> Stock out</label>
+          <label style="display:flex;gap:6px;align-items:center;"><input type="radio" name="fj-kind" ${inward ? "checked" : ""} onchange="Finance.setJournalKind('direct_in')" /> Stock in</label>
         </div>
         <div style="display:flex;gap:12px;flex-wrap:wrap;">
           <label>Date <input class="input" type="date" value="${ctx.esc(f.journal_date)}" onchange="Finance.setJournalField('journal_date', this.value)" /></label>
-          <label style="flex:1;min-width:220px;">${direct ? "Reason (optional)" : "Note"} <input class="input" style="width:100%;" value="${ctx.esc(f.narration)}" oninput="Finance.setJournalField('narration', this.value)" placeholder="Why this journal" /></label>
+          <label style="flex:1;min-width:220px;">${stockMove ? "Reason (optional)" : "Note"} <input class="input" style="width:100%;" value="${ctx.esc(f.narration)}" oninput="Finance.setJournalField('narration', this.value)" placeholder="Why this journal" /></label>
         </div>
-        ${direct ? `
-          <p style="margin:0;font-size:13px;color:var(--muted);">Quantity leaves stock. Use this for damaged goods. Reason is optional.</p>
+        ${stockMove ? `
+          <p style="margin:0;font-size:13px;color:var(--muted);">${inward ? "Quantity comes into stock. This is not a vendor bill." : "Quantity leaves stock. Use this for damaged goods. Reason is optional."}</p>
           <label>Search item <input class="input" id="fj-line" value="${ctx.esc(f.line_q)}" placeholder="Item number or name" oninput="Finance.searchJournalProduct('line', this.value)" /></label>
           <div id="fj-hits-line" style="display:flex;flex-direction:column;gap:4px;">${hitList(journalHits.line, "line")}</div>
           ${(f.lines || []).map((l, i) => `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
@@ -3170,16 +3194,48 @@ const Finance = (() => {
         ` : ""}
       </div>
       <div class="card table-wrap">
-        ${journals.length ? `<table class="data"><thead><tr><th>Date</th><th>Kind</th><th>Note</th><th>Cost</th><th></th></tr></thead><tbody>
-          ${journals.map(j => `<tr>
-            <td>${ctx.esc(j.journal_date)}</td>
-            <td>${j.kind === "transfer" ? "Move" : j.kind === "direct_out" ? "Direct out" : "Samples"}${j.voided_at ? " · voided" : ""}</td>
-            <td>${ctx.esc(j.narration || "—")}</td>
-            <td>${fmtPrice(j.total_cost)}</td>
-            <td>${j.voided_at ? "" : `<button class="btn btn-ghost btn-sm" onclick="Finance.voidJournal(${j.id})">Void</button>`}</td>
-          </tr>`).join("")}
-        </tbody></table>` : `<p style="padding:16px;margin:0;color:var(--muted);">No journals yet.</p>`}
+        <div style="display:flex;gap:8px;flex-wrap:wrap;padding:12px 12px 0;">
+          <button type="button" class="btn btn-sm ${journalLedger === "all" ? "btn-primary" : "btn-secondary"}" onclick="Finance.setJournalLedger('all')">All journals</button>
+          <button type="button" class="btn btn-sm ${journalLedger === "in" ? "btn-primary" : "btn-secondary"}" onclick="Finance.setJournalLedger('in')">Stock in</button>
+          <button type="button" class="btn btn-sm ${journalLedger === "out" ? "btn-primary" : "btn-secondary"}" onclick="Finance.setJournalLedger('out')">Stock out</button>
+          <button type="button" class="btn btn-sm ${journalLedger === "stock" ? "btn-primary" : "btn-secondary"}" onclick="Finance.setJournalLedger('stock')">Stock ledger</button>
+        </div>
+        ${journalListHtml()}
       </div>`;
+  }
+
+  function journalListHtml() {
+    if (journalLedger === "stock") return stockLedgerTable();
+    const rows = journalsForLedger();
+    if (!rows.length) return `<p style="padding:16px;margin:0;color:var(--muted);">No journals yet.</p>`;
+    return `<table class="data"><thead><tr><th>Date</th><th>Kind</th><th>Note</th><th>Cost</th><th></th></tr></thead><tbody>
+      ${rows.map(j => `<tr>
+        <td>${ctx.esc(j.journal_date)}</td>
+        <td>${journalKindLabel(j.kind)}${j.voided_at ? " · voided" : ""}</td>
+        <td>${ctx.esc(j.narration || "—")}</td>
+        <td>${fmtPrice(j.total_cost)}</td>
+        <td>${j.voided_at ? "" : `<button class="btn btn-ghost btn-sm" onclick="Finance.voidJournal(${j.id})">Void</button>`}</td>
+      </tr>`).join("")}
+    </tbody></table>`;
+  }
+
+  function stockLedgerTable() {
+    const rows = [];
+    for (const j of journalsForLedger()) {
+      if (j.voided_at) continue;
+      for (const ln of j.lines || []) {
+        rows.push(`<tr>
+          <td>${ctx.esc(j.journal_date)}</td>
+          <td>${journalKindLabel(j.kind)}</td>
+          <td>${ctx.esc(ln.our_product_id)}</td>
+          <td>${ln.quantity_delta}</td>
+          <td>${ctx.esc(j.narration || "—")}</td>
+          <td><button class="btn btn-ghost btn-sm" onclick="Finance.voidJournal(${j.id})">Void</button></td>
+        </tr>`);
+      }
+    }
+    if (!rows.length) return `<p style="padding:16px;margin:0;color:var(--muted);">No stock in or stock out yet.</p>`;
+    return `<table class="data"><thead><tr><th>Date</th><th>Kind</th><th>Item</th><th>Qty</th><th>Note</th><th></th></tr></thead><tbody>${rows.join("")}</tbody></table>`;
   }
 
   function journalPieces(preview) {
@@ -3229,7 +3285,7 @@ const Finance = (() => {
       <td>${ctx.esc(String(l.amount ?? ""))}</td>
       <td>${ctx.esc(String(l.on_hand ?? ""))}</td>
     </tr>`).join("");
-    const title = journalForm?.kind === "transfer" ? "Move to new item" : journalForm?.kind === "direct_out" ? "Direct out" : "Sample catalogue";
+    const title = journalKindLabel(journalForm?.kind);
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${ctx.esc(title)}</title>
       <style>body{font-family:sans-serif;font-size:12px;color:#111}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:4px 6px;text-align:left}h1{font-size:16px}</style>
       </head><body>
@@ -3244,7 +3300,14 @@ const Finance = (() => {
     w.document.write(html);
     w.document.close();
     w.focus();
-    w.print();
+    let started = false;
+    const go = () => {
+      if (started) return;
+      started = true;
+      try { w.print(); } catch (_) {}
+    };
+    w.addEventListener("load", go);
+    setTimeout(go, 200);
   }
 
   function exportJournalExcel() {
@@ -3268,7 +3331,7 @@ const Finance = (() => {
     const blob = new Blob([html], { type: "application/vnd.ms-excel" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = journalForm?.kind === "transfer" ? "move-to-new-item.xls" : journalForm?.kind === "direct_out" ? "direct-out.xls" : "sample-catalogue.xls";
+    a.download = `${journalKindLabel(journalForm?.kind).replace(/\s+/g, "-").toLowerCase()}.xls`;
     a.click();
     URL.revokeObjectURL(a.href);
   }
@@ -3277,6 +3340,8 @@ const Finance = (() => {
     if (!journalForm) journalForm = blankJournalForm();
     journalForm.kind = kind;
     journalForm.preview = null;
+    if (kind === "direct_in") journalLedger = "in";
+    else if (kind === "direct_out") journalLedger = "out";
     renderJournal();
   }
 
@@ -3442,7 +3507,7 @@ const Finance = (() => {
     ctx.showLoading?.();
     try {
       const saved = await ctx.api("/stock-journals", { method: "POST", body: JSON.stringify(journalBody()) }, 0);
-      ctx.toast(saved.kind === "consumption" ? "Sample cost recorded" : saved.kind === "direct_out" ? "Direct out recorded" : "Stock moved", "success");
+      ctx.toast(saved.kind === "consumption" ? "Sample cost recorded" : saved.kind === "direct_out" ? "Stock out recorded" : saved.kind === "direct_in" ? "Stock in recorded" : "Stock moved", "success");
       journalForm = blankJournalForm();
       journalHits = { from: [], to: [], line: [] };
       ctx.invalidateCache?.("/stock");
@@ -3487,7 +3552,7 @@ const Finance = (() => {
     shareArStatement, shareApStatement,
     setArOpeningBalance, setApOpeningBalance, saveArOpeningBalance, saveApOpeningBalance,
     openExpenseForm, onExpenseHeadChange, addExpenseHead, addExpenseSubhead, editExpense, saveExpenseEdit, closeExpenseForm, submitExpense, deleteExpense, onExpenseFilterChange, clearExpenseFilters,
-    setJournalKind, setJournalMode, setJournalField, setJournalLine, removeJournalLine, searchJournalProduct,
+    setJournalKind, setJournalLedger, setJournalMode, setJournalField, setJournalLine, removeJournalLine, searchJournalProduct,
     loadAlbumLines, applyJournalQtyAll,
     pickJournalProduct, previewJournal, printJournalPreview, exportJournalExcel, saveJournal, voidJournal,
     editApPayment, saveApPaymentEdit, editArPayment, saveArPaymentEdit,

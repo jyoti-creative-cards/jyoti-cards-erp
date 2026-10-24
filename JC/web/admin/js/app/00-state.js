@@ -35,6 +35,7 @@ const App = (() => {
   let partyLedgerCustomerId = null;
   let partyLedgerParties = null;
   let shortcutMode = "";
+  let shortcutSearchSeq = 0;
   let customerRealOnly = true;
   let customerAr = null;
   let viewStack = [];

@@ -334,3 +334,24 @@ def test_direct_out_reduces_stock_without_a_reason(db):
     assert report["items"][0]["qty"] == 8
     assert report["items"][0]["reason"] == ""
     assert list_journal_report(db, today_ist(), today_ist(), "transfer")["items"] == []
+
+
+def test_direct_in_adds_stock_and_does_not_create_an_expense(db):
+    vendor = _vendor(db)
+    item = _product(db, vendor, "IN 01", buying=Decimal("4.00"), stock=3)
+    saved = post_journal(
+        db,
+        JournalIn(
+            journal_date=today_ist(),
+            kind="direct_in",
+            narration="Found in the godown",
+            lines=[JournalLineIn(catalog_product_id=item.id, quantity=7)],
+        ),
+        AUTH,
+    )
+    assert saved.kind == "direct_in"
+    assert saved.lines[0].quantity_delta == 7
+    assert _hand(db, item.id) == 10
+    assert db.query(Expense).count() == 0
+    void_journal(db, saved.id, "Counted twice", AUTH)
+    assert _hand(db, item.id) == 3

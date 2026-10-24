@@ -30,8 +30,14 @@ const DocShare = (() => {
     if (print) {
       const w = window.open(url, "_blank");
       if (w) {
-        w.addEventListener("load", () => { try { w.print(); } catch (_) {} });
-        setTimeout(() => { try { w.print(); } catch (_) {} }, 800);
+        let started = false;
+        const go = () => {
+          if (started) return;
+          started = true;
+          try { w.focus(); w.print(); } catch (_) {}
+        };
+        w.addEventListener("load", go);
+        setTimeout(go, 800);
       }
     } else {
       const a = document.createElement("a");

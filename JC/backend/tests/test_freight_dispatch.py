@@ -90,6 +90,31 @@ def test_bus_bill_posts_agent_charge_before_pickup(db):
     assert again.id == entry.id
 
 
+def test_picked_bill_can_move_to_another_freight_agent(db):
+    from app.models.freight_agent import FreightAgent, FreightLedgerEntry
+    from app.services.freight_parcels import charge_for_bill, ensure_bill_freight_charge, sync_bill_freight_on_edit
+
+    first = FreightAgent(name="Old Agent")
+    second = FreightAgent(name="New Agent")
+    db.add_all([first, second])
+    db.flush()
+    bill = _bill(db, transport_mode="bus", picked_at=datetime.now(timezone.utc))
+    bill.freight_agent_id = first.id
+    bill.freight_charges = Decimal("40")
+    db.flush()
+    ensure_bill_freight_charge(db, bill, customer_name="Freight Party", actor_name="Test")
+    sync_bill_freight_on_edit(
+        db, bill=bill, freight_agent_id=second.id, freight_charges=Decimal("55"),
+        customer_name="Freight Party", actor_name="Test",
+    )
+    entry = charge_for_bill(db, bill.id)
+    assert bill.freight_agent_id == second.id
+    assert bill.freight_picked_at is not None
+    assert entry.freight_agent_id == second.id
+    assert entry.amount == Decimal("55")
+    assert db.query(FreightLedgerEntry).filter(FreightLedgerEntry.freight_agent_id == first.id).count() == 0
+
+
 def test_picked_parcel_from_yesterday_is_correctly_scoped_out_of_today(db):
     """Sanity check: "picked" (historical/completed) is day-scoped the same way as
     "pending" — both use CustomerBill.created_at now."""

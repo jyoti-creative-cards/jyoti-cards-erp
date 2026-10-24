@@ -156,6 +156,19 @@ def test_backdated_vendor_receive_uses_business_date(db):
     assert ledger_row.created_at.date() != datetime.now(timezone.utc).date()
 
 
+def test_staff_can_book_an_item_that_is_already_negative(db):
+    customer, prod = _setup(db, on_hand=-4)
+    placement = create_received_placement(
+        db, customer_id=customer.id, customer_name=customer.business_name,
+        lines=[{"catalog_product_id": prod.id, "quantity": 2}],
+        allow_negative_stock=True,
+    )
+    confirm_received_order(db, customer.id)
+    assert placement.id
+    bal = db.query(StockBalance).filter(StockBalance.catalog_product_id == prod.id).one()
+    assert bal.quantity_on_hand == -6
+
+
 def test_receive_of_empty_stock_names_the_waiting_party(db):
     customer, prod = _setup(db, on_hand=0)
     create_received_placement(

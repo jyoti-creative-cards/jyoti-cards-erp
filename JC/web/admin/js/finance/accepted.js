@@ -3307,26 +3307,16 @@ const Finance = (() => {
     const preview = journalForm?.preview;
     if (!preview) return;
     const totals = journalTotals(preview);
-    const cell = (v) => ctx.esc(v == null ? "" : String(v));
-    const rows = (preview.lines || []).map(l => `<tr>
-      <td>${cell(l.our_product_id)}</td><td>${cell(l.quantity_delta)}</td><td>${cell(l.rate)}</td>
-      <td>${cell(l.amount)}</td><td>${cell(l.on_hand)}</td></tr>`).join("");
-    const html = `<html><head><meta charset="utf-8"></head><body>
-      <table>
-        <tr><td>Items</td><td>${totals.items}</td></tr>
-        <tr><td>Total qty</td><td>${totals.qty}</td></tr>
-        <tr><td>Total amount</td><td>${cell(totals.amount)}</td></tr>
-        <tr></tr>
-        <tr><th>Item</th><th>Qty</th><th>Rate</th><th>Amount</th><th>On hand</th></tr>
-        ${rows}
-        <tr><td>Total · ${totals.items} item(s)</td><td>${totals.qty}</td><td></td><td>${cell(totals.amount)}</td><td></td></tr>
-      </table></body></html>`;
-    const blob = new Blob([html], { type: "application/vnd.ms-excel" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `${journalKindLabel(journalForm?.kind).replace(/\s+/g, "-").toLowerCase()}.xls`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    const sheet = [
+      ["Items", totals.items],
+      ["Total qty", totals.qty],
+      ["Total amount", totals.amount],
+      [],
+      ["Item", "Qty", "Rate", "Amount", "On hand"],
+      ...(preview.lines || []).map(l => [l.our_product_id, l.quantity_delta, l.rate, l.amount, l.on_hand]),
+      [`Total · ${totals.items} item(s)`, totals.qty, "", totals.amount, ""],
+    ];
+    Xlsx.download(`${journalKindLabel(journalForm?.kind).replace(/\s+/g, "-").toLowerCase()}.xlsx`, sheet);
   }
 
   function setJournalKind(kind) {

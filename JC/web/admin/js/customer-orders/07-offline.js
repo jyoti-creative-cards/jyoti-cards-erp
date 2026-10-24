@@ -337,7 +337,7 @@
     box.innerHTML = `<table class="data"><thead><tr><th>Item</th><th>Stock</th><th>Rate</th><th>Qty</th><th></th></tr></thead><tbody>
       ${offlineLines.map(l => `<tr>
         <td><strong>${ctx.esc(l.our_product_id)}</strong>${pricedAddonHtml({ catalog_product_id: l.catalog_product_id }, l)}</td>
-        <td>${l.quantity_on_hand ?? "—"}</td>
+        <td>${l.quantity_on_hand ?? "—"}${Number(l.quantity_on_hand) <= 0 ? ` <span style="color:#b45309;">in transit</span>` : ""}</td>
         <td>${fmtPrice(l.selling_price)}</td>
         <td><input data-qty-for="${l.catalog_product_id}" type="number" class="input" style="width:72px;" min="${Number(l.min_qty) || 1}" value="${l.quantity}" oninput="CustomerOrders.setOfflineQty(${l.catalog_product_id}, this.value)" onkeydown="CustomerOrders.onOfflineQtyKey(event)" /></td>
         <td><button type="button" class="btn btn-ghost btn-sm" onclick="CustomerOrders.removeOfflineLine(${l.catalog_product_id})">Remove</button></td>

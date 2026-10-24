@@ -405,7 +405,6 @@
     if (direct) {
       const booked = (processContext?.lines || []).some(l => Number(l.catalog_product_id) === Number(catalogProductId) && Number(l.quantity_open) > 0);
       if (booked) return ctx.toast("Already booked — tick that order", "error");
-      if (!(Number(p.quantity_on_hand) > 0)) return ctx.toast("Out of stock", "error");
       if (p.selling_price == null || p.selling_price === "") return ctx.toast("Sell price not set", "error");
     }
     processLines.push({
@@ -444,7 +443,7 @@
       return;
     }
     let q = Math.max(0, parseInt(val, 10) || 0);
-    if (ln.direct) q = Math.min(Number(ln.quantity_on_hand) || 0, q);
+    if (ln.direct && Number(ln.quantity_on_hand) > 0) q = Math.min(Number(ln.quantity_on_hand), q);
     else if (!editBillId) q = Math.min(Number(ln.quantity_open) || 0, q);
     ln.quantity_to_ship = q;
     renderWizardTotalsBar();

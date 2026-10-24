@@ -13,7 +13,6 @@ from app.models.catalog_product import CatalogProduct
 from app.models.customer import Customer
 from app.models.customer_bill import CustomerBill, CustomerBillLine
 from app.models.customer_order import CustomerOpenLine, CustomerOrder, CustomerOrderLine, CustomerOrderPlacement
-from app.models.stock import StockBalance
 from app.models.freight_agent import FreightAgent
 from app.services.commission_ledger import post_customer_bill_due
 from app.services.bill_series_alloc import allocate_bill_number, resolve_bill_number
@@ -66,10 +65,6 @@ def process_offline_customer_order(
             raise HTTPException(400, f"product {cid} not found")
         if prod.selling_price is None:
             raise HTTPException(400, f"sell price not set for {prod.our_product_id}")
-        bal = db.query(StockBalance).filter(StockBalance.catalog_product_id == cid).first()
-        on_hand = bal.quantity_on_hand if bal else 0
-        if on_hand < qty:
-            raise HTTPException(400, f"insufficient stock for {prod.our_product_id} (have {on_hand})")
         unit_price = prod.selling_price
         bill_items.append(
             {

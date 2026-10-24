@@ -88,57 +88,11 @@ def sync_bill_freight_on_edit(
     customer_name: str,
     actor_name: str,
 ) -> None:
-    """Update freight fields on bill edit. Picked parcels cannot change agent."""
-    picked = bill.freight_picked_at is not None
-    new_agent = freight_agent_id
-    new_amt = (freight_charges or Decimal("0")).quantize(Decimal("0.01")) if freight_charges is not None else Decimal("0")
-
-    if picked:
-        if new_agent != bill.freight_agent_id:
-            raise HTTPException(
-                400,
-                "parcel already picked — change freight agent only on pending parcels (Selling → Dispatch)",
-            )
-        bill.freight_charges = freight_charges
-        entry = charge_for_bill(db, bill.id)
-        if new_amt <= 0:
-            remove_charge_for_bill(db, bill.id)
-            bill.freight_picked_at = None
-            bill.freight_picked_by = None
-            bill.freight_agent_id = new_agent
-            return
-        if entry:
-            if entry.freight_agent_id != bill.freight_agent_id:
-                # Stale/orphaned entry pointing at a different agent than the bill
-                # now carries — clear it, then fall through to post a fresh charge
-                # against the correct agent below. Previously this branch cleared
-                # the entry and returned without reposting, so the pending due
-                # never made it onto the (correct) agent's ledger/statement.
-                remove_charge_for_bill(db, bill.id)
-                entry = None
-            else:
-                entry.amount = as_signed_increase(new_amt)
-                entry.notes = customer_name or entry.notes
-                db.flush()
-                recompute_balance_due(db, entry.freight_agent_id)
-                return
-        if not entry and bill.freight_agent_id and new_amt > 0:
-            agent = db.get(FreightAgent, bill.freight_agent_id)
-            if agent:
-                post_freight_charge(
-                    db,
-                    agent_id=agent.id,
-                    amount=new_amt,
-                    customer_bill_id=bill.id,
-                    notes=customer_name or f"Bill {bill.bill_number}",
-                    actor_name=actor_name,
-                )
-        return
-
-    # Pending — the charge was posted at bill save, so edit updates it.
-    bill.freight_agent_id = new_agent
+    """Update freight on a bill. A picked parcel can still move to another agent."""
+    bill.freight_agent_id = freight_agent_id
     bill.freight_charges = freight_charges
-    bill.transport_mode = "bus" if new_agent else (bill.transport_mode or "self_pickup")
+    if freight_agent_id:
+        bill.transport_mode = "bus"
     ensure_bill_freight_charge(db, bill, customer_name=customer_name, actor_name=actor_name)
 
 
@@ -204,8 +158,6 @@ def reassign_parcel(
     bill = db.get(CustomerBill, bill_id)
     if not bill:
         raise HTTPException(404, "bill not found")
-    if bill.freight_picked_at:
-        raise HTTPException(400, "already picked — cannot change agent")
     agent = db.get(FreightAgent, freight_agent_id)
     if not agent:
         raise HTTPException(400, "freight agent not found")

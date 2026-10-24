@@ -173,7 +173,10 @@ def create_received_placement(
         else:
             unit_price = Decimal(str(unit_price))
         if unit_price is None:
-            raise ValueError(f"sell price not set for {prod.our_product_id}")
+            if allow_negative_stock:
+                unit_price = Decimal(str(prod.buying_price or 0))
+            else:
+                raise ValueError(f"sell price not set for {prod.our_product_id}")
         addons = raw.get("addons_json")
         if addons is None:
             addons = list(addon_map.get(prod.id) or [])

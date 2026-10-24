@@ -553,8 +553,8 @@
     closeShortcut();
     if (mode === "bill") billCustomer(id);
     else if (mode === "ledger") {
-      showView("party-ledger");
-      pickPartyLedger(id);
+      showView("money");
+      Finance.openCustomerAr?.(id);
     } else {
       showView("products");
       Products.openProductDetail?.(id);

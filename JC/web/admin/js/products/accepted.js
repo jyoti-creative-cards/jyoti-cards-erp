@@ -1002,6 +1002,7 @@ const Products = (() => {
       if (!cat && !stock) throw new Error("Product not found");
 
       const ourId = cat?.our_product_id || stock?.our_product_id || "Product";
+      const companyNo = cat?.vendor_product_id || stock?.vendor_product_id || "";
       const year = cat?.year_group || stock?.year_group;
       const vendorName = cat?.vendor_name || stock?.vendor_name || (stock?.vendor_label || "—");
       const vendorCity = cat?.vendor_city || stock?.vendor_city || "";
@@ -1132,11 +1133,11 @@ const Products = (() => {
       const tabBtn = (key, label) =>
         `<button type="button" class="prod-detail-tab${sec === key ? " active" : ""}" onclick="Products.openProductDetail(${id}, '${key}')">${label}</button>`;
 
-      ctx.openDetail(ourId, `
+      ctx.openDetail(companyNo ? `${ourId} · ${companyNo}` : ourId, `
         <div class="profile-hero prod-detail-hero" style="margin:-24px -24px 16px;border-radius:0;">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
             <div style="min-width:0;">
-              <h2>${ctx.esc(ourId)}${year ? ` <span class="prod-year-pill">${ctx.esc(year)}</span>` : ""}</h2>
+              <h2>${ctx.esc(ourId)}${companyNo ? ` <span style="font-weight:600;">· ${ctx.esc(companyNo)}</span>` : ""}${year ? ` <span class="prod-year-pill">${ctx.esc(year)}</span>` : ""}</h2>
               <p>${ctx.esc(vendorName)}${vendorCity ? ` · ${ctx.esc(vendorCity)}` : ""}</p>
             </div>
             ${(ctx.can?.("customer_orders.write") || ctx.isAdmin?.())

@@ -1899,7 +1899,6 @@ const CustomerOrders = (() => {
     if (direct) {
       const booked = (processContext?.lines || []).some(l => Number(l.catalog_product_id) === Number(catalogProductId) && Number(l.quantity_open) > 0);
       if (booked) return ctx.toast("Already booked — tick that order", "error");
-      if (!(Number(p.quantity_on_hand) > 0)) return ctx.toast("Out of stock", "error");
       if (p.selling_price == null || p.selling_price === "") return ctx.toast("Sell price not set", "error");
     }
     processLines.push({
@@ -1938,7 +1937,7 @@ const CustomerOrders = (() => {
       return;
     }
     let q = Math.max(0, parseInt(val, 10) || 0);
-    if (ln.direct) q = Math.min(Number(ln.quantity_on_hand) || 0, q);
+    if (ln.direct && Number(ln.quantity_on_hand) > 0) q = Math.min(Number(ln.quantity_on_hand), q);
     else if (!editBillId) q = Math.min(Number(ln.quantity_open) || 0, q);
     ln.quantity_to_ship = q;
     renderWizardTotalsBar();
@@ -2986,7 +2985,7 @@ const CustomerOrders = (() => {
     box.innerHTML = `<table class="data"><thead><tr><th>Item</th><th>Stock</th><th>Rate</th><th>Qty</th><th></th></tr></thead><tbody>
       ${offlineLines.map(l => `<tr>
         <td><strong>${ctx.esc(l.our_product_id)}</strong>${pricedAddonHtml({ catalog_product_id: l.catalog_product_id }, l)}</td>
-        <td>${l.quantity_on_hand ?? "—"}</td>
+        <td>${l.quantity_on_hand ?? "—"}${Number(l.quantity_on_hand) <= 0 ? ` <span style="color:#b45309;">in transit</span>` : ""}</td>
         <td>${fmtPrice(l.selling_price)}</td>
         <td><input data-qty-for="${l.catalog_product_id}" type="number" class="input" style="width:72px;" min="${Number(l.min_qty) || 1}" value="${l.quantity}" oninput="CustomerOrders.setOfflineQty(${l.catalog_product_id}, this.value)" onkeydown="CustomerOrders.onOfflineQtyKey(event)" /></td>
         <td><button type="button" class="btn btn-ghost btn-sm" onclick="CustomerOrders.removeOfflineLine(${l.catalog_product_id})">Remove</button></td>

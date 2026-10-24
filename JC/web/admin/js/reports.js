@@ -391,22 +391,14 @@ const Reports = (() => {
     if (!tables.length) return ctx.toast?.("Nothing to export", "error");
     const rows = [];
     tables.forEach((table, index) => {
-      if (index) rows.push("<Row></Row>");
+      if (index) rows.push([]);
       table.querySelectorAll("tr").forEach(tr => {
-        const cells = [...tr.children]
+        rows.push([...tr.children]
           .filter(td => td.tagName === "TD" || td.tagName === "TH")
-          .map(td => excelCell((td.innerText || "").replace(/\s+/g, " ").trim()))
-          .join("");
-        rows.push(`<Row>${cells}</Row>`);
+          .map(td => (td.innerText || "").replace(/\s+/g, " ").trim()));
       });
     });
-    const xml = `<?xml version="1.0"?>\n<?mso-application progid="Excel.Sheet"?>\n<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Worksheet ss:Name="Report"><Table>${rows.join("")}</Table></Worksheet></Workbook>`;
-    const blob = new Blob([xml], { type: "application/vnd.ms-excel" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `${String(chip || "report").replace(/[^a-z0-9_-]+/gi, "-")}.xls`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    Xlsx.download(`${String(chip || "report").replace(/[^a-z0-9_-]+/gi, "-")}.xlsx`, rows);
   }
 
   function renderSearch() {

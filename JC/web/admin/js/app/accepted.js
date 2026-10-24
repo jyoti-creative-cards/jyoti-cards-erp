@@ -1197,8 +1197,8 @@ const App = (() => {
     closeShortcut();
     if (mode === "bill") billCustomer(id);
     else if (mode === "ledger") {
-      showView("party-ledger");
-      pickPartyLedger(id);
+      showView("money");
+      Finance.openCustomerAr?.(id);
     } else {
       showView("products");
       Products.openProductDetail?.(id);
@@ -2111,20 +2111,8 @@ const App = (() => {
 
   function exportPartyLedger() {
     if (!partyLedgerCustomerId) return toast("Select a party first", "error");
-    const rows = partyLedgerRows().map(cols => `<Row>${cols.map(col => {
-      const clean = String(col ?? "").replace(/\s+/g, " ").trim();
-      const numeric = clean.replace(/,/g, "");
-      if (/^-?\d+(\.\d+)?$/.test(numeric)) return `<Cell><Data ss:Type="Number">${numeric}</Data></Cell>`;
-      return `<Cell><Data ss:Type="String">${excelXml(clean)}</Data></Cell>`;
-    }).join("")}</Row>`).join("");
-    const xml = `<?xml version="1.0"?>\n<?mso-application progid="Excel.Sheet"?>\n<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Worksheet ss:Name="Ledger"><Table>${rows}</Table></Worksheet></Workbook>`;
-    const blob = new Blob([xml], { type: "application/vnd.ms-excel" });
-    const a = document.createElement("a");
     const name = (document.getElementById("party-ledger-picked")?.textContent || "party-ledger").replace(/[^a-z0-9]+/gi, "-");
-    a.href = URL.createObjectURL(blob);
-    a.download = `${name || "party-ledger"}.xls`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    Xlsx.download(`${name || "party-ledger"}.xlsx`, partyLedgerRows());
   }
 
   function printPartyLedger() {

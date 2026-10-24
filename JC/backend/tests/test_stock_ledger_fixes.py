@@ -156,6 +156,43 @@ def test_backdated_vendor_receive_uses_business_date(db):
     assert ledger_row.created_at.date() != datetime.now(timezone.utc).date()
 
 
+def test_receive_of_empty_stock_names_the_waiting_party(db):
+    customer, prod = _setup(db, on_hand=0)
+    create_received_placement(
+        db, customer_id=customer.id, customer_name=customer.business_name,
+        lines=[{"catalog_product_id": prod.id, "quantity": 2}],
+        allow_negative_stock=True,
+    )
+    confirm_received_order(db, customer.id)
+    result = receive_vendor_goods(
+        db, AUTH,
+        VendorReceiveCreate(
+            vendor_id=prod.vendor_id,
+            lines=[VendorReceiptLineIn(catalog_product_id=prod.id, quantity_received=5)],
+            order_receipt_number="RCPT-WAIT",
+        ),
+        offline=True,
+    )
+    waiting = [row for row in result["waiting"] if row["next"] == "bill"]
+    assert waiting[0]["customer_id"] == customer.id
+    assert waiting[0]["our_product_id"] == "P1"
+    assert waiting[0]["quantity"] == 2
+
+
+def test_receive_when_stock_was_already_there_has_no_waiting_list(db):
+    _customer, prod = _setup(db, on_hand=8)
+    result = receive_vendor_goods(
+        db, AUTH,
+        VendorReceiveCreate(
+            vendor_id=prod.vendor_id,
+            lines=[VendorReceiptLineIn(catalog_product_id=prod.id, quantity_received=2)],
+            order_receipt_number="RCPT-OK",
+        ),
+        offline=True,
+    )
+    assert result["waiting"] == []
+
+
 # ---------------------------------------------------------------------------
 # 2. No duplicate "Placed" rows in customer Activity after billing.
 # ---------------------------------------------------------------------------

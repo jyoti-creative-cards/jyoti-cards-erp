@@ -2304,10 +2304,8 @@ const App = (() => {
     const rows = (otItems || []).filter(p => String(p.our_product_id || "").toLowerCase().includes(needle)).slice(0, 12);
     box.innerHTML = rows.map(p => {
       const onHand = Number(p.quantity_on_hand || 0);
-      if (onHand <= 0) {
-        return `<div class="ot-out">${esc(p.our_product_id)} · Out of stock</div>`;
-      }
-      return `<button type="button" class="btn btn-secondary ot-hit" onclick="App.addOrderTakerItem(${p.catalog_product_id})">${esc(p.our_product_id)} · ${onHand} in stock</button>`;
+      const stockBit = onHand > 0 ? `${onHand} in stock` : "out of stock · order allowed";
+      return `<button type="button" class="btn btn-secondary ot-hit" onclick="App.addOrderTakerItem(${p.catalog_product_id})">${esc(p.our_product_id)} · ${stockBit}</button>`;
     }).join("") || `<p style="font-size:14px;color:var(--muted);margin:8px 0 0;">No match</p>`;
   }
 
@@ -2323,11 +2321,8 @@ const App = (() => {
   function addOrderTakerItem(id) {
     const p = (otItems || []).find(x => Number(x.catalog_product_id) === Number(id));
     if (!p) return;
-    const onHand = Number(p.quantity_on_hand || 0);
-    if (onHand <= 0) return toast("Out of stock", "error");
     const qty = parseInt(String(document.getElementById("ot-qty")?.value || ""), 10);
     if (!qty || qty < 1) return toast("Type the quantity", "error");
-    if (qty > onHand) return toast("Only " + onHand + " in stock", "error");
     const existing = otLines.find(l => l.catalog_product_id === p.catalog_product_id);
     if (existing) existing.quantity = qty;
     else otLines.push({ catalog_product_id: p.catalog_product_id, our_product_id: p.our_product_id, quantity: qty });

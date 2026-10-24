@@ -206,11 +206,24 @@
         const nextHint = savedMode === "offline_vendor"
           ? "In <strong>Received</strong> (unbilled). Next: Bill when vendor invoice arrives."
           : "Stock updated. Next: Bill when vendor invoice arrives.";
+        const waiting = res.waiting || [];
+        const waitingHtml = waiting.length ? `
+          <div style="margin:0 0 14px;padding:12px;border:2px solid #d97706;border-radius:12px;background:#fffbeb;">
+            <strong>Parties were waiting for this stock</strong>
+            <p style="margin:6px 0 10px;font-size:13px;color:#92400e;">The item was out. Their order is ready for the next step.</p>
+            ${waiting.map(w => `<div style="display:flex;gap:8px;align-items:center;justify-content:space-between;margin:0 0 8px;flex-wrap:wrap;">
+              <span><strong>${ctx.esc(w.customer_name)}</strong>${w.city ? " · " + ctx.esc(w.city) : ""} · ${ctx.esc(w.our_product_id)} × ${w.quantity}</span>
+              ${w.next === "dispatch"
+                ? `<button type="button" class="btn btn-primary btn-sm" onclick="App.closeDetail(); App.showView('selling'); CustomerOrders.openDetail(${w.customer_id}, 'billed')">Dispatch now</button>`
+                : `<button type="button" class="btn btn-primary btn-sm" onclick="App.closeDetail(); App.billCustomer(${w.customer_id})">Bill now</button>`}
+            </div>`).join("")}
+          </div>` : "";
         ctx.openDetail?.("Goods received", `
           <div class="doc-success-banner">
             <strong>Goods in stock</strong>
             <span>Receipt #${rid} · no AP yet</span>
           </div>
+          ${waitingHtml}
           <p style="margin:0 0 12px;font-size:14px;color:var(--muted);">${nextHint}</p>
           <div class="review-block" style="margin-bottom:12px;">
             ${ctx.reviewRow("Vendor", savedLabel || "—")}

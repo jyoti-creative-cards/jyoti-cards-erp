@@ -9,7 +9,10 @@ from sqlalchemy.orm import Session
 from app.deps import AuthContext
 from app.models.catalog_product import CatalogProduct
 from app.models.city import City
-from app.models.stock import StockReceipt, StockReceiptLine
+from app.models.customer import Customer
+from app.models.customer_bill import CustomerBill, CustomerBillLine
+from app.models.customer_order import CustomerOpenLine
+from app.models.stock import StockBalance, StockReceipt, StockReceiptLine
 from app.models.vendor import Vendor
 from app.schemas.stock import VendorBillIn, VendorReceiptCreate
 from app.services.activity import log_from_auth
@@ -32,6 +35,81 @@ def _vendor_label(db: Session, vendor: Vendor) -> str:
         city = db.get(City, vendor.city_id)
         city_name = city.name if city else None
     return f"{vendor.business_name} — {city_name}" if city_name else vendor.business_name
+
+
+def _on_hand(db: Session, catalog_product_id: int) -> int:
+    row = (
+        db.query(StockBalance)
+        .filter(StockBalance.catalog_product_id == catalog_product_id)
+        .first()
+    )
+    return int(row.quantity_on_hand or 0) if row else 0
+
+
+def parties_waiting_on_stock(db: Session, product_ids: list[int]) -> list[dict]:
+    """Parties who already ordered an item that had no stock before this receipt."""
+    ids = list({int(pid) for pid in product_ids if pid})
+    if not ids:
+        return []
+    out: list[dict] = []
+    open_rows = (
+        db.query(CustomerOpenLine, Customer, City)
+        .join(Customer, Customer.id == CustomerOpenLine.customer_id)
+        .outerjoin(City, City.id == Customer.city_id)
+        .filter(
+            CustomerOpenLine.catalog_product_id.in_(ids),
+            CustomerOpenLine.status == "open",
+            CustomerOpenLine.quantity_open > 0,
+            Customer.deleted_at.is_(None),
+        )
+        .order_by(Customer.business_name.asc(), CustomerOpenLine.id.asc())
+        .all()
+    )
+    for line, customer, city in open_rows:
+        out.append({
+            "customer_id": int(customer.id),
+            "customer_name": customer.business_name,
+            "city": city.name if city else "",
+            "catalog_product_id": int(line.catalog_product_id),
+            "our_product_id": line.our_product_id,
+            "quantity": int(line.quantity_open),
+            "next": "bill",
+        })
+    billed_rows = (
+        db.query(CustomerBillLine, CustomerBill, Customer, City)
+        .join(CustomerBill, CustomerBill.id == CustomerBillLine.bill_id)
+        .join(Customer, Customer.id == CustomerBill.customer_id)
+        .outerjoin(City, City.id == Customer.city_id)
+        .filter(
+            CustomerBillLine.catalog_product_id.in_(ids),
+            CustomerBillLine.status == "billed",
+            CustomerBill.cancelled_at.is_(None),
+            CustomerBill.closed_at.is_(None),
+            CustomerBill.deleted_at.is_(None),
+            CustomerBill.freight_picked_at.is_(None),
+            Customer.deleted_at.is_(None),
+        )
+        .order_by(Customer.business_name.asc(), CustomerBill.id.asc())
+        .all()
+    )
+    seen_bills: set[tuple[int, int]] = set()
+    for line, bill, customer, city in billed_rows:
+        key = (int(customer.id), int(line.catalog_product_id))
+        if key in seen_bills:
+            continue
+        seen_bills.add(key)
+        out.append({
+            "customer_id": int(customer.id),
+            "customer_name": customer.business_name,
+            "city": city.name if city else "",
+            "catalog_product_id": int(line.catalog_product_id),
+            "our_product_id": line.our_product_id,
+            "quantity": int(line.quantity_shipped or 0),
+            "bill_id": int(bill.id),
+            "bill_number": bill.bill_number,
+            "next": "dispatch",
+        })
+    return out[:40]
 
 
 def receive_vendor_goods(
@@ -105,11 +183,15 @@ def receive_vendor_goods(
 
     line_summary = []
     total_actual_value = Decimal("0")
+    short_ids: list[int] = []
     for ln in stock_lines:
         prod = db.get(CatalogProduct, ln.catalog_product_id)
         if not prod or prod.vendor_id != body.vendor_id:
             raise HTTPException(400, f"invalid product {ln.catalog_product_id} for vendor")
         recv_qty = int(ln.quantity_received or 0)
+        before = _on_hand(db, prod.id)
+        if before <= 0:
+            short_ids.append(int(prod.id))
         total_actual_value += (prod.buying_price or Decimal("0")) * recv_qty
         db.add(
             StockReceiptLine(
@@ -166,6 +248,7 @@ def receive_vendor_goods(
         entity_label=label,
         detail=", ".join(line_summary[:10]),
     )
+    waiting = parties_waiting_on_stock(db, short_ids)
     db.commit()
     from app.services.doc_jobs import enqueue_receipt_pdf
     enqueue_receipt_pdf(receipt.id, auth)
@@ -175,6 +258,7 @@ def receive_vendor_goods(
         "vendor_id": body.vendor_id,
         "message": f"{'Offline receive' if offline else 'Received goods'} for {len(stock_lines)} product(s)",
         "document_url": None,
+        "waiting": waiting,
     }
 
 

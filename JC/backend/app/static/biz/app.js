@@ -8,6 +8,7 @@ const state = {
   rateMin: "",
   rateMax: "",
   query: "",
+  searchSeq: 0,
   tab: "summary",
   productId: 0,
   billId: 0,
@@ -132,6 +133,15 @@ function drillView(data) {
     <div class="list">${bars(data.rows || []) || `<p class="muted">Nothing in these dates.</p>`}</div>`;
 }
 
+function searchHits(items, query) {
+  const rows = items || [];
+  if (!rows.length) return `<p class="muted">${String(query || "").trim() ? "No match." : "Type an item number."}</p>`;
+  return rows.map((item) => `<button class="hit" data-item="${item.id}">
+        <strong>${esc(item.name)}</strong>
+        <span class="muted">${esc(item.category || "")} ${esc(item.year_group || "")} · stock ${item.stock}</span>
+      </button>`).join("");
+}
+
 function searchView(items) {
   return `<h1>Items</h1>
     <div class="switch">
@@ -139,12 +149,7 @@ function searchView(items) {
       <button type="button" class="on" data-mode="items">Items</button>
     </div>
     <label class="search">Item number<input id="q" value="${esc(state.query)}" placeholder="9443" /></label>
-    <div class="list">
-      ${(items || []).map((item) => `<button class="hit" data-item="${item.id}">
-        <strong>${esc(item.name)}</strong>
-        <span class="muted">${esc(item.category || "")} ${esc(item.year_group || "")} · stock ${item.stock}</span>
-      </button>`).join("") || `<p class="muted">Type an item number.</p>`}
-    </div>`;
+    <div class="list">${searchHits(items, state.query)}</div>`;
 }
 
 function summaryStats(title, block) {
@@ -273,7 +278,7 @@ function bind() {
   q?.addEventListener("input", () => {
     state.query = q.value;
     clearTimeout(state._t);
-    state._t = setTimeout(render, 250);
+    state._t = setTimeout(refreshItemSearch, 200);
   });
   ["from", "to", "rate-min", "rate-max"].forEach((id) => {
     document.getElementById(id)?.addEventListener("change", () => {
@@ -283,6 +288,35 @@ function bind() {
       render();
     });
   });
+}
+
+function bindSearchHits() {
+  document.querySelectorAll("#app .list [data-item]").forEach((btn) => btn.addEventListener("click", () => {
+    readDates();
+    state.stack.push(snapshot());
+    state.productId = Number(btn.getAttribute("data-item"));
+    state.tab = "summary";
+    state.screen = "item";
+    state.mode = "items";
+    render();
+  }));
+}
+
+async function refreshItemSearch() {
+  const seq = ++state.searchSeq;
+  const query = state.query.trim();
+  const list = document.querySelector("#app .list");
+  const box = document.getElementById("q");
+  if (!list || !box || state.screen !== "search") return render();
+  try {
+    const data = query ? await api(`/api/v1/biz/items?q=${encodeURIComponent(query)}`) : { items: [] };
+    if (seq !== state.searchSeq || state.screen !== "search") return;
+    list.innerHTML = searchHits(data.items, query);
+    bindSearchHits();
+  } catch (e) {
+    if (seq !== state.searchSeq) return;
+    list.innerHTML = `<p class="err">${esc(e.message)}</p>`;
+  }
 }
 
 async function render() {

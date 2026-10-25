@@ -19,6 +19,7 @@ const CustomerOrders = (() => {
 
   let processStep = 1;
   let processContext = null;
+  let billOnAgent = true;
   let processLines = [];
   let billableOrders = [];
   let selectedPlacementIds = [];
@@ -123,6 +124,7 @@ const CustomerOrders = (() => {
   let offlinePlacedOn = "";
   let offlinePreview = null;
   let offlineBusy = false;
+  let offlineConfirmDuplicate = false;
   let offlineCustomers = [];
   let offlineEditPlacementId = null;
   let offlineSelectedDetail = null; // full customer detail with outstanding/credit
@@ -1540,6 +1542,7 @@ const CustomerOrders = (() => {
     if (packagingCharges.trim()) body.packaging_charges = String(packagingCharges);
     if (billDate) body.bill_date = billDate;
     if (!editBillId && selectedPlacementIds.length) body.placement_ids = selectedPlacementIds.map(Number);
+    if (!editBillId && processContext?.commission_agent_id) body.on_commission_agent = !!billOnAgent;
     return body;
   }
 
@@ -1639,6 +1642,7 @@ const CustomerOrders = (() => {
         ctx.api("/bill-series", {}, 30000),
       ]);
       processContext = pctx;
+      billOnAgent = true;
       freightAgents = agents || [];
       billSeries = (series || []).filter(s => s.is_active && s.current_num < s.end_num);
       billableOrders = pctx.orders || [];
@@ -2094,7 +2098,11 @@ const CustomerOrders = (() => {
       <input id="co-bill-edit-search" class="input" placeholder="Item number" oninput="CustomerOrders.setBillEditSearch(this.value)" />
       <div id="co-bill-edit-matches"></div>`;
     bodyEl.innerHTML = `
-      ${processContext?.commission_agent_name ? `<p style="margin:0 0 12px;padding:12px;background:#fef3c7;border:2px solid #d97706;border-radius:12px;"><span style="display:block;font-size:12px;font-weight:700;letter-spacing:.04em;">BILL ON</span><strong style="font-size:22px;">${ctx.esc(processContext.commission_agent_name)}</strong><span style="display:block;margin-top:4px;font-size:13px;color:#92400e;">Party ${ctx.esc(processContext?.customer_name || "")} is printed small. The due sits on this agent.</span></p>` : `<p style="margin:0 0 12px;"><strong>${processContext?.party_number ? "#" + processContext.party_number + " " : ""}${ctx.esc(processContext?.customer_name || "")}</strong>${partyMarkerBadgesHtml(processContext)}</p>`}
+      ${processContext?.commission_agent_name && !editBillId ? `<div style="margin:0 0 12px;padding:12px;background:#fef3c7;border:2px solid #d97706;border-radius:12px;">
+        <span style="display:block;font-size:12px;font-weight:700;letter-spacing:.04em;">BILL THIS ON</span>
+        <label style="display:block;margin-top:8px;font-size:16px;"><input type="radio" name="co-bill-on" ${billOnAgent ? "checked" : ""} onchange="CustomerOrders.setBillOnAgent(true)" /> ${ctx.esc(processContext.commission_agent_name)} <span style="font-size:13px;color:#92400e;">commission agent · due on the agent · agent name on the bill</span></label>
+        <label style="display:block;margin-top:6px;font-size:16px;"><input type="radio" name="co-bill-on" ${billOnAgent ? "" : "checked"} onchange="CustomerOrders.setBillOnAgent(false)" /> ${ctx.esc(processContext.customer_name || "Party")} <span style="font-size:13px;color:#92400e;">direct order · due on the party · no agent on the bill</span></label>
+      </div>` : `<p style="margin:0 0 12px;"><strong>${processContext?.party_number ? "#" + processContext.party_number + " " : ""}${ctx.esc(processContext?.customer_name || "")}</strong>${partyMarkerBadgesHtml(processContext)}</p>`}
       ${cashWarningHtml(processContext)}
       ${!editBillId ? creditBannerHtml(processContext?.credit) : ""}
       ${ordersHtml}
@@ -2505,6 +2513,27 @@ const CustomerOrders = (() => {
     document.getElementById("co-wizard")?.classList.remove("hidden");
   }
 
+  function setBillOnAgent(on) {
+    billOnAgent = !!on;
+  }
+
+  async function printDayDuplicates() {
+    const input = document.getElementById("co-print-day");
+    const day = input && input.value;
+    if (!day) return ctx.toast("Enter the invoice date", "error");
+    ctx.showLoading?.();
+    try {
+      await DocShare.openPdf(`/share/bills/duplicates.pdf?day=${encodeURIComponent(day)}`, {
+        print: true,
+        filename: `duplicates-${day}.pdf`,
+      });
+    } catch (e) {
+      ctx.toast(e.message || "Could not print the invoices", "error");
+    } finally {
+      ctx.hideLoading?.();
+    }
+  }
+
   async function openBillDoc(billId, print) {
     ctx.showLoading?.();
     try {
@@ -2807,6 +2836,7 @@ const CustomerOrders = (() => {
 
   function closeOfflineWizard() {
     offlineReview = false;
+    offlineConfirmDuplicate = false;
     document.getElementById("co-offline-wizard")?.classList.add("hidden");
     offlineEditPlacementId = null;
   }
@@ -2820,6 +2850,7 @@ const CustomerOrders = (() => {
       })),
       narration: (offlineNotes || "").trim() || null,
       placed_on: offlinePlacedOn || localToday(),
+      confirm_duplicate: !!offlineConfirmDuplicate,
     };
   }
 
@@ -3188,7 +3219,7 @@ const CustomerOrders = (() => {
       return ctx.toast("Add at least one product before placing the order", "error");
     }
     offlineBusy = true;
-    showOrderPlaced();
+    if (!offlineConfirmDuplicate) showOrderPlaced();
     try {
       if (offlineEditPlacementId) {
         const pid = offlineEditPlacementId;
@@ -3219,11 +3250,52 @@ const CustomerOrders = (() => {
       await processOrder({ quiet: true });
       loadList(true);
     } catch (e) {
+      const matches = e.status === 409 && e.detail && e.detail.matches;
+      if (matches) {
+        showDuplicateWarning(e.detail);
+        return;
+      }
+      offlineConfirmDuplicate = false;
       ctx.toast(e.message || "Could not place order", "error");
       renderOfflineWizard();
     } finally {
       offlineBusy = false;
     }
+  }
+
+  function showDuplicateWarning(detail) {
+    const body = document.getElementById("co-offline-body");
+    const footer = document.getElementById("co-offline-footer");
+    const rows = (detail.matches || []).map((m) => {
+      const bits = [];
+      if (m.same_items && m.same_items.length) bits.push(`same item ${m.same_items.join(", ")}`);
+      if (m.same_amount) bits.push(`same amount ₹${m.total}`);
+      return `<li>Order #${m.placement_id}: ${bits.join(" · ")}</li>`;
+    }).join("");
+    if (body) {
+      body.innerHTML = `<div style="border:2px solid #b45309;background:#fffbeb;border-radius:12px;padding:16px;">
+        <strong style="font-size:18px;">This could be a duplicate entry.</strong>
+        <p style="margin:8px 0;">Same date, same party. The following are the same:</p>
+        <ul style="margin:0 0 8px 18px;">${rows}</ul>
+        <p style="margin:0;">Do you want to proceed?</p>
+      </div>`;
+    }
+    if (footer) {
+      footer.innerHTML = `
+        <button class="btn btn-secondary" onclick="CustomerOrders.backFromDuplicate()">Go back</button>
+        <button class="btn btn-primary" onclick="CustomerOrders.proceedDuplicate()">Proceed</button>`;
+    }
+  }
+
+  function backFromDuplicate() {
+    offlineConfirmDuplicate = false;
+    offlineBusy = false;
+    renderOfflineWizard();
+  }
+
+  function proceedDuplicate() {
+    offlineConfirmDuplicate = true;
+    submitOffline();
   }
 
   function showOrderPlaced() {
@@ -3252,12 +3324,12 @@ const CustomerOrders = (() => {
     setFreightAgent, setFreightCharges, setTransportMode, setTransportReceipt, setPackagingCharges,
     setGst, setGstRate, setBillSeries, setNarration, setEditBillNumber, setBillDate, setAddCharge, addChargeRow,
     setOfflinePlacedOn,
-    setForceCredit,
+    setForceCredit, setBillOnAgent, printDayDuplicates,
     processNext, processBack, submitProcess, toggleBillOrder, toggleAllBillOrders,
     confirmOrder, _doConfirm, cancelOpenLine, cancelPlacement, cancelCustomerOpen, cancelEntireReceived, cancelAllOpen, editOpenLine, editReceivedLine, deleteReceivedLine, openEditPlacement, closeBillLine, cancelBill, voidBill, voidPlacement, openBillDoc, shareBillWhatsApp, uploadBillQr, resetBillQr,
     openOfflineWizard, closeOfflineWizard, renderOfflineWizard,
     pickOfflineCustomer, onOfflineCustomerSearch, setOfflineNotes, previewOrder, backFromOrderPreview,
     onOfflineSearchInput, onOfflineSearchKey, onOfflineQtyKey, toggleOfflineProduct, pickOfflineProduct, removeOfflineLine, skipOfflineAddon,
-    setOfflineQty, bumpOfflineQty, offlineNext, offlineBack, submitOffline,
+    setOfflineQty, bumpOfflineQty, offlineNext, offlineBack, submitOffline, backFromDuplicate, proceedDuplicate,
   };
 })();

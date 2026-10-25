@@ -52,6 +52,7 @@
     if (packagingCharges.trim()) body.packaging_charges = String(packagingCharges);
     if (billDate) body.bill_date = billDate;
     if (!editBillId && selectedPlacementIds.length) body.placement_ids = selectedPlacementIds.map(Number);
+    if (!editBillId && processContext?.commission_agent_id) body.on_commission_agent = !!billOnAgent;
     return body;
   }
 
@@ -151,6 +152,7 @@
         ctx.api("/bill-series", {}, 30000),
       ]);
       processContext = pctx;
+      billOnAgent = true;
       freightAgents = agents || [];
       billSeries = (series || []).filter(s => s.is_active && s.current_num < s.end_num);
       billableOrders = pctx.orders || [];
@@ -606,7 +608,11 @@
       <input id="co-bill-edit-search" class="input" placeholder="Item number" oninput="CustomerOrders.setBillEditSearch(this.value)" />
       <div id="co-bill-edit-matches"></div>`;
     bodyEl.innerHTML = `
-      ${processContext?.commission_agent_name ? `<p style="margin:0 0 12px;padding:12px;background:#fef3c7;border:2px solid #d97706;border-radius:12px;"><span style="display:block;font-size:12px;font-weight:700;letter-spacing:.04em;">BILL ON</span><strong style="font-size:22px;">${ctx.esc(processContext.commission_agent_name)}</strong><span style="display:block;margin-top:4px;font-size:13px;color:#92400e;">Party ${ctx.esc(processContext?.customer_name || "")} is printed small. The due sits on this agent.</span></p>` : `<p style="margin:0 0 12px;"><strong>${processContext?.party_number ? "#" + processContext.party_number + " " : ""}${ctx.esc(processContext?.customer_name || "")}</strong>${partyMarkerBadgesHtml(processContext)}</p>`}
+      ${processContext?.commission_agent_name && !editBillId ? `<div style="margin:0 0 12px;padding:12px;background:#fef3c7;border:2px solid #d97706;border-radius:12px;">
+        <span style="display:block;font-size:12px;font-weight:700;letter-spacing:.04em;">BILL THIS ON</span>
+        <label style="display:block;margin-top:8px;font-size:16px;"><input type="radio" name="co-bill-on" ${billOnAgent ? "checked" : ""} onchange="CustomerOrders.setBillOnAgent(true)" /> ${ctx.esc(processContext.commission_agent_name)} <span style="font-size:13px;color:#92400e;">commission agent · due on the agent · agent name on the bill</span></label>
+        <label style="display:block;margin-top:6px;font-size:16px;"><input type="radio" name="co-bill-on" ${billOnAgent ? "" : "checked"} onchange="CustomerOrders.setBillOnAgent(false)" /> ${ctx.esc(processContext.customer_name || "Party")} <span style="font-size:13px;color:#92400e;">direct order · due on the party · no agent on the bill</span></label>
+      </div>` : `<p style="margin:0 0 12px;"><strong>${processContext?.party_number ? "#" + processContext.party_number + " " : ""}${ctx.esc(processContext?.customer_name || "")}</strong>${partyMarkerBadgesHtml(processContext)}</p>`}
       ${cashWarningHtml(processContext)}
       ${!editBillId ? creditBannerHtml(processContext?.credit) : ""}
       ${ordersHtml}

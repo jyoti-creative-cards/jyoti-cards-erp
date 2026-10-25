@@ -55,6 +55,44 @@ def _pdf_response(data: bytes, filename: str) -> Response:
     return Response(content=data, media_type="application/pdf", headers=headers)
 
 
+@router.get("/bills/duplicates.pdf")
+def duplicate_day_pdf(
+    day: date = Query(...),
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("customer_orders.read")),
+):
+    """Every invoice of one day, each page headed DUPLICATE. The bill button stays ORIGINAL."""
+    from io import BytesIO
+
+    from pypdf import PdfWriter
+
+    from app.services.doc_gen import generate_customer_bill_document
+
+    bills = (
+        db.query(CustomerBill)
+        .filter(
+            CustomerBill.deleted_at.is_(None),
+            CustomerBill.cancelled_at.is_(None),
+            CustomerBill.bill_date == day,
+        )
+        .order_by(CustomerBill.id.asc())
+        .all()
+    )
+    writer = PdfWriter()
+    for bill in bills:
+        generate_customer_bill_document(
+            db, bill.id, copies=1, with_labels=True, persist=False, copy_label="DUPLICATE",
+        )
+        fresh = getattr(bill, "_pdf_bytes", None)
+        if fresh:
+            writer.append(BytesIO(fresh))
+    if not writer.pages:
+        raise HTTPException(404, "no invoices on that date")
+    out = BytesIO()
+    writer.write(out)
+    return _pdf_response(out.getvalue(), f"duplicates-{day.isoformat()}.pdf")
+
+
 @router.get("/bills/{bill_id}/pdf")
 def bill_pdf(
     bill_id: int,
@@ -70,7 +108,7 @@ def bill_pdf(
         raise HTTPException(404, "bill not found")
     customer = db.get(Customer, bill.customer_id)
     party = customer.business_name if customer else ""
-    # Print is the stored original+duplicate. Saving a copy is one unlabeled bill.
+    # Print is one copy headed ORIGINAL. Saving a copy is one unlabeled bill.
     if (layout or "print").strip().lower() == "file":
         data = bill_file_pdf_bytes(db, bill_id)
     else:

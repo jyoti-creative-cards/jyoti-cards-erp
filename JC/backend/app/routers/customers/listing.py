@@ -6,8 +6,6 @@ from decimal import Decimal
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, text
-from sqlalchemy import String as SAString
-from sqlalchemy.sql.expression import cast as sa_cast
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from app.config import get_settings
@@ -184,21 +182,18 @@ def entry_parties(
 
 
 def search_sticker_parties(db: Session, q: str) -> list[Customer]:
-    """Party-number prefix only. A typed 3 must not match a name or a phone."""
+    """The exact party number only. Typing 3 must not list 30."""
     text = (q or "").strip()
     if not text.isdigit():
         return []
-    number = sa_cast(Customer.party_number, SAString)
     return (
         db.query(Customer)
         .filter(
             Customer.is_active.is_(True),
             Customer.deleted_at.is_(None),
-            Customer.party_number.isnot(None),
-            number.like(f"{text}%"),
+            Customer.party_number == int(text),
         )
-        .order_by(Customer.party_number.asc())
-        .limit(8)
+        .limit(1)
         .all()
     )
 

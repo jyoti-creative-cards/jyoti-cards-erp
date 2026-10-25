@@ -33,6 +33,10 @@ def test_known_parties_and_cities_are_hindi():
     assert hindi_city("Ujjain") == "उज्जैन"
     assert "प" in hindi_name("Payal Computer")
     assert hindi_name("Shop 12").endswith("12")
+    assert hindi_name("Leader Graphics") == "लीडर ग्राफिक्स"
+    assert hindi_name("Dream Cards") == "ड्रीम कार्ड्स"
+    assert hindi_name("Ideal Stationary") == "आइडियल स्टेशनरी"
+    assert hindi_name("Real Graphics") == "रियल ग्राफिक्स"
 
 
 @pytest.fixture()
@@ -124,7 +128,8 @@ def test_sticker_search_matches_party_number_only(db):
         Customer(business_name="3 Shop", phone="3000000003", password_hash="x", party_number=14),
     ])
     db.commit()
-    assert [c.party_number for c in search_sticker_parties(db, "3")] == [3, 30]
+    assert [c.party_number for c in search_sticker_parties(db, "3")] == [3]
+    assert [c.party_number for c in search_sticker_parties(db, "30")] == [30]
     assert search_sticker_parties(db, "shop") == []
     assert search_sticker_parties(db, "3000000003") == []
 

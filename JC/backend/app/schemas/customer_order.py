@@ -192,6 +192,7 @@ class ProcessBillIn(BaseModel):
     narration: Optional[str] = None
     force_credit_override: bool = False
     bill_date: Optional[date] = None  # backdate; default = today
+    on_commission_agent: Optional[bool] = None
 
 
 class EditBillLineIn(BaseModel):
@@ -280,6 +281,7 @@ class OfflineCustomerOrderIn(BaseModel):
     lines: List[OfflineLineIn] = Field(..., min_length=1)
     narration: Optional[str] = None
     placed_on: Optional[date] = None  # backdate; default = today
+    confirm_duplicate: bool = False
     # Legacy bill fields ignored (billing happens via Process Order)
     overall_discount_percent: Optional[float] = None
     gst_enabled: bool = False

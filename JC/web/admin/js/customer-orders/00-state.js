@@ -19,6 +19,7 @@ const CustomerOrders = (() => {
 
   let processStep = 1;
   let processContext = null;
+  let billOnAgent = true;
   let processLines = [];
   let billableOrders = [];
   let selectedPlacementIds = [];

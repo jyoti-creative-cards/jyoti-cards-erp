@@ -65,6 +65,7 @@ def process_customer_bill(
     transport_receipt_number: Optional[str] = None,
     freight_charges_raw: object = None,
     placement_ids: Optional[list[int]] = None,
+    on_commission_agent: Optional[bool] = None,
 ) -> CustomerBill:
     ship_lines = [ln for ln in lines_in if int(ln.get("quantity_to_ship") or 0) > 0]
     if not ship_lines:
@@ -338,6 +339,7 @@ def process_customer_bill(
         actor_name=actor_name,
         value_date=invoice_day,
         created_at=ar_posted_at,
+        on_agent=on_commission_agent,
     )
     _persist_totals_addons(db, bill)
     settle_confirmed_after_bill(db, customer_id)

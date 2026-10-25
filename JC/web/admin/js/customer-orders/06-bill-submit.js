@@ -68,6 +68,27 @@
     document.getElementById("co-wizard")?.classList.remove("hidden");
   }
 
+  function setBillOnAgent(on) {
+    billOnAgent = !!on;
+  }
+
+  async function printDayDuplicates() {
+    const input = document.getElementById("co-print-day");
+    const day = input && input.value;
+    if (!day) return ctx.toast("Enter the invoice date", "error");
+    ctx.showLoading?.();
+    try {
+      await DocShare.openPdf(`/share/bills/duplicates.pdf?day=${encodeURIComponent(day)}`, {
+        print: true,
+        filename: `duplicates-${day}.pdf`,
+      });
+    } catch (e) {
+      ctx.toast(e.message || "Could not print the invoices", "error");
+    } finally {
+      ctx.hideLoading?.();
+    }
+  }
+
   async function openBillDoc(billId, print) {
     ctx.showLoading?.();
     try {

@@ -109,7 +109,8 @@ def bill_pdf_bytes(db: Session, bill_id: int) -> bytes | None:
         if not bill:
             return None
         # A stored print from before a freight edit still says the old amount.
-        if bill.document_key and bill_totals_match_columns(bill):
+        stored_totals = bill.totals_json if isinstance(bill.totals_json, dict) else {}
+        if bill.document_key and stored_totals.get("print_copies") == 1 and bill_totals_match_columns(bill):
             stored = download_bytes(bill.document_key)
             if stored:
                 return stored

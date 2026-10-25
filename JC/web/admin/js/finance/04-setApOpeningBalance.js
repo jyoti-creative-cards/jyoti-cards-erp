@@ -78,8 +78,10 @@
     let run = 0;
     const stamped = new Map();
     for (const e of chrono) {
-      const signed = Number(e.signed_amount);
-      run += Number.isFinite(signed) ? signed : (Number(e.amount) || 0);
+      if (!e.memo) {
+        const signed = Number(e.signed_amount);
+        run += Number.isFinite(signed) ? signed : (Number(e.amount) || 0);
+      }
       if (e.id != null) stamped.set(e.id, Math.round(run * 100) / 100);
     }
     return (entries || []).map(e => stamped.has(e.id) ? { ...e, running_balance: stamped.get(e.id) } : e);
@@ -104,7 +106,7 @@
         <td style="font-size:12px;">${fmtDocDate(e.display_date || e.value_date || e.created_at)}</td>
         <td><span class="badge ${badgeCls}">${typeLabel}</span></td>
         <td>${ctx.esc(e.display_name || e.description)}${moneyDocButton(e)}</td>
-        <td>${fmtPrice(e.signed_amount)}</td>
+        <td>${fmtPrice(e.display_amount != null && e.display_amount !== "" ? e.display_amount : e.signed_amount)}</td>
         <td><strong>${fmtPrice(e.running_balance)}</strong></td>
       </tr>`;}).join("")}
     </tbody></table></div>`;
@@ -159,7 +161,7 @@
           <td style="font-size:12px;">${fmtDocDate(e.display_date || e.value_date || e.created_at)}</td>
           <td><span class="badge ${badgeCls}">${typeLabel}</span></td>
           <td>${ctx.esc(e.display_name || e.description)}${moneyDocButton(e)}</td>
-          <td>${fmtPrice(e.signed_amount)}</td>
+          <td>${fmtPrice(e.display_amount != null && e.display_amount !== "" ? e.display_amount : e.signed_amount)}</td>
           <td><strong>${fmtPrice(e.running_balance)}</strong></td>
         </tr>`;}).join("")}
       </tbody></table>

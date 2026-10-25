@@ -45,6 +45,7 @@
   let offlinePlacedOn = "";
   let offlinePreview = null;
   let offlineBusy = false;
+  let offlineConfirmDuplicate = false;
   let offlineCustomers = [];
   let offlineEditPlacementId = null;
   let offlineSelectedDetail = null; // full customer detail with outstanding/credit

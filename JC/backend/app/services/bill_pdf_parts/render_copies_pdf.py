@@ -100,6 +100,7 @@ def render_copies_pdf(
     *,
     copies: int = 1,
     with_labels: bool = True,
+    copy_label: str | None = None,
     bill_id: int,
     order_id: int,
     bill_number: str | None = None,
@@ -199,7 +200,10 @@ def render_copies_pdf(
     c = canvas.Canvas(buf, pagesize=A4)
     c.setTitle(f"Invoice {invoice_no}")
     for copy_i in range(copies):
-        label = COPY_LABELS[copy_i] if with_labels else None
+        if copy_label:
+            label = copy_label if with_labels else None
+        else:
+            label = COPY_LABELS[copy_i] if with_labels else None
         kw = dict(header_kw)
         kw["copy_label"] = label
         for i, page in enumerate(pages, start=1):
@@ -357,8 +361,9 @@ def render_customer_bill_pdf(
     credit_limit: float | None = None,
     outstanding: float | None = None,
     bill_number: str | None = None,
-    copies: int = 2,
+    copies: int = 1,
     with_labels: bool = True,
+    copy_label: str | None = None,
     payment_qr: bytes | None = None,
     agent_name: str | None = None,
     agent_phone: str | None = None,
@@ -367,6 +372,7 @@ def render_customer_bill_pdf(
     return render_copies_pdf(
         copies=copies,
         with_labels=with_labels,
+        copy_label=copy_label,
         bill_id=bill_id,
         order_id=order_id,
         bill_number=bill_number,

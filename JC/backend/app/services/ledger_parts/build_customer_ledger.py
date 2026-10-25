@@ -167,6 +167,11 @@ def build_customer_ledger(db: Session, customer_id: int, *, show_actor: bool = T
             ", ".join(f"{_bill_line_name(ln)} × {ln.quantity_shipped}" for ln in blines[:8])
             or "—"
         )
+        if bill.commission_agent_id:
+            from app.models.commission_agent import CommissionAgent
+            agent = db.get(CommissionAgent, bill.commission_agent_id)
+            if agent and not agent.deleted_at:
+                summary = f"{summary} · on {agent.name}"
         bill_number = bill.bill_number
         title = (
             f"Cancelled bill {bill_number}"

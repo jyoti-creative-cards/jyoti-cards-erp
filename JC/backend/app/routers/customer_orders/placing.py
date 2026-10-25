@@ -68,6 +68,23 @@ from app.services.void_service import void_customer_bill, void_customer_placemen
 
 from app.routers.customer_orders.router import router
 
+
+def _reject_duplicate_order(db: Session, customer_id: int, body: OfflineCustomerOrderIn, ignore_placement_id: int | None = None) -> None:
+    if body.confirm_duplicate:
+        return
+    from app.services.order_duplicates import same_day_order_clashes
+
+    clashes = same_day_order_clashes(
+        db,
+        customer_id=customer_id,
+        lines=[{"catalog_product_id": ln.catalog_product_id, "quantity": ln.quantity} for ln in body.lines],
+        placed_on=body.placed_on,
+        ignore_placement_id=ignore_placement_id,
+    )
+    if clashes:
+        raise HTTPException(409, {"message": "This could be a duplicate entry.", "matches": clashes})
+
+
 @router.post("/open-lines/{line_id}/cancel", dependencies=[Depends(require_cancel_key)])
 def cancel_open_line_endpoint(
     line_id: int,
@@ -188,6 +205,7 @@ def replace_placement_endpoint(
     customer = db.get(Customer, order.customer_id) if order else None
     if not customer or customer.deleted_at:
         raise HTTPException(404, "customer not found")
+    _reject_duplicate_order(db, customer.id, body, ignore_placement_id=placement_id)
     try:
         replace_received_placement(
             db,
@@ -448,6 +466,7 @@ def create_offline_customer_order(
     customer = db.get(Customer, customer_id)
     if not customer:
         raise HTTPException(404, "customer not found")
+    _reject_duplicate_order(db, customer_id, body)
     try:
         placement = create_received_placement(
             db,

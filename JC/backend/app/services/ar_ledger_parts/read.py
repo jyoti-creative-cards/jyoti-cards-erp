@@ -65,6 +65,58 @@ def build_ar_ledger(db: Session, customer_id: int) -> list[dict]:
                 "created_at": e.created_at,
             }
         )
+    # Bills collected through a commission agent have no party AR row. Show them
+    # here so the party's ledger lists the bill. signed_amount stays 0 so the
+    # party balance does not include money the agent owes.
+    from app.models.commission_agent import CommissionAgent
+
+    agent_bills = (
+        db.query(CustomerBill)
+        .filter(
+            CustomerBill.customer_id == customer_id,
+            CustomerBill.deleted_at.is_(None),
+            CustomerBill.commission_agent_id.isnot(None),
+        )
+        .all()
+    )
+    agents = {
+        a.id: a.name
+        for a in db.query(CommissionAgent).filter(
+            CommissionAgent.id.in_({b.commission_agent_id for b in agent_bills})
+        ).all()
+    } if agent_bills else {}
+    for bill in agent_bills:
+        if bill.id in bill_ids:
+            continue
+        if _doc_status(bill) == "voided":
+            continue
+        agent_name = agents.get(bill.commission_agent_id) or "commission agent"
+        number = bill.bill_number or f"#{bill.id}"
+        out.append(
+            {
+                "id": f"agent-bill-{bill.id}",
+                "entry_type": "bill",
+                "amount": format(mag(bill.grand_total), "f"),
+                "signed_amount": "0.00",
+                "display_amount": format(bill.grand_total, "f"),
+                "running_balance": format(running, "f"),
+                "bill_id": bill.id,
+                "return_id": None,
+                "payment_ref": None,
+                "payment_mode": None,
+                "payment_comment": None,
+                "party_name": None,
+                "display_date": bill.bill_date or bill.created_at,
+                "display_name": f"Bill {number} · on {agent_name}",
+                "status": _doc_status(bill),
+                "description": f"Billed on {agent_name}. The party ledger shows the bill. The due sits on the agent.",
+                "value_date": bill.bill_date.isoformat() if bill.bill_date else None,
+                "reverses_entry_id": None,
+                "created_by_name": bill.created_by_name or "",
+                "created_at": bill.created_at,
+                "memo": True,
+            }
+        )
     return out
 
 def list_ar_customers(db: Session) -> list[dict]:

@@ -80,18 +80,18 @@ def test_short_bill_is_one_page():
     for n in (1, 2, 9):
         pdf = _render(n, gst=False)
         assert pdf.startswith(b"%PDF")
-        assert _pages(pdf) == 2, n
+        assert _pages(pdf) == 1, n
 
 
 def test_long_bill_continues_onto_second_page():
     pdf = _render(29, gst=False)
     assert pdf.startswith(b"%PDF")
-    assert _pages(pdf) == 4
+    assert _pages(pdf) == 2
 
 
 def test_gst_bill_uses_the_same_page_breaks():
-    assert _pages(_render(9, gst=True)) == 2
-    assert _pages(_render(29, gst=True)) == 4
+    assert _pages(_render(9, gst=True)) == 1
+    assert _pages(_render(29, gst=True)) == 2
 
 
 def _pdf_text(pdf: bytes) -> str:
@@ -119,11 +119,11 @@ def _pdf_text(pdf: bytes) -> str:
     return "\n".join(parts)
 
 
-def test_every_bill_is_original_and_duplicate():
+def test_every_bill_is_one_original():
     text = _pdf_text(_render(1, gst=False)).replace("\\(", "(").replace("\\)", ")")
     assert text.count("ORIGINAL") == 1
-    assert text.count("DUPLICATE") == 1
-    assert text.count("Order Estimate") == 2
+    assert text.count("DUPLICATE") == 0
+    assert text.count("Order Estimate") == 1
     assert "JYOTI CREATIVE" not in text
     assert "Jyoti Creative" not in text
     assert "TRIPLICATE" not in text
@@ -132,12 +132,30 @@ def test_every_bill_is_original_and_duplicate():
     assert "25.00" in text
     assert "270.00" not in text
     assert "750.00" not in text
-    assert text.count("Credit") == 2
-    assert text.count("Sharma Gift House, JODHPUR  G  J") == 2
-    assert text.count("No. (42)") == 2
+    assert text.count("Credit") == 1
+    assert text.count("Sharma Gift House, JODHPUR  G  J") == 1
+    assert text.count("No. (42)") == 1
     assert "12 Market Road, Near Bus Stand, Ward 4, JODHPUR" not in text
     assert "Freight Charges" in text
     assert "Transport Charges" not in text
+
+
+def test_duplicate_heading_is_one_copy():
+    pdf = render_customer_bill_pdf(
+        bill_id=18,
+        order_id=18,
+        bill_number="EST-18",
+        customer_name="Sharma Gift House",
+        customer_company=None,
+        totals=_totals(1, gst=False),
+        copies=1,
+        with_labels=True,
+        copy_label="DUPLICATE",
+    )
+    text = _pdf_text(pdf).replace("\\(", "(").replace("\\)", ")")
+    assert _pages(pdf) == 1
+    assert text.count("DUPLICATE") == 1
+    assert "ORIGINAL" not in text
 
 
 def test_saved_copy_is_one_bill_without_copy_labels():
@@ -186,7 +204,7 @@ def test_transport_mode_prints_transport_charges():
     assert "Transport Charges" in text
     assert "TR-19" in text
     assert "Freight Charges" not in text
-    assert text.count("Cash") == 2
+    assert text.count("Cash") == 1
 
 
 def test_discount_bill_keeps_disc_column_and_pay_qr():

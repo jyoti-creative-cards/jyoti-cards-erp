@@ -267,9 +267,10 @@ def generate_customer_bill_document(
     db: Session,
     bill_id: int,
     *,
-    copies: int = 2,
+    copies: int = 1,
     with_labels: bool = True,
     persist: bool = True,
+    copy_label: str | None = None,
 ) -> str | None:
     bill = db.get(CustomerBill, bill_id)
     if not bill:
@@ -425,10 +426,16 @@ def generate_customer_bill_document(
         outstanding=outstanding,
         copies=copies,
         with_labels=with_labels,
+        copy_label=copy_label,
         payment_qr=_bill_payment_qr(bill),
         agent_name=agent_name,
         agent_phone=agent_phone,
     )
+    if persist and copies == 1 and with_labels and not copy_label:
+        stamped = dict(bill.totals_json or {})
+        stamped["print_copies"] = 1
+        bill.totals_json = stamped
+        flag_modified(bill, "totals_json")
     if not persist:
         bill._pdf_bytes = pdf
         db.add(bill)

@@ -167,6 +167,7 @@
 
   function closeOfflineWizard() {
     offlineReview = false;
+    offlineConfirmDuplicate = false;
     document.getElementById("co-offline-wizard")?.classList.add("hidden");
     offlineEditPlacementId = null;
   }
@@ -180,6 +181,7 @@
       })),
       narration: (offlineNotes || "").trim() || null,
       placed_on: offlinePlacedOn || localToday(),
+      confirm_duplicate: !!offlineConfirmDuplicate,
     };
   }
 
@@ -548,7 +550,7 @@
       return ctx.toast("Add at least one product before placing the order", "error");
     }
     offlineBusy = true;
-    showOrderPlaced();
+    if (!offlineConfirmDuplicate) showOrderPlaced();
     try {
       if (offlineEditPlacementId) {
         const pid = offlineEditPlacementId;
@@ -579,11 +581,52 @@
       await processOrder({ quiet: true });
       loadList(true);
     } catch (e) {
+      const matches = e.status === 409 && e.detail && e.detail.matches;
+      if (matches) {
+        showDuplicateWarning(e.detail);
+        return;
+      }
+      offlineConfirmDuplicate = false;
       ctx.toast(e.message || "Could not place order", "error");
       renderOfflineWizard();
     } finally {
       offlineBusy = false;
     }
+  }
+
+  function showDuplicateWarning(detail) {
+    const body = document.getElementById("co-offline-body");
+    const footer = document.getElementById("co-offline-footer");
+    const rows = (detail.matches || []).map((m) => {
+      const bits = [];
+      if (m.same_items && m.same_items.length) bits.push(`same item ${m.same_items.join(", ")}`);
+      if (m.same_amount) bits.push(`same amount ₹${m.total}`);
+      return `<li>Order #${m.placement_id}: ${bits.join(" · ")}</li>`;
+    }).join("");
+    if (body) {
+      body.innerHTML = `<div style="border:2px solid #b45309;background:#fffbeb;border-radius:12px;padding:16px;">
+        <strong style="font-size:18px;">This could be a duplicate entry.</strong>
+        <p style="margin:8px 0;">Same date, same party. The following are the same:</p>
+        <ul style="margin:0 0 8px 18px;">${rows}</ul>
+        <p style="margin:0;">Do you want to proceed?</p>
+      </div>`;
+    }
+    if (footer) {
+      footer.innerHTML = `
+        <button class="btn btn-secondary" onclick="CustomerOrders.backFromDuplicate()">Go back</button>
+        <button class="btn btn-primary" onclick="CustomerOrders.proceedDuplicate()">Proceed</button>`;
+    }
+  }
+
+  function backFromDuplicate() {
+    offlineConfirmDuplicate = false;
+    offlineBusy = false;
+    renderOfflineWizard();
+  }
+
+  function proceedDuplicate() {
+    offlineConfirmDuplicate = true;
+    submitOffline();
   }
 
   function showOrderPlaced() {

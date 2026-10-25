@@ -104,6 +104,36 @@ WORDS = {
     "gram": "ग्राम",
     "graphic": "ग्राफिक",
     "graphics": "ग्राफिक्स",
+    "leader": "लीडर",
+    "leaders": "लीडर्स",
+    "dream": "ड्रीम",
+    "dreams": "ड्रीम्स",
+    "ideal": "आइडियल",
+    "stationary": "स्टेशनरी",
+    "stationery": "स्टेशनरी",
+    "real": "रियल",
+    "dealer": "डीलर",
+    "dealers": "डीलर्स",
+    "cream": "क्रीम",
+    "team": "टीम",
+    "style": "स्टाइल",
+    "styles": "स्टाइल्स",
+    "super": "सुपर",
+    "classic": "क्लासिक",
+    "star": "स्टार",
+    "work": "वर्क",
+    "works": "वर्क्स",
+    "zone": "ज़ोन",
+    "hub": "हब",
+    "solution": "सॉल्यूशन",
+    "solutions": "सॉल्यूशन्स",
+    "studio": "स्टूडियो",
+    "point": "पॉइंट",
+    "world": "वर्ल्ड",
+    "shop": "शॉप",
+    "printing": "प्रिंटिंग",
+    "printers": "प्रिंटर्स",
+    "printer": "प्रिंटर",
     "gupta": "गुप्ता",
     "gurjar": "गुर्जर",
     "guru": "गुरु",
@@ -631,6 +661,7 @@ _VOWELS = (
     ("ai", "ै", "ऐ"),
     ("au", "ौ", "औ"),
     ("ee", "ी", "ई"),
+    ("ea", "ी", "ई"),
     ("ii", "ी", "ई"),
     ("oo", "ू", "ऊ"),
     ("uu", "ू", "ऊ"),
@@ -780,7 +811,11 @@ def _word(token: str) -> str:
         return WORDS[key]
     if len(key) <= 2:
         return token.upper()
-    return _phonetic(key)
+    spoken = _phonetic(key)
+    # English trade words end in "er" (leader, dealer). The phonetic leaves ेर.
+    if key.endswith("er") and spoken.endswith("ेर"):
+        spoken = spoken[:-2] + "र"
+    return spoken
 
 
 def hindi_name(text: str) -> str:

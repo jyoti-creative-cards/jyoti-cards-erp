@@ -119,12 +119,16 @@ const Sticker = (() => {
         box.innerHTML = `<p class="fin-panel-sub" style="margin:8px 0 0;">No party for that number.</p>`;
         return;
       }
-      box.innerHTML = `<div class="sticker-results">${list.map((r, i) => `
-        <button type="button" class="sticker-hit" onclick="Sticker.pick(${i})">
-          <strong>${esc(r.business_name || "Party")} · ${esc(r.party_number ?? "")}</strong>
-          <span>${esc(r.city_name || "—")} · ${esc(r.phone || "—")}</span>
-        </button>`).join("")}</div>`;
-      box._rows = list;
+      const exact = list.filter((r) => String(r.party_number) === String(q));
+      if (exact.length !== 1) {
+        box.innerHTML = `<p class="fin-panel-sub" style="margin:8px 0 0;">No party for that number.</p>`;
+        box._rows = [];
+        return;
+      }
+      box.innerHTML = "";
+      box._rows = exact;
+      pick(0);
+      return;
     } catch (e) {
       box.innerHTML = `<p class="fin-panel-sub" style="margin:8px 0 0;">${esc(e.message || "Search failed")}</p>`;
     }
@@ -170,16 +174,22 @@ const Sticker = (() => {
     const html = `<!DOCTYPE html><html lang="hi"><head><meta charset="utf-8"><title>Sticker</title>
       <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@500;700&display=swap">
       <style>
-        @page { size: A5 portrait; margin: 8mm; }
-        html, body { margin: 0; padding: 0; height: 100%; }
-        body {
-          color: #111;
-          min-height: 190mm;
+        @page { size: 148mm 210mm; margin: 0; }
+        html, body { margin: 0; padding: 0; width: 148mm; height: 210mm; overflow: hidden; }
+        .sheet {
+          position: absolute;
+          top: 0;
+          left: 148mm;
+          width: 210mm;
+          height: 148mm;
           box-sizing: border-box;
+          transform: rotate(90deg);
+          transform-origin: top left;
+          color: #111;
           display: flex;
           flex-direction: column;
           justify-content: space-evenly;
-          padding: 6mm 4mm 14mm;
+          padding: 8mm 10mm 12mm;
         }
         .phone { font-family: Helvetica, Arial, sans-serif; }
         .name, .city { font-family: "Noto Sans Devanagari", "Kohinoor Devanagari", "Nirmala UI", "Mangal", sans-serif; }
@@ -187,7 +197,7 @@ const Sticker = (() => {
         .city { font-size: 16mm; margin: 0; line-height: 1.2; }
         .phone { font-size: 14mm; margin: 0; letter-spacing: 0.4mm; }
         .time {
-          position: fixed;
+          position: absolute;
           right: 8mm;
           bottom: 6mm;
           margin: 0;
@@ -196,10 +206,12 @@ const Sticker = (() => {
           font-family: Helvetica, Arial, sans-serif;
         }
       </style></head><body>
+        <div class="sheet">
         <p class="name" lang="hi">${esc(label.name_hi || "")}</p>
         <p class="city" lang="hi">${esc(label.city_hi || "")}</p>
         <p class="phone">${esc(label.phone || "")}</p>
         <p class="time">${esc(label.printed_label || "")}</p>
+        </div>
       </body></html>`;
     w.document.open();
     w.document.write(html);

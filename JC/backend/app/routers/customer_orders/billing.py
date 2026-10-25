@@ -244,6 +244,7 @@ def submit_process_bill(
         transport_receipt_number=body.transport_receipt_number,
         freight_charges_raw=body.freight_charges,
         placement_ids=body.placement_ids or None,
+        on_commission_agent=body.on_commission_agent,
     )
     log_from_auth(db, auth, action="bill", entity_type="customer_order", entity_id=bill.id, entity_label=customer.business_name, detail=f"Bill {bill.bill_number}")
     db.commit()

@@ -536,12 +536,15 @@
   var otLines = [];
   var otParties = null;
   var otItems = null;
+  var otMode = "book";
+  var otStockTimer = null;
 
   function showOrderTakerDesk() {
     document.getElementById("people-hub")?.classList.add("hidden");
     document.getElementById("people-customers")?.classList.add("hidden");
     document.getElementById("people-vendors")?.classList.add("hidden");
     document.getElementById("order-taker-desk")?.classList.remove("hidden");
+    setOrderTakerMode(otMode);
     if (!otParties || !otItems) {
       Promise.all([
         api("/customers/entry-parties", {}, 0),
@@ -572,6 +575,38 @@
 
   function partyLabel(c) {
     return `${c.business_name || ""}${c.city_name ? " · " + c.city_name : ""}`;
+  }
+
+  function setOrderTakerMode(mode) {
+    otMode = mode === "stock" ? "stock" : "book";
+    document.getElementById("ot-mode-book")?.classList.toggle("on", otMode === "book");
+    document.getElementById("ot-mode-stock")?.classList.toggle("on", otMode === "stock");
+    document.getElementById("ot-stock")?.classList.toggle("hidden", otMode !== "stock");
+    const booking = otMode === "book";
+    document.getElementById("ot-pick")?.classList.toggle("hidden", !(booking && !otCustomer));
+    document.getElementById("ot-book")?.classList.toggle("hidden", !(booking && otCustomer));
+    if (otMode === "stock") document.getElementById("ot-stock-q")?.focus();
+  }
+
+  function onOrderTakerStock(val) {
+    const box = document.getElementById("ot-stock-hits");
+    if (!box) return;
+    const q = String(val || "").trim();
+    clearTimeout(otStockTimer);
+    if (!q) { box.innerHTML = ""; return; }
+    otStockTimer = setTimeout(async () => {
+      try {
+        const rows = await api(`/stock/entry-items?q=${encodeURIComponent(q)}`, {}, 0) || [];
+        if ((document.getElementById("ot-stock-q")?.value || "").trim() !== q) return;
+        box.innerHTML = rows.map(p => {
+          const vendor = p.vendor_product_id ? ` · ${esc(p.vendor_product_id)}` : "";
+          const onHand = Number(p.quantity_on_hand || 0);
+          return `<div class="ot-hit"><strong>${esc(p.our_product_id)}</strong>${vendor}<br><span style="font-weight:500;color:var(--muted);">${onHand} in stock</span></div>`;
+        }).join("") || `<p style="font-size:14px;color:var(--muted);margin:8px 0 0;">No match</p>`;
+      } catch (e) {
+        box.innerHTML = `<p style="font-size:14px;color:var(--danger);margin:8px 0 0;">${esc(e.message)}</p>`;
+      }
+    }, 200);
   }
 
   function onOrderTakerCustomer(val) {
@@ -625,11 +660,16 @@
     if (!box) return;
     const needle = String(val || "").trim().toLowerCase();
     if (!needle) { box.innerHTML = ""; return; }
-    const rows = (otItems || []).filter(p => String(p.our_product_id || "").toLowerCase().includes(needle)).slice(0, 12);
+    const rows = (otItems || []).filter(p => {
+      const ours = String(p.our_product_id || "").toLowerCase();
+      const vendor = String(p.vendor_product_id || "").toLowerCase();
+      return ours.includes(needle) || vendor.includes(needle);
+    }).slice(0, 12);
     box.innerHTML = rows.map(p => {
       const onHand = Number(p.quantity_on_hand || 0);
       const stockBit = onHand > 0 ? `${onHand} in stock` : "out of stock · order allowed";
-      return `<button type="button" class="btn btn-secondary ot-hit" onclick="App.addOrderTakerItem(${p.catalog_product_id})">${esc(p.our_product_id)} · ${stockBit}</button>`;
+      const vendor = p.vendor_product_id ? ` · ${esc(p.vendor_product_id)}` : "";
+      return `<button type="button" class="btn btn-secondary ot-hit" onclick="App.addOrderTakerItem(${p.catalog_product_id})">${esc(p.our_product_id)}${vendor} · ${stockBit}</button>`;
     }).join("") || `<p style="font-size:14px;color:var(--muted);margin:8px 0 0;">No match</p>`;
   }
 

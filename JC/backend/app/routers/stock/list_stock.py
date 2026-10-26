@@ -254,16 +254,18 @@ def entry_items(
     if needle:
         like = f"%{needle.lower()}%"
         prefix = f"{needle.lower()}%"
+        our_id = func.lower(CatalogProduct.our_product_id)
+        vendor_id = func.lower(func.coalesce(CatalogProduct.vendor_product_id, ""))
         rows = (
             db.query(CatalogProduct, StockBalance.quantity_on_hand)
             .outerjoin(StockBalance, StockBalance.catalog_product_id == CatalogProduct.id)
             .filter(
                 CatalogProduct.is_active.is_(True),
                 CatalogProduct.deleted_at.is_(None),
-                func.lower(CatalogProduct.our_product_id).like(like),
+                or_(our_id.like(like), vendor_id.like(like)),
             )
             .order_by(
-                case((func.lower(CatalogProduct.our_product_id).like(prefix), 0), else_=1),
+                case((our_id.like(prefix), 0), (vendor_id.like(prefix), 1), else_=2),
                 CatalogProduct.our_product_id.asc(),
                 CatalogProduct.id.asc(),
             )
@@ -276,6 +278,7 @@ def entry_items(
             out.append({
                 "catalog_product_id": product.id,
                 "our_product_id": product.our_product_id,
+                "vendor_product_id": product.vendor_product_id,
                 "year_group": product.year_group,
                 "selling_price": format(price, "f") if price is not None else None,
                 "quantity_on_hand": int(qty or 0),
@@ -304,6 +307,7 @@ def entry_items(
         out.append({
             "catalog_product_id": product.id,
             "our_product_id": product.our_product_id,
+            "vendor_product_id": product.vendor_product_id,
             "year_group": product.year_group,
             "selling_price": format(price, "f") if price is not None else None,
             "quantity_on_hand": int(qty or 0),

@@ -10,7 +10,7 @@
   }
   function orderTaker() {
     if (authMode !== "staff" || !permissions.has("customer_orders.write")) return false;
-    const allowed = new Set(["customers.read", "customer_orders.read", "customer_orders.write"]);
+    const allowed = new Set(["customers.read", "customer_orders.read", "customer_orders.write", "stock.read"]);
     for (const key of permissions) if (!allowed.has(key)) return false;
     return true;
   }

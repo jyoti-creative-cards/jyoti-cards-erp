@@ -34,7 +34,7 @@ class AuthContext:
 
     def is_order_taker(self) -> bool:
         """Salesperson who may only book a customer order. Nothing else."""
-        allowed = {"customers.read", "customer_orders.read", "customer_orders.write"}
+        allowed = {"customers.read", "customer_orders.read", "customer_orders.write", "stock.read"}
         return (
             self.actor_type == "staff"
             and "customer_orders.write" in self.permissions

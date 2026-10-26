@@ -3706,6 +3706,9 @@ table.data tr.filter-row th { padding: 6px 8px; background: #fff; border-bottom:
 #app.order-taker #main.shift-collapsed { margin-left: 0; padding: 12px 12px 32px; }
 #order-taker-desk { max-width: 520px; margin: 0 auto; padding: 4px 0 24px; }
 #order-taker-desk .ot-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+#order-taker-desk .ot-modes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 16px 0; }
+#order-taker-desk .ot-mode { min-height: 52px; border-radius: 12px; border: 1px solid var(--border); background: #fff; font-size: 16px; font-weight: 700; }
+#order-taker-desk .ot-mode.on { background: var(--ink, #14213d); color: #fff; border-color: transparent; }
 #order-taker-desk h2 { margin: 0; font-size: 22px; }
 #order-taker-desk .input { font-size: 16px; width: 100%; min-height: 48px; }
 #order-taker-desk .btn-primary { width: 100%; min-height: 52px; margin-top: 16px; font-size: 17px; }

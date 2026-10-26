@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>JC Admin — Jyoti Creative</title>
-  <link rel="stylesheet" href="styles.css?v=ui68" />
+  <link rel="stylesheet" href="styles.css?v=ui69" />
 </head>
 <body>
   <div id="toasts"></div>
@@ -723,8 +723,17 @@
       <div id="view-people" class="view hidden">
         <div id="order-taker-desk" class="hidden">
           <div class="ot-top">
-            <h2>Book an order</h2>
+            <h2>Sales</h2>
             <button type="button" class="btn btn-secondary btn-sm" onclick="App.logout()">Logout</button>
+          </div>
+          <div class="ot-modes">
+            <button type="button" id="ot-mode-book" class="ot-mode on" onclick="App.setOrderTakerMode('book')">Book order</button>
+            <button type="button" id="ot-mode-stock" class="ot-mode" onclick="App.setOrderTakerMode('stock')">View stock</button>
+          </div>
+          <div id="ot-stock" class="hidden">
+            <label class="label">Item or vendor number</label>
+            <input id="ot-stock-q" class="input" type="text" placeholder="Our number or vendor number" autocomplete="off" oninput="App.onOrderTakerStock(this.value)" />
+            <div id="ot-stock-hits"></div>
           </div>
           <div id="ot-pick">
             <label class="label">Customer on the call</label>
@@ -740,7 +749,7 @@
               <button type="button" class="btn btn-secondary btn-sm" onclick="App.clearOrderTakerCustomer()">Change</button>
             </div>
             <label class="label">Item</label>
-            <input id="ot-item" class="input" type="text" placeholder="Item number" autocomplete="off" oninput="App.onOrderTakerItem(this.value)" />
+            <input id="ot-item" class="input" type="text" placeholder="Item or vendor number" autocomplete="off" oninput="App.onOrderTakerItem(this.value)" />
             <label class="label">Quantity</label>
             <input id="ot-qty" class="input" type="number" min="1" inputmode="numeric" placeholder="How many" />
             <div id="ot-item-matches"></div>
@@ -1242,7 +1251,7 @@
   <script src="js/payment-modes.js?v=ui62"></script>
   <script src="js/freight-agents.js?v=ui66"></script>
   <script src="js/calculator.js?v=ui2"></script>
-  <script src="app.js?v=ui97"></script>
+  <script src="app.js?v=ui98"></script>
   <script src="js/commission-agents.js?v=ui1"></script>
   <script src="js/whatsapp-inbox.js?v=ui2"></script>
 </body>

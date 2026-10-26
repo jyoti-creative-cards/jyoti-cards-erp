@@ -72,7 +72,7 @@ async def block_item_lookup_account(request, call_next):
                 if perms == {"items.lookup"}:
                     from starlette.responses import JSONResponse
                     return JSONResponse({"detail": "permission denied"}, status_code=403)
-                order_only = {"customers.read", "customer_orders.read", "customer_orders.write"}
+                order_only = {"customers.read", "customer_orders.read", "customer_orders.write", "stock.read"}
                 if perms and "customer_orders.write" in perms and perms <= order_only:
                     if not _order_taker_allowed(request.method, path):
                         from starlette.responses import JSONResponse

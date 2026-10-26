@@ -508,7 +508,7 @@
     if (title) title.textContent = mode === "bill" ? "Create bill" : mode === "ledger" ? "Party ledger" : "Open item";
     if (input) {
       input.value = "";
-      input.placeholder = mode === "item" ? "Item number" : "Party name or code";
+      input.placeholder = mode === "item" ? "Item or vendor number" : "Party name or code";
     }
     if (hits) hits.innerHTML = "";
     box.classList.remove("hidden");
@@ -544,7 +544,7 @@
     }
     if (seq !== shortcutSearchSeq) return;
     hits.innerHTML = rows.map(p =>
-      `<button type="button" class="btn btn-secondary" style="display:block;width:100%;text-align:left;margin-top:6px;" onclick="App.pickShortcut(${p.catalog_product_id})">${esc(p.our_product_id)} · stock ${p.quantity_on_hand ?? 0}</button>`
+      `<button type="button" class="btn btn-secondary" style="display:block;width:100%;text-align:left;margin-top:6px;" onclick="App.pickShortcut(${p.catalog_product_id})">${esc(p.our_product_id)}${p.vendor_product_id ? " · " + esc(p.vendor_product_id) : ""} · stock ${p.quantity_on_hand ?? 0}</button>`
     ).join("") || `<p style="color:var(--muted);">No match</p>`;
   }
 

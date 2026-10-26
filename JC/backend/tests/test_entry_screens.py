@@ -38,6 +38,7 @@ def test_alt_s_search_matches_the_vendor_item_number():
     rows = entry_items(q="V-5401", db=db, auth=auth)
     assert [row["our_product_id"] for row in rows] == ["5401 PATRIKA"]
     assert rows[0]["vendor_product_id"] == "V-5401"
+    assert rows[0]["marking"] is None
     db.close()
     engine.dispose()
 

@@ -605,7 +605,7 @@ const CustomerOrders = (() => {
         const img = (l.image_urls || [])[0] || "";
         return `<tr>
           <td>${thumb(img)}</td>
-          <td><strong>${ctx.esc(l.our_product_id)}</strong>${l.marking ? ` <span class="badge badge-amber" style="font-size:9px;padding:1px 4px;">${ctx.esc(l.marking)}</span>` : ""}</td>
+          <td><strong>${ctx.esc(l.our_product_id)}</strong>${l.marking ? ` <span class="marking-flag">${ctx.esc(l.marking)}</span>` : ""}</td>
           <td><strong>${l.quantity_open}</strong></td>
           <td>${fmtPrice(l.unit_price)}</td>
         </tr>`;
@@ -862,7 +862,7 @@ const CustomerOrders = (() => {
         </div>` : ""}
         ${waitingHtml}
         <div class="ord-hub-list">${lines.length ? lines.map(line => HubUI.partyCard({
-          title: ctx.esc(line.our_product_id) + (line.marking ? ` <span class="badge badge-amber" style="font-size:9px;padding:1px 4px;">${ctx.esc(line.marking)}</span>` : ""),
+          title: ctx.esc(line.our_product_id) + (line.marking ? ` <span class="marking-flag">${ctx.esc(line.marking)}</span>` : ""),
           titleIsHtml: true,
           meta: `${thumb((line.image_urls || [])[0])} Recv ${line.quantity_received} · To bill <strong>${line.quantity_open}</strong> · Billed ${line.quantity_billed} · ${fmtPrice(line.unit_price)}${addonsUnderHtml(line.addons, line.quantity_open)}${orderMarkingForProduct(waiting, line.catalog_product_id)}`,
           pillHtml: "",
@@ -900,7 +900,7 @@ const CustomerOrders = (() => {
         const hideDisc = !!b.hide_discount_column;
         const linesHtml = `<table class="data vo-hub-table"><thead><tr><th>Product</th><th>Qty</th><th>Rate</th>${hideDisc ? "" : "<th>Disc</th>"}<th>Net</th><th>Total</th><th></th></tr></thead><tbody>
           ${(b.lines || []).map(ln => `<tr>
-            <td>${ctx.esc(ln.our_product_id)}${ln.marking ? ` <span class="badge badge-amber" style="font-size:9px;padding:1px 4px;">${ctx.esc(ln.marking)}</span>` : ""}${addonsUnderHtml(ln.addons, ln.quantity_shipped)}</td>
+            <td>${ctx.esc(ln.our_product_id)}${ln.marking ? ` <span class="marking-flag">${ctx.esc(ln.marking)}</span>` : ""}${addonsUnderHtml(ln.addons, ln.quantity_shipped)}</td>
             <td>${ln.quantity_shipped}</td>
             <td>${fmtPrice(ln.unit_price)}</td>
             ${hideDisc ? "" : `<td>${ln.discount_percent ? ctx.esc(String(ln.discount_percent)) + "%" : "—"}</td>`}
@@ -974,7 +974,7 @@ const CustomerOrders = (() => {
         const expanded = coExpandedId === openKey;
         const linesHtml = `<table class="data vo-hub-table"><thead><tr><th>Product</th><th>Qty</th><th>Billed</th><th>Rate</th><th></th></tr></thead><tbody>
           ${(p.lines || []).map(ln => `<tr>
-            <td>${ctx.esc(ln.our_product_id)}${ln.marking ? ` <span class="badge badge-amber" style="font-size:9px;padding:1px 4px;">${ctx.esc(ln.marking)}</span>` : ""}${addonsUnderHtml(ln.addons, ln.quantity)}</td>
+            <td>${ctx.esc(ln.our_product_id)}${ln.marking ? ` <span class="marking-flag">${ctx.esc(ln.marking)}</span>` : ""}${addonsUnderHtml(ln.addons, ln.quantity)}</td>
             <td>${ln.quantity}</td>
             <td>${ln.quantity_billed}</td>
             <td>${fmtPrice(ln.unit_price)}</td>

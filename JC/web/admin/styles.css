@@ -50,6 +50,7 @@ body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Ro
 .badge-gray { background: #f1f5f9; color: #64748b; }
 .badge-amber { background: #fef3c7; color: #b45309; }
 .badge-red { background: #fee2e2; color: #b91c1c; }
+.marking-flag { display: inline-block; margin-left: 4px; padding: 2px 7px; border-radius: 6px; background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; font-weight: 800; font-size: 12px; line-height: 1.3; }
 /* Toggle switch */
 .toggle-track {
   display: inline-flex; align-items: center;

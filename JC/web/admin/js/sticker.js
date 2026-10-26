@@ -193,7 +193,7 @@ const Sticker = (() => {
         }
         .phone { font-family: Helvetica, Arial, sans-serif; }
         .name, .city { font-family: "Noto Sans Devanagari", "Kohinoor Devanagari", "Nirmala UI", "Mangal", sans-serif; }
-        .name { font-size: 28mm; font-weight: 700; margin: 0; line-height: 1.05; }
+        .name { font-size: 36mm; font-weight: 800; margin: 0; line-height: 1.02; color: #dc2626; }
         .city { font-size: 18mm; margin: 0; line-height: 1.1; }
         .phone { font-size: 16mm; margin: 0; letter-spacing: 0.4mm; }
         .time {

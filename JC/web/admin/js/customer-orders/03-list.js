@@ -61,7 +61,7 @@
         const img = (l.image_urls || [])[0] || "";
         return `<tr>
           <td>${thumb(img)}</td>
-          <td><strong>${ctx.esc(l.our_product_id)}</strong>${l.marking ? ` <span class="badge badge-amber" style="font-size:9px;padding:1px 4px;">${ctx.esc(l.marking)}</span>` : ""}</td>
+          <td><strong>${ctx.esc(l.our_product_id)}</strong>${l.marking ? ` <span class="marking-flag">${ctx.esc(l.marking)}</span>` : ""}</td>
           <td><strong>${l.quantity_open}</strong></td>
           <td>${fmtPrice(l.unit_price)}</td>
         </tr>`;

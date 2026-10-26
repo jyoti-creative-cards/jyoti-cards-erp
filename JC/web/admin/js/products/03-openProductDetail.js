@@ -170,7 +170,7 @@
             ${cat?.category ? `<span class="badge badge-gray">${ctx.esc(cat.category)}</span>` : ""}
             ${cat?.second_category ? `<span class="badge badge-gray">${ctx.esc(cat.second_category)}</span>` : ""}
             ${cat?.category_3 ? `<span class="badge badge-gray">${ctx.esc(cat.category_3)}</span>` : ""}
-            ${(cat?.marking || stock?.marking) ? `<span class="badge badge-amber">${ctx.esc(cat?.marking || stock?.marking)}</span>` : ""}
+            ${(cat?.marking || stock?.marking) ? `<span class="marking-flag">${ctx.esc(cat?.marking || stock?.marking)}</span>` : ""}
           </div>
           ${images}
         </div>

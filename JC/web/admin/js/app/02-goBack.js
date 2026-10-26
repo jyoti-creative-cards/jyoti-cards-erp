@@ -544,7 +544,7 @@
     }
     if (seq !== shortcutSearchSeq) return;
     hits.innerHTML = rows.map(p =>
-      `<button type="button" class="btn btn-secondary" style="display:block;width:100%;text-align:left;margin-top:6px;" onclick="App.pickShortcut(${p.catalog_product_id})">${esc(p.our_product_id)}${p.vendor_product_id ? " · " + esc(p.vendor_product_id) : ""} · stock ${p.quantity_on_hand ?? 0}</button>`
+      `<button type="button" class="btn btn-secondary" style="display:block;width:100%;text-align:left;margin-top:6px;" onclick="App.pickShortcut(${p.catalog_product_id})">${esc(p.our_product_id)}${p.vendor_product_id ? " · " + esc(p.vendor_product_id) : ""}${p.marking ? ` <span class="marking-flag">${esc(p.marking)}</span>` : ""} · stock ${p.quantity_on_hand ?? 0}</button>`
     ).join("") || `<p style="color:var(--muted);">No match</p>`;
   }
 

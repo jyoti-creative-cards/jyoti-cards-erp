@@ -12,8 +12,10 @@ import type {
 type PortalTab = "availability" | "order_now" | "my_orders";
 
 /** WhatsApp business number. Customers call this to book from the godown. */
-const GODOWN_PHONE_DISPLAY = "+91 76948 12345";
-const GODOWN_PHONE_TEL = "+917694812345";
+const GODOWN_PHONES = [
+  { display: "0731 2506986", tel: "tel:07312506986" },
+  { display: "+91 76948 12345", tel: "tel:+917694812345" },
+];
 
 /** Customer-facing: can they rely on us having units? */
 function availabilityLine(s: string): { title: string; hint: string } {
@@ -736,9 +738,13 @@ export default function CustomerPortalPage() {
                           {p.stock_status !== "in_stock" ? (
                             <div className="rounded-2xl border-2 border-amber-400 bg-amber-50 px-4 py-3 text-sm font-semibold leading-relaxed text-amber-950">
                               <p>{avail.hint}</p>
-                              <a href={`tel:${GODOWN_PHONE_TEL}`} className="mt-2 block text-lg tracking-wide text-jc-brand">
-                                {GODOWN_PHONE_DISPLAY}
-                              </a>
+                              <span className="mt-2 flex flex-col gap-1">
+                                {GODOWN_PHONES.map((phone) => (
+                                  <a key={phone.tel} href={phone.tel} className="text-lg tracking-wide text-jc-brand">
+                                    {phone.display}
+                                  </a>
+                                ))}
+                              </span>
                             </div>
                           ) : (
                             <p className="text-xs leading-relaxed text-jc-muted">{avail.hint}</p>

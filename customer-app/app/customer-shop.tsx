@@ -17,7 +17,6 @@ const GODOWN_PHONES = [
   { display: "0731 2454565", tel: "tel:07312454565" },
   { display: "747 0548865", tel: "tel:+917470548865" },
   { display: "95167 89702", tel: "tel:+919516789702" },
-  { display: "+91 76948 12345", tel: "tel:+917694812345" },
 ];
 
 /** Customer-facing: can they rely on us having units? */

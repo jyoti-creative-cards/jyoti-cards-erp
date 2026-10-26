@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session, object_session
 
 from app.db.session import get_db
 from app.deps import AuthContext, require_admin, require_permission
-from app.models.expense import Expense, ExpenseHead, ExpenseSubhead
+from app.models.expense import Expense, ExpenseHead, ExpenseSource, ExpenseSubhead
 from app.services.activity import log_from_auth
 from app.services import response_cache
 from app.services.document_present import present
@@ -28,6 +28,18 @@ class ExpenseIn(BaseModel):
     reference: Optional[str] = None
     head_id: Optional[int] = None
     subhead_id: Optional[int] = None
+    source_id: Optional[int] = None
+
+
+DEFAULT_SOURCES = ("ICICI", "NC Saving Account", "Cash Register")
+
+
+def ensure_expense_sources(db: Session) -> None:
+    if db.query(ExpenseSource.id).count():
+        return
+    for name in DEFAULT_SOURCES:
+        db.add(ExpenseSource(name=name))
+    db.commit()
 
 
 class HeadIn(BaseModel):
@@ -43,6 +55,17 @@ def _clean_head_name(name: str) -> str:
     if len(text) > 80:
         raise HTTPException(400, "Name is too long")
     return text
+
+
+def _expense_source(db: Session, source_id: Optional[int], *, required: bool) -> Optional[ExpenseSource]:
+    if not source_id:
+        if required:
+            raise HTTPException(400, "Pick where the money came from")
+        return None
+    row = db.get(ExpenseSource, source_id)
+    if not row:
+        raise HTTPException(400, "Pick where the money came from")
+    return row
 
 
 def resolve_expense_category(db: Session, body: ExpenseIn) -> str:
@@ -109,6 +132,8 @@ class ExpensePublic(BaseModel):
     freight_agent_id: Optional[int] = None
     addon_product_id: Optional[int] = None
     is_cash: bool = True
+    source_id: Optional[int] = None
+    source_name: Optional[str] = None
     created_by_name: str
     display_date: Optional[date] = None
     display_name: Optional[str] = None
@@ -118,6 +143,7 @@ class ExpensePublic(BaseModel):
     def from_row(cls, row: Expense) -> "ExpensePublic":
         db = object_session(row)
         view = present(db, "expense", row) if db is not None else {}
+        source = db.get(ExpenseSource, row.source_id) if db is not None and row.source_id else None
         return cls(
             id=row.id,
             expense_date=row.expense_date,
@@ -128,11 +154,81 @@ class ExpensePublic(BaseModel):
             freight_agent_id=row.freight_agent_id,
             addon_product_id=row.addon_product_id,
             is_cash=True if row.is_cash is None else bool(row.is_cash),
+            source_id=row.source_id,
+            source_name=source.name if source else None,
             created_by_name=row.created_by_name,
             display_date=view.get("display_date") or row.expense_date,
             display_name=view.get("display_name") or row.category,
             status=view.get("status") or "open",
         )
+
+
+@router.get("/sources")
+def list_expense_sources(
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("finance.write")),
+):
+    ensure_expense_sources(db)
+    rows = db.query(ExpenseSource).order_by(ExpenseSource.name.asc(), ExpenseSource.id.asc()).all()
+    return [{"id": row.id, "name": row.name} for row in rows]
+
+
+@router.post("/sources", status_code=201)
+def create_expense_source(
+    body: HeadIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("finance.write")),
+):
+    name = _clean_head_name(body.name)
+    taken = db.query(ExpenseSource).filter(func.lower(ExpenseSource.name) == name.lower()).first()
+    if taken:
+        raise HTTPException(400, "That source already exists")
+    row = ExpenseSource(name=name)
+    db.add(row)
+    db.flush()
+    log_from_auth(db, auth, action="create", entity_type="expense_source", entity_id=row.id, entity_label=name)
+    db.commit()
+    db.refresh(row)
+    return {"id": row.id, "name": row.name}
+
+
+@router.patch("/sources/{source_id}")
+def rename_expense_source(
+    source_id: int,
+    body: HeadIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("finance.write")),
+):
+    row = db.get(ExpenseSource, source_id)
+    if not row:
+        raise HTTPException(404, "source not found")
+    name = _clean_head_name(body.name)
+    taken = db.query(ExpenseSource).filter(
+        func.lower(ExpenseSource.name) == name.lower(), ExpenseSource.id != row.id,
+    ).first()
+    if taken:
+        raise HTTPException(400, "That source already exists")
+    row.name = name
+    log_from_auth(db, auth, action="edit", entity_type="expense_source", entity_id=row.id, entity_label=name)
+    db.commit()
+    return {"id": row.id, "name": row.name}
+
+
+@router.delete("/sources/{source_id}", status_code=204)
+def delete_expense_source(
+    source_id: int,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("finance.write")),
+):
+    row = db.get(ExpenseSource, source_id)
+    if not row:
+        raise HTTPException(404, "source not found")
+    used = db.query(Expense.id).filter(Expense.source_id == row.id).first()
+    if used:
+        raise HTTPException(400, "This source is used on an expense. Rename it, or leave it.")
+    log_from_auth(db, auth, action="delete", entity_type="expense_source", entity_id=row.id, entity_label=row.name)
+    db.delete(row)
+    db.commit()
 
 
 @router.get("/heads")
@@ -221,12 +317,14 @@ def create_expense(
     auth: AuthContext = Depends(require_permission("finance.write")),
 ):
     category = resolve_expense_category(db, body)
+    source = _expense_source(db, body.source_id, required=True)
     row = Expense(
         expense_date=body.expense_date,
         category=category,
         description=(body.description or "").strip() or None,
         amount=body.amount,
         reference=(body.reference or "").strip() or None,
+        source_id=source.id,
         created_by_name=auth.actor_name,
     )
     db.add(row)
@@ -261,6 +359,8 @@ def patch_expense(
     row.description = (body.description or "").strip() or None
     row.amount = body.amount
     row.reference = (body.reference or "").strip() or None
+    if body.source_id:
+        row.source_id = _expense_source(db, body.source_id, required=True).id
     log_from_auth(
         db,
         auth,

@@ -13,7 +13,6 @@ from app.models.catalog_product import CatalogProduct
 from app.models.customer import Customer
 from app.models.customer_bill import CustomerBill, CustomerBillLine
 from app.models.customer_order import CustomerOpenLine, CustomerOrder, CustomerOrderLine, CustomerOrderPlacement
-from app.models.stock import StockBalance
 from app.models.freight_agent import FreightAgent
 from app.services.commission_ledger import post_customer_bill_due
 from app.services.bill_series_alloc import allocate_bill_number, resolve_bill_number
@@ -112,15 +111,6 @@ def process_customer_bill(
             price = effective_selling_price(product.buying_price, product.selling_price)
             if price is None:
                 raise HTTPException(400, f"sell price not set for {product.our_product_id}")
-            balance = (
-                db.query(StockBalance)
-                .filter(StockBalance.catalog_product_id == cid)
-                .with_for_update()
-                .first()
-            )
-            on_hand = int(balance.quantity_on_hand or 0) if balance else 0
-            if qty > on_hand:
-                raise HTTPException(400, f"only {on_hand} in stock for {product.our_product_id}")
             bill_items.append({
                 "catalog_product_id": cid,
                 "our_product_id": product.our_product_id,

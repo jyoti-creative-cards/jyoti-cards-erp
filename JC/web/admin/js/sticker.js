@@ -174,28 +174,28 @@ const Sticker = (() => {
     const html = `<!DOCTYPE html><html lang="hi"><head><meta charset="utf-8"><title>Sticker</title>
       <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@500;700&display=swap">
       <style>
-        @page { size: 148mm 210mm; margin: 0; }
-        html, body { margin: 0; padding: 0; width: 148mm; height: 210mm; overflow: hidden; }
+        @page { size: A5 landscape; margin: 0; }
+        html, body { margin: 0; padding: 0; width: 210mm; height: 148mm; overflow: hidden; }
         .sheet {
           position: absolute;
-          top: 0;
-          left: 148mm;
-          width: 210mm;
-          height: 148mm;
+          left: 10%;
+          top: 10%;
+          width: 80%;
+          height: 80%;
           box-sizing: border-box;
-          transform: rotate(90deg);
-          transform-origin: top left;
           color: #111;
           display: flex;
           flex-direction: column;
-          justify-content: space-evenly;
-          padding: 8mm 10mm 12mm;
+          justify-content: center;
+          align-items: center;
+          text-align: center;
+          gap: 5mm;
         }
         .phone { font-family: Helvetica, Arial, sans-serif; }
         .name, .city { font-family: "Noto Sans Devanagari", "Kohinoor Devanagari", "Nirmala UI", "Mangal", sans-serif; }
-        .name { font-size: 22mm; font-weight: 700; margin: 0; line-height: 1.15; }
-        .city { font-size: 16mm; margin: 0; line-height: 1.2; }
-        .phone { font-size: 14mm; margin: 0; letter-spacing: 0.4mm; }
+        .name { font-size: 28mm; font-weight: 700; margin: 0; line-height: 1.05; }
+        .city { font-size: 18mm; margin: 0; line-height: 1.1; }
+        .phone { font-size: 16mm; margin: 0; letter-spacing: 0.4mm; }
         .time {
           position: absolute;
           right: 8mm;

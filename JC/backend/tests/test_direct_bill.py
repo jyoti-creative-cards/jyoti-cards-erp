@@ -190,9 +190,8 @@ def test_direct_refuses_an_item_that_is_already_booked(db):
     assert "already booked" in str(caught.value.detail)
 
 
-def test_direct_refuses_more_than_stock(db):
+def test_direct_bill_can_take_stock_below_zero(db):
     customer = _customer(db)
     prod = _product(db, "P-DIRECT", 1)
-    with pytest.raises(HTTPException) as caught:
-        _bill(db, customer, [{"catalog_product_id": prod.id, "quantity_to_ship": 4, "direct": True}])
-    assert "only 1 in stock" in str(caught.value.detail)
+    _bill(db, customer, [{"catalog_product_id": prod.id, "quantity_to_ship": 4, "direct": True}])
+    assert db.query(StockBalance).filter(StockBalance.catalog_product_id == prod.id).one().quantity_on_hand == -3

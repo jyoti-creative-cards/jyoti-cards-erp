@@ -431,11 +431,12 @@
       return;
     }
     el.innerHTML = `<table class="data"><thead><tr>
-      <th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Ref</th><th></th>
+      <th>Date</th><th>Category</th><th>Paid from</th><th>Description</th><th>Amount</th><th>Ref</th><th></th>
     </tr></thead><tbody>
       ${expenses.map(e => `<tr>
         <td>${fmtDocDate(e.display_date || e.expense_date)}</td>
         <td>${ctx.esc(e.display_name || e.category)}${e.is_cash === false ? ` <span class="badge">Stock</span>` : ""}</td>
+        <td>${ctx.esc(e.source_name || "—")}</td>
         <td>${ctx.esc(e.description || "—")}</td>
         <td>${fmtPrice(e.amount)}</td>
         <td>${ctx.esc(e.reference || "—")}</td>
@@ -472,13 +473,13 @@
     if (saveBusy) return;
     const payload = expensePayload();
     if (!payload) return;
-    const { expense_date, description, amount, reference, subhead_id } = payload;
+    const { expense_date, description, amount, reference, subhead_id, source_id } = payload;
     saveBusy = true;
     ctx.showLoading?.();
     try {
       await ctx.api(`/expenses/${id}`, {
         method: "PATCH",
-        body: JSON.stringify({ expense_date, description, amount, reference, subhead_id }),
+        body: JSON.stringify({ expense_date, description, amount, reference, subhead_id, source_id }),
       });
       ctx.invalidateCache?.("/expenses");
       ctx.invalidateCache?.("/finance");

@@ -1,4 +1,5 @@
   let expenseHeadCache = [];
+  let expenseSourceCache = [];
 
   function expenseCategoryOptions() {
     const cats = new Set((expenses || []).map(e => e.category).filter(Boolean));
@@ -17,10 +18,34 @@
     ).join("");
   }
 
+  function sourceOptions(selectedId) {
+    return `<option value="">— Where the money came from —</option>` + expenseSourceCache.map(s =>
+      `<option value="${s.id}" ${String(selectedId) === String(s.id) ? "selected" : ""}>${ctx.esc(s.name)}</option>`
+    ).join("");
+  }
+
+  function sourceManager() {
+    return `<div style="margin:0 0 12px;padding:10px;border:1px dashed var(--border);border-radius:10px;">
+      <div style="font-size:12px;font-weight:700;margin-bottom:6px;">Sources</div>
+      ${expenseSourceCache.map(s => `<div style="display:flex;gap:8px;align-items:center;margin-top:6px;">
+        <span style="flex:1;">${ctx.esc(s.name)}</span>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="Finance.renameExpenseSource(${s.id})">Rename</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="Finance.deleteExpenseSource(${s.id})">Delete</button>
+      </div>`).join("")}
+      <div style="display:flex;gap:8px;margin-top:8px;">
+        <input id="exp-source-new" class="input" placeholder="New source" />
+        <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.addExpenseSource()">Add</button>
+      </div>
+    </div>`;
+  }
+
   async function fillExpenseForm(existing, editId) {
     let heads = [];
+    let sources = [];
     try { heads = await ctx.api("/expenses/heads", {}, 0) || []; } catch (err) { heads = []; }
+    try { sources = await ctx.api("/expenses/sources", {}, 0) || []; } catch (err) { sources = []; }
     expenseHeadCache = heads;
+    expenseSourceCache = sources;
     const cat = (existing?.category || "").toLowerCase();
     let headId = "";
     let subId = "";
@@ -39,6 +64,10 @@
       <input type="date" class="input" id="exp-date" value="${ctx.esc(day)}" style="margin-bottom:12px;" />
       <label class="label">Sub-head</label>
       <select class="input" id="exp-sub" style="margin-bottom:12px;">${expenseSubOptions(subId)}</select>
+      <p style="margin:-6px 0 12px;font-size:12px;color:var(--muted);">New heads: More → Reports → Ledgers → Expense → New head.</p>
+      <label class="label">Paid from</label>
+      <select class="input" id="exp-source" style="margin-bottom:8px;">${sourceOptions(existing?.source_id || "")}</select>
+      ${sourceManager()}
       <label class="label">Description</label>
       <input class="input" id="exp-desc" value="${ctx.esc(existing?.description || "")}" style="margin-bottom:12px;" />
       <label class="label">Amount (₹)</label>
@@ -52,6 +81,42 @@
       saveBtn.textContent = editId ? "Save" : "Save expense";
       saveBtn.setAttribute("onclick", editId ? `Finance.saveExpenseEdit(${editId})` : "Finance.submitExpense()");
     }
+  }
+
+  async function addExpenseSource() {
+    const name = (document.getElementById("exp-source-new")?.value || "").trim();
+    if (!name) return ctx.toast("Type a source name", "error");
+    const keep = expenseDraft();
+    try {
+      await ctx.api("/expenses/sources", { method: "POST", body: JSON.stringify({ name }) });
+      ctx.toast("Source saved", "success");
+      await fillExpenseForm(keep.existing, keep.editId);
+      restoreExpenseDraft(keep);
+    } catch (e) { ctx.toast(e.message, "error"); }
+  }
+
+  async function renameExpenseSource(id) {
+    const current = expenseSourceCache.find(s => s.id === id);
+    const name = prompt("Source name:", current?.name || "");
+    if (name == null || !name.trim()) return;
+    const keep = expenseDraft();
+    try {
+      await ctx.api(`/expenses/sources/${id}`, { method: "PATCH", body: JSON.stringify({ name: name.trim() }) });
+      ctx.toast("Source renamed", "success");
+      await fillExpenseForm(keep.existing, keep.editId);
+      restoreExpenseDraft(keep);
+    } catch (e) { ctx.toast(e.message, "error"); }
+  }
+
+  async function deleteExpenseSource(id) {
+    if (!confirm("Delete this source?")) return;
+    const keep = expenseDraft();
+    try {
+      await ctx.api(`/expenses/sources/${id}`, { method: "DELETE" });
+      ctx.toast("Source deleted", "success");
+      await fillExpenseForm(keep.existing, keep.editId);
+      restoreExpenseDraft(keep);
+    } catch (e) { ctx.toast(e.message, "error"); }
   }
 
   function openExpenseForm() {
@@ -107,6 +172,7 @@
         description: document.getElementById("exp-desc")?.value || "",
         amount: document.getElementById("exp-amount")?.value || "",
         reference: document.getElementById("exp-ref")?.value || "",
+        source_id: document.getElementById("exp-source")?.value || "",
         category: "",
       },
     };
@@ -121,6 +187,8 @@
     if (desc) desc.value = keep.existing.description || "";
     if (amount) amount.value = keep.existing.amount || "";
     if (ref) ref.value = keep.existing.reference || "";
+    const source = document.getElementById("exp-source");
+    if (source && keep.existing.source_id) source.value = String(keep.existing.source_id);
   }
 
   function expensePayload() {
@@ -129,9 +197,11 @@
     const description = (document.getElementById("exp-desc")?.value || "").trim() || null;
     const amount = parseFloat(document.getElementById("exp-amount")?.value || "0");
     const reference = (document.getElementById("exp-ref")?.value || "").trim() || null;
+    const source_id = Number(document.getElementById("exp-source")?.value || 0);
     if (!expense_date || !amount || amount <= 0) { ctx.toast("Enter date and amount", "error"); return null; }
     if (!subhead_id) { ctx.toast("Pick a sub-head", "error"); return null; }
-    return { expense_date, subhead_id, description, amount, reference };
+    if (!source_id) { ctx.toast("Pick where the money came from", "error"); return null; }
+    return { expense_date, subhead_id, description, amount, reference, source_id };
   }
 
   function closeExpenseForm() { document.getElementById("expense-modal")?.classList.add("hidden"); }
@@ -140,13 +210,13 @@
     if (saveBusy) return;
     const payload = expensePayload();
     if (!payload) return;
-    const { expense_date, description, amount, reference, subhead_id } = payload;
+    const { expense_date, description, amount, reference, subhead_id, source_id } = payload;
     saveBusy = true;
     ctx.showLoading?.();
     try {
       await ctx.api("/expenses", {
         method: "POST",
-        body: JSON.stringify({ expense_date, description, amount, reference, subhead_id }),
+        body: JSON.stringify({ expense_date, description, amount, reference, subhead_id, source_id }),
       });
       ctx.invalidateCache?.("/expenses");
       ctx.invalidateCache?.("/finance");

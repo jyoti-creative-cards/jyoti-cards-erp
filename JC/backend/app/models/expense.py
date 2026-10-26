@@ -23,7 +23,18 @@ class Expense(Base):
     addon_product_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     # False = stock journal / sample cost. Stays on the expense list, not in cash out.
     is_cash: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=sql_true())
+    source_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     created_by_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class ExpenseSource(Base):
+    """Where the cash for an expense left from."""
+
+    __tablename__ = "jc_expense_sources"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 

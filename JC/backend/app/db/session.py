@@ -96,7 +96,7 @@ def init_db() -> None:
         CatalogProduct, City, Customer, EntityHistory, PriceHistory, Route, Staff, Vendor,
         VendorOrder, VendorOrderLine, VendorOrderPlacement, VendorOpenLine,
         CustomerOrder, CustomerOrderLine, CustomerOrderPlacement, CustomerOpenLine,
-        CustomerBill, CustomerBillLine, BillSeries, FreightAgent, FreightLedgerEntry, Expense, ExpenseHead, ExpenseSubhead,
+        CustomerBill, CustomerBillLine, BillSeries, FreightAgent, FreightLedgerEntry, Expense, ExpenseHead, ExpenseSource, ExpenseSubhead,
         StockJournal, StockJournalLine,
         CustomerArAccount, ArLedgerEntry, PaymentMode,
         StockBalance, StockLedger, StockReceipt, StockReceiptLine,
@@ -152,6 +152,7 @@ def init_db() -> None:
         _migrate_bill_payment_qr()
         _migrate_vendor_cash_discount_gst()
         _migrate_expense_is_cash()
+        _migrate_expense_sources()
         with engine.begin() as conn:
             conn.execute(text("SELECT 1"))
         _DB_READY = True
@@ -444,6 +445,37 @@ def _migrate_expense_is_cash() -> None:
             _exec_sql(
                 conn,
                 "ALTER TABLE jc_expenses ADD COLUMN IF NOT EXISTS is_cash BOOLEAN NOT NULL DEFAULT TRUE",
+                critical=False,
+            )
+
+
+def _migrate_expense_sources() -> None:
+    """Paid-from accounts on an expense. Idempotent so boot and Alembic can both run."""
+    with engine.begin() as conn:
+        if _is_sqlite:
+            tables = [r[0] for r in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()]
+            if "jc_expense_sources" not in tables:
+                _exec_sql(conn, """
+                    CREATE TABLE jc_expense_sources (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name VARCHAR(120) NOT NULL UNIQUE,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL
+                    )
+                """)
+            cols = [r[1] for r in conn.execute(text("PRAGMA table_info(jc_expenses)")).fetchall()]
+            if "source_id" not in cols:
+                _exec_sql(conn, "ALTER TABLE jc_expenses ADD COLUMN source_id INTEGER")
+        else:
+            _exec_sql(conn, """
+                CREATE TABLE IF NOT EXISTS jc_expense_sources (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(120) NOT NULL UNIQUE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """, critical=False)
+            _exec_sql(
+                conn,
+                "ALTER TABLE jc_expenses ADD COLUMN IF NOT EXISTS source_id INTEGER",
                 critical=False,
             )
 

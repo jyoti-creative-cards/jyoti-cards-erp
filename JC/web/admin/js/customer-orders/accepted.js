@@ -1935,8 +1935,7 @@ const CustomerOrders = (() => {
       return;
     }
     let q = Math.max(0, parseInt(val, 10) || 0);
-    if (ln.direct && Number(ln.quantity_on_hand) > 0) q = Math.min(Number(ln.quantity_on_hand), q);
-    else if (!editBillId) q = Math.min(Number(ln.quantity_open) || 0, q);
+    if (!ln.direct && !editBillId) q = Math.min(Number(ln.quantity_open) || 0, q);
     ln.quantity_to_ship = q;
     renderWizardTotalsBar();
   }

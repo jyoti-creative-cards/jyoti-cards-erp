@@ -5,7 +5,7 @@ from sqlalchemy.orm import sessionmaker
 from app.db.session import Base
 from app.models.catalog_product import CatalogProduct
 from app.models.vendor import Vendor
-from app.routers.shop.list_order_history import _query_products, _rank_products
+from app.routers.shop.list_order_history import _query_products, _rank_products, stock_status_for_wanted
 
 
 def test_our_item_number_ranks_above_the_same_vendor_code():
@@ -39,3 +39,10 @@ def test_search_returns_the_item_number_not_only_the_vendor_code():
     assert [row.our_product_id for row in found] == ["6734 BOX PATRIKA"]
     assert _query_products(db, "G-42", 20) == []
     assert _query_products(db, "6734 OLD", 20) == []
+
+
+def test_stock_follows_the_quantity_the_customer_asked_for():
+    assert stock_status_for_wanted(120, 50) == "in_stock"
+    assert stock_status_for_wanted(40, 50) == "low_stock"
+    assert stock_status_for_wanted(0, 50) == "out_of_stock"
+    assert stock_status_for_wanted(-3, 50) == "out_of_stock"

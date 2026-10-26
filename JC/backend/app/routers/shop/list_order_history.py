@@ -289,13 +289,15 @@ def _alternatives_batch(db: Session, parent_ids: list[int], stock: dict[int, tup
 @router.get("/products/search", response_model=List[ShopProductPublic])
 def product_search(
     q: str = Query(..., min_length=1, max_length=200),
+    qty: int = Query(50, ge=1, le=100_000_000),
     db: Session = Depends(get_db),
     _customer: Customer = Depends(get_current_customer),
 ):
     raw = _norm_q(q)
     if not raw:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="search text empty")
-    cache_key = f"shop:search:{raw.lower()}"
+    wanted = int(qty)
+    cache_key = f"shop:search:{raw.lower()}:{wanted}"
     cached = response_cache.get(cache_key)
     if cached is not None:
         return cached
@@ -304,10 +306,11 @@ def product_search(
     ids = [p.id for p in rows]
     stock = _stock_map(db, ids)
     addon_map = addon_snapshots_map(db, ids)
-    need_alts = [
-        p.id for p in rows
-        if stock_status_label(*stock.get(p.id, (0, 5))) in ("out_of_stock", "low_stock")
-    ]
+    statuses = {
+        p.id: stock_status_for_wanted(stock.get(p.id, (0, 5))[0], wanted)
+        for p in rows
+    }
+    need_alts = [pid for pid, label in statuses.items() if label != "in_stock"]
     alt_map = _alternatives_batch(db, need_alts, stock)
     out = [
         _to_shop_product(
@@ -316,6 +319,7 @@ def product_search(
             th=stock.get(p.id, (0, 5))[1],
             addons=addon_map.get(p.id) or [],
             alts=alt_map.get(p.id) or [],
+            status=statuses[p.id],
         )
         for p in rows
     ]
@@ -330,9 +334,10 @@ def _to_shop_product(
     th: int,
     addons: list[dict],
     alts: List[ShopAlternativePublic],
+    status: str | None = None,
 ) -> ShopProductPublic:
-    raw_lbl = stock_status_label(qty, th)
-    lbl = _portal_stock_status(qty, th)
+    raw_lbl = status or stock_status_label(qty, th)
+    lbl = raw_lbl
     return ShopProductPublic(
         catalog_product_id=p.id,
         our_product_id=p.our_product_id,
@@ -564,6 +569,21 @@ def _image_url(prod: CatalogProduct | None) -> str:
 def _portal_stock_status(qty: int, th: int) -> str:
     """Dealer-facing stock. Out, low, or in. The number stays off the label."""
     return stock_status_label(qty, th)
+
+
+def stock_status_for_wanted(on_hand: int, wanted: int) -> str:
+    """Compare godown stock with the quantity the customer asked for.
+
+    Zero and negative are both out of stock. A smaller positive balance is low
+    stock. Enough stock is in stock.
+    """
+    have = int(on_hand or 0)
+    need = int(wanted or 0)
+    if have <= 0:
+        return "out_of_stock"
+    if need > have:
+        return "low_stock"
+    return "in_stock"
 
 def _norm_q(q: str) -> str:
     s = unicodedata.normalize("NFKC", (q or "").strip())

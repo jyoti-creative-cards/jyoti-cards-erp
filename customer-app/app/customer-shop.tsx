@@ -11,17 +11,24 @@ import type {
 
 type PortalTab = "availability" | "order_now" | "my_orders";
 
+/** WhatsApp business number. Customers call this to book from the godown. */
+const GODOWN_PHONE_DISPLAY = "+91 76948 12345";
+const GODOWN_PHONE_TEL = "+917694812345";
+
 /** Customer-facing: can they rely on us having units? */
 function availabilityLine(s: string): { title: string; hint: string } {
   if (s === "in_stock")
-    return { title: "In stock with us", hint: "We have this product available now." };
+    return { title: "In stock", hint: "We have the quantity you asked for." };
   if (s === "low_stock")
     return {
-      title: "Limited stock",
-      hint: "We still have units, but quantity is running low.",
+      title: "Low stock",
+      hint: "ये आइटम पर्याप्त मात्रा में उपलब्ध नहीं है। कृपया बुक करने के लिए इस नंबर पर संपर्क करें।",
     };
   if (s === "out_of_stock")
-    return { title: "Out of stock", hint: "This item cannot be added to the bag." };
+    return {
+      title: "Out of stock",
+      hint: "ये आइटम अभी स्टॉक में नहीं है। कृपया इस नंबर पर गोदाम पर संपर्क करें।",
+    };
   return { title: "Unknown", hint: "" };
 }
 
@@ -133,6 +140,7 @@ export default function CustomerPortalPage() {
   const [portalTab, setPortalTab] = useState<PortalTab>("availability");
 
   const [shopQ, setShopQ] = useState("");
+  const [searchQty, setSearchQty] = useState("50");
   const [shopSuggestions, setShopSuggestions] = useState<ShopSuggestionPublic[]>([]);
   const [shopSuggestOpen, setShopSuggestOpen] = useState(false);
   const [shopResults, setShopResults] = useState<ShopProductPublic[]>([]);
@@ -142,7 +150,6 @@ export default function CustomerPortalPage() {
   const suggestTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [cart, setCart] = useState<Record<number, { p: ShopProductPublic; qty: number }>>({});
-  const [qtyDraft, setQtyDraft] = useState<Record<number, string>>({});
   const [orderMsg, setOrderMsg] = useState("");
   const [orderSubmitting, setOrderSubmitting] = useState(false);
   const [orderNotes, setOrderNotes] = useState("");
@@ -248,19 +255,25 @@ export default function CustomerPortalPage() {
     };
   }, [shopQ, token]);
 
-  const runSearch = useCallback(async () => {
+  const runSearch = useCallback(async (queryOverride?: string) => {
     setShopErr("");
     setShopResults([]);
     if (!token) return;
-    const q = normalizeShopQuery(shopQ);
+    const q = normalizeShopQuery(queryOverride ?? shopQ);
     if (q.length < 1) {
       setShopErr("Please enter an item code or product name to search.");
+      return;
+    }
+    const want = Math.floor(Number(searchQty));
+    if (!Number.isFinite(want) || want < 50 || want % 50 !== 0) {
+      setShopErr("Quantity must be a multiple of 50.");
       return;
     }
     setShopLoading(true);
     try {
       const p = new URLSearchParams();
       p.set("q", q);
+      p.set("qty", String(want));
       const r = await fetchApi(apiUrl(`shop/products/search?${p}`), {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -271,32 +284,18 @@ export default function CustomerPortalPage() {
       }
       setShopResults(Array.isArray(data) ? (data as ShopProductPublic[]) : []);
       setShopDidSearch(true);
-      setQtyDraft((prev) => {
-        const next = { ...prev };
-        for (const row of Array.isArray(data) ? data : []) {
-          const prod = row as ShopProductPublic;
-          if (next[prod.catalog_product_id] === undefined) next[prod.catalog_product_id] = "50";
-        }
-        return next;
-      });
     } finally {
       setShopLoading(false);
     }
-  }, [token, shopQ]);
+  }, [token, shopQ, searchQty]);
 
-  function canAddToBag(p: ShopProductPublic, qtyStr?: string) {
-    const onHand = Number(p.quantity_on_hand ?? 0);
-    if (p.stock_status === "out_of_stock" || onHand < 50) return false;
-    if (qtyStr != null && qtyStr !== "") {
-      const n = Math.floor(Number(qtyStr));
-      if (Number.isFinite(n) && n > onHand) return false;
-    }
-    return true;
+  function canAddToBag(p: ShopProductPublic) {
+    return p.stock_status === "in_stock";
   }
 
   function addProductToCart(p: ShopProductPublic, qtyStr: string) {
-    if (!canAddToBag(p, qtyStr)) {
-      setOrderMsg("Out of stock");
+    if (!canAddToBag(p)) {
+      setOrderMsg("Call the godown to book this item.");
       return;
     }
     const n = Math.floor(Number(qtyStr));
@@ -314,14 +313,15 @@ export default function CustomerPortalPage() {
     });
   }
 
-  function setQtyDraftFor(pid: number, s: string) {
-    setQtyDraft((prev) => ({ ...prev, [pid]: s }));
-  }
-
   function setLineQty(catalogProductId: number, qtyStr: string) {
     const row = cart[catalogProductId];
     if (!row) return;
     const n = Math.floor(Number(qtyStr));
+    const onHand = Number(row.p.quantity_on_hand ?? 0);
+    if (Number.isFinite(n) && n > onHand) {
+      setOrderMsg("Call the godown. We do not have that quantity.");
+      return;
+    }
     const q = Number.isFinite(n) ? Math.max(50, Math.min(n, MAX_ORDER_QTY)) : 50;
     setCart((prev) => ({
       ...prev,
@@ -350,6 +350,10 @@ export default function CustomerPortalPage() {
     }
     if (lines.some((ln) => ln.quantity < 50 || ln.quantity % 50 !== 0)) {
       setOrderMsg("Quantity must be a multiple of 50.");
+      return;
+    }
+    if (Object.values(cart).some((row) => row.p.stock_status !== "in_stock" || row.qty > Number(row.p.quantity_on_hand ?? 0))) {
+      setOrderMsg("Call the godown. We do not have enough stock for an item in the bag.");
       return;
     }
     setOrderSubmitting(true);
@@ -425,6 +429,7 @@ export default function CustomerPortalPage() {
     setShopQ(s.our_product_id);
     setShopSuggestOpen(false);
     setShopSuggestions([]);
+    void runSearch(s.our_product_id);
   }
 
   const cartLines = Object.values(cart);
@@ -459,7 +464,7 @@ export default function CustomerPortalPage() {
                 </li>
                 <li className="flex items-center gap-2">
                   <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white/15 text-xs">✓</span>
-                  See prices before you order
+                  See stock before you order
                 </li>
                 <li className="flex items-center gap-2">
                   <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white/15 text-xs">✓</span>
@@ -584,13 +589,10 @@ export default function CustomerPortalPage() {
                   <div>
                     <h3 className="font-display text-2xl font-semibold text-jc-ink sm:text-[1.65rem]">Find products</h3>
                     <p className="mt-1 max-w-xl text-sm text-jc-muted">
-                      Search by code or name. Add to your bag, then open{" "}
-                      <strong className="font-semibold text-jc-ink">Your bag</strong> to send your order.
+                      Type the item number and the quantity. A match from the list opens straight away.
+                      Price is shown in your bag.
                     </p>
                   </div>
-                  <p className="hidden max-w-[10rem] rounded-2xl bg-white/80 px-3 py-2 text-center text-[11px] font-medium leading-snug text-jc-muted shadow-sm ring-1 ring-jc-border/70 sm:block">
-                    List prices shown here
-                  </p>
                 </div>
               </div>
 
@@ -621,6 +623,18 @@ export default function CustomerPortalPage() {
                       placeholder="Item code or product name"
                       autoComplete="off"
                     />
+                    <label className="flex shrink-0 items-center gap-1 pr-1 text-xs font-semibold text-jc-muted">
+                      Qty
+                      <input
+                        type="number"
+                        min={50}
+                        step={50}
+                        value={searchQty}
+                        onChange={(e) => setSearchQty(e.target.value)}
+                        className="w-20 rounded-lg border border-jc-border bg-white px-2 py-2 text-sm text-jc-ink"
+                        aria-label="Quantity"
+                      />
+                    </label>
                     <button
                       type="button"
                       className="shrink-0 rounded-xl bg-jc-brand px-4 py-2.5 text-sm font-semibold text-white shadow-md transition hover:bg-jc-brand-light disabled:opacity-55"
@@ -662,7 +676,7 @@ export default function CustomerPortalPage() {
                   </span>
                   <p className="mt-4 font-display text-lg font-semibold text-jc-ink">Start with a search</p>
                   <p className="mt-2 max-w-sm text-sm text-jc-muted">
-                    Type a product name or your usual item code, then tap Search.
+                    Type an item number and quantity, then tap Search. Choosing a suggestion opens that item.
                   </p>
                 </div>
               ) : null}
@@ -687,7 +701,7 @@ export default function CustomerPortalPage() {
                 <div className="grid gap-6 px-5 pb-8 sm:grid-cols-2 sm:px-8">
                   {shopResults.map((p) => {
                     const avail = availabilityLine(p.stock_status);
-                    const canOrder = canAddToBag(p, qtyDraft[p.catalog_product_id] ?? "50");
+                    const canOrder = canAddToBag(p);
                     return (
                       <article
                         key={p.catalog_product_id}
@@ -716,75 +730,69 @@ export default function CustomerPortalPage() {
                           </span>
                         </div>
                         <div className="flex flex-1 flex-col gap-3 p-5">
-                          <div className="flex flex-wrap items-start justify-between gap-3">
-                            <p className="font-display text-lg font-semibold leading-snug text-jc-ink">
-                              {p.our_product_id}
-                            </p>
-                            <div className="text-right">
-                              <span className="block text-[10px] font-semibold uppercase tracking-wider text-jc-muted">
-                                Our price
-                              </span>
-                              <span className="text-xl font-bold tabular-nums text-jc-brand">₹{p.selling_price}</span>
+                          <p className="font-display text-lg font-semibold leading-snug text-jc-ink">
+                            {p.our_product_id}
+                          </p>
+                          {p.stock_status !== "in_stock" ? (
+                            <div className="rounded-2xl border-2 border-amber-400 bg-amber-50 px-4 py-3 text-sm font-semibold leading-relaxed text-amber-950">
+                              <p>{avail.hint}</p>
+                              <a href={`tel:${GODOWN_PHONE_TEL}`} className="mt-2 block text-lg tracking-wide text-jc-brand">
+                                {GODOWN_PHONE_DISPLAY}
+                              </a>
                             </div>
-                          </div>
-                          <p className="line-clamp-2 text-xs leading-relaxed text-jc-muted">{avail.hint}</p>
-                          {p.stock_status === "out_of_stock" && p.alternatives.length === 0 ? (
-                            <p className="text-xs font-medium text-jc-muted">
-                              No substitute SKU in stock with us right now.
-                            </p>
+                          ) : (
+                            <p className="text-xs leading-relaxed text-jc-muted">{avail.hint}</p>
+                          )}
+                          {canOrder ? (
+                            <div className="mt-auto border-t border-jc-border/60 pt-4">
+                              <button
+                                type="button"
+                                onClick={() => addProductToCart(p, searchQty)}
+                                className="rounded-xl bg-jc-accent px-5 py-2.5 text-sm font-semibold text-white shadow-md transition hover:bg-jc-accent-hover"
+                              >
+                                Add to bag
+                              </button>
+                            </div>
                           ) : null}
-                          <div className="mt-auto flex flex-wrap items-end gap-3 border-t border-jc-border/60 pt-4">
-                            <label className="block text-sm font-medium text-jc-ink">
-                              Qty
-                              <input
-                                type="number"
-                                min={50}
-                                step={50}
-                                max={MAX_ORDER_QTY}
-                                value={qtyDraft[p.catalog_product_id] ?? "50"}
-                                onChange={(e) => setQtyDraftFor(p.catalog_product_id, e.target.value)}
-                                className="mt-1.5 w-24 rounded-xl border border-jc-border bg-jc-bg/30 px-3 py-2 text-sm shadow-inner"
-                              />
-                            </label>
-                            <button
-                              type="button"
-                              disabled={!canOrder}
-                              onClick={() => addProductToCart(p, qtyDraft[p.catalog_product_id] ?? "50")}
-                              className="rounded-xl bg-jc-accent px-5 py-2.5 text-sm font-semibold text-white shadow-md transition hover:bg-jc-accent-hover disabled:cursor-not-allowed disabled:bg-neutral-300"
-                            >
-                              {canOrder ? "Add to bag" : "Out of stock"}
-                            </button>
-                          </div>
                         </div>
-                        {p.alternatives.length > 0 ? (
+                        {p.stock_status !== "in_stock" ? (
                           <div className="border-t border-jc-border bg-jc-bg/50 px-5 py-4">
                             <p className="text-xs font-bold uppercase tracking-wide text-jc-muted">Similar in stock</p>
-                            <ul className="mt-3 grid grid-cols-3 gap-2">
-                              {p.alternatives.map((a) => (
-                                <li
-                                  key={a.catalog_product_id}
-                                  className="flex flex-col overflow-hidden rounded-xl border border-jc-border bg-white p-2 shadow-sm"
-                                >
-                                  <div className="aspect-square w-full overflow-hidden rounded-lg bg-jc-bg-deep/40">
-                                    {a.image_url ? (
-                                      // eslint-disable-next-line @next/next/no-img-element
-                                      <img
-                                        src={a.image_url}
-                                        alt=""
-                                        className="h-full w-full object-contain object-center p-1"
-                                      />
-                                    ) : (
-                                      <div className="flex h-full min-h-[72px] items-center justify-center text-[10px] text-jc-muted">
-                                        —
+                            {p.alternatives.length === 0 ? (
+                              <p className="mt-2 text-xs font-medium text-jc-muted">
+                                No substitute in stock right now.
+                              </p>
+                            ) : (
+                              <ul className="mt-3 grid grid-cols-3 gap-2">
+                                {p.alternatives.map((a) => (
+                                  <li key={a.catalog_product_id}>
+                                    <button
+                                      type="button"
+                                      className="flex w-full flex-col overflow-hidden rounded-xl border border-jc-border bg-white p-2 text-left shadow-sm"
+                                      onClick={() => pickSuggestion({ catalog_product_id: a.catalog_product_id, our_product_id: a.our_product_id })}
+                                    >
+                                      <div className="aspect-square w-full overflow-hidden rounded-lg bg-jc-bg-deep/40">
+                                        {a.image_url ? (
+                                          // eslint-disable-next-line @next/next/no-img-element
+                                          <img
+                                            src={a.image_url}
+                                            alt=""
+                                            className="h-full w-full object-contain object-center p-1"
+                                          />
+                                        ) : (
+                                          <div className="flex h-full min-h-[72px] items-center justify-center text-[10px] text-jc-muted">
+                                            —
+                                          </div>
+                                        )}
                                       </div>
-                                    )}
-                                  </div>
-                                  <p className="mt-1.5 truncate text-center text-[10px] font-semibold text-jc-ink">
-                                    {a.our_product_id}
-                                  </p>
-                                </li>
-                              ))}
-                            </ul>
+                                      <p className="mt-1.5 truncate text-center text-[10px] font-semibold text-jc-ink">
+                                        {a.our_product_id}
+                                      </p>
+                                    </button>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
                           </div>
                         ) : null}
                       </article>
@@ -807,8 +815,7 @@ export default function CustomerPortalPage() {
               {cartLines.length > 0 ? (
                 <div className="sticky bottom-0 z-10 mx-3 mb-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-jc-border bg-white/95 px-4 py-3.5 shadow-2xl shadow-black/10 backdrop-blur-md sm:mx-6 sm:mb-4 sm:px-6">
                   <div className="text-sm text-jc-ink">
-                    <span className="font-semibold">{cartLines.length}</span> item(s) · Est.{" "}
-                    <span className="font-bold tabular-nums text-jc-brand">₹{cartTotal.toFixed(2)}</span>
+                    <span className="font-semibold">{cartLines.length}</span> item(s) in your bag
                   </div>
                   <button
                     type="button"

@@ -72,6 +72,9 @@ async def block_item_lookup_account(request, call_next):
                 if perms == {"items.lookup"}:
                     from starlette.responses import JSONResponse
                     return JSONResponse({"detail": "permission denied"}, status_code=403)
+                if perms == {"stickers.print"} and not _sticker_allowed(request.method, path):
+                    from starlette.responses import JSONResponse
+                    return JSONResponse({"detail": "permission denied"}, status_code=403)
                 order_only = {"customers.read", "customer_orders.read", "customer_orders.write", "stock.read"}
                 if perms and "customer_orders.write" in perms and perms <= order_only:
                     if not _order_taker_allowed(request.method, path):
@@ -80,6 +83,19 @@ async def block_item_lookup_account(request, call_next):
         except Exception:
             pass
     return await call_next(request)
+
+
+def _sticker_allowed(method: str, path: str) -> bool:
+    """Search a party number, print its sticker, and see the prints already given."""
+    if path.startswith("/api/v1/auth"):
+        return True
+    if method == "GET" and path in ("/api/v1/customers/sticker-search", "/api/v1/customers/sticker-prints"):
+        return True
+    if method == "GET" and path.startswith("/api/v1/customers/") and path.endswith("/sticker"):
+        return True
+    if method == "POST" and path.startswith("/api/v1/customers/") and path.endswith("/sticker-prints"):
+        return True
+    return False
 
 
 def _order_taker_allowed(method: str, path: str) -> bool:

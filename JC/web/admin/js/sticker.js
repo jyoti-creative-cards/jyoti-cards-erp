@@ -54,6 +54,7 @@ const Sticker = (() => {
           <div id="sticker-log"></div>
         </div>
         <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="App.logout()">Logout</button>
           <button type="button" class="btn btn-secondary" onclick="Sticker.close()">Close</button>
           <button type="button" class="btn btn-primary" id="sticker-print" onclick="Sticker.print()" disabled>Print A5</button>
         </div>
@@ -142,7 +143,8 @@ const Sticker = (() => {
     document.querySelectorAll(".sticker-hit").forEach((el, i) => el.classList.toggle("is-on", i === index));
     const note = document.getElementById("sticker-picked");
     if (note) {
-      note.textContent = `${row.business_name || "Party"} · ${row.city_name || "—"} · ${row.phone || "—"}`;
+      note.innerHTML = `<span style="display:block;margin-top:8px;padding:18px 16px;border:3px solid #dc2626;border-radius:14px;background:#fee2e2;text-align:center;font-size:34px;font-weight:800;line-height:1.15;color:#b91c1c;">${esc(row.business_name || "Party")}</span>
+        <span style="display:block;margin-top:8px;text-align:center;font-size:16px;color:#7f1d1d;">${esc(row.city_name || "—")} · ${esc(row.phone || "—")}</span>`;
     }
     const btn = document.getElementById("sticker-print");
     if (btn) btn.disabled = false;
@@ -193,7 +195,7 @@ const Sticker = (() => {
         }
         .phone { font-family: Helvetica, Arial, sans-serif; }
         .name, .city { font-family: "Noto Sans Devanagari", "Kohinoor Devanagari", "Nirmala UI", "Mangal", sans-serif; }
-        .name { font-size: 36mm; font-weight: 800; margin: 0; line-height: 1.02; color: #dc2626; }
+        .name { font-size: 28mm; font-weight: 700; margin: 0; line-height: 1.05; color: #111; }
         .city { font-size: 18mm; margin: 0; line-height: 1.1; }
         .phone { font-size: 16mm; margin: 0; letter-spacing: 0.4mm; }
         .time {

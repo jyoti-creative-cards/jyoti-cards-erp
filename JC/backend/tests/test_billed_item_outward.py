@@ -22,6 +22,21 @@ def test_staff_is_not_blocked_by_permissions():
     assert auth.has("stickers.print")
 
 
+def test_sticker_account_can_only_print():
+    from app.main import _sticker_allowed
+
+    auth = AuthContext(actor_type="staff", actor_id=7, actor_name="print_sticker", permissions={"stickers.print"})
+    assert auth.is_sticker_only()
+    assert auth.has("stickers.print")
+    assert not auth.has("catalog.read")
+    assert not auth.has("customers.read")
+    assert _sticker_allowed("GET", "/api/v1/customers/sticker-search")
+    assert _sticker_allowed("GET", "/api/v1/customers/12/sticker")
+    assert _sticker_allowed("POST", "/api/v1/customers/12/sticker-prints")
+    assert not _sticker_allowed("GET", "/api/v1/customers")
+    assert not _sticker_allowed("POST", "/api/v1/customer-bills")
+
+
 def test_item_lookup_account_only_sees_photo_and_stock():
     from app.routers.items_lookup import _matches
 

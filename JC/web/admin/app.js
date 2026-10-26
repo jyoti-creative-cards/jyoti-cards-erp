@@ -59,14 +59,14 @@ const App = (() => {
     for (const key of permissions) if (!allowed.has(key)) return false;
     return true;
   }
+  function stickerDesk() {
+    return authMode === "staff" && permissions.size === 1 && permissions.has("stickers.print");
+  }
   function isAdmin() {
-    if (lookupDesk() || orderTaker()) return false;
+    if (lookupDesk() || orderTaker() || stickerDesk()) return false;
     return authMode === "admin" || authMode === "staff";
   }
   function can(perm) { return isAdmin() || permissions.has(perm); }
-  function stickerDesk() {
-    return !isAdmin() && permissions.size === 1 && permissions.has("stickers.print");
-  }
   function canWrite(resource) { return can(resource + ".write"); }
   function canRead(resource) { return can(resource + ".read"); }
 
@@ -81,6 +81,7 @@ const App = (() => {
     const taker = orderTaker();
     document.getElementById("app")?.classList.toggle("lookup-only", lookup);
     document.getElementById("app")?.classList.toggle("order-taker", taker);
+    document.getElementById("app")?.classList.toggle("sticker-only", desk);
     const moreTitle = document.querySelector("#more-hub .ui-hub-title");
     const moreSub = document.querySelector("#more-hub .ui-hub-sub");
     if (moreTitle) moreTitle.textContent = desk ? "Print sticker" : "More";
@@ -98,6 +99,22 @@ const App = (() => {
     document.getElementById("more-tile-reports")?.classList.toggle("hidden", !isAdmin());
     document.getElementById("more-tile-setup")?.classList.toggle("hidden", !canRead("setup"));
     document.getElementById("more-tile-safety")?.classList.toggle("hidden", !(canRead("recycle") || isAdmin()));
+    document.getElementById("more-tile-whatsapp")?.classList.toggle("hidden", desk || lookup || taker);
+    document.getElementById("more-tile-sticker")?.classList.toggle("hidden", lookup || taker);
+    let stickerOut = document.getElementById("sticker-desk-logout");
+    if (desk) {
+      if (!stickerOut) {
+        stickerOut = document.createElement("button");
+        stickerOut.id = "sticker-desk-logout";
+        stickerOut.type = "button";
+        stickerOut.className = "btn btn-secondary";
+        stickerOut.textContent = "Logout";
+        stickerOut.style.margin = "8px 16px 0";
+        stickerOut.onclick = () => logout();
+        document.getElementById("more-hub")?.prepend(stickerOut);
+      }
+      stickerOut.classList.remove("hidden");
+    } else if (stickerOut) stickerOut.classList.add("hidden");
     document.getElementById("more-safety-recycle")?.classList.toggle("hidden", !canRead("recycle"));
     document.getElementById("more-safety-backup")?.classList.toggle("hidden", !isAdmin());
     // Legacy hidden nav ids — keep in sync for any leftover callers

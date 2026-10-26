@@ -55,7 +55,7 @@ from app.services.catalog_identity import find_active_sku_year, sku_year_label, 
 from app.services.storage import image_key, presigned_urls, storage_configured, upload_bytes, vendor_folder_slug
 
 
-MAX_ALTERNATIVES = 3
+MAX_ALTERNATIVES = 12
 DEFAULT_YEAR_GROUP = "2026-27"
 
 from app.routers.catalog.router import router

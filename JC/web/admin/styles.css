@@ -3701,7 +3701,10 @@ table.data tr.filter-row th { padding: 6px 8px; background: #fff; border-bottom:
   .wa-threads, .wa-chat { min-height: 40vh; }
 }
 
-#app.order-taker #sidebar { display: none; }
+#app.order-taker #sidebar, #app.sticker-only #sidebar { display: none; }
+#app.sticker-only #main,
+#app.sticker-only #main.shift-expanded,
+#app.sticker-only #main.shift-collapsed { margin-left: 0; padding: 12px; }
 #app.order-taker #main,
 #app.order-taker #main.shift-expanded,
 #app.order-taker #main.shift-collapsed { margin-left: 0; padding: 12px 12px 32px; }

@@ -13,7 +13,7 @@ const Catalog = (() => {
   let catalogVendors = [];
   let wizardDupes = [];
 
-  const MAX_ALTERNATIVES = 3;
+  const MAX_ALTERNATIVES = 12;
   const STEP_LABELS = ["Product", "Price", "Create"];
 
   let _rowCounter = 0;

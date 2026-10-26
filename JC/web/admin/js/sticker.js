@@ -3,6 +3,17 @@ const Sticker = (() => {
   let timer = null;
   let picked = null;
   let lastQuery = "";
+  let step = "number";
+  let carry = "bus";
+  let printing = false;
+
+  function isDesk() {
+    if ((sessionStorage.getItem("jc_auth_mode") || "") !== "staff") return false;
+    let user = null;
+    try { user = JSON.parse(sessionStorage.getItem("jc_staff_user") || "null"); } catch (_) { user = null; }
+    const perms = (user && user.permissions) || [];
+    return perms.length === 1 && perms[0] === "stickers.print";
+  }
 
   function apiBase() {
     const saved = localStorage.getItem("jc_api");
@@ -46,12 +57,21 @@ const Sticker = (() => {
         </div>
         <div class="modal-body">
           <label class="label">Party number
-            <input id="sticker-q" class="input" type="search" inputmode="numeric" autocomplete="off" placeholder="Party number only" oninput="Sticker.onType(this.value)" />
+            <input id="sticker-q" class="input" type="search" inputmode="numeric" autocomplete="off" placeholder="Party number only" oninput="Sticker.onType(this.value)" onkeydown="Sticker.onKey(event)" />
           </label>
           <div id="sticker-results"></div>
           <p id="sticker-picked" class="fin-panel-sub" style="margin:12px 0 0;"></p>
-          <h4 style="margin:18px 0 0; font-size:14px;">Prints given</h4>
-          <div id="sticker-log"></div>
+          <div id="sticker-mode" class="hidden" style="margin-top:16px;">
+            <p style="margin:0 0 8px;font-weight:700;">Bus or transport. Enter prints.</p>
+            <div style="display:flex;gap:12px;">
+              <button type="button" id="sticker-bus" class="btn btn-secondary" style="flex:1;font-size:22px;font-weight:800;padding:16px;" onclick="Sticker.choose('bus')">Bus</button>
+              <button type="button" id="sticker-transport" class="btn btn-secondary" style="flex:1;font-size:22px;font-weight:800;padding:16px;" onclick="Sticker.choose('transport')">Transport</button>
+            </div>
+          </div>
+          <div id="sticker-log-wrap">
+            <h4 style="margin:18px 0 0; font-size:14px;">Prints given</h4>
+            <div id="sticker-log"></div>
+          </div>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" onclick="App.logout()">Logout</button>
@@ -65,26 +85,84 @@ const Sticker = (() => {
 
   function open() {
     ensureModal();
-    picked = null;
-    lastQuery = "";
     const modal = document.getElementById("sticker-modal");
     modal.classList.remove("hidden");
+    document.getElementById("sticker-log-wrap")?.classList.toggle("hidden", isDesk());
+    document.getElementById("sticker-print")?.classList.toggle("hidden", isDesk());
+    resetReady();
+    if (!isDesk()) loadPrints("");
+  }
+
+  function resetReady() {
+    picked = null;
+    lastQuery = "";
+    step = "number";
+    carry = "bus";
     const input = document.getElementById("sticker-q");
     if (input) { input.value = ""; input.focus(); }
     const box = document.getElementById("sticker-results");
-    if (box) box.innerHTML = "";
+    if (box) { box.innerHTML = ""; box._rows = []; }
     const note = document.getElementById("sticker-picked");
-    if (note) note.textContent = "Type the party number. Pick the party. Then print.";
+    if (note) note.textContent = isDesk() ? "Type the party number and press Enter." : "Type the party number. Pick the party. Then print.";
     const btn = document.getElementById("sticker-print");
     if (btn) btn.disabled = true;
-    loadPrints("");
+    paintCarry();
   }
 
   function close() {
     document.getElementById("sticker-modal")?.classList.add("hidden");
   }
 
+  function onKey(event) {
+    if (!isDesk() || !event) return;
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      if (step !== "mode") return;
+      event.preventDefault();
+      carry = event.key === "ArrowRight" ? "transport" : "bus";
+      paintCarry();
+      return;
+    }
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    if (step === "mode" && picked) {
+      print();
+      return;
+    }
+    const q = String(document.getElementById("sticker-q")?.value || "").trim();
+    if (/^\d+$/.test(q)) search(q);
+  }
+
+  function choose(next) {
+    if (!isDesk() || !picked) return;
+    carry = next === "transport" ? "transport" : "bus";
+    paintCarry();
+    print();
+  }
+
+  function paintCarry() {
+    const box = document.getElementById("sticker-mode");
+    const show = isDesk() && step === "mode" && picked;
+    if (box) box.classList.toggle("hidden", !show);
+    const bus = document.getElementById("sticker-bus");
+    const transport = document.getElementById("sticker-transport");
+    if (bus) bus.classList.toggle("btn-primary", carry === "bus");
+    if (bus) bus.classList.toggle("btn-secondary", carry !== "bus");
+    if (transport) transport.classList.toggle("btn-primary", carry === "transport");
+    if (transport) transport.classList.toggle("btn-secondary", carry !== "transport");
+  }
+
   function onType(value) {
+    if (isDesk()) {
+      picked = null;
+      step = "number";
+      carry = "bus";
+      const box = document.getElementById("sticker-results");
+      if (box) box.innerHTML = "";
+      const note = document.getElementById("sticker-picked");
+      if (note && String(value || "").trim()) note.textContent = "";
+      paintCarry();
+      return;
+    }
     const q = String(value || "").trim();
     picked = null;
     const btn = document.getElementById("sticker-print");
@@ -129,6 +207,12 @@ const Sticker = (() => {
       box.innerHTML = "";
       box._rows = exact;
       pick(0);
+      if (isDesk()) {
+        step = "mode";
+        carry = "bus";
+        paintCarry();
+        document.getElementById("sticker-q")?.focus();
+      }
       return;
     } catch (e) {
       box.innerHTML = `<p class="fin-panel-sub" style="margin:8px 0 0;">${esc(e.message || "Search failed")}</p>`;
@@ -198,6 +282,7 @@ const Sticker = (() => {
         .name { font-size: 28mm; font-weight: 700; margin: 0; line-height: 1.05; color: #111; }
         .city { font-size: 18mm; margin: 0; line-height: 1.1; }
         .phone { font-size: 16mm; margin: 0; letter-spacing: 0.4mm; }
+        .carry { font-size: 16mm; font-weight: 800; margin: 0; letter-spacing: 1mm; font-family: Helvetica, Arial, sans-serif; }
         .time {
           position: absolute;
           right: 8mm;
@@ -212,6 +297,7 @@ const Sticker = (() => {
         <p class="name" lang="hi">${esc(label.name_hi || "")}</p>
         <p class="city" lang="hi">${esc(label.city_hi || "")}</p>
         <p class="phone">${esc(label.phone || "")}</p>
+        ${label.carry ? `<p class="carry">${esc(label.carry)}</p>` : ""}
         <p class="time">${esc(label.printed_label || "")}</p>
         </div>
       </body></html>`;
@@ -232,28 +318,40 @@ const Sticker = (() => {
   }
 
   function print() {
-    if (!picked) return;
+    if (!picked || printing) return;
+    const partyId = picked.id;
+    const desk = isDesk();
+    const printedCarry = carry === "transport" ? "TRANSPORT" : "BUS";
+    printing = true;
     const note = document.getElementById("sticker-picked");
     const w = window.open("", "_blank");
     if (!w) {
+      printing = false;
       if (note) note.textContent = "Allow pop-ups to print.";
       return;
     }
-    fetch(`${apiBase()}/customers/${picked.id}/sticker-prints`, { method: "POST", headers: headers() })
+    fetch(`${apiBase()}/customers/${partyId}/sticker-prints`, { method: "POST", headers: headers() })
       .then((res) => {
         if (!res.ok) throw new Error("Could not record the print");
         return res.json();
       })
       .then((label) => {
-        writeSheet(w, label);
-        const q = document.getElementById("sticker-q");
-        loadPrints(q ? q.value.trim() : "");
+        const printed = Object.assign({}, label);
+        if (desk) printed.carry = printedCarry;
+        writeSheet(w, printed);
+        printing = false;
+        if (desk) resetReady();
+        else {
+          const q = document.getElementById("sticker-q");
+          loadPrints(q ? q.value.trim() : "");
+        }
       })
       .catch((e) => {
+        printing = false;
         try { w.close(); } catch (err) { /* window already gone */ }
         if (note) note.textContent = e.message || "Could not record the print";
       });
   }
 
-  return { open, close, onType, pick, print };
+  return { open, close, onType, onKey, choose, pick, print };
 })();

@@ -22,12 +22,15 @@ const Reports = (() => {
   let journalReportKind = "all";
   let stockYear = "";
   let stockYears = null;
+  let printCarry = "";
+  let printOpen = {};
 
   const MODES = [
     { id: "today", label: "Today" },
     { id: "books", label: "Books" },
     { id: "stock", label: "Stock" },
     { id: "tax", label: "Tax" },
+    { id: "prints", label: "Print report" },
   ];
 
   const CHIPS = {
@@ -63,6 +66,9 @@ const Reports = (() => {
       { id: "low", label: "Low stock" },
       { id: "returns", label: "Returns" },
       { id: "debit-notes", label: "Debit notes" },
+    ],
+    prints: [
+      { id: "sticker-prints", label: "Prints" },
     ],
     tax: [
       { id: "transport", label: "Transport" },

@@ -190,6 +190,59 @@ def test_direct_refuses_an_item_that_is_already_booked(db):
     assert "already booked" in str(caught.value.detail)
 
 
+def test_bill_can_ship_more_than_the_open_order(db):
+    customer = _customer(db)
+    booked = _product(db, "P-BOOKED", 20)
+    placement = create_received_placement(
+        db, customer_id=customer.id, customer_name=customer.business_name,
+        lines=[{"catalog_product_id": booked.id, "quantity": 2}],
+    )
+    confirm_received_order(db, customer.id)
+    before = db.query(StockBalance).filter(StockBalance.catalog_product_id == booked.id).one().quantity_on_hand
+    bill = _bill(
+        db, customer,
+        [{"catalog_product_id": booked.id, "quantity_to_ship": 5}],
+        placement_ids=[placement.id],
+    )
+    db.flush()
+    line = db.query(CustomerBillLine).filter(CustomerBillLine.bill_id == bill.id).one()
+    assert line.quantity_shipped == 5
+    open_row = db.query(CustomerOpenLine).filter(CustomerOpenLine.catalog_product_id == booked.id).one()
+    assert open_row.quantity_open == 0
+    assert open_row.quantity_billed == 2
+    assert db.query(StockBalance).filter(StockBalance.catalog_product_id == booked.id).one().quantity_on_hand == before - 3
+
+
+def test_same_day_bill_warns_before_a_second_bill(db):
+    customer = _customer(db)
+    prod = _product(db, "P-DIRECT", 10)
+    lines = [{"catalog_product_id": prod.id, "quantity_to_ship": 2, "direct": True}]
+    _bill(db, customer, lines)
+    with pytest.raises(HTTPException) as caught:
+        process_customer_bill(
+            db,
+            customer_id=customer.id,
+            customer_name=customer.business_name,
+            lines_in=lines,
+            overall_discount_percent=None,
+            gst_enabled=False,
+            gst_rate_percent=Decimal("0"),
+            freight_agent_id=None,
+            freight_charges=None,
+            packaging_charges=None,
+            additional_charges=None,
+            bill_series_id=_series(db).id,
+            narration=None,
+            actor_type="admin",
+            actor_id=1,
+            actor_name="Test",
+            transport_mode="self_pickup",
+            confirm_duplicate=False,
+        )
+    assert caught.value.status_code == 409
+    assert caught.value.detail["matches"][0]["same_items"] == ["P-DIRECT"]
+
+
 def test_direct_bill_can_take_stock_below_zero(db):
     customer = _customer(db)
     prod = _product(db, "P-DIRECT", 1)

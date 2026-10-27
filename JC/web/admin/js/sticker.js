@@ -57,7 +57,7 @@ const Sticker = (() => {
         </div>
         <div class="modal-body">
           <label class="label">Party number
-            <input id="sticker-q" class="input" type="search" inputmode="numeric" autocomplete="off" placeholder="Party number only" oninput="Sticker.onType(this.value)" onkeydown="Sticker.onKey(event)" />
+            <input id="sticker-q" class="input" type="search" inputmode="numeric" autocomplete="off" placeholder="Party number or name" oninput="Sticker.onType(this.value)" onkeydown="Sticker.onKey(event)" />
           </label>
           <div id="sticker-results"></div>
           <p id="sticker-picked" class="fin-panel-sub" style="margin:12px 0 0;"></p>
@@ -103,7 +103,7 @@ const Sticker = (() => {
     const box = document.getElementById("sticker-results");
     if (box) { box.innerHTML = ""; box._rows = []; }
     const note = document.getElementById("sticker-picked");
-    if (note) note.textContent = isDesk() ? "Type the party number and press Enter." : "Type the party number. Pick the party. Then print.";
+    if (note) note.textContent = isDesk() ? "Type the party number or name and press Enter." : "Type the party number. Pick the party. Then print.";
     const btn = document.getElementById("sticker-print");
     if (btn) btn.disabled = true;
     paintCarry();
@@ -115,40 +115,34 @@ const Sticker = (() => {
 
   function onKey(event) {
     if (!isDesk() || !event) return;
-    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-      if (step !== "mode") return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      const box = document.getElementById("sticker-results");
+      const rows = box && box._rows ? box._rows : [];
+      if (step !== "pick" || rows.length < 2) return;
       event.preventDefault();
-      carry = event.key === "ArrowRight" ? "transport" : "bus";
-      paintCarry();
+      const at = rows.findIndex((r) => picked && r.id === picked.id);
+      const next = event.key === "ArrowDown" ? (at + 1) % rows.length : (at - 1 + rows.length) % rows.length;
+      pick(next);
       return;
     }
     if (event.key !== "Enter") return;
     event.preventDefault();
-    if (step === "mode" && picked) {
+    if (step === "pick" && picked) {
       print();
       return;
     }
     const q = String(document.getElementById("sticker-q")?.value || "").trim();
-    if (/^\d+$/.test(q)) search(q);
+    if (q) search(q);
   }
 
-  function choose(next) {
-    if (!isDesk() || !picked) return;
-    carry = next === "transport" ? "transport" : "bus";
-    paintCarry();
+  function choose(index) {
+    if (!isDesk()) return;
+    pick(index);
     print();
   }
 
   function paintCarry() {
-    const box = document.getElementById("sticker-mode");
-    const show = isDesk() && step === "mode" && picked;
-    if (box) box.classList.toggle("hidden", !show);
-    const bus = document.getElementById("sticker-bus");
-    const transport = document.getElementById("sticker-transport");
-    if (bus) bus.classList.toggle("btn-primary", carry === "bus");
-    if (bus) bus.classList.toggle("btn-secondary", carry !== "bus");
-    if (transport) transport.classList.toggle("btn-primary", carry === "transport");
-    if (transport) transport.classList.toggle("btn-secondary", carry !== "transport");
+    document.getElementById("sticker-mode")?.classList.add("hidden");
   }
 
   function onType(value) {
@@ -195,24 +189,33 @@ const Sticker = (() => {
       if (lastQuery !== q) return;
       const list = Array.isArray(rows) ? rows : [];
       if (!list.length) {
-        box.innerHTML = `<p class="fin-panel-sub" style="margin:8px 0 0;">No party for that number.</p>`;
+        box.innerHTML = `<p class="fin-panel-sub" style="margin:8px 0 0;">No party for that.</p>`;
+        box._rows = [];
         return;
       }
-      const exact = list.filter((r) => String(r.party_number) === String(q));
-      if (exact.length !== 1) {
+      const number = /^\d+$/.test(q);
+      const exact = number ? list.filter((r) => String(r.party_number) === String(q)) : list;
+      if (number && exact.length !== 1) {
         box.innerHTML = `<p class="fin-panel-sub" style="margin:8px 0 0;">No party for that number.</p>`;
         box._rows = [];
         return;
       }
-      box.innerHTML = "";
       box._rows = exact;
-      pick(0);
-      if (isDesk()) {
-        step = "mode";
-        carry = "bus";
-        paintCarry();
-        document.getElementById("sticker-q")?.focus();
+      if (isDesk() && exact.length === 1) {
+        box.innerHTML = "";
+        pick(0);
+        print();
+        return;
       }
+      if (isDesk()) {
+        step = "pick";
+        box.innerHTML = exact.map((r, i) => `
+          <button type="button" class="btn btn-secondary sticker-hit" style="display:block;width:100%;margin-top:8px;text-align:left;font-size:18px;font-weight:800;" onclick="Sticker.choose(${i})">${esc(r.business_name || "Party")} · ${esc(r.party_number ?? "")}</button>`).join("");
+        pick(0);
+        return;
+      }
+      box.innerHTML = "";
+      pick(0);
       return;
     } catch (e) {
       box.innerHTML = `<p class="fin-panel-sub" style="margin:8px 0 0;">${esc(e.message || "Search failed")}</p>`;
@@ -321,7 +324,6 @@ const Sticker = (() => {
     if (!picked || printing) return;
     const partyId = picked.id;
     const desk = isDesk();
-    const printedCarry = carry === "transport" ? "TRANSPORT" : "BUS";
     printing = true;
     const note = document.getElementById("sticker-picked");
     const w = window.open("", "_blank");
@@ -337,7 +339,7 @@ const Sticker = (() => {
       })
       .then((label) => {
         const printed = Object.assign({}, label);
-        if (desk) printed.carry = printedCarry;
+        if (desk && label.carry_label) printed.carry = label.carry_label;
         writeSheet(w, printed);
         printing = false;
         if (desk) resetReady();

@@ -65,6 +65,7 @@ def process_customer_bill(
     freight_charges_raw: object = None,
     placement_ids: Optional[list[int]] = None,
     on_commission_agent: Optional[bool] = None,
+    confirm_duplicate: bool = True,
 ) -> CustomerBill:
     ship_lines = [ln for ln in lines_in if int(ln.get("quantity_to_ship") or 0) > 0]
     if not ship_lines:
@@ -97,6 +98,7 @@ def process_customer_bill(
     allowed = _unbilled_qty_on_placements(db, customer_id, selected_ids) if selected_ids else None
 
     direct_ids: set[int] = set()
+    overflow: dict[int, int] = {}
     for ln in ship_lines:
         cid = int(ln["catalog_product_id"])
         qty = int(ln["quantity_to_ship"])
@@ -129,10 +131,14 @@ def process_customer_bill(
                     item_overrides.append(ov)
             continue
         row = open_map.get(cid)
-        if not row or qty > row.quantity_open:
+        open_qty = int(row.quantity_open or 0) if row else 0
+        cap = open_qty
+        if allowed is not None:
+            cap = min(cap, int(allowed.get(cid, 0)))
+        if not row or cap <= 0:
             raise HTTPException(400, f"cannot ship more than open qty for product {cid}")
-        if allowed is not None and qty > allowed.get(cid, 0):
-            raise HTTPException(400, f"cannot ship more than the selected orders for product {cid}")
+        if qty > cap:
+            overflow[cid] = qty - cap
         bill_items.append(
             {
                 "catalog_product_id": cid,
@@ -177,9 +183,21 @@ def process_customer_bill(
 
     from app.services.biz_date import resolve_biz_dt, resolve_invoice_date
 
+    invoice_day = resolve_invoice_date(bill_date)
+    if not confirm_duplicate:
+        from app.services.bill_duplicates import same_day_bill_clashes
+
+        clashes = same_day_bill_clashes(
+            db,
+            customer_id=customer_id,
+            lines=bill_items,
+            grand_total=grand_check,
+            billed_on=invoice_day,
+        )
+        if clashes:
+            raise HTTPException(409, {"message": "This could be a duplicate entry.", "matches": clashes})
     bill_number = resolve_bill_number(db, bill_series_id, bill_number)
     entered_at = datetime.now(timezone.utc)
-    invoice_day = resolve_invoice_date(bill_date)
     # bill.created_at / placement.placed_at stay real "now" on purpose — the Billed hub
     # tab's Today/Past scoping keys off these (same rule as backdated customer orders:
     # a backdated entry lands in Past, it doesn't masquerade as Today). The AR *ledger*
@@ -301,11 +319,37 @@ def process_customer_bill(
                 only_addon_ids=kept,
             )
         elif open_row:
-            open_row.quantity_open = max(0, open_row.quantity_open - qty)
-            open_row.quantity_billed += qty
+            extra = int(overflow.get(cid) or 0)
+            taken = qty - extra
+            open_row.quantity_open = max(0, open_row.quantity_open - taken)
+            open_row.quantity_billed += taken
             if open_row.quantity_open <= 0:
                 open_row.status = "open"
-            billed_qty[cid] = billed_qty.get(cid, 0) + qty
+            billed_qty[cid] = billed_qty.get(cid, 0) + taken
+            if extra:
+                add_stock(
+                    db,
+                    catalog_product_id=cid,
+                    our_product_id=sku,
+                    quantity=-extra,
+                    entry_type="sold",
+                    reference_type="customer_bill",
+                    reference_id=bill.id,
+                    party=customer_name,
+                    notes=f"Extra on bill {bill_number}",
+                )
+                from app.services.addon_stock import deduct_addons_for_product
+                kept = [int(a.get("addon_product_id")) for a in (addon_map.get(cid) or []) if a.get("addon_product_id")]
+                deduct_addons_for_product(
+                    db,
+                    catalog_product_id=cid,
+                    units=extra,
+                    reference_type="customer_bill",
+                    reference_id=bill.id,
+                    party=customer_name,
+                    note=f"Extra on bill {bill_number}",
+                    only_addon_ids=kept,
+                )
 
     if selected_ids:
         _apply_billed_qtys_to_placements(db, customer_id, billed_qty, selected_ids)

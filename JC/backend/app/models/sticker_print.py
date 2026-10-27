@@ -26,3 +26,4 @@ class StickerPrint(Base):
     phone: Mapped[str] = mapped_column(String(32), nullable=False, default="", server_default="")
     printed_by: Mapped[str] = mapped_column(String(200), nullable=False, default="", server_default="")
     printed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    carry: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)

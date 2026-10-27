@@ -938,7 +938,7 @@ const CustomerOrders = (() => {
         const receiptBit = b.transport_receipt_number ? ` · Rcpt ${ctx.esc(b.transport_receipt_number)}` : "";
         return HubUI.partyCard({
           title: b.display_name || `Bill ${b.bill_number}`,
-          meta: `${fmtPrice(b.grand_total)} · ${ctx.fmtDay(b.display_date || b.bill_date)}${modeLbl ? ` · ${modeLbl}` : ""}${chargeBit}${receiptBit}${(b.additional_charges || []).filter(c => Number(c.amount) > 0).map(c => ` · ${ctx.esc(c.name)} ${fmtPrice(c.amount)}`).join("")}${b.status && b.status !== "open" ? ` · ${ctx.esc(b.status)}` : ""}${b.narration ? `<div style="margin-top:2px;">${ctx.esc(b.narration)}</div>` : ""}`,
+          meta: `${fmtPrice(b.grand_total)} · ${ctx.fmtDate(b.created_at || b.display_date || b.bill_date)}${modeLbl ? ` · ${modeLbl}` : ""}${chargeBit}${receiptBit}${(b.additional_charges || []).filter(c => Number(c.amount) > 0).map(c => ` · ${ctx.esc(c.name)} ${fmtPrice(c.amount)}`).join("")}${b.status && b.status !== "open" ? ` · ${ctx.esc(b.status)}` : ""}${b.narration ? `<div style="margin-top:2px;">${ctx.esc(b.narration)}</div>` : ""}`,
           pillHtml: "",
           primaryLabel: canEditBill ? "Edit" : "Print",
           primaryOnclick: canEditBill
@@ -1494,6 +1494,8 @@ const CustomerOrders = (() => {
   }
 
 // @slice 05-bill
+  let billConfirmDuplicate = false;
+
   function buildProcessBody() {
     const discOn = discountEnabled;
     const lines = processLines
@@ -1528,6 +1530,7 @@ const CustomerOrders = (() => {
       narration: narration.trim() || null,
       additional_charges: extra,
       force_credit_override: !!forceCreditOverride,
+      confirm_duplicate: !!billConfirmDuplicate,
     };
     if (!editBillId) body.bill_series_id = Number(billSeriesId);
     if (discOn && useOverallDiscount && overallDiscount.trim()) {
@@ -1941,7 +1944,6 @@ const CustomerOrders = (() => {
       return;
     }
     let q = Math.max(0, parseInt(val, 10) || 0);
-    if (!ln.direct && !editBillId) q = Math.min(Number(ln.quantity_open) || 0, q);
     ln.quantity_to_ship = q;
     renderWizardTotalsBar();
   }
@@ -2487,11 +2489,52 @@ const CustomerOrders = (() => {
       loadList(true);
     } catch (e) {
       processBusy = false;
+      const matches = e.status === 409 && e.detail && e.detail.matches;
+      if (matches) {
+        showBillDuplicate(e.detail);
+        return;
+      }
+      billConfirmDuplicate = false;
       ctx.toast(e.message, "error");
       renderProcessWizard();
     } finally {
       processBusy = false;
     }
+  }
+
+  function showBillDuplicate(detail) {
+    const body = document.getElementById("co-wizard-body");
+    const footer = document.getElementById("co-wizard-footer");
+    const rows = (detail.matches || []).map((m) => {
+      const bits = [];
+      if (m.same_items && m.same_items.length) bits.push(`same item ${m.same_items.join(", ")}`);
+      if (m.same_amount) bits.push(`same amount ₹${m.total}`);
+      return `<li>${ctx.esc(m.bill_number || "Bill")}: ${ctx.esc(bits.join(" · "))}</li>`;
+    }).join("");
+    if (body) {
+      body.innerHTML = `<div style="border:2px solid #b45309;background:#fffbeb;border-radius:12px;padding:16px;">
+        <strong style="font-size:18px;">This could be a duplicate entry.</strong>
+        <p style="margin:8px 0;">Same date, same party. The following are the same:</p>
+        <ul style="margin:0 0 8px 18px;">${rows}</ul>
+        <p style="margin:0;">Do you want to proceed?</p>
+      </div>`;
+    }
+    if (footer) {
+      footer.innerHTML = `
+        <button type="button" class="btn btn-secondary" onclick="CustomerOrders.backFromBillDuplicate()">Go back</button>
+        <button type="button" class="btn btn-primary" onclick="CustomerOrders.proceedBillDuplicate()">Proceed</button>`;
+    }
+  }
+
+  function backFromBillDuplicate() {
+    billConfirmDuplicate = false;
+    processBusy = false;
+    renderProcessWizard();
+  }
+
+  function proceedBillDuplicate() {
+    billConfirmDuplicate = true;
+    submitProcess();
   }
 
   function showBillReady(res) {
@@ -3333,7 +3376,7 @@ const CustomerOrders = (() => {
     setGst, setGstRate, setBillSeries, setNarration, setEditBillNumber, setBillDate, setAddCharge, addChargeRow,
     setOfflinePlacedOn,
     setForceCredit, setBillOnAgent, printDayDuplicates,
-    processNext, processBack, submitProcess, toggleBillOrder, toggleAllBillOrders,
+    processNext, processBack, submitProcess, backFromBillDuplicate, proceedBillDuplicate, toggleBillOrder, toggleAllBillOrders,
     confirmOrder, _doConfirm, cancelOpenLine, cancelPlacement, cancelCustomerOpen, cancelEntireReceived, cancelAllOpen, editOpenLine, editReceivedLine, deleteReceivedLine, openEditPlacement, closeBillLine, cancelBill, voidBill, voidPlacement, openBillDoc, shareBillWhatsApp, uploadBillQr, resetBillQr,
     openOfflineWizard, closeOfflineWizard, renderOfflineWizard,
     pickOfflineCustomer, onOfflineCustomerSearch, setOfflineNotes, previewOrder, backFromOrderPreview,

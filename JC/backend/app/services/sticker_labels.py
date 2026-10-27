@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import String, cast, or_
 from sqlalchemy.orm import Session
 
+from app.models.customer_bill import CustomerBill
 from app.models.sticker_label import StickerLabel
 from app.models.sticker_print import StickerPrint
 from app.services.sticker_hindi import hindi_city, hindi_name
@@ -51,7 +52,24 @@ def english_print_stamp(dt: datetime) -> str:
     return f"{local.day} {local.strftime('%b')} {local.year}, {hour}:{local.minute:02d} {ampm}"
 
 
+def latest_bill_carry(db: Session, customer_id: int) -> str:
+    """Bus or transport from the party's newest live bill. Blank if neither."""
+    bill = (
+        db.query(CustomerBill)
+        .filter(
+            CustomerBill.customer_id == customer_id,
+            CustomerBill.deleted_at.is_(None),
+            CustomerBill.cancelled_at.is_(None),
+        )
+        .order_by(CustomerBill.created_at.desc(), CustomerBill.id.desc())
+        .first()
+    )
+    mode = (bill.transport_mode or "").strip().lower() if bill else ""
+    return mode if mode in ("bus", "transport") else ""
+
+
 def print_payload(row: StickerPrint) -> dict:
+    carry = (row.carry or "").strip().lower()
     return {
         "id": row.id,
         "customer_id": row.customer_id,
@@ -64,11 +82,14 @@ def print_payload(row: StickerPrint) -> dict:
         "printed_by": row.printed_by,
         "printed_at": row.printed_at.isoformat() if row.printed_at else None,
         "printed_label": english_print_stamp(row.printed_at) if row.printed_at else "",
+        "carry": carry,
+        "carry_label": "BUS" if carry == "bus" else ("TRANSPORT" if carry == "transport" else ""),
     }
 
 
 def record_sticker_print(db: Session, customer, city_name: str | None, printed_by: str) -> StickerPrint:
     label = label_for_customer(db, customer, city_name)
+    carry = latest_bill_carry(db, customer.id)
     row = StickerPrint(
         customer_id=customer.id,
         party_number=customer.party_number,
@@ -79,11 +100,39 @@ def record_sticker_print(db: Session, customer, city_name: str | None, printed_b
         phone=customer.phone or "",
         printed_by=(printed_by or "").strip(),
         printed_at=datetime.now(timezone.utc),
+        carry=carry or None,
     )
     db.add(row)
     db.commit()
     db.refresh(row)
     return row
+
+
+def list_print_report(
+    db: Session,
+    *,
+    q: str | None = None,
+    carry: str | None = None,
+    start=None,
+    end=None,
+) -> list[StickerPrint]:
+    query = db.query(StickerPrint).order_by(StickerPrint.printed_at.desc(), StickerPrint.id.desc())
+    if start is not None:
+        query = query.filter(StickerPrint.printed_at >= start)
+    if end is not None:
+        query = query.filter(StickerPrint.printed_at <= end)
+    mode = (carry or "").strip().lower()
+    if mode in ("bus", "transport"):
+        query = query.filter(StickerPrint.carry == mode)
+    text = (q or "").strip()
+    if text:
+        like = f"%{text}%"
+        query = query.filter(or_(
+            StickerPrint.business_name.ilike(like),
+            cast(StickerPrint.party_number, String).ilike(like),
+            StickerPrint.city_name.ilike(like),
+        ))
+    return query.limit(500).all()
 
 
 def list_sticker_prints(db: Session, q: str | None, limit: int = 40) -> list[StickerPrint]:

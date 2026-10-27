@@ -16,6 +16,23 @@ from app.services.ap_ledger import build_ap_ledger, vendor_ap_totals, _vendor_la
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 
+@router.get("/sticker-prints")
+def sticker_prints_report(
+    q: str = Query("", max_length=120),
+    carry: str = Query("", max_length=20),
+    from_date: Optional[date] = Query(None),
+    to_date: Optional[date] = Query(None),
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    from app.services.biz_date import ist_range_bounds_utc
+    from app.services.sticker_labels import list_print_report, print_payload
+
+    start, end = ist_range_bounds_utc(from_date, to_date)
+    rows = list_print_report(db, q=q, carry=carry, start=start, end=end)
+    return {"items": [print_payload(row) for row in rows]}
+
+
 @router.get("/day-bills")
 def day_bills_report(
     day: date = Query(..., description="Bill date, YYYY-MM-DD"),

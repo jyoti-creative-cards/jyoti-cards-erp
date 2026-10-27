@@ -130,8 +130,31 @@ def test_sticker_search_matches_party_number_only(db):
     db.commit()
     assert [c.party_number for c in search_sticker_parties(db, "3")] == [3]
     assert [c.party_number for c in search_sticker_parties(db, "30")] == [30]
-    assert search_sticker_parties(db, "shop") == []
+    assert [c.party_number for c in search_sticker_parties(db, "3 Shop")] == [14]
+    assert [c.party_number for c in search_sticker_parties(db, "shop")] == [14]
     assert search_sticker_parties(db, "3000000003") == []
+
+
+def test_sticker_print_copies_bus_from_the_latest_bill(db):
+    from decimal import Decimal
+    from app.models.customer_bill import CustomerBill
+
+    customer = Customer(business_name="Bus Party", phone="9100000099", password_hash="x", party_number=77)
+    db.add(customer)
+    db.flush()
+    db.add(CustomerBill(
+        customer_id=customer.id,
+        bill_number="B77",
+        subtotal_inclusive=Decimal("10"),
+        grand_total=Decimal("10"),
+        created_by_type="admin",
+        created_by_name="Test",
+        transport_mode="bus",
+    ))
+    db.commit()
+    saved = post_customer_sticker_print(customer.id, db=db, auth=AUTH)
+    assert saved["carry"] == "bus"
+    assert saved["carry_label"] == "BUS"
 
 
 def test_staff_signs_in_by_name_for_sticker_only(db):

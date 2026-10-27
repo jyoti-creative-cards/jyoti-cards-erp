@@ -22,12 +22,15 @@ const Reports = (() => {
   let journalReportKind = "all";
   let stockYear = "";
   let stockYears = null;
+  let printCarry = "";
+  let printOpen = {};
 
   const MODES = [
     { id: "today", label: "Today" },
     { id: "books", label: "Books" },
     { id: "stock", label: "Stock" },
     { id: "tax", label: "Tax" },
+    { id: "prints", label: "Print report" },
   ];
 
   const CHIPS = {
@@ -63,6 +66,9 @@ const Reports = (() => {
       { id: "low", label: "Low stock" },
       { id: "returns", label: "Returns" },
       { id: "debit-notes", label: "Debit notes" },
+    ],
+    prints: [
+      { id: "sticker-prints", label: "Prints" },
     ],
     tax: [
       { id: "transport", label: "Transport" },
@@ -404,9 +410,10 @@ const Reports = (() => {
     if (!slot) return;
     const caret = (typeof OrdersUI !== "undefined" && OrdersUI.captureSearchCaret)
       ? OrdersUI.captureSearchCaret("reports-hub-search") : null;
-    const searchable = ["sales", "sales-book", "day-bills", "transport", "receipt-book", "daybook", "purchases", "payments", "ledgers", "ageing", "customer-sales", "vendor-purchases", "item-sales", "item-purchases", "stock-wise", "item-outward", "stock-journal", "valuation", "movers", "low", "returns", "debit-notes", "gst-sales", "gst-purchases", "cashbook", "expense-cat"].includes(chip);
+    const searchable = ["sales", "sales-book", "day-bills", "transport", "receipt-book", "daybook", "purchases", "payments", "ledgers", "ageing", "customer-sales", "vendor-purchases", "item-sales", "item-purchases", "stock-wise", "item-outward", "stock-journal", "valuation", "movers", "low", "returns", "debit-notes", "gst-sales", "gst-purchases", "cashbook", "expense-cat", "sticker-prints"].includes(chip);
     if (!searchable) { slot.innerHTML = ""; return; }
-    const ph = chip === "day-bills" ? "Search bill, party, city…"
+    const ph = chip === "sticker-prints" ? "Search party name or number…"
+      : chip === "day-bills" ? "Search bill, party, city…"
       : chip === "ledgers"
       ? (ledgerKind === "staff" ? "Search staff…" : ledgerKind === "products" ? "Search products…" : ledgerKind === "customers" || ledgerKind === "vendors" ? "Search name, person, city…" : "Search…")
       : chip.includes("item") || chip === "stock-wise" || chip === "valuation" || chip === "movers" || chip === "low" ? "Search product…"
@@ -480,6 +487,62 @@ const Reports = (() => {
     </tbody></table></div>`;
   }
 
+  function setPrintCarry(mode) {
+    printCarry = mode === "bus" || mode === "transport" ? mode : "";
+    loadChip();
+  }
+
+  function togglePrintGroup(key) {
+    printOpen[key] = !printOpen[key];
+    loadChip();
+  }
+
+  async function renderPrintReport(body) {
+    const params = new URLSearchParams();
+    if (fromDate) params.set("from_date", fromDate);
+    if (toDate) params.set("to_date", toDate);
+    if (hubSearch.trim()) params.set("q", hubSearch.trim());
+    if (printCarry) params.set("carry", printCarry);
+    const data = await ctx.api(`/reports/sticker-prints?${params.toString()}`, {}, 0);
+    const items = data.items || [];
+    const groups = new Map();
+    items.forEach((it) => {
+      const key = String(it.customer_id || it.business_name || "party");
+      if (!groups.has(key)) groups.set(key, { name: it.business_name || "Party", number: it.party_number, rows: [] });
+      groups.get(key).rows.push(it);
+    });
+    const chipBtn = (id, label) => `<button type="button" class="btn btn-sm ${printCarry === id ? "btn-primary" : "btn-secondary"}" onclick="Reports.setPrintCarry('${id}')">${label}</button>`;
+    const cards = [...groups.values()].map((g) => {
+      const key = String(g.rows[0].customer_id || g.name);
+      const open = !!printOpen[key];
+      const lines = g.rows.map((r) => `<div style="padding:8px 0;border-top:1px solid var(--line);">
+          <strong>${ctx.esc(r.printed_label || "—")}</strong>
+          <span style="margin-left:8px;">${ctx.esc((r.carry_label || "—"))}</span>
+          <span style="color:var(--muted);margin-left:8px;">${ctx.esc(r.printed_by || "")}</span>
+        </div>`).join("");
+      return `<div class="card" style="padding:12px 14px;margin-bottom:10px;">
+        <button type="button" class="btn btn-secondary" style="width:100%;text-align:left;font-size:16px;" onclick="Reports.togglePrintGroup('${ctx.esc(key)}')">
+          <strong>${ctx.esc(g.name)}</strong>
+          ${g.number != null ? `<span style="color:var(--muted);"> #${ctx.esc(g.number)}</span>` : ""}
+          <span style="float:right;font-weight:800;">${g.rows.length} print${g.rows.length === 1 ? "" : "s"}</span>
+        </button>
+        ${open ? lines : ""}
+      </div>`;
+    }).join("");
+    body.innerHTML = `
+      <p class="fin-panel-sub" style="margin:0 0 12px;">Stickers Pandit Ji printed. A party with 3 bundles shows 3 prints. Open the party to see each time.</p>
+      <div style="display:flex;gap:8px;margin-bottom:12px;">
+        ${chipBtn("", "All")}
+        ${chipBtn("bus", "Bus")}
+        ${chipBtn("transport", "Transport")}
+      </div>
+      <div class="fin-hub-strip" style="margin-bottom:16px;">
+        <div class="fin-stat"><span class="fin-stat-label">Prints</span><strong>${items.length}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">Parties</span><strong>${groups.size}</strong></div>
+      </div>
+      ${cards || empty("No prints", "No sticker was printed in these dates.")}`;
+  }
+
   async function loadChip() {
     const body = document.getElementById("reports-body");
     if (!body) return;
@@ -488,6 +551,7 @@ const Reports = (() => {
       if (chip === "daybook") await renderDaybook(body);
       else if (chip === "sales" || chip === "sales-book") await renderDocList(body, "sales", "Sales book");
       else if (chip === "day-bills") await renderDayBills(body);
+      else if (chip === "sticker-prints") await renderPrintReport(body);
       else if (chip === "transport") await renderTransport(body);
       else if (chip === "receipt-book") await renderReceiptBook(body);
       else if (chip === "purchases") await renderDocList(body, "purchases", "Purchase bills");
@@ -1554,6 +1618,6 @@ const Reports = (() => {
     setDatePreset, onRangeChange, onDayBillChange, setDayBillToday, onThresholdChange,
     openLedger, openStaffLedger, openExpenseLedger, addExpenseHead, addExpenseSubhead, addExpenseSource, renameExpenseSource, deleteExpenseSource, openCashLedger, backFromLedger, openDoc,
     shareDaybook, waDaybook, shareStockSummary, shareAgeing, waAgeing, exportExcel,
-    printCurrent, exportCurrentExcel, setHideVoids, setJournalReportKind, setStockYear,
+    printCurrent, exportCurrentExcel, setHideVoids, setJournalReportKind, setStockYear, setPrintCarry, togglePrintGroup,
   };
 })();

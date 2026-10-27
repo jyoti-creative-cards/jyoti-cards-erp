@@ -1,3 +1,5 @@
+  let billConfirmDuplicate = false;
+
   function buildProcessBody() {
     const discOn = discountEnabled;
     const lines = processLines
@@ -32,6 +34,7 @@
       narration: narration.trim() || null,
       additional_charges: extra,
       force_credit_override: !!forceCreditOverride,
+      confirm_duplicate: !!billConfirmDuplicate,
     };
     if (!editBillId) body.bill_series_id = Number(billSeriesId);
     if (discOn && useOverallDiscount && overallDiscount.trim()) {
@@ -445,7 +448,6 @@
       return;
     }
     let q = Math.max(0, parseInt(val, 10) || 0);
-    if (!ln.direct && !editBillId) q = Math.min(Number(ln.quantity_open) || 0, q);
     ln.quantity_to_ship = q;
     renderWizardTotalsBar();
   }

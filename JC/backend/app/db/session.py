@@ -153,6 +153,7 @@ def init_db() -> None:
         _migrate_vendor_cash_discount_gst()
         _migrate_expense_is_cash()
         _migrate_expense_sources()
+        _migrate_sticker_carry()
         with engine.begin() as conn:
             conn.execute(text("SELECT 1"))
         _DB_READY = True
@@ -476,6 +477,21 @@ def _migrate_expense_sources() -> None:
             _exec_sql(
                 conn,
                 "ALTER TABLE jc_expenses ADD COLUMN IF NOT EXISTS source_id INTEGER",
+                critical=False,
+            )
+
+
+def _migrate_sticker_carry() -> None:
+    """Bus or transport copied from the party's bill onto each sticker print."""
+    with engine.begin() as conn:
+        if _is_sqlite:
+            cols = [r[1] for r in conn.execute(text("PRAGMA table_info(jc_sticker_prints)")).fetchall()]
+            if cols and "carry" not in cols:
+                _exec_sql(conn, "ALTER TABLE jc_sticker_prints ADD COLUMN carry VARCHAR(20)")
+        else:
+            _exec_sql(
+                conn,
+                "ALTER TABLE jc_sticker_prints ADD COLUMN IF NOT EXISTS carry VARCHAR(20)",
                 critical=False,
             )
 

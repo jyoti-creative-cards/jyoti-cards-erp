@@ -182,28 +182,37 @@ def entry_parties(
 
 
 def search_sticker_parties(db: Session, q: str) -> list[Customer]:
-    """The exact party number only. Typing 3 must not list 30."""
+    """Exact party number, or the customer name. Typing 3 must not list 30."""
     text = (q or "").strip()
-    if not text.isdigit():
+    if not text:
         return []
+    base = db.query(Customer).filter(Customer.is_active.is_(True), Customer.deleted_at.is_(None))
+    if text.isdigit():
+        return base.filter(Customer.party_number == int(text)).limit(1).all()
+    exact = (
+        base.filter(func.lower(Customer.business_name) == text.lower())
+        .order_by(Customer.business_name.asc(), Customer.id.asc())
+        .limit(12)
+        .all()
+    )
+    if exact:
+        return exact
     return (
-        db.query(Customer)
-        .filter(
-            Customer.is_active.is_(True),
-            Customer.deleted_at.is_(None),
-            Customer.party_number == int(text),
-        )
-        .limit(1)
+        base.filter(Customer.business_name.ilike(f"%{text}%"))
+        .order_by(Customer.business_name.asc(), Customer.id.asc())
+        .limit(12)
         .all()
     )
 
 
 @router.get("/sticker-search")
 def sticker_party_search(
-    q: str = Query("", max_length=20),
+    q: str = Query("", max_length=120),
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_any_permission("stickers.print", "customers.read", "finance.write")),
 ) -> list[dict]:
+    from app.services.sticker_labels import latest_bill_carry
+
     rows = search_sticker_parties(db, q if isinstance(q, str) else "")
     city_ids = sorted({r.city_id for r in rows if r.city_id})
     cities = {c.id: c.name for c in (db.query(City).filter(City.id.in_(city_ids)).all() if city_ids else [])}
@@ -214,6 +223,7 @@ def sticker_party_search(
             "city_name": cities.get(r.city_id),
             "phone": r.phone,
             "party_number": r.party_number,
+            "carry": latest_bill_carry(db, r.id),
         }
         for r in rows
     ]

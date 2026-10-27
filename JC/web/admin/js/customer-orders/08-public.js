@@ -18,7 +18,7 @@
     setGst, setGstRate, setBillSeries, setNarration, setEditBillNumber, setBillDate, setAddCharge, addChargeRow,
     setOfflinePlacedOn,
     setForceCredit, setBillOnAgent, printDayDuplicates,
-    processNext, processBack, submitProcess, toggleBillOrder, toggleAllBillOrders,
+    processNext, processBack, submitProcess, backFromBillDuplicate, proceedBillDuplicate, toggleBillOrder, toggleAllBillOrders,
     confirmOrder, _doConfirm, cancelOpenLine, cancelPlacement, cancelCustomerOpen, cancelEntireReceived, cancelAllOpen, editOpenLine, editReceivedLine, deleteReceivedLine, openEditPlacement, closeBillLine, cancelBill, voidBill, voidPlacement, openBillDoc, shareBillWhatsApp, uploadBillQr, resetBillQr,
     openOfflineWizard, closeOfflineWizard, renderOfflineWizard,
     pickOfflineCustomer, onOfflineCustomerSearch, setOfflineNotes, previewOrder, backFromOrderPreview,

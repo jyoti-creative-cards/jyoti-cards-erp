@@ -193,6 +193,7 @@ class ProcessBillIn(BaseModel):
     force_credit_override: bool = False
     bill_date: Optional[date] = None  # backdate; default = today
     on_commission_agent: Optional[bool] = None
+    confirm_duplicate: bool = False
 
 
 class EditBillLineIn(BaseModel):

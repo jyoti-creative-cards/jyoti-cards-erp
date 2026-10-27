@@ -168,7 +168,7 @@ def serialize_customer_bill(
         bill_series_id=bill.bill_series_id,
         bill_date=bill.bill_date,
         created_at=bill.created_at,
-        display_date=bill.bill_date or bill.created_at,
+        display_date=bill.created_at or bill.bill_date,
         display_name=f"Bill {bill.bill_number}" if bill.bill_number else f"Bill #{bill.id}",
         status=bill_status,
         transport_mode=mode,

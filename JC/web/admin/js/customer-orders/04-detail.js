@@ -155,7 +155,7 @@
         const receiptBit = b.transport_receipt_number ? ` · Rcpt ${ctx.esc(b.transport_receipt_number)}` : "";
         return HubUI.partyCard({
           title: b.display_name || `Bill ${b.bill_number}`,
-          meta: `${fmtPrice(b.grand_total)} · ${ctx.fmtDay(b.display_date || b.bill_date)}${modeLbl ? ` · ${modeLbl}` : ""}${chargeBit}${receiptBit}${(b.additional_charges || []).filter(c => Number(c.amount) > 0).map(c => ` · ${ctx.esc(c.name)} ${fmtPrice(c.amount)}`).join("")}${b.status && b.status !== "open" ? ` · ${ctx.esc(b.status)}` : ""}${b.narration ? `<div style="margin-top:2px;">${ctx.esc(b.narration)}</div>` : ""}`,
+          meta: `${fmtPrice(b.grand_total)} · ${ctx.fmtDate(b.created_at || b.display_date || b.bill_date)}${modeLbl ? ` · ${modeLbl}` : ""}${chargeBit}${receiptBit}${(b.additional_charges || []).filter(c => Number(c.amount) > 0).map(c => ` · ${ctx.esc(c.name)} ${fmtPrice(c.amount)}`).join("")}${b.status && b.status !== "open" ? ` · ${ctx.esc(b.status)}` : ""}${b.narration ? `<div style="margin-top:2px;">${ctx.esc(b.narration)}</div>` : ""}`,
           pillHtml: "",
           primaryLabel: canEditBill ? "Edit" : "Print",
           primaryOnclick: canEditBill

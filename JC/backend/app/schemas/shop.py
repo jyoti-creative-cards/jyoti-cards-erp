@@ -20,6 +20,7 @@ class ShopAlternativePublic(BaseModel):
     image_url: str = ""
     stock_status: str
     selling_price: str = "0"
+    quantity_on_hand: int = 0
     category: Optional[str] = None
 
 

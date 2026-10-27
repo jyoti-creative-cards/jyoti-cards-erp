@@ -67,40 +67,115 @@ function fmtTs(iso: string): string {
 
 /** Cart qty cap when exact stock is not exposed in the shop UI (server still validates). */
 const MAX_ORDER_QTY = 100_000_000;
-const QTY_CHOICES = Array.from({ length: 40 }, (_, i) => (i + 1) * 50);
+const QTY_CHOICES = [50, 100, 150, 200, 250, 300, 400, 500, 750, 1000, 1500, 2000];
 
-function QtyField({
+function AmazonQty({
   value,
   onChange,
 }: {
   value: string;
   onChange: (next: string) => void;
 }) {
+  const known = QTY_CHOICES.map(String);
+  const custom = value !== "" && !known.includes(value);
+  const [other, setOther] = useState(custom);
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex min-w-0 items-center gap-2">
       <select
         aria-label="Quantity"
-        value={QTY_CHOICES.includes(Number(value)) ? value : ""}
-        onChange={(e) => onChange(e.target.value)}
-        className="rounded-lg border border-jc-border bg-white px-2 py-2 text-sm text-jc-ink"
+        value={known.includes(value) && !other ? value : "other"}
+        onChange={(e) => {
+          if (e.target.value === "other") {
+            setOther(true);
+            onChange("");
+            return;
+          }
+          setOther(false);
+          onChange(e.target.value);
+        }}
+        className="h-12 min-w-[6.5rem] rounded-xl border border-stone-300 bg-gradient-to-b from-white to-stone-50 px-3 text-sm font-semibold text-jc-ink shadow-sm transition hover:border-stone-400 focus:border-jc-brand focus:outline-none focus:ring-2 focus:ring-jc-brand/20"
       >
-        <option value="">Qty</option>
         {QTY_CHOICES.map((n) => (
           <option key={n} value={n}>
-            {n}
+            Qty: {n}
           </option>
         ))}
+        <option value="other">Other</option>
       </select>
-      <input
-        type="number"
-        min={50}
-        step={50}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-24 rounded-lg border border-jc-border px-2 py-2 text-right text-sm"
-        aria-label="Type a quantity in multiples of 50"
-      />
+      {other || custom ? (
+        <input
+          type="number"
+          min={50}
+          step={50}
+          inputMode="numeric"
+          placeholder="50"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="h-12 w-24 rounded-xl border border-stone-300 px-3 text-right text-sm font-semibold focus:border-jc-brand focus:outline-none focus:ring-2 focus:ring-jc-brand/20"
+          aria-label="Type a quantity in multiples of 50"
+        />
+      ) : null}
     </div>
+  );
+}
+
+function altProduct(a: ShopProductPublic["alternatives"][number]): ShopProductPublic {
+  return {
+    catalog_product_id: a.catalog_product_id,
+    our_product_id: a.our_product_id,
+    image_url: a.image_url,
+    selling_price: a.selling_price || "0",
+    stock_status: a.stock_status || "in_stock",
+    quantity_on_hand: a.quantity_on_hand ?? 0,
+    alternatives: [],
+  };
+}
+
+function ProductTile({
+  p,
+  qty,
+  onQty,
+  onAdd,
+}: {
+  p: ShopProductPublic;
+  qty: string;
+  onQty: (next: string) => void;
+  onAdd: () => void;
+}) {
+  const avail = availabilityLine(p.stock_status);
+  const canOrder = Number(p.quantity_on_hand ?? 0) >= 50;
+  return (
+    <article className="jc-rise flex h-full flex-col overflow-hidden rounded-3xl border border-jc-border bg-white shadow-jc ring-1 ring-black/[0.03] transition duration-300 hover:-translate-y-1 hover:shadow-jc-lg">
+      <div className="relative aspect-[4/3] w-full bg-gradient-to-b from-jc-bg-deep to-white">
+        {p.image_url ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={p.image_url} alt={p.our_product_id} className="h-full w-full object-contain p-4 transition duration-500 hover:scale-[1.03]" />
+        ) : (
+          <div className="flex h-full min-h-[180px] items-center justify-center text-sm text-jc-muted">Photo coming soon</div>
+        )}
+        <span className={`absolute left-3 top-3 rounded-full px-3 py-1 text-xs font-bold ring-1 ${stockPillClass(p.stock_status)}`}>
+          {avail.title}
+        </span>
+      </div>
+      <div className="flex flex-1 flex-col gap-3 p-4 sm:p-5">
+        <p className="font-display text-xl font-semibold leading-snug text-jc-ink">{p.our_product_id}</p>
+        <p className="text-sm leading-relaxed text-jc-muted">{avail.hint}</p>
+        {canOrder ? (
+          <div className="mt-auto flex items-center gap-2 pt-1">
+            <AmazonQty value={qty} onChange={onQty} />
+            <button
+              type="button"
+              onClick={onAdd}
+              className="h-12 flex-1 rounded-xl bg-jc-accent text-sm font-bold text-white shadow-md transition hover:bg-jc-accent-hover active:scale-[0.98]"
+            >
+              Add to bag
+            </button>
+          </div>
+        ) : (
+          <p className="mt-auto text-sm font-semibold text-stone-500">Not available to order.</p>
+        )}
+      </div>
+    </article>
   );
 }
 
@@ -725,103 +800,44 @@ export default function CustomerPortalPage() {
                   ))}
                 </div>
               ) : shopResults.length > 0 ? (
-                <div className="grid gap-6 px-5 pb-8 sm:grid-cols-2 sm:px-8">
+                <div className="space-y-10 px-5 pb-8 sm:px-8">
                   {shopResults.map((p) => {
-                    const avail = availabilityLine(p.stock_status);
-                    const canOrder = Number(p.quantity_on_hand ?? 0) >= 50;
                     const typedQty = addQty[p.catalog_product_id] ?? "50";
                     return (
-                      <article
-                        key={p.catalog_product_id}
-                        className="flex flex-col overflow-hidden rounded-3xl border border-jc-border/90 bg-white shadow-jc ring-1 ring-black/[0.04] transition hover:shadow-jc-lg"
-                      >
-                        <div className="relative aspect-square w-full bg-gradient-to-b from-jc-bg-deep to-jc-bg/80">
-                          {p.image_url ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img
-                              src={p.image_url}
-                              alt={p.our_product_id}
-                              className="h-full w-full object-contain object-center p-3"
-                            />
-                          ) : (
-                            <div className="flex h-full min-h-[160px] flex-col items-center justify-center gap-2 text-jc-muted">
-                              <span className="text-4xl opacity-35" aria-hidden>
-                                ✨
-                              </span>
-                              <span className="text-sm">Photo coming soon</span>
-                            </div>
-                          )}
-                          <span
-                            className={`absolute right-3 top-3 max-w-[11rem] truncate rounded-full px-3 py-1 text-xs font-semibold ring-1 ${stockPillClass(p.stock_status)}`}
-                          >
-                            {avail.title}
-                          </span>
-                        </div>
-                        <div className="flex flex-1 flex-col gap-3 p-5">
-                          <p className="font-display text-lg font-semibold leading-snug text-jc-ink">
-                            {p.our_product_id}
-                          </p>
-                          <p className="text-sm leading-relaxed text-jc-muted">{avail.hint}</p>
-                          {canOrder ? (
-                            <div className="mt-auto flex flex-wrap items-center gap-2 border-t border-jc-border/60 pt-4">
-                              <QtyField
-                                value={typedQty}
-                                onChange={(next) => setAddQty((prev) => ({ ...prev, [p.catalog_product_id]: next }))}
-                              />
-                              <button
-                                type="button"
-                                onClick={() => addProductToCart(p, typedQty)}
-                                className="rounded-xl bg-jc-accent px-5 py-2.5 text-sm font-semibold text-white shadow-md transition hover:bg-jc-accent-hover"
-                              >
-                                Add to bag
-                              </button>
-                            </div>
-                          ) : null}
+                      <section key={p.catalog_product_id} className="space-y-5">
+                        <div className="mx-auto max-w-xl">
+                          <ProductTile
+                            p={p}
+                            qty={typedQty}
+                            onQty={(next) => setAddQty((prev) => ({ ...prev, [p.catalog_product_id]: next }))}
+                            onAdd={() => addProductToCart(p, typedQty)}
+                          />
                         </div>
                         {p.stock_status !== "in_stock" ? (
-                          <div className="border-t border-jc-border bg-jc-bg/50 px-5 py-4">
-                            <p className="text-xs font-bold uppercase tracking-wide text-jc-muted">Similar in stock</p>
+                          <div>
+                            <h3 className="font-display text-lg font-semibold text-jc-ink">Alternatives</h3>
                             {p.alternatives.length === 0 ? (
-                              <p className="mt-2 text-xs font-medium text-jc-muted">
-                                No substitute in stock right now.
-                              </p>
+                              <p className="mt-2 text-sm text-jc-muted">No alternatives for this item.</p>
                             ) : (
-                              <ul className="mt-3 grid grid-cols-3 gap-2">
-                                {p.alternatives.map((a) => (
-                                  <li key={a.catalog_product_id}>
-                                    <button
-                                      type="button"
-                                      className="flex w-full flex-col overflow-hidden rounded-xl border border-jc-border bg-white p-2 text-left shadow-sm"
-                                      onClick={() => pickSuggestion({ catalog_product_id: a.catalog_product_id, our_product_id: a.our_product_id })}
-                                    >
-                                      <div className="aspect-square w-full overflow-hidden rounded-lg bg-jc-bg-deep/40">
-                                        {a.image_url ? (
-                                          // eslint-disable-next-line @next/next/no-img-element
-                                          <img
-                                            src={a.image_url}
-                                            alt=""
-                                            className="h-full w-full object-contain object-center p-1"
-                                          />
-                                        ) : (
-                                          <div className="flex h-full min-h-[72px] items-center justify-center text-[10px] text-jc-muted">
-                                            —
-                                          </div>
-                                        )}
-                                      </div>
-                                      <p className="mt-1.5 truncate text-center text-[10px] font-semibold text-jc-ink">
-                                        {a.our_product_id}
-                                      </p>
-                                      <p className="truncate text-center text-[10px] text-jc-muted">
-                                        {availabilityLine(a.stock_status).title}
-                                      </p>
-                                    </button>
-                                  </li>
-                                ))}
-                              </ul>
+                              <div className="mt-4 grid gap-5 sm:grid-cols-2">
+                                {p.alternatives.map((a) => {
+                                  const alt = altProduct(a);
+                                  const altQty = addQty[alt.catalog_product_id] ?? "50";
+                                  return (
+                                    <ProductTile
+                                      key={alt.catalog_product_id}
+                                      p={alt}
+                                      qty={altQty}
+                                      onQty={(next) => setAddQty((prev) => ({ ...prev, [alt.catalog_product_id]: next }))}
+                                      onAdd={() => addProductToCart(alt, altQty)}
+                                    />
+                                  );
+                                })}
+                              </div>
                             )}
                           </div>
                         ) : null}
-                      </article>
+                      </section>
                     );
                   })}
                 </div>
@@ -831,10 +847,7 @@ export default function CustomerPortalPage() {
                     🔎
                   </span>
                   <p className="mt-3 font-display text-base font-semibold text-jc-ink">No matches</p>
-                  <p className="mt-2 max-w-sm text-sm text-jc-muted">
-                    Try another code or name. Admin and this portal must share one database — check the API console for{" "}
-                    <span className="font-mono text-[11px] text-jc-ink/80">[backend] database=…</span>.
-                  </p>
+                  <p className="mt-2 max-w-sm text-sm text-jc-muted">Try another item number.</p>
                 </div>
               ) : null}
 
@@ -925,7 +938,7 @@ export default function CustomerPortalPage() {
                                 <span className="font-semibold tabular-nums text-jc-brand">₹{line.toFixed(2)}</span>
                               </p>
                               <div className="mt-2 flex flex-wrap items-center gap-2">
-                                <QtyField
+                                <AmazonQty
                                   value={String(qty)}
                                   onChange={(next) => setLineQty(p.catalog_product_id, next)}
                                 />
@@ -965,7 +978,7 @@ export default function CustomerPortalPage() {
                                 <td className="px-4 py-3 text-right tabular-nums">₹{p.selling_price}</td>
                                 <td className="px-4 py-3 text-xs text-jc-muted">{av.title}</td>
                                 <td className="px-4 py-3 text-right">
-                                  <QtyField
+                                  <AmazonQty
                                     value={String(qty)}
                                     onChange={(next) => setLineQty(p.catalog_product_id, next)}
                                   />
@@ -1149,21 +1162,22 @@ export default function CustomerPortalPage() {
         </div>
       )}
       {stockPopup ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setStockPopup(false)}>
-          <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <p className="text-lg font-semibold text-amber-950">
-              ये आइटम पर्याप्त मात्रा में उपलब्ध नहीं है। कृपया मात्रा कम करें, या बुक करने के लिए गोदाम पर संपर्क करें।
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/45 p-4 sm:items-center" onClick={() => setStockPopup(false)}>
+          <div className="jc-pop w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <p className="font-display text-2xl font-semibold text-jc-ink">Low stock</p>
+            <p className="mt-3 text-base font-semibold leading-relaxed text-amber-950">
+              ये आइटम पर्याप्त मात्रा में उपलब्ध नहीं है। मात्रा कम करें, या गोदाम पर कॉल करें।
             </p>
-            <div className="mt-4 flex flex-col gap-2">
+            <div className="mt-4 grid gap-2">
               {GODOWN_PHONES.map((phone) => (
-                <a key={phone.tel} href={phone.tel} className="text-lg font-semibold text-jc-brand">
+                <a key={phone.tel} href={phone.tel} className="rounded-2xl border border-jc-border bg-jc-bg px-4 py-3 text-lg font-bold tracking-wide text-jc-brand transition hover:border-jc-brand/40 hover:bg-white">
                   {phone.display}
                 </a>
               ))}
             </div>
             <button
               type="button"
-              className="mt-6 rounded-xl bg-jc-brand px-5 py-2.5 text-sm font-semibold text-white"
+              className="mt-5 h-12 w-full rounded-xl bg-jc-brand text-sm font-bold text-white"
               onClick={() => setStockPopup(false)}
             >
               OK

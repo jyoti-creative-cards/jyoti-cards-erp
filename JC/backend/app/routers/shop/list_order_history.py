@@ -279,6 +279,7 @@ def _alternatives_batch(db: Session, parent_ids: list[int], stock: dict[int, tup
                 image_url=_image_url(alt_prod),
                 stock_status=lbl,
                 selling_price=_sell_price(alt_prod),
+                quantity_on_hand=max(0, int(qty or 0)),
                 category=alt_prod.category,
             )
         )

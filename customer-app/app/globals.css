@@ -21,6 +21,24 @@ body {
   color: var(--jc-ink);
 }
 
+@keyframes jc-rise {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes jc-pop {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+
+.jc-rise {
+  animation: jc-rise 0.45s ease both;
+}
+
+.jc-pop {
+  animation: jc-pop 0.22s ease both;
+}
+
 .jc-page-bg {
   background-color: var(--jc-bg);
   background-image:

@@ -19,6 +19,9 @@ export interface ShopProductAlternativePublic {
   catalog_product_id: number;
   our_product_id: string;
   image_url: string;
+  stock_status?: string;
+  selling_price?: string;
+  quantity_on_hand?: number;
 }
 
 export interface ShopProductPublic {

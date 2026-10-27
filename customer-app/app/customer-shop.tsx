@@ -22,11 +22,11 @@ const GODOWN_PHONES = [
 /** Customer-facing: can they rely on us having units? */
 function availabilityLine(s: string): { title: string; hint: string } {
   if (s === "in_stock")
-    return { title: "In stock", hint: "We have the quantity you asked for." };
+    return { title: "In stock", hint: "Available. Enter a quantity when you add it." };
   if (s === "low_stock")
     return {
       title: "Low stock",
-      hint: "ये आइटम पर्याप्त मात्रा में उपलब्ध नहीं है। कृपया बुक करने के लिए इस नंबर पर संपर्क करें।",
+      hint: "Limited stock. You can try a smaller quantity, or look at the alternatives.",
     };
   if (s === "out_of_stock")
     return {
@@ -67,6 +67,42 @@ function fmtTs(iso: string): string {
 
 /** Cart qty cap when exact stock is not exposed in the shop UI (server still validates). */
 const MAX_ORDER_QTY = 100_000_000;
+const QTY_CHOICES = Array.from({ length: 40 }, (_, i) => (i + 1) * 50);
+
+function QtyField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <select
+        aria-label="Quantity"
+        value={QTY_CHOICES.includes(Number(value)) ? value : ""}
+        onChange={(e) => onChange(e.target.value)}
+        className="rounded-lg border border-jc-border bg-white px-2 py-2 text-sm text-jc-ink"
+      >
+        <option value="">Qty</option>
+        {QTY_CHOICES.map((n) => (
+          <option key={n} value={n}>
+            {n}
+          </option>
+        ))}
+      </select>
+      <input
+        type="number"
+        min={50}
+        step={50}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-24 rounded-lg border border-jc-border px-2 py-2 text-right text-sm"
+        aria-label="Type a quantity in multiples of 50"
+      />
+    </div>
+  );
+}
 
 function stockPillClass(status: string): string {
   if (status === "in_stock") return "bg-emerald-100 text-emerald-900 ring-emerald-200/70";
@@ -144,7 +180,8 @@ export default function CustomerPortalPage() {
   const [portalTab, setPortalTab] = useState<PortalTab>("availability");
 
   const [shopQ, setShopQ] = useState("");
-  const [searchQty, setSearchQty] = useState("50");
+  const [addQty, setAddQty] = useState<Record<number, string>>({});
+  const [stockPopup, setStockPopup] = useState(false);
   const [shopSuggestions, setShopSuggestions] = useState<ShopSuggestionPublic[]>([]);
   const [shopSuggestOpen, setShopSuggestOpen] = useState(false);
   const [shopResults, setShopResults] = useState<ShopProductPublic[]>([]);
@@ -268,16 +305,10 @@ export default function CustomerPortalPage() {
       setShopErr("Please enter an item code or product name to search.");
       return;
     }
-    const want = Math.floor(Number(searchQty));
-    if (!Number.isFinite(want) || want < 50 || want % 50 !== 0) {
-      setShopErr("Quantity must be a multiple of 50.");
-      return;
-    }
     setShopLoading(true);
     try {
       const p = new URLSearchParams();
       p.set("q", q);
-      p.set("qty", String(want));
       const r = await fetchApi(apiUrl(`shop/products/search?${p}`), {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -291,30 +322,38 @@ export default function CustomerPortalPage() {
     } finally {
       setShopLoading(false);
     }
-  }, [token, shopQ, searchQty]);
+  }, [token, shopQ]);
 
-  function canAddToBag(p: ShopProductPublic) {
-    return p.stock_status === "in_stock";
+  function qtyTooHigh(n: number, onHand: number) {
+    if (!Number.isFinite(n) || n < 50 || n % 50 !== 0 || n > MAX_ORDER_QTY) {
+      setStockPopup(false);
+      setOrderMsg("Quantity must be a multiple of 50.");
+      return true;
+    }
+    if (n > onHand) {
+      setOrderMsg("");
+      setStockPopup(true);
+      return true;
+    }
+    setOrderMsg("");
+    setStockPopup(false);
+    return false;
   }
 
   function addProductToCart(p: ShopProductPublic, qtyStr: string) {
-    if (!canAddToBag(p)) {
-      setOrderMsg("Call the godown to book this item.");
-      return;
-    }
     const n = Math.floor(Number(qtyStr));
     const onHand = Number(p.quantity_on_hand ?? 0);
-    const addQty = Number.isFinite(n) ? Math.max(50, Math.min(n, onHand, MAX_ORDER_QTY)) : 50;
-    setOrderMsg("");
-    setCart((prev) => {
-      const existing = prev[p.catalog_product_id];
-      const merged = (existing?.qty ?? 0) + addQty;
-      const q = Math.min(Math.max(50, merged), MAX_ORDER_QTY);
-      return {
-        ...prev,
-        [p.catalog_product_id]: { p, qty: q },
-      };
-    });
+    if (qtyTooHigh(n, onHand)) return;
+    const existing = cart[p.catalog_product_id];
+    const merged = (existing?.qty ?? 0) + n;
+    if (merged > onHand) {
+      setStockPopup(true);
+      return;
+    }
+    setCart((prev) => ({
+      ...prev,
+      [p.catalog_product_id]: { p, qty: merged },
+    }));
   }
 
   function setLineQty(catalogProductId: number, qtyStr: string) {
@@ -322,14 +361,10 @@ export default function CustomerPortalPage() {
     if (!row) return;
     const n = Math.floor(Number(qtyStr));
     const onHand = Number(row.p.quantity_on_hand ?? 0);
-    if (Number.isFinite(n) && n > onHand) {
-      setOrderMsg("Call the godown. We do not have that quantity.");
-      return;
-    }
-    const q = Number.isFinite(n) ? Math.max(50, Math.min(n, MAX_ORDER_QTY)) : 50;
+    if (qtyTooHigh(n, onHand)) return;
     setCart((prev) => ({
       ...prev,
-      [catalogProductId]: { ...row, qty: q },
+      [catalogProductId]: { ...row, qty: n },
     }));
   }
 
@@ -627,18 +662,6 @@ export default function CustomerPortalPage() {
                       placeholder="Item code or product name"
                       autoComplete="off"
                     />
-                    <label className="flex shrink-0 items-center gap-1 pr-1 text-xs font-semibold text-jc-muted">
-                      Qty
-                      <input
-                        type="number"
-                        min={50}
-                        step={50}
-                        value={searchQty}
-                        onChange={(e) => setSearchQty(e.target.value)}
-                        className="w-20 rounded-lg border border-jc-border bg-white px-2 py-2 text-sm text-jc-ink"
-                        aria-label="Quantity"
-                      />
-                    </label>
                     <button
                       type="button"
                       className="shrink-0 rounded-xl bg-jc-brand px-4 py-2.5 text-sm font-semibold text-white shadow-md transition hover:bg-jc-brand-light disabled:opacity-55"
@@ -680,7 +703,7 @@ export default function CustomerPortalPage() {
                   </span>
                   <p className="mt-4 font-display text-lg font-semibold text-jc-ink">Start with a search</p>
                   <p className="mt-2 max-w-sm text-sm text-jc-muted">
-                    Type an item number and quantity, then tap Search. Choosing a suggestion opens that item.
+                    Type an item number, then tap Search. Quantity is asked when you add it to the bag.
                   </p>
                 </div>
               ) : null}
@@ -705,7 +728,8 @@ export default function CustomerPortalPage() {
                 <div className="grid gap-6 px-5 pb-8 sm:grid-cols-2 sm:px-8">
                   {shopResults.map((p) => {
                     const avail = availabilityLine(p.stock_status);
-                    const canOrder = canAddToBag(p);
+                    const canOrder = Number(p.quantity_on_hand ?? 0) >= 50;
+                    const typedQty = addQty[p.catalog_product_id] ?? "50";
                     return (
                       <article
                         key={p.catalog_product_id}
@@ -737,25 +761,16 @@ export default function CustomerPortalPage() {
                           <p className="font-display text-lg font-semibold leading-snug text-jc-ink">
                             {p.our_product_id}
                           </p>
-                          {p.stock_status !== "in_stock" ? (
-                            <div className="rounded-2xl border-2 border-amber-400 bg-amber-50 px-4 py-3 text-sm font-semibold leading-relaxed text-amber-950">
-                              <p>{avail.hint}</p>
-                              <span className="mt-2 flex flex-col gap-1">
-                                {GODOWN_PHONES.map((phone) => (
-                                  <a key={phone.tel} href={phone.tel} className="text-lg tracking-wide text-jc-brand">
-                                    {phone.display}
-                                  </a>
-                                ))}
-                              </span>
-                            </div>
-                          ) : (
-                            <p className="text-xs leading-relaxed text-jc-muted">{avail.hint}</p>
-                          )}
+                          <p className="text-sm leading-relaxed text-jc-muted">{avail.hint}</p>
                           {canOrder ? (
-                            <div className="mt-auto border-t border-jc-border/60 pt-4">
+                            <div className="mt-auto flex flex-wrap items-center gap-2 border-t border-jc-border/60 pt-4">
+                              <QtyField
+                                value={typedQty}
+                                onChange={(next) => setAddQty((prev) => ({ ...prev, [p.catalog_product_id]: next }))}
+                              />
                               <button
                                 type="button"
-                                onClick={() => addProductToCart(p, searchQty)}
+                                onClick={() => addProductToCart(p, typedQty)}
                                 className="rounded-xl bg-jc-accent px-5 py-2.5 text-sm font-semibold text-white shadow-md transition hover:bg-jc-accent-hover"
                               >
                                 Add to bag
@@ -795,6 +810,9 @@ export default function CustomerPortalPage() {
                                       </div>
                                       <p className="mt-1.5 truncate text-center text-[10px] font-semibold text-jc-ink">
                                         {a.our_product_id}
+                                      </p>
+                                      <p className="truncate text-center text-[10px] text-jc-muted">
+                                        {availabilityLine(a.stock_status).title}
                                       </p>
                                     </button>
                                   </li>
@@ -907,14 +925,9 @@ export default function CustomerPortalPage() {
                                 <span className="font-semibold tabular-nums text-jc-brand">₹{line.toFixed(2)}</span>
                               </p>
                               <div className="mt-2 flex flex-wrap items-center gap-2">
-                                <input
-                                  type="number"
-                                  min={50}
-                                  step={50}
-                                  max={MAX_ORDER_QTY}
-                                  value={qty}
-                                  onChange={(e) => setLineQty(p.catalog_product_id, e.target.value)}
-                                  className="w-20 rounded-lg border border-jc-border px-2 py-1.5 text-right text-sm"
+                                <QtyField
+                                  value={String(qty)}
+                                  onChange={(next) => setLineQty(p.catalog_product_id, next)}
                                 />
                                 <button
                                   type="button"
@@ -952,14 +965,9 @@ export default function CustomerPortalPage() {
                                 <td className="px-4 py-3 text-right tabular-nums">₹{p.selling_price}</td>
                                 <td className="px-4 py-3 text-xs text-jc-muted">{av.title}</td>
                                 <td className="px-4 py-3 text-right">
-                                  <input
-                                    type="number"
-                                    min={50}
-                                    step={50}
-                                    max={MAX_ORDER_QTY}
-                                    value={qty}
-                                    onChange={(e) => setLineQty(p.catalog_product_id, e.target.value)}
-                                    className="w-20 rounded-lg border border-jc-border px-2 py-1.5 text-right text-sm"
+                                  <QtyField
+                                    value={String(qty)}
+                                    onChange={(next) => setLineQty(p.catalog_product_id, next)}
                                   />
                                 </td>
                                 <td className="px-4 py-3 text-right font-medium tabular-nums text-jc-ink">
@@ -1140,6 +1148,29 @@ export default function CustomerPortalPage() {
           )}
         </div>
       )}
+      {stockPopup ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setStockPopup(false)}>
+          <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <p className="text-lg font-semibold text-amber-950">
+              ये आइटम पर्याप्त मात्रा में उपलब्ध नहीं है। कृपया मात्रा कम करें, या बुक करने के लिए गोदाम पर संपर्क करें।
+            </p>
+            <div className="mt-4 flex flex-col gap-2">
+              {GODOWN_PHONES.map((phone) => (
+                <a key={phone.tel} href={phone.tel} className="text-lg font-semibold text-jc-brand">
+                  {phone.display}
+                </a>
+              ))}
+            </div>
+            <button
+              type="button"
+              className="mt-6 rounded-xl bg-jc-brand px-5 py-2.5 text-sm font-semibold text-white"
+              onClick={() => setStockPopup(false)}
+            >
+              OK
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -24,6 +24,7 @@ const Reports = (() => {
   let stockYears = null;
   let printCarry = "";
   let printOpen = {};
+  let stockAlbums = [];
 
   const MODES = [
     { id: "today", label: "Today" },
@@ -874,15 +875,33 @@ const Reports = (() => {
       </tbody></table></div>` : empty("All clear", "Nothing due.")}`;
   }
 
+  function toggleStockAlbum(name) {
+    const has = stockAlbums.includes(name);
+    stockAlbums = has ? stockAlbums.filter(a => a !== name) : stockAlbums.concat(name);
+    loadChip();
+  }
+
   async function renderStockWise(body) {
-    const data = await ctx.api(`/reports/stock/summary${rangeQs()}`, {}, 0);
-    const items = (data.items || []).filter(it => matchSearch(it.label, it.category));
+    const params = new URLSearchParams();
+    if (fromDate) params.set("from_date", fromDate);
+    if (toDate) params.set("to_date", toDate);
+    stockAlbums.forEach(name => params.append("albums", name));
+    const qs = params.toString();
+    const data = await ctx.api(`/reports/stock/summary${qs ? `?${qs}` : ""}`, {}, 0);
+    const items = (data.items || []).filter(it => matchSearch(it.label, it.category, ...(it.albums || [])));
     const sum = (key) => items.reduce((s, it) => s + (Number(it[key]) || 0), 0);
     const opening = sum("opening");
     const inward = sum("inward");
     const outward = sum("outward");
     const closing = sum("closing");
+    const albumBar = (data.albums || []).map(name =>
+      `<label style="display:inline-flex;align-items:center;gap:4px;margin:0 10px 6px 0;font-size:13px;">
+        <input type="checkbox" ${stockAlbums.includes(name) ? "checked" : ""} onchange="Reports.toggleStockAlbum(this.value)" value="${ctx.esc(name)}" />
+        ${ctx.esc(name)}
+      </label>`
+    ).join("");
     body.innerHTML = `
+      <div style="margin:0 0 12px;">${albumBar}</div>
       <div class="fin-hub-strip" style="margin-bottom:16px;">
         <div class="fin-stat"><span class="fin-stat-label">Products</span><strong>${items.length}</strong></div>
         <div class="fin-stat"><span class="fin-stat-label">Opening</span><strong>${opening}</strong></div>
@@ -1618,6 +1637,6 @@ const Reports = (() => {
     setDatePreset, onRangeChange, onDayBillChange, setDayBillToday, onThresholdChange,
     openLedger, openStaffLedger, openExpenseLedger, addExpenseHead, addExpenseSubhead, addExpenseSource, renameExpenseSource, deleteExpenseSource, openCashLedger, backFromLedger, openDoc,
     shareDaybook, waDaybook, shareStockSummary, shareAgeing, waAgeing, exportExcel,
-    printCurrent, exportCurrentExcel, setHideVoids, setJournalReportKind, setStockYear, setPrintCarry, togglePrintGroup,
+    printCurrent, exportCurrentExcel, setHideVoids, setJournalReportKind, setStockYear, setPrintCarry, togglePrintGroup, toggleStockAlbum,
   };
 })();

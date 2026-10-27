@@ -24,6 +24,7 @@ const Reports = (() => {
   let stockYears = null;
   let printCarry = "";
   let printOpen = {};
+  let stockAlbums = [];
 
   const MODES = [
     { id: "today", label: "Today" },

@@ -18,7 +18,7 @@ class StockBalance(Base):
         Integer, ForeignKey("jc_catalog_products.id", ondelete="RESTRICT"), nullable=False, unique=True, index=True
     )
     quantity_on_hand: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
-    low_stock_threshold: Mapped[int] = mapped_column(Integer, nullable=False, default=5, server_default="5")
+    low_stock_threshold: Mapped[int] = mapped_column(Integer, nullable=False, default=300, server_default="300")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )

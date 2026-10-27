@@ -270,10 +270,8 @@ def _alternatives_batch(db: Session, parent_ids: list[int], stock: dict[int, tup
         alt_prod = alts.get(row.alternative_product_id)
         if not alt_prod or (alt_prod.year_group or "").strip() != PORTAL_YEAR_GROUP:
             continue
-        qty, th = stock.get(alt_prod.id, (0, 5))
+        qty, th = stock.get(alt_prod.id, (0, 300))
         lbl = _portal_stock_status(qty, th)
-        if lbl == "out_of_stock":
-            continue
         grouped.setdefault(row.product_id, []).append(
             ShopAlternativePublic(
                 catalog_product_id=alt_prod.id,
@@ -296,8 +294,7 @@ def product_search(
     raw = _norm_q(q)
     if not raw:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="search text empty")
-    wanted = int(qty)
-    cache_key = f"shop:search:{raw.lower()}:{wanted}"
+    cache_key = f"shop:search:{raw.lower()}"
     cached = response_cache.get(cache_key)
     if cached is not None:
         return cached
@@ -307,7 +304,7 @@ def product_search(
     stock = _stock_map(db, ids)
     addon_map = addon_snapshots_map(db, ids)
     statuses = {
-        p.id: stock_status_for_wanted(stock.get(p.id, (0, 5))[0], wanted)
+        p.id: _portal_stock_status(*stock.get(p.id, (0, 300)))
         for p in rows
     }
     need_alts = [pid for pid, label in statuses.items() if label != "in_stock"]

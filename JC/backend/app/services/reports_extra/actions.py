@@ -31,7 +31,12 @@ from app.services.reports import _customer_labels, _range_bounds, _vendor_labels
 
 from app.services.reports_extra.gst_purchase_register import _fmt
 
-def stock_wise(db: Session, from_date: Optional[date], to_date: Optional[date]) -> dict:
+def stock_wise(
+    db: Session,
+    from_date: Optional[date],
+    to_date: Optional[date],
+    albums: Optional[list[str]] = None,
+) -> dict:
     """Item-wise stock: opening, inward, outward, closing for an IST date range."""
     start, end = _range_bounds(from_date, to_date)
     range_parts = []
@@ -62,29 +67,42 @@ def stock_wise(db: Session, from_date: Optional[date], to_date: Optional[date]) 
             CatalogProduct.id,
             CatalogProduct.our_product_id,
             CatalogProduct.category,
+            CatalogProduct.second_category,
+            CatalogProduct.category_3,
             opening_expr,
             inward_expr,
             outward_expr,
         )
         .join(StockLedger, StockLedger.catalog_product_id == CatalogProduct.id)
         .filter(CatalogProduct.deleted_at.is_(None), CatalogProduct.is_active.is_(True))
-        .group_by(CatalogProduct.id, CatalogProduct.our_product_id, CatalogProduct.category)
+        .group_by(
+            CatalogProduct.id,
+            CatalogProduct.our_product_id,
+            CatalogProduct.category,
+            CatalogProduct.second_category,
+            CatalogProduct.category_3,
+        )
         .all()
     )
     items = []
     totals = {"opening": 0, "inward": 0, "outward": 0, "closing": 0}
-    for pid, label, category, opening, inward, outward in rows:
+    chosen = {a.strip() for a in (albums or []) if a and a.strip()}
+    for pid, label, category, second, third, opening, inward, outward in rows:
         opening_n = int(opening or 0)
         inward_n = int(inward or 0)
         outward_n = int(outward or 0)
         closing_n = opening_n + inward_n - outward_n
         if opening_n == 0 and inward_n == 0 and outward_n == 0:
             continue
+        item_albums = [name for name in (category, second, third) if name]
+        if chosen and not chosen.intersection(item_albums):
+            continue
         items.append(
             {
                 "id": pid,
                 "label": label,
                 "category": category or "",
+                "albums": item_albums,
                 "opening": opening_n,
                 "inward": inward_n,
                 "outward": outward_n,
@@ -97,7 +115,14 @@ def stock_wise(db: Session, from_date: Optional[date], to_date: Optional[date]) 
         totals["closing"] += closing_n
     items.sort(key=lambda x: (x["label"] or "", x["id"]))
     totals["sku_count"] = len(items)
-    return {"items": items, "totals": totals}
+    album_names = set()
+    for row in (
+        db.query(CatalogProduct.category, CatalogProduct.second_category, CatalogProduct.category_3)
+        .filter(CatalogProduct.deleted_at.is_(None), CatalogProduct.is_active.is_(True))
+        .all()
+    ):
+        album_names.update(name for name in row if name)
+    return {"items": items, "totals": totals, "albums": sorted(album_names)}
 
 def low_stock_count(db: Session, threshold: int = 10) -> int:
     """Fast count for dashboard — SQL only, no row materialization."""

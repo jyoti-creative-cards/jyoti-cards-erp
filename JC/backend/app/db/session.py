@@ -154,6 +154,7 @@ def init_db() -> None:
         _migrate_expense_is_cash()
         _migrate_expense_sources()
         _migrate_sticker_carry()
+        _migrate_low_stock_threshold_300()
         with engine.begin() as conn:
             conn.execute(text("SELECT 1"))
         _DB_READY = True
@@ -477,6 +478,22 @@ def _migrate_expense_sources() -> None:
             _exec_sql(
                 conn,
                 "ALTER TABLE jc_expenses ADD COLUMN IF NOT EXISTS source_id INTEGER",
+                critical=False,
+            )
+
+
+def _migrate_low_stock_threshold_300() -> None:
+    """The old default of 5 was a piece count. Stock is stored in hundreds, so 5 meant almost empty."""
+    with engine.begin() as conn:
+        _exec_sql(
+            conn,
+            "UPDATE jc_stock_balances SET low_stock_threshold = 300 WHERE low_stock_threshold = 5",
+            critical=False,
+        )
+        if not _is_sqlite:
+            _exec_sql(
+                conn,
+                "ALTER TABLE jc_stock_balances ALTER COLUMN low_stock_threshold SET DEFAULT 300",
                 critical=False,
             )
 

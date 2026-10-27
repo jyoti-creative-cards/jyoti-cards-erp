@@ -205,10 +205,11 @@ def billed_items_report(
 def stock_summary(
     from_date: Optional[date] = Query(None),
     to_date: Optional[date] = Query(None),
+    albums: Optional[list[str]] = Query(None),
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_admin),
 ):
-    return ext.stock_wise(db, from_date, to_date)
+    return ext.stock_wise(db, from_date, to_date, albums)
 
 
 @router.get("/stock/valuation")

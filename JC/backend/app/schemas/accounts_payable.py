@@ -74,6 +74,7 @@ class ApSettlementIn(BaseModel):
     comment: Optional[str] = None
     value_date: Optional[date] = None
     payment_mode_id: Optional[int] = None
+    confirm_duplicate: bool = False
 
 
 class ApPaymentPatchIn(BaseModel):

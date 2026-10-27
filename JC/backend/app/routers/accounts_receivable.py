@@ -10,6 +10,7 @@ from app.db.session import get_db
 from app.deps import AuthContext, require_admin, require_permission
 from app.services.cancel_key import require_cancel_key
 from app.models.city import City
+from app.models.accounts_receivable import ArLedgerEntry
 from app.models.customer import Customer
 from app.schemas.accounts_receivable import (
     ArCustomerDetail,
@@ -148,6 +149,11 @@ def settle_customer_ar(
     desc_bits.append(f"— ₹{amount}")
 
     pay_day = body.value_date or today_ist()
+    from app.services.payment_duplicates import reject_duplicate_payment
+    reject_duplicate_payment(
+        db, body.confirm_duplicate, model=ArLedgerEntry, party_field="customer_id",
+        party_id=customer_id, amount=amount, pay_day=pay_day, payment_mode=mode_name,
+    )
     entry = post_payment_entry(
         db,
         customer_id=customer_id,
@@ -213,6 +219,11 @@ def record_customer_payment(
     desc_bits.append(f"— ₹{amount}")
 
     pay_day = body.value_date or today_ist()
+    from app.services.payment_duplicates import reject_duplicate_payment
+    reject_duplicate_payment(
+        db, body.confirm_duplicate, model=ArLedgerEntry, party_field="customer_id",
+        party_id=customer_id, amount=amount, pay_day=pay_day, payment_mode=mode_name,
+    )
     entry = post_payment_entry(
         db,
         customer_id=customer_id,

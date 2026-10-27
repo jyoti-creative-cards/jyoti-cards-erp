@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.deps import AuthContext, require_admin, require_permission
 from app.services.cancel_key import require_cancel_key
+from app.models.accounts_payable import ApLedgerEntry
 from app.models.vendor import Vendor
 from app.schemas.accounts_payable import (
     ApLedgerEntryOut,
@@ -140,6 +141,11 @@ def settle_vendor_ap(
             raise HTTPException(400, "select a payment mode")
 
     pay_day = body.value_date or today_ist()
+    from app.services.payment_duplicates import reject_duplicate_payment
+    reject_duplicate_payment(
+        db, body.confirm_duplicate, model=ApLedgerEntry, party_field="vendor_id",
+        party_id=vendor_id, amount=amount, pay_day=pay_day, payment_mode=mode_name,
+    )
     entry = post_payment_entry(
         db,
         vendor_id=vendor_id,
@@ -204,6 +210,11 @@ def record_vendor_payment(
             raise HTTPException(400, "select a payment mode")
 
     pay_day = body.value_date or today_ist()
+    from app.services.payment_duplicates import reject_duplicate_payment
+    reject_duplicate_payment(
+        db, body.confirm_duplicate, model=ApLedgerEntry, party_field="vendor_id",
+        party_id=vendor_id, amount=amount, pay_day=pay_day, payment_mode=mode_name,
+    )
     entry = post_payment_entry(
         db,
         vendor_id=vendor_id,

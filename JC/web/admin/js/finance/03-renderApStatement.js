@@ -289,10 +289,7 @@
       }
       const body = { payment_ref: ref, amount, payment_receipt_key: key, comment, value_date: valueDate };
       if (payment_mode_id) body.payment_mode_id = payment_mode_id;
-      const saved = await ctx.api(`/accounts-payable/vendor/${currentVendor}/settle`, {
-        method: "POST",
-        body: JSON.stringify(body),
-      });
+      const saved = await postPayment(`/accounts-payable/vendor/${currentVendor}/settle`, body);
       ctx.invalidateCache?.("/accounts-payable");
       ctx.invalidateCache?.("/finance");
       closeSettle();
@@ -313,7 +310,7 @@
       });
       loadApList();
       loadOverviewSilent();
-    } catch (e) { ctx.toast(e.message, "error"); }
+    } catch (e) { if (!e.cancelled) ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
   }
 

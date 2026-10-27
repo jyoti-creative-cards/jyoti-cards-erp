@@ -68,6 +68,7 @@ class ArSettlementIn(BaseModel):
     amount: Decimal = Field(..., gt=0)
     comment: Optional[str] = None
     value_date: Optional[date] = None
+    confirm_duplicate: bool = False
 
 
 class ArPaymentPatchIn(BaseModel):

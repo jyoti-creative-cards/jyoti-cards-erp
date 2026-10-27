@@ -390,6 +390,21 @@ const Finance = (() => {
     return rows[idx];
   }
 
+  async function postPayment(path, body) {
+    try {
+      return await ctx.api(path, { method: "POST", body: JSON.stringify(body) });
+    } catch (e) {
+      if (!(e.status === 409 && e.detail && e.detail.matches)) throw e;
+      const lines = e.detail.matches.map(m => `₹${m.total} · ${m.mode || "—"} · ${m.date || ""}`).join("\n");
+      if (!window.confirm(`This could be a duplicate payment.\nSame party, same amount, same date, same bank account.\n\n${lines}\n\nSave it anyway?`)) {
+        const cancel = new Error("Not saved");
+        cancel.cancelled = true;
+        throw cancel;
+      }
+      return ctx.api(path, { method: "POST", body: JSON.stringify({ ...body, confirm_duplicate: true }) });
+    }
+  }
+
   async function quickVendorPayment() {
     const vendor = await _pickQuickParty("vendors", "vendor");
     if (!vendor) return;
@@ -418,9 +433,8 @@ const Finance = (() => {
     const comment = prompt("Note (optional):") || "";
     ctx.showLoading?.();
     try {
-      const res = await ctx.api(`/accounts-payable/vendor/${vendor.id}/record-payment`, {
-        method: "POST",
-        body: JSON.stringify({ payment_ref: ref.trim(), payment_mode_id: paymentModeId, amount, comment: comment.trim() || undefined }),
+      const res = await postPayment(`/accounts-payable/vendor/${vendor.id}/record-payment`, {
+        payment_ref: ref.trim(), payment_mode_id: paymentModeId, amount, comment: comment.trim() || undefined,
       });
       ctx.toast(res.message || "Payment recorded", "success");
       showPaymentDone({
@@ -432,7 +446,7 @@ const Finance = (() => {
         mode: res.payment_mode || modeName,
         againFn: "Finance.quickVendorPayment()",
       });
-    } catch (e) { ctx.toast(e.message, "error"); }
+    } catch (e) { if (!e.cancelled) ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
   }
 
@@ -496,15 +510,12 @@ const Finance = (() => {
     rememberCollectDate("quick-pay-date");
     ctx.showLoading?.();
     try {
-      const res = await ctx.api(`/accounts-receivable/customer/${customer.id}/record-payment`, {
-        method: "POST",
-        body: JSON.stringify({
-          payment_ref: ref || undefined,
-          payment_mode_id: paymentModeId || undefined,
-          amount,
-          comment: comment || undefined,
-          value_date: valueDate,
-        }),
+      const res = await postPayment(`/accounts-receivable/customer/${customer.id}/record-payment`, {
+        payment_ref: ref || undefined,
+        payment_mode_id: paymentModeId || undefined,
+        amount,
+        comment: comment || undefined,
+        value_date: valueDate,
       });
       closeQuickPay();
       ctx.toast(res.message || "Payment recorded", "success");
@@ -519,7 +530,7 @@ const Finance = (() => {
         mode: modeName,
         againFn: "Finance.quickCustomerPayment()",
       });
-    } catch (e) { ctx.toast(e.message, "error"); }
+    } catch (e) { if (!e.cancelled) ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
   }
 
@@ -1376,10 +1387,7 @@ const Finance = (() => {
       }
       const body = { payment_ref: ref, amount, payment_receipt_key: key, comment, value_date: valueDate };
       if (payment_mode_id) body.payment_mode_id = payment_mode_id;
-      const saved = await ctx.api(`/accounts-payable/vendor/${currentVendor}/settle`, {
-        method: "POST",
-        body: JSON.stringify(body),
-      });
+      const saved = await postPayment(`/accounts-payable/vendor/${currentVendor}/settle`, body);
       ctx.invalidateCache?.("/accounts-payable");
       ctx.invalidateCache?.("/finance");
       closeSettle();
@@ -1400,7 +1408,7 @@ const Finance = (() => {
       });
       loadApList();
       loadOverviewSilent();
-    } catch (e) { ctx.toast(e.message, "error"); }
+    } catch (e) { if (!e.cancelled) ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
   }
 
@@ -1962,10 +1970,7 @@ const Finance = (() => {
     try {
       const body = { amount, comment, payment_ref: ref || null, value_date: valueDate };
       if (payment_mode_id) body.payment_mode_id = payment_mode_id;
-      const saved = await ctx.api(`/accounts-receivable/customer/${currentCustomer}/settle`, {
-        method: "POST",
-        body: JSON.stringify(body),
-      });
+      const saved = await postPayment(`/accounts-receivable/customer/${currentCustomer}/settle`, body);
       ctx.invalidateCache?.("/accounts-receivable");
       ctx.invalidateCache?.("/finance");
       closeArSettle();
@@ -1985,7 +1990,7 @@ const Finance = (() => {
       });
       loadArList();
       loadOverviewSilent();
-    } catch (e) { ctx.toast(e.message, "error"); }
+    } catch (e) { if (!e.cancelled) ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
   }
 

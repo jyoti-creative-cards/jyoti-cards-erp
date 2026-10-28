@@ -509,7 +509,7 @@ const Reports = (() => {
     const groups = new Map();
     items.forEach((it) => {
       const key = String(it.customer_id || it.business_name || "party");
-      if (!groups.has(key)) groups.set(key, { name: it.business_name || "Party", number: it.party_number, rows: [] });
+      if (!groups.has(key)) groups.set(key, { name: it.business_name || "Party", city: it.city_name || "", number: it.party_number, rows: [] });
       groups.get(key).rows.push(it);
     });
     const chipBtn = (id, label) => `<button type="button" class="btn btn-sm ${printCarry === id ? "btn-primary" : "btn-secondary"}" onclick="Reports.setPrintCarry('${id}')">${label}</button>`;
@@ -524,6 +524,7 @@ const Reports = (() => {
       return `<div class="card" style="padding:12px 14px;margin-bottom:10px;">
         <button type="button" class="btn btn-secondary" style="width:100%;text-align:left;font-size:16px;" onclick="Reports.togglePrintGroup('${ctx.esc(key)}')">
           <strong>${ctx.esc(g.name)}</strong>
+          ${g.city ? `<span style="color:var(--muted);"> · ${ctx.esc(g.city)}</span>` : ""}
           ${g.number != null ? `<span style="color:var(--muted);"> #${ctx.esc(g.number)}</span>` : ""}
           <span style="float:right;font-weight:800;">${g.rows.length} print${g.rows.length === 1 ? "" : "s"}</span>
         </button>

@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import re
-from datetime import date
+import threading
+import uuid
+from datetime import date, datetime, timezone
+from io import BytesIO
 from typing import Optional
 from urllib.parse import quote
 
@@ -91,6 +95,140 @@ def duplicate_day_pdf(
     out = BytesIO()
     writer.write(out)
     return _pdf_response(out.getvalue(), f"duplicates-{day.isoformat()}.pdf")
+
+
+_dup_guard = threading.Lock()
+_dup_jobs: dict[str, dict] = {}
+
+
+def _dup_job(job_id: str) -> dict | None:
+    with _dup_guard:
+        job = _dup_jobs.get(job_id)
+        return dict(job) if job else None
+
+
+def _dup_update(job_id: str, **fields) -> None:
+    with _dup_guard:
+        job = _dup_jobs.get(job_id)
+        if job is not None:
+            job.update(fields)
+
+
+def _build_duplicate_day(job_id: str, bill_ids: list[int]) -> None:
+    from pypdf import PdfWriter
+
+    from app.db.session import SessionLocal
+    from app.services.doc_gen import generate_customer_bill_document
+
+    db = SessionLocal()
+    writer = PdfWriter()
+    failed: list[str] = []
+    try:
+        for index, bill_id in enumerate(bill_ids, 1):
+            try:
+                generate_customer_bill_document(
+                    db, bill_id, copies=1, with_labels=True, persist=False, copy_label="DUPLICATE",
+                )
+                bill = db.get(CustomerBill, bill_id)
+                fresh = getattr(bill, "_pdf_bytes", None) if bill else None
+                if fresh:
+                    writer.append(BytesIO(fresh))
+                else:
+                    failed.append(str(bill_id))
+            except Exception:
+                logging.getLogger(__name__).exception("duplicate invoice %s", bill_id)
+                failed.append(str(bill_id))
+            finally:
+                db.rollback()
+            _dup_update(job_id, done=index)
+        if not writer.pages:
+            _dup_update(job_id, state="error", error="Could not build the invoices")
+            return
+        out = BytesIO()
+        writer.write(out)
+        _dup_update(job_id, state="ready", pdf=out.getvalue(), failed=failed)
+    except Exception:
+        logging.getLogger(__name__).exception("duplicate day %s", job_id)
+        _dup_update(job_id, state="error", error="Could not build the invoices")
+    finally:
+        db.close()
+
+
+def _drop_old_duplicate_jobs() -> None:
+    cutoff = datetime.now(timezone.utc).timestamp() - 900
+    with _dup_guard:
+        stale = [key for key, job in _dup_jobs.items() if float(job.get("created") or 0) < cutoff]
+        for key in stale:
+            _dup_jobs.pop(key, None)
+
+
+@router.post("/bills/duplicates/start")
+def start_duplicate_day_pdf(
+    day: date = Query(...),
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("customer_orders.read")),
+):
+    """Build one day's invoices in the background so the print window can stay open."""
+    bill_ids = [
+        int(row[0])
+        for row in (
+            db.query(CustomerBill.id)
+            .filter(
+                CustomerBill.deleted_at.is_(None),
+                CustomerBill.cancelled_at.is_(None),
+                CustomerBill.bill_date == day,
+            )
+            .order_by(CustomerBill.id.asc())
+            .all()
+        )
+    ]
+    if not bill_ids:
+        raise HTTPException(404, "no invoices on that date")
+    _drop_old_duplicate_jobs()
+    job_id = uuid.uuid4().hex
+    with _dup_guard:
+        _dup_jobs[job_id] = {
+            "state": "running",
+            "done": 0,
+            "total": len(bill_ids),
+            "error": "",
+            "failed": [],
+            "pdf": None,
+            "created": datetime.now(timezone.utc).timestamp(),
+            "filename": f"duplicates-{day.isoformat()}.pdf",
+        }
+    threading.Thread(target=_build_duplicate_day, args=(job_id, bill_ids), daemon=True).start()
+    return {"job_id": job_id, "total": len(bill_ids), "state": "running", "done": 0}
+
+
+@router.get("/bills/duplicates/jobs/{job_id}")
+def duplicate_day_status(
+    job_id: str,
+    auth: AuthContext = Depends(require_permission("customer_orders.read")),
+):
+    job = _dup_job(job_id)
+    if not job:
+        raise HTTPException(404, "print job not found")
+    return {
+        "state": job.get("state") or "running",
+        "done": int(job.get("done") or 0),
+        "total": int(job.get("total") or 0),
+        "error": job.get("error") or "",
+        "failed": job.get("failed") or [],
+    }
+
+
+@router.get("/bills/duplicates/jobs/{job_id}/file")
+def duplicate_day_file(
+    job_id: str,
+    auth: AuthContext = Depends(require_permission("customer_orders.read")),
+):
+    job = _dup_job(job_id)
+    if not job:
+        raise HTTPException(404, "print job not found")
+    if job.get("state") != "ready" or not job.get("pdf"):
+        raise HTTPException(409, "invoices are still being prepared")
+    return _pdf_response(job["pdf"], job.get("filename") or "duplicates.pdf")
 
 
 @router.get("/bills/{bill_id}/pdf")

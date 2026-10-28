@@ -181,6 +181,7 @@ def serialize_customer_bill(
         hide_discount_column=_hide_discount_column(bill, entries),
         commission_agent_id=bill.commission_agent_id,
         commission_agent_name=commission_agent.name if commission_agent else None,
+        created_by_name=bill.created_by_name or "",
         has_custom_qr=bool(bill.payment_qr_key),
         lines=[
             CustomerBillLineOut(

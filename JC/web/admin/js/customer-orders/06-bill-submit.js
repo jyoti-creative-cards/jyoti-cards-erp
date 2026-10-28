@@ -113,20 +113,48 @@
     billOnAgent = !!on;
   }
 
+  function sayInPrintWindow(win, text) {
+    try {
+      win.document.open();
+      win.document.write(`<!doctype html><title>Invoices</title><body style="font:16px sans-serif;padding:28px;color:#222">${text}</body>`);
+      win.document.close();
+    } catch (_) {}
+  }
+
   async function printDayDuplicates() {
     const input = document.getElementById("co-print-day");
     const day = input && input.value;
     if (!day) return ctx.toast("Enter the invoice date", "error");
-    ctx.showLoading?.();
+    const win = window.open("", "_blank");
+    if (!win) return ctx.toast("Allow pop-ups to print the invoices", "error");
+    sayInPrintWindow(win, "Preparing invoices…");
     try {
-      await DocShare.openPdf(`/share/bills/duplicates.pdf?day=${encodeURIComponent(day)}`, {
-        print: true,
-        filename: `duplicates-${day}.pdf`,
-      });
+      const start = await ctx.api(`/share/bills/duplicates/start?day=${encodeURIComponent(day)}`, { method: "POST" });
+      const jobId = start.job_id;
+      let status = start;
+      const started = Date.now();
+      while (status.state !== "ready") {
+        if (status.state === "error") throw new Error(status.error || "Could not print the invoices");
+        if (Date.now() - started > 180000) throw new Error("Preparing the invoices took too long");
+        sayInPrintWindow(win, `Preparing invoices… ${status.done || 0} of ${status.total || ""}`);
+        await new Promise(resolve => setTimeout(resolve, 800));
+        status = await ctx.api(`/share/bills/duplicates/jobs/${jobId}`);
+      }
+      const headers = { ...(ctx.headers?.() || {}) };
+      delete headers["Content-Type"];
+      const res = await fetch(`${(ctx.apiBase?.() || "").replace(/\/$/, "")}/share/bills/duplicates/jobs/${jobId}/file`, { headers });
+      if (!res.ok) throw new Error("Could not open the invoices");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      win.location = url;
+      setTimeout(() => {
+        try { win.focus(); win.print(); } catch (_) {}
+      }, 900);
+      const skipped = (status.failed || []).length;
+      if (skipped) ctx.toast(`Printed the invoices. ${skipped} could not be included.`, "error");
     } catch (e) {
+      sayInPrintWindow(win, ctx.esc ? ctx.esc(e.message || "Could not print the invoices") : "Could not print the invoices");
       ctx.toast(e.message || "Could not print the invoices", "error");
-    } finally {
-      ctx.hideLoading?.();
     }
   }
 

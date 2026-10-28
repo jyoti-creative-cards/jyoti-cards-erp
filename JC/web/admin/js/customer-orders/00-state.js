@@ -6,6 +6,8 @@ const CustomerOrders = (() => {
   let currentBucket = "open"; // same stages for Today + Past
   let hubMode = "queue"; // queue (Today) | past — date scope only
   let hubSearch = "";
+  let hubPriceMin = "";
+  let hubPriceMax = "";
   let hubSort = "latest"; // latest | oldest — unfiltered hub-list order
   let coExpandedId = null;
   let hubExpandedCustomerId = null;

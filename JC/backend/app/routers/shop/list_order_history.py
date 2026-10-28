@@ -249,7 +249,7 @@ def _portal_year(query):
     return query.filter(CatalogProduct.year_group == PORTAL_YEAR_GROUP)
 
 
-def _alternatives_batch(db: Session, parent_ids: list[int], stock: dict[int, tuple[int, int]]) -> dict[int, List[ShopAlternativePublic]]:
+def _alternatives_batch(db: Session, parent_ids: list[int], stock: dict[int, tuple[int, int]], wanted: int = 0) -> dict[int, List[ShopAlternativePublic]]:
     if not parent_ids:
         return {}
     rows = db.query(CatalogAlternative).filter(CatalogAlternative.product_id.in_(parent_ids)).all()
@@ -271,7 +271,7 @@ def _alternatives_batch(db: Session, parent_ids: list[int], stock: dict[int, tup
         if not alt_prod or (alt_prod.year_group or "").strip() != PORTAL_YEAR_GROUP:
             continue
         qty, th = stock.get(alt_prod.id, (0, 300))
-        lbl = _portal_stock_status(qty, th)
+        lbl = stock_status_for_wanted(qty, wanted) if wanted else _portal_stock_status(qty, th)
         grouped.setdefault(row.product_id, []).append(
             ShopAlternativePublic(
                 catalog_product_id=alt_prod.id,
@@ -295,7 +295,7 @@ def product_search(
     raw = _norm_q(q)
     if not raw:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="search text empty")
-    cache_key = f"shop:search:{raw.lower()}"
+    cache_key = f"shop:search:{raw.lower()}:{int(qty)}"
     cached = response_cache.get(cache_key)
     if cached is not None:
         return cached
@@ -305,11 +305,10 @@ def product_search(
     stock = _stock_map(db, ids)
     addon_map = addon_snapshots_map(db, ids)
     statuses = {
-        p.id: _portal_stock_status(*stock.get(p.id, (0, 300)))
+        p.id: stock_status_for_wanted(stock.get(p.id, (0, 300))[0], qty)
         for p in rows
     }
-    need_alts = [pid for pid, label in statuses.items() if label != "in_stock"]
-    alt_map = _alternatives_batch(db, need_alts, stock)
+    alt_map = _alternatives_batch(db, ids, stock, wanted=qty)
     out = [
         _to_shop_product(
             p,
@@ -355,8 +354,7 @@ def _to_shop_product(
             for a in addons
         ],
         quantity_on_hand=max(0, int(qty or 0)),
-        # Swaps when the item is out, or running low.
-        alternatives=alts if raw_lbl in ("out_of_stock", "low_stock") else [],
+        alternatives=alts,
     )
 
 @router.get("/products/suggestions", response_model=List[ShopSuggestionPublic])

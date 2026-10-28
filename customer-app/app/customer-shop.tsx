@@ -22,11 +22,11 @@ const GODOWN_PHONES = [
 /** Customer-facing: can they rely on us having units? */
 function availabilityLine(s: string): { title: string; hint: string } {
   if (s === "in_stock")
-    return { title: "In stock", hint: "Available. Enter a quantity when you add it." };
+    return { title: "In stock", hint: "We have this quantity. Add it to your bag." };
   if (s === "low_stock")
     return {
       title: "Low stock",
-      hint: "Limited stock. You can try a smaller quantity, or look at the alternatives.",
+      hint: "We don't have this quantity. Alternatives with enough stock are beside it.",
     };
   if (s === "out_of_stock")
     return {
@@ -131,38 +131,46 @@ function altProduct(a: ShopProductPublic["alternatives"][number]): ShopProductPu
   };
 }
 
+function stockForWanted(onHand: number, wanted: number): string {
+  if (onHand <= 0) return "out_of_stock";
+  if (wanted > onHand) return "low_stock";
+  return "in_stock";
+}
+
 function ProductTile({
   p,
   qty,
   onQty,
   onAdd,
+  compact = false,
 }: {
   p: ShopProductPublic;
   qty: string;
   onQty: (next: string) => void;
   onAdd: () => void;
+  compact?: boolean;
 }) {
   const avail = availabilityLine(p.stock_status);
-  const canOrder = Number(p.quantity_on_hand ?? 0) >= 50;
+  const canOrder = Number(p.quantity_on_hand ?? 0) >= 50 && p.stock_status === "in_stock";
   return (
-    <article className="jc-rise flex h-full flex-col overflow-hidden rounded-3xl border border-jc-border bg-white shadow-jc ring-1 ring-black/[0.03] transition duration-300 hover:-translate-y-1 hover:shadow-jc-lg">
-      <div className="relative aspect-[4/3] w-full bg-gradient-to-b from-jc-bg-deep to-white">
+    <article className={`jc-rise flex h-full flex-col overflow-hidden border border-jc-border bg-white shadow-jc ring-1 ring-black/[0.03] ${compact ? "rounded-2xl" : "rounded-3xl transition duration-300 hover:-translate-y-1 hover:shadow-jc-lg"}`}>
+      <div className={`relative w-full bg-gradient-to-b from-jc-bg-deep to-white ${compact ? "aspect-[5/3]" : "aspect-[4/3]"}`}>
         {p.image_url ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={p.image_url} alt={p.our_product_id} className="h-full w-full object-contain p-4 transition duration-500 hover:scale-[1.03]" />
+          <img src={p.image_url} alt={p.our_product_id} className={`h-full w-full object-contain ${compact ? "p-2" : "p-4 transition duration-500 hover:scale-[1.03]"}`} />
         ) : (
-          <div className="flex h-full min-h-[180px] items-center justify-center text-sm text-jc-muted">Photo coming soon</div>
+          <div className={`flex h-full items-center justify-center text-sm text-jc-muted ${compact ? "min-h-[96px]" : "min-h-[180px]"}`}>Photo coming soon</div>
         )}
         <span className={`absolute left-3 top-3 rounded-full px-3 py-1 text-xs font-bold ring-1 ${stockPillClass(p.stock_status)}`}>
           {avail.title}
         </span>
       </div>
-      <div className="flex flex-1 flex-col gap-3 p-4 sm:p-5">
-        <p className="font-display text-xl font-semibold leading-snug text-jc-ink">{p.our_product_id}</p>
-        <p className="text-sm leading-relaxed text-jc-muted">{avail.hint}</p>
-        {canOrder ? (
-          <div className="mt-auto flex items-center gap-2 pt-1">
-            <AmazonQty value={qty} onChange={onQty} />
+      <div className={`flex flex-1 flex-col gap-3 ${compact ? "p-3" : "p-4 sm:p-5"}`}>
+        <p className={`font-display font-semibold leading-snug text-jc-ink ${compact ? "text-base" : "text-xl"}`}>{p.our_product_id}</p>
+        {compact ? null : <p className="text-sm leading-relaxed text-jc-muted">{avail.hint}</p>}
+        <div className="mt-auto flex flex-wrap items-center gap-2 pt-1">
+          <AmazonQty value={qty} onChange={onQty} />
+          {canOrder ? (
             <button
               type="button"
               onClick={onAdd}
@@ -170,10 +178,10 @@ function ProductTile({
             >
               Add to bag
             </button>
-          </div>
-        ) : (
-          <p className="mt-auto text-sm font-semibold text-stone-500">Not available to order.</p>
-        )}
+          ) : (
+            <p className="text-sm font-semibold text-stone-500">Not enough for this quantity.</p>
+          )}
+        </div>
       </div>
     </article>
   );
@@ -255,6 +263,7 @@ export default function CustomerPortalPage() {
   const [portalTab, setPortalTab] = useState<PortalTab>("availability");
 
   const [shopQ, setShopQ] = useState("");
+  const [shopQty, setShopQty] = useState("50");
   const [addQty, setAddQty] = useState<Record<number, string>>({});
   const [stockPopup, setStockPopup] = useState(false);
   const [shopSuggestions, setShopSuggestions] = useState<ShopSuggestionPublic[]>([]);
@@ -376,14 +385,20 @@ export default function CustomerPortalPage() {
     setShopResults([]);
     if (!token) return;
     const q = normalizeShopQuery(queryOverride ?? shopQ);
+    const wanted = Math.floor(Number(shopQty));
     if (q.length < 1) {
       setShopErr("Please enter an item code or product name to search.");
+      return;
+    }
+    if (!Number.isFinite(wanted) || wanted < 50 || wanted % 50 !== 0) {
+      setShopErr("Enter the quantity you need, in multiples of 50.");
       return;
     }
     setShopLoading(true);
     try {
       const p = new URLSearchParams();
       p.set("q", q);
+      p.set("qty", String(wanted));
       const r = await fetchApi(apiUrl(`shop/products/search?${p}`), {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -392,12 +407,18 @@ export default function CustomerPortalPage() {
         setShopErr(formatApiError(data) || r.statusText);
         return;
       }
-      setShopResults(Array.isArray(data) ? (data as ShopProductPublic[]) : []);
+      const found = Array.isArray(data) ? (data as ShopProductPublic[]) : [];
+      setShopResults(found);
+      setAddQty((prev) => {
+        const next = { ...prev };
+        for (const item of found) next[item.catalog_product_id] = String(wanted);
+        return next;
+      });
       setShopDidSearch(true);
     } finally {
       setShopLoading(false);
     }
-  }, [token, shopQ]);
+  }, [token, shopQ, shopQty]);
 
   function qtyTooHigh(n: number, onHand: number) {
     if (!Number.isFinite(n) || n < 50 || n % 50 !== 0 || n > MAX_ORDER_QTY) {
@@ -703,8 +724,7 @@ export default function CustomerPortalPage() {
                   <div>
                     <h3 className="font-display text-2xl font-semibold text-jc-ink sm:text-[1.65rem]">Find products</h3>
                     <p className="mt-1 max-w-xl text-sm text-jc-muted">
-                      Type the item number and the quantity. A match from the list opens straight away.
-                      Price is shown in your bag.
+                      Type the item, choose how many you need, then search. We will say if that quantity is in stock.
                     </p>
                   </div>
                 </div>
@@ -737,6 +757,7 @@ export default function CustomerPortalPage() {
                       placeholder="Item code or product name"
                       autoComplete="off"
                     />
+                    <AmazonQty value={shopQty} onChange={setShopQty} />
                     <button
                       type="button"
                       className="shrink-0 rounded-xl bg-jc-brand px-4 py-2.5 text-sm font-semibold text-white shadow-md transition hover:bg-jc-brand-light disabled:opacity-55"
@@ -778,7 +799,7 @@ export default function CustomerPortalPage() {
                   </span>
                   <p className="mt-4 font-display text-lg font-semibold text-jc-ink">Start with a search</p>
                   <p className="mt-2 max-w-sm text-sm text-jc-muted">
-                    Type an item number, then tap Search. Quantity is asked when you add it to the bag.
+                    Type an item and the quantity you need, then tap Search.
                   </p>
                 </div>
               ) : null}
@@ -802,29 +823,41 @@ export default function CustomerPortalPage() {
               ) : shopResults.length > 0 ? (
                 <div className="space-y-10 px-5 pb-8 sm:px-8">
                   {shopResults.map((p) => {
-                    const typedQty = addQty[p.catalog_product_id] ?? "50";
+                    const typedQty = addQty[p.catalog_product_id] ?? shopQty;
+                    const wanted = Math.floor(Number(typedQty)) || 0;
+                    const live = stockForWanted(Number(p.quantity_on_hand ?? 0), wanted);
+                    const shown = { ...p, stock_status: live };
+                    const short = live !== "in_stock";
+                    const alts = (p.alternatives || []).filter((a) => Number(a.quantity_on_hand ?? 0) > wanted);
                     return (
-                      <section key={p.catalog_product_id} className="space-y-5">
-                        <div className="mx-auto max-w-xl">
+                      <section
+                        key={p.catalog_product_id}
+                        className={short ? "grid items-start gap-4 lg:grid-cols-[minmax(220px,280px)_minmax(0,1fr)]" : ""}
+                      >
+                        <div className={short ? "max-w-sm" : "mx-auto max-w-xl"}>
                           <ProductTile
-                            p={p}
+                            compact={short}
+                            p={shown}
                             qty={typedQty}
                             onQty={(next) => setAddQty((prev) => ({ ...prev, [p.catalog_product_id]: next }))}
-                            onAdd={() => addProductToCart(p, typedQty)}
+                            onAdd={() => addProductToCart(shown, typedQty)}
                           />
                         </div>
-                        {p.stock_status !== "in_stock" ? (
-                          <div>
-                            <h3 className="font-display text-lg font-semibold text-jc-ink">Alternatives</h3>
-                            {p.alternatives.length === 0 ? (
-                              <p className="mt-2 text-sm text-jc-muted">No alternatives for this item.</p>
+                        {short ? (
+                          <div className="min-w-0 rounded-2xl border border-amber-200/80 bg-amber-50/40 p-3 sm:p-4">
+                            <h3 className="font-display text-base font-semibold text-jc-ink">
+                              Alternatives with more than {wanted || "this"} in stock
+                            </h3>
+                            {alts.length === 0 ? (
+                              <p className="mt-2 text-sm text-jc-muted">No alternative has more than this quantity.</p>
                             ) : (
-                              <div className="mt-4 grid gap-5 sm:grid-cols-2">
-                                {p.alternatives.map((a) => {
-                                  const alt = altProduct(a);
-                                  const altQty = addQty[alt.catalog_product_id] ?? "50";
+                              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                                {alts.map((a) => {
+                                  const alt = { ...altProduct(a), stock_status: "in_stock" };
+                                  const altQty = addQty[alt.catalog_product_id] ?? typedQty;
                                   return (
                                     <ProductTile
+                                      compact
                                       key={alt.catalog_product_id}
                                       p={alt}
                                       qty={altQty}

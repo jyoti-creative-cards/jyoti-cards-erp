@@ -224,6 +224,30 @@ def _summaries_batch(db: Session, orders: list[CustomerOrder]) -> list[CustomerO
     city_ids = [c.city_id for c in customers.values() if c.city_id]
     cities = {c.id: c for c in db.query(City).filter(City.id.in_(city_ids)).all()} if city_ids else {}
     sources = _sources_for_received_many(db, ids)
+    search_by_order: dict[int, dict] = defaultdict(lambda: {"text": set(), "prices": []})
+    open_bits = (
+        db.query(
+            CustomerOpenLine.customer_id,
+            CatalogProduct.our_product_id,
+            CatalogProduct.vendor_product_id,
+            CatalogProduct.category,
+            CatalogProduct.second_category,
+            CatalogProduct.category_3,
+            CustomerOpenLine.unit_price,
+        )
+        .join(CatalogProduct, CatalogProduct.id == CustomerOpenLine.catalog_product_id)
+        .filter(CustomerOpenLine.customer_id.in_(cids), CustomerOpenLine.status == "open")
+        .all()
+    ) if cids else []
+    order_by_customer = {o.customer_id: o.id for o in orders if o.bucket == "open"}
+    for cid, our, vendor, cat, second, third, price in open_bits:
+        oid = order_by_customer.get(cid)
+        if not oid:
+            continue
+        bag = search_by_order[oid]
+        bag["text"].update(x for x in (our, vendor, cat, second, third) if x)
+        if price is not None:
+            bag["prices"].append(format(price, "f"))
     out: list[CustomerOrderSummary] = []
     for order in orders:
         cust = customers.get(order.customer_id)
@@ -248,6 +272,8 @@ def _summaries_batch(db: Session, orders: list[CustomerOrder]) -> list[CustomerO
                 marker_2=getattr(cust, "marker_2", None) if cust else None,
                 payment_type=getattr(cust, "payment_type", None) if cust else None,
                 city_name=city.name if city else None,
+                search_text=" ".join(sorted(search_by_order[order.id]["text"])),
+                prices=search_by_order[order.id]["prices"],
             )
         )
     return out
@@ -359,6 +385,32 @@ def list_customer_orders(
         customers_by_id = {c.id: c for c in db.query(Customer).filter(Customer.id.in_(cids)).all()}
         city_ids = {c.city_id for c in customers_by_id.values() if c.city_id}
         cities = {c.id: c.name for c in (db.query(City).filter(City.id.in_(city_ids)).all() if city_ids else [])}
+        search_rows = (
+            db.query(
+                CustomerOpenLine.customer_id,
+                CatalogProduct.id,
+                CatalogProduct.our_product_id,
+                CatalogProduct.vendor_product_id,
+                CatalogProduct.category,
+                CatalogProduct.second_category,
+                CatalogProduct.category_3,
+                CustomerOpenLine.unit_price,
+            )
+            .join(CatalogProduct, CatalogProduct.id == CustomerOpenLine.catalog_product_id)
+            .filter(
+                CustomerOpenLine.customer_id.in_(cids),
+                CustomerOpenLine.status == "open",
+                CustomerOpenLine.quantity_open > 0,
+            )
+            .all()
+        )
+        lines_by_cid: dict[int, list[dict]] = defaultdict(list)
+        for cid, pid, our, vendor, cat, second, third, price in search_rows:
+            text = " ".join(str(x).strip() for x in (pid, our, vendor, cat, second, third) if x)
+            lines_by_cid[int(cid)].append({
+                "text": text,
+                "price": format(price, "f") if price is not None else "",
+            })
         touched_by_cid = {int(r[0]): r[3] for r in rows}
         placed_by_cid: dict[int, object] = {}
         if received_ids:
@@ -400,6 +452,9 @@ def list_customer_orders(
                     marker_2=getattr(cust_obj, "marker_2", None) if cust_obj else None,
                     payment_type=getattr(cust_obj, "payment_type", None) if cust_obj else None,
                     city_name=cities.get(cust_obj.city_id) if cust_obj and cust_obj.city_id else None,
+                    search_lines=lines_by_cid.get(cid, []),
+                    search_text=" ".join(ln["text"] for ln in lines_by_cid.get(cid, [])),
+                    prices=[ln["price"] for ln in lines_by_cid.get(cid, []) if ln["price"]],
                 )
             )
         out.sort(key=lambda x: _sort_business_date(x.display_date), reverse=True)

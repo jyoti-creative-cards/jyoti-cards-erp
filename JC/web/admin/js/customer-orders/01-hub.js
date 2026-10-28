@@ -119,9 +119,11 @@
             ${HubUI.searchBar({
               id: "co-hub-search",
               value: hubSearch,
-              placeholder: currentBucket === "billed" ? "Search customer, bill no…" : "Search customer…",
+              placeholder: currentBucket === "open" ? "Customer, item, vendor item, category…" : currentBucket === "billed" ? "Search customer, bill no…" : "Search customer…",
               oninput: "CustomerOrders.setHubSearch(this.value)",
             })}
+            ${currentBucket === "open" ? `<input class="input" style="width:110px;" inputmode="decimal" placeholder="Min price" value="${ctx.esc(hubPriceMin)}" oninput="CustomerOrders.setHubPrice('min', this.value)" />
+            <input class="input" style="width:110px;" inputmode="decimal" placeholder="Max price" value="${ctx.esc(hubPriceMax)}" oninput="CustomerOrders.setHubPrice('max', this.value)" />` : ""}
             <div class="ord-mode-toggle" style="flex:0 0 auto;" role="tablist" aria-label="Sort order">
               <button type="button" class="ord-mode-btn${hubSort === "latest" ? " active" : ""}" onclick="CustomerOrders.setHubSort('latest')">Latest first</button>
               <button type="button" class="ord-mode-btn${hubSort === "oldest" ? " active" : ""}" onclick="CustomerOrders.setHubSort('oldest')">Oldest first</button>
@@ -183,6 +185,27 @@
     else renderList();
   }
 
+  function setHubPrice(which, val) {
+    if (which === "max") hubPriceMax = val || "";
+    else hubPriceMin = val || "";
+    renderList();
+  }
+
+  function priceInRange(prices) {
+    const min = hubPriceMin === "" ? null : Number(hubPriceMin);
+    const max = hubPriceMax === "" ? null : Number(hubPriceMax);
+    const hasMin = min != null && Number.isFinite(min);
+    const hasMax = max != null && Number.isFinite(max);
+    if (!hasMin && !hasMax) return true;
+    return (prices || []).some(p => {
+      const n = Number(p);
+      if (!Number.isFinite(n)) return false;
+      if (hasMin && n < min) return false;
+      if (hasMax && n > max) return false;
+      return true;
+    });
+  }
+
   function hubTime(o) {
     const raw = o.sort_at || o.updated_at || o.display_date || 0;
     const t = new Date(raw).getTime();
@@ -201,20 +224,45 @@
     });
   }
 
+  function linePriceOk(price) {
+    return priceInRange([price]);
+  }
+
+  function confirmedOrderMatches(order, tokens, hasPrice) {
+    const party = `${order.customer_name || ""} ${order.city_name || ""} ${order.party_number ?? ""}`.toLowerCase();
+    const partyHit = tokens.length > 0 && tokens.every(t => party.includes(String(t).toLowerCase()));
+    const lines = Array.isArray(order.search_lines) && order.search_lines.length
+      ? order.search_lines
+      : String(order.search_text || "").split("||").filter(Boolean).map(text => ({ text, price: "" }));
+    const lineHit = lines.some(ln => {
+      const text = String(ln.text || "").toLowerCase();
+      const textOk = !tokens.length || tokens.every(t => text.includes(String(t).toLowerCase()));
+      return textOk && (!hasPrice || linePriceOk(ln.price));
+    });
+    if (partyHit && hasPrice) return lines.some(ln => linePriceOk(ln.price));
+    if (partyHit) return true;
+    return lineHit;
+  }
+
   function filterHubOrders(list) {
+    let rows = list || [];
+    const tokens = hubSearch.trim() ? OrdersUI.partySearchTokens(hubSearch) : [];
+    const hasPrice = currentBucket === "open" && (hubPriceMin !== "" || hubPriceMax !== "");
+    if (currentBucket === "open" && (tokens.length || hasPrice)) {
+      return sortHubOrders(rows.filter(o => confirmedOrderMatches(o, tokens, hasPrice)));
+    }
     if (!hubSearch.trim()) {
-      return sortHubOrders(list);
+      return sortHubOrders(rows);
     }
     // Hub rows only have customer_name — still token-match; rank by name starts-with
     const ranked = OrdersUI.filterAndRankParties(
-      (list || []).map(o => ({
+      rows.map(o => ({
         ...o,
         business_name: o.customer_name || o.business_name || "",
       })),
       hubSearch,
     );
     if (currentBucket !== "billed") return sortHubOrders(ranked);
-    const tokens = OrdersUI.partySearchTokens(hubSearch);
     const seen = new Set(ranked.map(o => o.customer_id));
     const billHits = (list || []).filter(o => {
       if (seen.has(o.customer_id)) return false;

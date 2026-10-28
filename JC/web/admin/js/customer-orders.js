@@ -7,6 +7,8 @@ const CustomerOrders = (() => {
   let currentBucket = "open"; // same stages for Today + Past
   let hubMode = "queue"; // queue (Today) | past — date scope only
   let hubSearch = "";
+  let hubPriceMin = "";
+  let hubPriceMax = "";
   let hubSort = "latest"; // latest | oldest — unfiltered hub-list order
   let coExpandedId = null;
   let hubExpandedCustomerId = null;
@@ -200,9 +202,11 @@ const CustomerOrders = (() => {
             ${HubUI.searchBar({
               id: "co-hub-search",
               value: hubSearch,
-              placeholder: currentBucket === "billed" ? "Search customer, bill no…" : "Search customer…",
+              placeholder: currentBucket === "open" ? "Customer, item, vendor item, category…" : currentBucket === "billed" ? "Search customer, bill no…" : "Search customer…",
               oninput: "CustomerOrders.setHubSearch(this.value)",
             })}
+            ${currentBucket === "open" ? `<input class="input" style="width:110px;" inputmode="decimal" placeholder="Min price" value="${ctx.esc(hubPriceMin)}" oninput="CustomerOrders.setHubPrice('min', this.value)" />
+            <input class="input" style="width:110px;" inputmode="decimal" placeholder="Max price" value="${ctx.esc(hubPriceMax)}" oninput="CustomerOrders.setHubPrice('max', this.value)" />` : ""}
             <div class="ord-mode-toggle" style="flex:0 0 auto;" role="tablist" aria-label="Sort order">
               <button type="button" class="ord-mode-btn${hubSort === "latest" ? " active" : ""}" onclick="CustomerOrders.setHubSort('latest')">Latest first</button>
               <button type="button" class="ord-mode-btn${hubSort === "oldest" ? " active" : ""}" onclick="CustomerOrders.setHubSort('oldest')">Oldest first</button>
@@ -264,6 +268,27 @@ const CustomerOrders = (() => {
     else renderList();
   }
 
+  function setHubPrice(which, val) {
+    if (which === "max") hubPriceMax = val || "";
+    else hubPriceMin = val || "";
+    renderList();
+  }
+
+  function priceInRange(prices) {
+    const min = hubPriceMin === "" ? null : Number(hubPriceMin);
+    const max = hubPriceMax === "" ? null : Number(hubPriceMax);
+    const hasMin = min != null && Number.isFinite(min);
+    const hasMax = max != null && Number.isFinite(max);
+    if (!hasMin && !hasMax) return true;
+    return (prices || []).some(p => {
+      const n = Number(p);
+      if (!Number.isFinite(n)) return false;
+      if (hasMin && n < min) return false;
+      if (hasMax && n > max) return false;
+      return true;
+    });
+  }
+
   function hubTime(o) {
     const raw = o.sort_at || o.updated_at || o.display_date || 0;
     const t = new Date(raw).getTime();
@@ -282,20 +307,45 @@ const CustomerOrders = (() => {
     });
   }
 
+  function linePriceOk(price) {
+    return priceInRange([price]);
+  }
+
+  function confirmedOrderMatches(order, tokens, hasPrice) {
+    const party = `${order.customer_name || ""} ${order.city_name || ""} ${order.party_number ?? ""}`.toLowerCase();
+    const partyHit = tokens.length > 0 && tokens.every(t => party.includes(String(t).toLowerCase()));
+    const lines = Array.isArray(order.search_lines) && order.search_lines.length
+      ? order.search_lines
+      : String(order.search_text || "").split("||").filter(Boolean).map(text => ({ text, price: "" }));
+    const lineHit = lines.some(ln => {
+      const text = String(ln.text || "").toLowerCase();
+      const textOk = !tokens.length || tokens.every(t => text.includes(String(t).toLowerCase()));
+      return textOk && (!hasPrice || linePriceOk(ln.price));
+    });
+    if (partyHit && hasPrice) return lines.some(ln => linePriceOk(ln.price));
+    if (partyHit) return true;
+    return lineHit;
+  }
+
   function filterHubOrders(list) {
+    let rows = list || [];
+    const tokens = hubSearch.trim() ? OrdersUI.partySearchTokens(hubSearch) : [];
+    const hasPrice = currentBucket === "open" && (hubPriceMin !== "" || hubPriceMax !== "");
+    if (currentBucket === "open" && (tokens.length || hasPrice)) {
+      return sortHubOrders(rows.filter(o => confirmedOrderMatches(o, tokens, hasPrice)));
+    }
     if (!hubSearch.trim()) {
-      return sortHubOrders(list);
+      return sortHubOrders(rows);
     }
     // Hub rows only have customer_name — still token-match; rank by name starts-with
     const ranked = OrdersUI.filterAndRankParties(
-      (list || []).map(o => ({
+      rows.map(o => ({
         ...o,
         business_name: o.customer_name || o.business_name || "",
       })),
       hubSearch,
     );
     if (currentBucket !== "billed") return sortHubOrders(ranked);
-    const tokens = OrdersUI.partySearchTokens(hubSearch);
     const seen = new Set(ranked.map(o => o.customer_id));
     const billHits = (list || []).filter(o => {
       if (seen.has(o.customer_id)) return false;
@@ -938,7 +988,7 @@ const CustomerOrders = (() => {
         const receiptBit = b.transport_receipt_number ? ` · Rcpt ${ctx.esc(b.transport_receipt_number)}` : "";
         return HubUI.partyCard({
           title: b.display_name || `Bill ${b.bill_number}`,
-          meta: `${fmtPrice(b.grand_total)} · ${ctx.fmtDate(b.created_at || b.display_date || b.bill_date)}${modeLbl ? ` · ${modeLbl}` : ""}${chargeBit}${receiptBit}${(b.additional_charges || []).filter(c => Number(c.amount) > 0).map(c => ` · ${ctx.esc(c.name)} ${fmtPrice(c.amount)}`).join("")}${b.status && b.status !== "open" ? ` · ${ctx.esc(b.status)}` : ""}${b.narration ? `<div style="margin-top:2px;">${ctx.esc(b.narration)}</div>` : ""}`,
+          meta: `${fmtPrice(b.grand_total)} · ${ctx.fmtDate(b.created_at || b.display_date || b.bill_date)}${b.created_by_name ? ` · ${ctx.esc(b.created_by_name)}` : ""}${modeLbl ? ` · ${modeLbl}` : ""}${chargeBit}${receiptBit}${(b.additional_charges || []).filter(c => Number(c.amount) > 0).map(c => ` · ${ctx.esc(c.name)} ${fmtPrice(c.amount)}`).join("")}${b.status && b.status !== "open" ? ` · ${ctx.esc(b.status)}` : ""}${b.narration ? `<div style="margin-top:2px;">${ctx.esc(b.narration)}</div>` : ""}`,
           pillHtml: "",
           primaryLabel: canEditBill ? "Edit" : "Print",
           primaryOnclick: canEditBill
@@ -2566,20 +2616,48 @@ const CustomerOrders = (() => {
     billOnAgent = !!on;
   }
 
+  function sayInPrintWindow(win, text) {
+    try {
+      win.document.open();
+      win.document.write(`<!doctype html><title>Invoices</title><body style="font:16px sans-serif;padding:28px;color:#222">${text}</body>`);
+      win.document.close();
+    } catch (_) {}
+  }
+
   async function printDayDuplicates() {
     const input = document.getElementById("co-print-day");
     const day = input && input.value;
     if (!day) return ctx.toast("Enter the invoice date", "error");
-    ctx.showLoading?.();
+    const win = window.open("", "_blank");
+    if (!win) return ctx.toast("Allow pop-ups to print the invoices", "error");
+    sayInPrintWindow(win, "Preparing invoices…");
     try {
-      await DocShare.openPdf(`/share/bills/duplicates.pdf?day=${encodeURIComponent(day)}`, {
-        print: true,
-        filename: `duplicates-${day}.pdf`,
-      });
+      const start = await ctx.api(`/share/bills/duplicates/start?day=${encodeURIComponent(day)}`, { method: "POST" });
+      const jobId = start.job_id;
+      let status = start;
+      const started = Date.now();
+      while (status.state !== "ready") {
+        if (status.state === "error") throw new Error(status.error || "Could not print the invoices");
+        if (Date.now() - started > 180000) throw new Error("Preparing the invoices took too long");
+        sayInPrintWindow(win, `Preparing invoices… ${status.done || 0} of ${status.total || ""}`);
+        await new Promise(resolve => setTimeout(resolve, 800));
+        status = await ctx.api(`/share/bills/duplicates/jobs/${jobId}`);
+      }
+      const headers = { ...(ctx.headers?.() || {}) };
+      delete headers["Content-Type"];
+      const res = await fetch(`${(ctx.apiBase?.() || "").replace(/\/$/, "")}/share/bills/duplicates/jobs/${jobId}/file`, { headers });
+      if (!res.ok) throw new Error("Could not open the invoices");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      win.location = url;
+      setTimeout(() => {
+        try { win.focus(); win.print(); } catch (_) {}
+      }, 900);
+      const skipped = (status.failed || []).length;
+      if (skipped) ctx.toast(`Printed the invoices. ${skipped} could not be included.`, "error");
     } catch (e) {
+      sayInPrintWindow(win, ctx.esc ? ctx.esc(e.message || "Could not print the invoices") : "Could not print the invoices");
       ctx.toast(e.message || "Could not print the invoices", "error");
-    } finally {
-      ctx.hideLoading?.();
     }
   }
 
@@ -3363,7 +3441,7 @@ const CustomerOrders = (() => {
   }
 
   return {
-    init, loadList, setBucket, setHubMode, setQueueFilter, setHubSearch, setHubSort, showHub, openDetail, openCustomer, switchBucket, toggleDetailExpand,
+    init, loadList, setBucket, setHubMode, setQueueFilter, setHubSearch, setHubPrice, setHubSort, showHub, openDetail, openCustomer, switchBucket, toggleDetailExpand,
     openSlidePanel, closeSlidePanel, toggleCardMore, closeAllCardMore,
     goToDispatch, goCollectPayment, setDispatchStatus, setDispatchAgent, pickParcel, reassignParcel, submitParcelReassign,
     showCreateMenu, showCreateMenuFromCustomer, openCloseBatch,

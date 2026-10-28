@@ -62,6 +62,11 @@ class BilledBillChip(BaseModel):
     grand_total: str
 
 
+class HubSearchLine(BaseModel):
+    text: str = ""
+    price: str = ""
+
+
 class CustomerOrderSummary(BaseModel):
     id: int
     customer_id: int
@@ -85,6 +90,9 @@ class CustomerOrderSummary(BaseModel):
     marker_2: Optional[str] = None
     payment_type: Optional[str] = None
     city_name: Optional[str] = None
+    search_text: str = ""
+    prices: List[str] = []
+    search_lines: List[HubSearchLine] = []
 
 
 class CustomerBillLineOut(BaseModel):
@@ -135,6 +143,7 @@ class CustomerBillOut(BaseModel):
     has_custom_qr: bool = False
     commission_agent_id: Optional[int] = None
     commission_agent_name: Optional[str] = None
+    created_by_name: Optional[str] = None
     lines: List[CustomerBillLineOut] = []
 
 

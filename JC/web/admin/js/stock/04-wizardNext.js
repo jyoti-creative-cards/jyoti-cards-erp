@@ -343,6 +343,9 @@
     if (stockLedgerKind === "purchase" || stockLedgerKind === "sales" || stockLedgerKind === "other") {
       list = list.filter(e => stockMoveBucket(e) === stockLedgerKind);
     }
+    if (stockLedgerKind === "billed" || stockLedgerKind === "reserved") {
+      list = list.filter(e => stockHoldLabel(e) === stockLedgerKind);
+    }
     list = [...list].sort((a, b) => {
       const da = ledgerDay(a);
       const db = ledgerDay(b);
@@ -350,6 +353,14 @@
       return (Number(a.id) || 0) - (Number(b.id) || 0);
     });
     return list;
+  }
+
+  function stockHoldLabel(e) {
+    const t = String(e.entry_type || "").toLowerCase();
+    const isOrder = t === "reserved" || t === "customer_order" || t === "sold";
+    if (!isOrder) return "";
+    if (e.bill_number || e.voucher_kind === "customer_bill" || t === "sold") return "billed";
+    return "reserved";
   }
 
   function ledgerDay(e) {
@@ -412,12 +423,14 @@
         <td>${qty}</td>
         <td><strong>${ctx.esc(e.bill_number || "—")}</strong></td>
         <td>${e.balance_after}</td>
-        <td><span class="badge badge-blue">${ctx.esc(e.entry_type || "")}</span></td>
+        <td><span class="badge ${stockHoldLabel(e) === "billed" ? "badge-green" : stockHoldLabel(e) === "reserved" ? "badge-amber" : "badge-blue"}">${ctx.esc(stockHoldLabel(e) || e.entry_type || "")}</span></td>
       </tr>`;
     }).join("") : `<tr><td colspan="6" style="color:var(--muted);">No movements for this filter</td></tr>`;
     return `<div id="stock-ledger-block">
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 10px;">
         ${chip("all", "All")}
+        ${chip("billed", "Billed")}
+        ${chip("reserved", "Reserved")}
         ${chip("purchase", "Purchase only")}
         ${chip("sales", "Sale only")}
         ${chip("other", "Other")}

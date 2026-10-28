@@ -1,6 +1,6 @@
   return {
     init, load, setViewMode, render, openDetail, openLedgerDetail, openReceiptDetail, openVoucher, toastNoBill, ledgerTableHtml,
-    setLedgerKind, setHideStockVoids,
+    setLedgerKind, setHideStockVoids, setPartyHoldFilter,
     openAddWizard, openReceiveForVendor, openBillForVendor, openOfflineWizard, openOfflineForVendor, closeWizard, pickMode, pickVendor, setLine, setLineAmount, setLineRate, setBillFile,
     toggleOfflineProduct, pickOfflineProduct, onOfflineSearchKey, onOfflineQtyKey, setOfflineLine, onOfflineProductSearch, onOfflineVendorSearch,
     openOfflineQtyPopup, closeOfflineQtyPopup, confirmOfflineQty, removeOfflineLine, bumpOfflineQty,

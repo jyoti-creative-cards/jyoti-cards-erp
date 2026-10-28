@@ -37,26 +37,57 @@
   function thumb(_url) {
     return `<div class="vo-thumb vo-thumb-empty">—</div>`;
   }
+  let partyHoldFilter = "all";
+  let partyHoldRows = [];
+
+  function partyHoldParts(row) {
+    const reserved = (Number(row.unconfirmed) || 0) + (Number(row.to_bill) || 0);
+    const billed = Number(row.billed_not_dispatched) || 0;
+    return { reserved, billed };
+  }
+
+  function setPartyHoldFilter(kind) {
+    partyHoldFilter = kind === "billed" || kind === "reserved" ? kind : "all";
+    const host = document.getElementById("party-hold-block");
+    if (host) host.outerHTML = reservedByPartyTable(partyHoldRows);
+  }
+
   function reservedByPartyTable(rows) {
-    if (!rows || !rows.length) return "";
-    const body = rows.map(r => {
+    partyHoldRows = rows || [];
+    if (!partyHoldRows.length) return "";
+    const shown = partyHoldRows.filter(r => {
+      const parts = partyHoldParts(r);
+      if (partyHoldFilter === "reserved") return parts.reserved > 0;
+      if (partyHoldFilter === "billed") return parts.billed > 0;
+      return parts.reserved > 0 || parts.billed > 0;
+    });
+    const chip = (id, label) => `<button type="button" class="btn btn-sm ${partyHoldFilter === id ? "btn-primary" : "btn-secondary"}" onclick="Stock.setPartyHoldFilter('${id}')">${label}</button>`;
+    const body = shown.length ? shown.map(r => {
+      const parts = partyHoldParts(r);
       const billId = Number(r.bill_id) || 0;
       const click = billId
         ? `Stock.openVoucher('customer_bill', ${billId})`
         : `Stock.toastNoBill()`;
+      const status = parts.billed > 0 && parts.reserved > 0
+        ? "Billed · Reserved"
+        : parts.billed > 0 ? "Billed" : "Reserved";
       return `<tr class="clickable" onclick="${click}">
         <td>${ctx.esc(r.customer_name)}</td>
-        <td>${r.unconfirmed || 0}</td>
-        <td>${r.to_bill || 0}</td>
-        <td>${r.billed_not_dispatched || 0}</td>
-        <td><strong>${r.total_held || 0}</strong></td>
+        <td>${parts.reserved}</td>
+        <td>${parts.billed}</td>
+        <td><strong>${status}</strong></td>
       </tr>`;
-    }).join("");
-    return `<div class="detail-section">
-        <h4>Reserved by party</h4>
-        <p style="color:var(--muted);font-size:12px;margin:0 0 8px;">Who is holding this stock right now — New (not yet confirmed), To bill (confirmed, unbilled), Billed (invoiced, not yet dispatched). Click a party to open that bill.</p>
+    }).join("") : `<tr><td colspan="4" style="color:var(--muted);">Nothing in this filter</td></tr>`;
+    return `<div class="detail-section" id="party-hold-block">
+        <h4>Who has this item</h4>
+        <p style="color:var(--muted);font-size:12px;margin:0 0 8px;">Reserved is an order or a confirmed order that is not billed yet. Billed is already invoiced. Click a party to open the bill.</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px;">
+          ${chip("all", "All")}
+          ${chip("reserved", "Reserved")}
+          ${chip("billed", "Billed")}
+        </div>
         <table class="data history-table"><thead><tr>
-          <th>Party</th><th>New</th><th>To bill</th><th>Billed (not dispatched)</th><th>Total held</th>
+          <th>Party</th><th>Reserved</th><th>Billed</th><th>Status</th>
         </tr></thead><tbody>${body}</tbody></table>
       </div>`;
   }

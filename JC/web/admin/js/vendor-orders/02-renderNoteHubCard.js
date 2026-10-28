@@ -367,6 +367,9 @@
             meta: `${lines.length} products · ${p.total_quantity || 0} qty · ${ctx.fmtDay(p.display_date)}${p.notes ? ` · ${ctx.esc(p.notes)}` : ""}`,
             primaryLabel: canWrite && p.receipt_id ? "Edit" : null,
             primaryOnclick: `Stock.openEditReceipt(${p.receipt_id})`,
+            moreItems: canWrite && p.receipt_id
+              ? [{ label: "Void receipt", onclick: `Stock.voidReceipt(${p.receipt_id}, ${detailVendorId})`, danger: true }]
+              : [],
             open: !!lines.length,
             canWrite: !!canWrite,
             expandHtml: lines.length ? `<table class="data vo-hub-table"><thead><tr><th>Product</th><th>Qty</th><th>Unbilled</th></tr></thead><tbody>

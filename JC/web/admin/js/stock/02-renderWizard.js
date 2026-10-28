@@ -96,6 +96,7 @@
             </div>
           </div>`;
         footerEl.innerHTML = `
+          <button class="btn btn-danger" onclick="Stock.voidReceipt(${editReceiptId}, ${wizardVendorId || 0})">Void receipt</button>
           <button class="btn btn-secondary" onclick="Stock.closeWizard()">Cancel</button>
           <button class="btn btn-primary btn-lg" onclick="Stock.submitReceipt()">Save changes</button>`;
         return;

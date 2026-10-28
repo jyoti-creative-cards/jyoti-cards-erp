@@ -20,6 +20,7 @@
         ctx.invalidateCache?.("/stock");
         ctx.invalidateCache?.("/vendor-orders");
         ctx.invalidateCache?.("/accounts-payable");
+        closeWizard();
         ctx.closeDetail?.();
         ctx.toast("Voided — moved to recycle bin", "success");
         if (typeof VendorOrders !== "undefined" && VendorOrders.refreshIfOpen) VendorOrders.refreshIfOpen(vendorId);

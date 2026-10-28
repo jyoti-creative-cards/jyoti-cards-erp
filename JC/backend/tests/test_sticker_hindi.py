@@ -163,7 +163,8 @@ def test_print_report_filters_self_pickup(db):
     db.flush()
     bus = Customer(business_name="Bus Party", phone="9800000001", password_hash="x", city_id=city.id, party_number=1)
     walk = Customer(business_name="Walk Party", phone="9800000002", password_hash="x", city_id=city.id, party_number=2)
-    db.add_all([bus, walk])
+    blank = Customer(business_name="Blank Carry Party", phone="9800000003", password_hash="x", city_id=city.id, party_number=3)
+    db.add_all([bus, walk, blank])
     db.flush()
     now = datetime(2026, 10, 28, 6, 0, tzinfo=timezone.utc)
     db.add(StickerPrint(
@@ -176,9 +177,14 @@ def test_print_report_filters_self_pickup(db):
         name_hi="वॉक", city_name="Indore", city_hi="इंदौर", phone="9800000002",
         printed_by="Pandit", printed_at=now, carry=None,
     ))
+    db.add(StickerPrint(
+        customer_id=blank.id, party_number=3, business_name="Blank Carry Party",
+        name_hi="खाली", city_name="Indore", city_hi="इंदौर", phone="9800000003",
+        printed_by="Pandit", printed_at=now, carry="",
+    ))
     db.commit()
     pickup = list_print_report(db, carry="self_pickup")
-    assert [row.business_name for row in pickup] == ["Walk Party"]
+    assert {row.business_name for row in pickup} == {"Walk Party", "Blank Carry Party"}
     buses = list_print_report(db, carry="bus")
     assert [row.business_name for row in buses] == ["Bus Party"]
 

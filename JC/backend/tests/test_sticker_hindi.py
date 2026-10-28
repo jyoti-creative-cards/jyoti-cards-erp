@@ -28,7 +28,7 @@ def test_known_parties_and_cities_are_hindi():
     assert hindi_name("Shri Natraj Studio") == "श्री नटराज स्टूडियो"
     assert hindi_city("Indore") == "इंदौर"
     assert hindi_city("Mandsaur") == "मंदसौर"
-    assert hindi_city("Anjad") == "अंजाड़"
+    assert hindi_city("Anjad") == "अंजड"
     assert hindi_city("Ajmer") == "अजमेर"
     assert hindi_city("Ujjain") == "उज्जैन"
     assert "प" in hindi_name("Payal Computer")
@@ -104,7 +104,7 @@ def test_print_is_recorded_with_english_time(db):
 
     saved = post_customer_sticker_print(customer.id, db=db, auth=AUTH)
     assert saved["name_hi"] == "श्री नटराज स्टूडियो"
-    assert saved["city_hi"] == "अंजाड़"
+    assert saved["city_hi"] == "अंजड"
     assert saved["phone"] == "9811111111"
     assert saved["printed_label"].endswith("am") or saved["printed_label"].endswith("pm")
     assert "Oct" in saved["printed_label"] or any(m in saved["printed_label"] for m in (

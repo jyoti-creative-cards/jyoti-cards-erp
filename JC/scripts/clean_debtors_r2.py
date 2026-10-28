@@ -11,9 +11,10 @@ from pathlib import Path
 from openpyxl import Workbook, load_workbook
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "debtors_cleaned.xlsx"
-BAK = ROOT / "debtors_cleaned_before_r2.xlsx"
-OUT = ROOT / "debtors_cleaned.xlsx"
+DATA = ROOT / "data"
+SRC = DATA / "debtors_cleaned.xlsx"
+BAK = DATA / "debtors_cleaned_before_r2.xlsx"
+OUT = DATA / "debtors_cleaned.xlsx"
 
 NOISE_IN_CITY = re.compile(
     r"""(?ix)
@@ -497,7 +498,7 @@ def main() -> None:
     known = build_known_cities([r[i_city] for r in data if r[i_city]])
 
     # keep original tally sheet if present
-    orig_path = ROOT / "debtors .xlsx"
+    orig_path = DATA / "debtors .xlsx"
     out_wb = Workbook()
     orig_ws = out_wb.active
     orig_ws.title = "Original"

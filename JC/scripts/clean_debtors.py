@@ -10,8 +10,9 @@ from pathlib import Path
 from openpyxl import Workbook, load_workbook
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "debtors .xlsx"
-OUT = ROOT / "debtors_cleaned.xlsx"
+DATA = ROOT / "data"
+SRC = DATA / "debtors .xlsx"
+OUT = DATA / "debtors_cleaned.xlsx"
 
 EXTRA_EXACT = {
     "cash", "block", "bloc", "full", "full bill", "old", "new", "strict",

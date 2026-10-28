@@ -12,9 +12,10 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "ONLY DEBTOR NEW.XLSX"
-OUT_XLSX = ROOT / "debtors_missing_from_db.xlsx"
-OUT_JSON = ROOT / "debtors_missing_from_db.json"
+DATA = ROOT / "data"
+SRC = DATA / "ONLY DEBTOR NEW.XLSX"
+OUT_XLSX = DATA / "debtors_missing_from_db.xlsx"
+OUT_JSON = DATA / "debtors_missing_from_db.json"
 BACKEND = ROOT / "backend"
 
 sys.path.insert(0, str(ROOT / "scripts"))

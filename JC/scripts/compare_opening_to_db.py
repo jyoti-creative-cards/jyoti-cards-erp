@@ -18,10 +18,11 @@ from clean_debtors import build_known_cities, split_name  # noqa: E402
 from clean_debtors_r2 import clean_business, clean_city, title_case  # noqa: E402
 from merge_debtors_final import norm_key  # noqa: E402
 
-SHEET = ROOT / "MAIN DEBTORS BACK 3 YEAR.XLSX"
-MISSING = ROOT / "debtors_missing_from_db.json"
-OUT_JSON = ROOT / "debtors_opening_compare.json"
-OUT_XLSX = ROOT / "debtors_opening_compare.xlsx"
+DATA = ROOT / "data"
+SHEET = DATA / "MAIN DEBTORS BACK 3 YEAR.XLSX"
+MISSING = DATA / "debtors_missing_from_db.json"
+OUT_JSON = DATA / "debtors_opening_compare.json"
+OUT_XLSX = DATA / "debtors_opening_compare.xlsx"
 
 TOL = Decimal("1.00")  # rupees
 

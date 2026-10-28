@@ -13,9 +13,10 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
 ROOT = Path(__file__).resolve().parents[1]
-PHONE_SRC = ROOT / "ONLY DEBTOR NEW .XLSX"
-OB_SRC = ROOT / "debtors_opening_balance_cleaned.xlsx"
-OUT = ROOT / "debtors_merged_cleaned.xlsx"
+DATA = ROOT / "data"
+PHONE_SRC = DATA / "ONLY DEBTOR NEW .XLSX"
+OB_SRC = DATA / "debtors_opening_balance_cleaned.xlsx"
+OUT = DATA / "debtors_merged_cleaned.xlsx"
 
 sys.path.insert(0, str(ROOT / "scripts"))
 from clean_debtors import build_known_cities, extract_phones, split_name  # noqa: E402

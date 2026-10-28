@@ -16,8 +16,9 @@ from sqlalchemy import func, text
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "backend"
-MERGED = ROOT / "debtors_merged_cleaned.xlsx"
-OUT = ROOT / "debtors_import_result.xlsx"
+DATA = ROOT / "data"
+MERGED = DATA / "debtors_merged_cleaned.xlsx"
+OUT = DATA / "debtors_import_result.xlsx"
 AS_ON = date(2025, 7, 1)
 
 sys.path.insert(0, str(BACKEND))

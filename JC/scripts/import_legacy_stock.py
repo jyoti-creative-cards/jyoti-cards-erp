@@ -15,9 +15,10 @@ from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 ROOT = Path(__file__).resolve().parents[1]
+DATA = ROOT / "data"
 BACKEND = ROOT / "backend"
-SRC = ROOT / "ALL ITEM STOCK (30-JUN-26).xlsx"
-OUT = ROOT / "stock_products_cleaned.xlsx"
+SRC = DATA / "ALL ITEM STOCK (30-JUN-26).xlsx"
+OUT = DATA / "stock_products_cleaned.xlsx"
 YEAR = "2015-25"
 DEFAULT_VENDOR_NAME = "LEGACY STOCK"
 

@@ -12,8 +12,9 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "DEBTOR WITH OPENING BALANCE.XLSX"
-OUT = ROOT / "debtors_opening_balance_cleaned.xlsx"
+DATA = ROOT / "data"
+SRC = DATA / "DEBTOR WITH OPENING BALANCE.XLSX"
+OUT = DATA / "debtors_opening_balance_cleaned.xlsx"
 
 sys.path.insert(0, str(ROOT / "scripts"))
 from clean_debtors import build_known_cities, split_name  # noqa: E402

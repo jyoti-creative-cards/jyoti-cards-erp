@@ -12,8 +12,9 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "IMP DEBTORS.XLSX"
-OUT = ROOT / "imp_debtors_cleaned.xlsx"
+DATA = ROOT / "data"
+SRC = DATA / "IMP DEBTORS.XLSX"
+OUT = DATA / "imp_debtors_cleaned.xlsx"
 BACKEND = ROOT / "backend"
 
 sys.path.insert(0, str(ROOT / "scripts"))

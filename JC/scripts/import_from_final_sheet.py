@@ -16,8 +16,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "backend"
-SRC = ROOT / "final_sheet_cleaned.xlsx"
-OUT = ROOT / "final_sheet_import_result.xlsx"
+DATA = ROOT / "data"
+SRC = DATA / "final_sheet_cleaned.xlsx"
+OUT = DATA / "final_sheet_import_result.xlsx"
 AS_ON = date(2026, 6, 30)
 
 sys.path.insert(0, str(BACKEND))

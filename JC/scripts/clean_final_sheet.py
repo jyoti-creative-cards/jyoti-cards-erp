@@ -11,8 +11,9 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "final_sheet.xlsx"
-OUT = ROOT / "final_sheet_cleaned.xlsx"
+DATA = ROOT / "data"
+SRC = DATA / "final_sheet.xlsx"
+OUT = DATA / "final_sheet_cleaned.xlsx"
 
 sys.path.insert(0, str(ROOT / "scripts"))
 from clean_debtors import build_known_cities, extract_parens, extract_phones, split_name  # noqa: E402

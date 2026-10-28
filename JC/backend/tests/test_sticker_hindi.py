@@ -16,7 +16,7 @@ from app.models.sticker_label import StickerLabel
 from app.models.sticker_print import StickerPrint
 from app.routers.customers.listing import get_customer_sticker, list_customer_sticker_prints, post_customer_sticker_print
 from app.services.sticker_hindi import hindi_city, hindi_name
-from app.services.sticker_labels import english_print_stamp
+from app.services.sticker_labels import english_print_stamp, list_print_report
 
 AUTH = AuthContext(actor_type="admin", actor_id=1, actor_name="Test Admin")
 
@@ -155,6 +155,32 @@ def test_sticker_print_copies_bus_from_the_latest_bill(db):
     saved = post_customer_sticker_print(customer.id, db=db, auth=AUTH)
     assert saved["carry"] == "bus"
     assert saved["carry_label"] == "BUS"
+
+
+def test_print_report_filters_self_pickup(db):
+    city = City(name="Indore")
+    db.add(city)
+    db.flush()
+    bus = Customer(business_name="Bus Party", phone="9800000001", password_hash="x", city_id=city.id, party_number=1)
+    walk = Customer(business_name="Walk Party", phone="9800000002", password_hash="x", city_id=city.id, party_number=2)
+    db.add_all([bus, walk])
+    db.flush()
+    now = datetime(2026, 10, 28, 6, 0, tzinfo=timezone.utc)
+    db.add(StickerPrint(
+        customer_id=bus.id, party_number=1, business_name="Bus Party",
+        name_hi="बस", city_name="Indore", city_hi="इंदौर", phone="9800000001",
+        printed_by="Pandit", printed_at=now, carry="bus",
+    ))
+    db.add(StickerPrint(
+        customer_id=walk.id, party_number=2, business_name="Walk Party",
+        name_hi="वॉक", city_name="Indore", city_hi="इंदौर", phone="9800000002",
+        printed_by="Pandit", printed_at=now, carry=None,
+    ))
+    db.commit()
+    pickup = list_print_report(db, carry="self_pickup")
+    assert [row.business_name for row in pickup] == ["Walk Party"]
+    buses = list_print_report(db, carry="bus")
+    assert [row.business_name for row in buses] == ["Bus Party"]
 
 
 def test_staff_signs_in_by_name_for_sticker_only(db):

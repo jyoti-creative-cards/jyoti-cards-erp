@@ -395,7 +395,7 @@
   }
 
   function setPrintCarry(mode) {
-    printCarry = mode === "bus" || mode === "transport" ? mode : "";
+    printCarry = mode === "bus" || mode === "transport" || mode === "self_pickup" ? mode : "";
     loadChip();
   }
 
@@ -418,37 +418,46 @@
       if (!groups.has(key)) groups.set(key, { name: it.business_name || "Party", city: it.city_name || "", number: it.party_number, rows: [] });
       groups.get(key).rows.push(it);
     });
+    const modeLabel = (row) => {
+      const carry = String(row.carry || "").toLowerCase();
+      if (carry === "bus") return "BUS";
+      if (carry === "transport") return "TRANSPORT";
+      return "SELF PICKUP";
+    };
     const chipBtn = (id, label) => `<button type="button" class="btn btn-sm ${printCarry === id ? "btn-primary" : "btn-secondary"}" onclick="Reports.setPrintCarry('${id}')">${label}</button>`;
     const cards = [...groups.values()].map((g) => {
       const key = String(g.rows[0].customer_id || g.name);
       const open = !!printOpen[key];
-      const lines = g.rows.map((r) => `<div style="padding:8px 0;border-top:1px solid var(--line);">
+      const modes = [...new Set(g.rows.map(modeLabel))];
+      const lines = g.rows.map((r) => `<div class="print-party-line">
           <strong>${ctx.esc(r.printed_label || "—")}</strong>
-          <span style="margin-left:8px;">${ctx.esc((r.carry_label || "—"))}</span>
-          <span style="color:var(--muted);margin-left:8px;">${ctx.esc(r.printed_by || "")}</span>
+          <span class="print-mode-flag">${ctx.esc(modeLabel(r))}</span>
+          <span class="print-party-by">${ctx.esc(r.printed_by || "")}</span>
         </div>`).join("");
-      return `<div class="card" style="padding:12px 14px;margin-bottom:10px;">
-        <button type="button" class="btn btn-secondary" style="width:100%;text-align:left;font-size:16px;" onclick="Reports.togglePrintGroup('${ctx.esc(key)}')">
-          <strong>${ctx.esc(g.name)}</strong>
-          ${g.city ? `<span style="color:var(--muted);"> · ${ctx.esc(g.city)}</span>` : ""}
-          ${g.number != null ? `<span style="color:var(--muted);"> #${ctx.esc(g.number)}</span>` : ""}
-          <span style="float:right;font-weight:800;">${g.rows.length} print${g.rows.length === 1 ? "" : "s"}</span>
+      return `<article class="print-party-card">
+        <button type="button" class="print-party-hit" onclick="Reports.togglePrintGroup('${ctx.esc(key)}')">
+          <strong class="print-party-name">${ctx.esc(g.name)}</strong>
+          <span class="print-mode-flag">${modes.map(m => ctx.esc(m)).join(" · ")}</span>
+          <span class="print-party-meta">${g.city ? ctx.esc(g.city) : ""}${g.number != null ? ` #${ctx.esc(g.number)}` : ""}</span>
+          <span class="print-party-count">${g.rows.length} print${g.rows.length === 1 ? "" : "s"}</span>
         </button>
-        ${open ? lines : ""}
-      </div>`;
+        ${open ? `<div class="print-party-lines">${lines}</div>` : ""}
+      </article>`;
     }).join("");
     body.innerHTML = `
       <p class="fin-panel-sub" style="margin:0 0 12px;">Stickers Pandit Ji printed. A party with 3 bundles shows 3 prints. Open the party to see each time.</p>
-      <div style="display:flex;gap:8px;margin-bottom:12px;">
+      <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
         ${chipBtn("", "All")}
         ${chipBtn("bus", "Bus")}
         ${chipBtn("transport", "Transport")}
+        ${chipBtn("self_pickup", "Self pickup")}
       </div>
       <div class="fin-hub-strip" style="margin-bottom:16px;">
         <div class="fin-stat"><span class="fin-stat-label">Prints</span><strong>${items.length}</strong></div>
         <div class="fin-stat"><span class="fin-stat-label">Parties</span><strong>${groups.size}</strong></div>
       </div>
-      ${cards || empty("No prints", "No sticker was printed in these dates.")}`;
+      <div class="print-party-grid">${cards}</div>
+      ${cards ? "" : empty("No prints", "No sticker was printed in these dates.")}`;
   }
 
   async function loadChip() {

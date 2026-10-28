@@ -122,7 +122,9 @@ def list_print_report(
     if end is not None:
         query = query.filter(StickerPrint.printed_at <= end)
     mode = (carry or "").strip().lower()
-    if mode in ("bus", "transport"):
+    if mode == "self_pickup":
+        query = query.filter(or_(StickerPrint.carry.is_(None), StickerPrint.carry == ""))
+    elif mode in ("bus", "transport"):
         query = query.filter(StickerPrint.carry == mode)
     text = (q or "").strip()
     if text:

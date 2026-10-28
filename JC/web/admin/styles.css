@@ -3722,3 +3722,43 @@ table.data tr.filter-row th { padding: 6px 8px; background: #fff; border-bottom:
 #order-taker-desk .ot-out { margin-top: 8px; padding: 12px; border: 1px solid #fecaca; border-radius: 10px; color: #b91c1c; font-weight: 700; }
 #order-taker-desk #ot-lines { margin-top: 16px; }
 
+.print-party-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+  width: 100%;
+}
+.print-party-card {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  min-width: 0;
+}
+.print-party-hit {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  width: 100%;
+  margin: 0;
+  padding: 14px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.print-party-name { font-size: 16px; line-height: 1.3; }
+.print-mode-flag { color: #b91c1c; font-weight: 800; font-size: 13px; letter-spacing: .04em; }
+.print-party-meta, .print-party-count, .print-party-by { color: var(--muted); font-size: 13px; }
+.print-party-lines { border-top: 1px solid var(--border); padding: 0 14px 10px; }
+.print-party-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+  padding: 8px 0;
+  border-top: 1px solid var(--line, var(--border));
+}
+

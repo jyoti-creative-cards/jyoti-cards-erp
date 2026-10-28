@@ -56,7 +56,7 @@ _BELOW_20 = [
 ]
 _TENS = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"]
 
-from app.services.bill_pdf_parts.common import _draw_charge, _draw_footer, _draw_item, _draw_photos, _draw_total, _draw_verticals, _photo_height, _printed_token, _txt, _y
+from app.services.bill_pdf_parts.common import _draw_charge, _draw_footer, _draw_item, _draw_photos, _draw_total, _draw_verticals, _photo_height, _printed_token, _txt, _wrap, _y
 
 def _draw_header(
     c: canvas.Canvas,
@@ -81,43 +81,46 @@ def _draw_header(
     marker_2: str | None = None,
     agent_name: str | None = None,
     agent_phone: str | None = None,
+    narration: str | None = None,
 ) -> float:
     """Draw the Tally header. Returns the table-top y measured from the top of the page."""
     # Same corner on every printed bill, for the pin.
     c.setFillColorRGB(0, 0, 0)
     c.circle(PAGE_W - 28, PAGE_H - 28, 5, stroke=0, fill=1)
+    shift = _draw_narration_banner(c, narration)
     if show_printed and printed is not None:
         c.setFont("Helvetica-Oblique", 8)
         c.drawRightString(RIGHT, _y(22), f"Printed on {_printed_token(printed)}")
+    c.setFillColorRGB(0, 0, 0)
     c.setFont("Helvetica-BoldOblique", 7.5)
-    c.drawString(LEFT, _y(32), f"Creation Dt & Time : {_creation_token(created)}")
+    c.drawString(LEFT, _y(32 + shift), f"Creation Dt & Time : {_creation_token(created)}")
 
     c.setFont("Helvetica", 9)
-    c.drawString(LEFT, _y(52), "Invoice No.")
+    c.drawString(LEFT, _y(52 + shift), "Invoice No.")
     c.setFont("Helvetica-Bold", 9)
-    c.drawString(LEFT + 54, _y(52), invoice_no or "")
+    c.drawString(LEFT + 54, _y(52 + shift), invoice_no or "")
     if invoice_day is not None:
         dated = _day_token(invoice_day)
         c.setFont("Helvetica-Bold", 9)
-        c.drawRightString(RIGHT, _y(52), dated)
+        c.drawRightString(RIGHT, _y(52 + shift), dated)
         c.setFont("Helvetica", 9)
-        c.drawRightString(RIGHT - c.stringWidth(dated, "Helvetica-Bold", 9) - 8, _y(52), "Dated")
+        c.drawRightString(RIGHT - c.stringWidth(dated, "Helvetica-Bold", 9) - 8, _y(52 + shift), "Dated")
     c.setFont("Helvetica", 9)
     if order_at is not None:
-        c.drawString(LEFT, _y(66), f"Order : {_creation_token(order_at)}")
+        c.drawString(LEFT, _y(66 + shift), f"Order : {_creation_token(order_at)}")
     else:
-        c.drawString(LEFT, _y(66), "Ref. No.")
+        c.drawString(LEFT, _y(66 + shift), "Ref. No.")
     who = _txt(order_by, 28)
     if who:
         by = f"By : {who}"
         c.setFont("Helvetica-Bold", 9)
-        c.drawRightString(RIGHT, _y(66), by)
+        c.drawRightString(RIGHT, _y(66 + shift), by)
 
     c.setFont("Helvetica-Bold", 9)
-    c.drawCentredString(PAGE_W / 2, _y(82), "Order Estimate")
+    c.drawCentredString(PAGE_W / 2, _y(82 + shift), "Order Estimate")
     title = "INVOICE" if page_no <= 1 else f"INVOICE(Page  {page_no})"
     c.setFont("Helvetica-Bold", 11)
-    c.drawCentredString(PAGE_W / 2, _y(98), title)
+    c.drawCentredString(PAGE_W / 2, _y(98 + shift), title)
 
     party_lines: list[tuple[str, str, bool]] = []
     raw_name = _txt(customer_name, 70) or "Customer"
@@ -131,7 +134,7 @@ def _draw_header(
     agent = _txt(agent_name, 40)
     phone = _txt(agent_phone, 40) if agent else _txt(customer_phone, 40)
     if agent:
-        top = 116.0
+        top = 116.0 + shift
         c.setFont("Helvetica-Bold", 14)
         c.drawCentredString(PAGE_W / 2, _y(top), agent)
         top += 16
@@ -160,7 +163,7 @@ def _draw_header(
     if agent:
         top += 6
     else:
-        top = 116.0
+        top = 116.0 + shift
         for prefix, text, bold in party_lines:
             font = "Helvetica-Bold" if bold else "Helvetica"
             c.setFont("Helvetica", 9)
@@ -206,6 +209,39 @@ def _draw_header(
         c.setFillColorRGB(0, 0, 0)
 
     return top
+
+
+def _draw_narration_banner(c: canvas.Canvas, narration: str | None) -> float:
+    """Yellow narration at the top left. Returns how far the header must move down."""
+    text = _txt(narration, 180)
+    if not text:
+        return 0.0
+    font = "Helvetica-Bold"
+    size = 10
+    max_w = 190.0
+    lines = _wrap(c, text, font, size, max_w)[:2]
+    if not lines:
+        return 0.0
+    line_h = 12.0
+    pad_x = 5.0
+    pad_y = 3.0
+    block_h = pad_y * 2 + line_h * len(lines)
+    top = 12.0
+    width = max(c.stringWidth(line, font, size) for line in lines) + pad_x * 2
+    c.setFillColorRGB(1, 0.93, 0.45)
+    c.setStrokeColorRGB(0.72, 0.42, 0.05)
+    c.setLineWidth(0.8)
+    c.rect(LEFT, _y(top + block_h), width, block_h, fill=1, stroke=1)
+    c.setFillColorRGB(0.55, 0.05, 0.02)
+    c.setFont(font, size)
+    text_top = top + pad_y + size
+    for line in lines:
+        c.drawString(LEFT + pad_x, _y(text_top), line)
+        text_top += line_h
+    c.setFillColorRGB(0, 0, 0)
+    # Creation date is drawn at 32. Keep it under the banner.
+    return max(0.0, (top + block_h + 6) - 32)
+
 
 def _paginate(
     running: list[dict],

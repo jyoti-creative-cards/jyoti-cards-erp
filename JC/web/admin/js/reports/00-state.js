@@ -25,6 +25,8 @@ const Reports = (() => {
   let printCarry = "";
   let printOpen = {};
   let stockAlbums = [];
+  let markingScope = "all";
+  let markingPicked = {};
 
   const MODES = [
     { id: "today", label: "Today" },
@@ -65,6 +67,7 @@ const Reports = (() => {
       { id: "valuation", label: "Valuation" },
       { id: "movers", label: "Fast / slow" },
       { id: "low", label: "Low stock" },
+      { id: "markings", label: "Markings" },
       { id: "returns", label: "Returns" },
       { id: "debit-notes", label: "Debit notes" },
     ],

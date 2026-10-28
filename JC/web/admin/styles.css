@@ -3753,6 +3753,29 @@ table.data tr.filter-row th { padding: 6px 8px; background: #fff; border-bottom:
 .print-mode-flag { color: #b91c1c; font-weight: 800; font-size: 13px; letter-spacing: .04em; }
 .print-party-meta, .print-party-count, .print-party-by { color: var(--muted); font-size: 13px; }
 .print-party-lines { border-top: 1px solid var(--border); padding: 0 14px 10px; }
+.mark-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: end;
+  margin: 0 0 14px;
+}
+.mark-tools .input { min-width: 160px; }
+.mark-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 14px 14px 0;
+  cursor: pointer;
+}
+.mark-edit {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 0 14px 14px;
+}
+.mark-edit .input { flex: 1; min-width: 0; }
 .print-party-line {
   display: flex;
   flex-wrap: wrap;

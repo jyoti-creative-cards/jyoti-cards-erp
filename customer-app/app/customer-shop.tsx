@@ -2,12 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiUrl, fetchApi, formatApiError } from "@/lib/api";
-import type {
-  CustomerPublic,
-  PortalOrderPublic,
-  ShopProductPublic,
-  ShopSuggestionPublic,
-} from "@/lib/types";
+import ShopFinder, { normalizeShopQuery, type ShopSearchOutcome } from "./shop-finder";
+import type { CustomerPublic, PortalOrderPublic, ShopProductPublic } from "@/lib/types";
 
 type PortalTab = "availability" | "order_now" | "my_orders";
 
@@ -139,14 +135,10 @@ function stockForWanted(onHand: number, wanted: number): string {
 
 function ProductTile({
   p,
-  qty,
-  onQty,
   onAdd,
   compact = false,
 }: {
   p: ShopProductPublic;
-  qty: string;
-  onQty: (next: string) => void;
   onAdd: () => void;
   compact?: boolean;
 }) {
@@ -168,13 +160,12 @@ function ProductTile({
       <div className={`flex flex-1 flex-col gap-3 ${compact ? "p-3" : "p-4 sm:p-5"}`}>
         <p className={`font-display font-semibold leading-snug text-jc-ink ${compact ? "text-base" : "text-xl"}`}>{p.our_product_id}</p>
         {compact ? null : <p className="text-sm leading-relaxed text-jc-muted">{avail.hint}</p>}
-        <div className="mt-auto flex flex-wrap items-center gap-2 pt-1">
-          <AmazonQty value={qty} onChange={onQty} />
+        <div className="mt-auto pt-1">
           {canOrder ? (
             <button
               type="button"
               onClick={onAdd}
-              className="h-12 flex-1 rounded-xl bg-jc-accent text-sm font-bold text-white shadow-md transition hover:bg-jc-accent-hover active:scale-[0.98]"
+              className="h-12 w-full rounded-xl bg-jc-accent text-sm font-bold text-white shadow-md transition hover:bg-jc-accent-hover active:scale-[0.98]"
             >
               Add to bag
             </button>
@@ -192,11 +183,6 @@ function stockPillClass(status: string): string {
   if (status === "low_stock") return "bg-amber-100 text-amber-900 ring-amber-200/70";
   if (status === "out_of_stock") return "bg-stone-100 text-stone-600 ring-stone-200/70";
   return "bg-stone-100 text-stone-700 ring-stone-200/70";
-}
-
-/** Trim fancy spaces / NBSP so SKU search matches the catalogue. */
-function normalizeShopQuery(s: string): string {
-  return s.replace(/\u00a0/g, " ").trim().replace(/\s+/g, " ");
 }
 
 function profileInitials(name: string | undefined): string {
@@ -262,17 +248,13 @@ export default function CustomerPortalPage() {
 
   const [portalTab, setPortalTab] = useState<PortalTab>("availability");
 
-  const [shopQ, setShopQ] = useState("");
-  const [shopQty, setShopQty] = useState("50");
-  const [addQty, setAddQty] = useState<Record<number, string>>({});
   const [stockPopup, setStockPopup] = useState(false);
-  const [shopSuggestions, setShopSuggestions] = useState<ShopSuggestionPublic[]>([]);
-  const [shopSuggestOpen, setShopSuggestOpen] = useState(false);
   const [shopResults, setShopResults] = useState<ShopProductPublic[]>([]);
+  const [shopWanted, setShopWanted] = useState(0);
   const [shopLoading, setShopLoading] = useState(false);
   const [shopErr, setShopErr] = useState("");
   const [shopDidSearch, setShopDidSearch] = useState(false);
-  const suggestTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchSeq = useRef(0);
 
   const [cart, setCart] = useState<Record<number, { p: ShopProductPublic; qty: number }>>({});
   const [orderMsg, setOrderMsg] = useState("");
@@ -356,69 +338,50 @@ export default function CustomerPortalPage() {
     void loadMyOrders(token, orderStatusFilter);
   }, [token, portalTab, orderStatusFilter, loadMyOrders]);
 
-  useEffect(() => {
-    const qn = normalizeShopQuery(shopQ);
-    if (!token || qn.length < 1) {
-      setShopSuggestions([]);
-      return;
-    }
-    if (suggestTimer.current) clearTimeout(suggestTimer.current);
-    suggestTimer.current = setTimeout(async () => {
-      const r = await fetchApi(
-        apiUrl(`shop/products/suggestions?q=${encodeURIComponent(qn)}`),
-        { headers: { Authorization: `Bearer ${token}` } },
-      );
-      const data = await r.json().catch(() => []);
-      if (!r.ok) {
-        setShopSuggestions([]);
-        return;
-      }
-      setShopSuggestions(Array.isArray(data) ? (data as ShopSuggestionPublic[]) : []);
-    }, 220);
-    return () => {
-      if (suggestTimer.current) clearTimeout(suggestTimer.current);
-    };
-  }, [shopQ, token]);
-
-  const runSearch = useCallback(async (queryOverride?: string) => {
+  const loadShop = useCallback(async (query: string, qty: number): Promise<ShopSearchOutcome> => {
+    if (!token) return "error";
+    const q = normalizeShopQuery(query);
+    const seq = ++searchSeq.current;
     setShopErr("");
     setShopResults([]);
-    if (!token) return;
-    const q = normalizeShopQuery(queryOverride ?? shopQ);
-    const wanted = Math.floor(Number(shopQty));
-    if (q.length < 1) {
-      setShopErr("Please enter an item code or product name to search.");
-      return;
-    }
-    if (!Number.isFinite(wanted) || wanted < 50 || wanted % 50 !== 0) {
-      setShopErr("Enter the quantity you need, in multiples of 50.");
-      return;
-    }
+    setShopDidSearch(false);
     setShopLoading(true);
     try {
       const p = new URLSearchParams();
       p.set("q", q);
-      p.set("qty", String(wanted));
+      p.set("qty", String(qty));
       const r = await fetchApi(apiUrl(`shop/products/search?${p}`), {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await r.json().catch(() => null);
-      if (!r.ok) {
-        setShopErr(formatApiError(data) || r.statusText);
-        return;
+      if (seq !== searchSeq.current) return "stale";
+      if (!r.ok || !q) {
+        setShopErr("Could not load. Try again.");
+        setShopResults([]);
+        return "error";
       }
-      const found = Array.isArray(data) ? (data as ShopProductPublic[]) : [];
-      setShopResults(found);
-      setAddQty((prev) => {
-        const next = { ...prev };
-        for (const item of found) next[item.catalog_product_id] = String(wanted);
-        return next;
-      });
+      setShopResults(Array.isArray(data) ? (data as ShopProductPublic[]) : []);
+      setShopWanted(qty);
       setShopDidSearch(true);
+      setShopErr("");
+      return "ok";
+    } catch {
+      if (seq !== searchSeq.current) return "stale";
+      setShopErr("Could not load. Try again.");
+      setShopResults([]);
+      return "error";
     } finally {
-      setShopLoading(false);
+      if (seq === searchSeq.current) setShopLoading(false);
     }
-  }, [token, shopQ, shopQty]);
+  }, [token]);
+
+  const invalidateShop = useCallback(() => {
+    searchSeq.current += 1;
+    setShopLoading(false);
+    setShopResults([]);
+    setShopErr("");
+    setShopDidSearch(false);
+  }, []);
 
   function qtyTooHigh(n: number, onHand: number) {
     if (!Number.isFinite(n) || n < 50 || n % 50 !== 0 || n > MAX_ORDER_QTY) {
@@ -551,20 +514,15 @@ export default function CustomerPortalPage() {
     setToken(null);
     setProfile(null);
     setOk("");
-    setShopQ("");
+    searchSeq.current += 1;
     setShopResults([]);
-    setShopSuggestions([]);
+    setShopWanted(0);
+    setShopErr("");
     setShopDidSearch(false);
+    setShopLoading(false);
     setCart({});
     setMyOrders([]);
     setPortalTab("availability");
-  }
-
-  function pickSuggestion(s: ShopSuggestionPublic) {
-    setShopQ(s.our_product_id);
-    setShopSuggestOpen(false);
-    setShopSuggestions([]);
-    void runSearch(s.our_product_id);
   }
 
   const cartLines = Object.values(cart);
@@ -715,97 +673,24 @@ export default function CustomerPortalPage() {
             />
           </nav>
 
-          {portalTab === "availability" ? (
+          <div className={portalTab === "availability" ? "" : "hidden"}>
             <div
-              className={`relative overflow-hidden rounded-3xl border border-jc-border/80 bg-jc-card shadow-jc-lg ring-1 ring-black/[0.03] ${cartLines.length > 0 ? "pb-28" : ""}`}
+              className={`relative rounded-3xl border border-jc-border/80 bg-jc-card shadow-jc-lg ring-1 ring-black/[0.03] ${cartLines.length > 0 ? "pb-28" : ""}`}
             >
-              <div className="border-b border-jc-border/90 bg-gradient-to-br from-amber-50/90 via-white to-jc-bg-deep/60 px-5 py-6 sm:px-8">
-                <div className="flex flex-wrap items-end justify-between gap-4">
-                  <div>
-                    <h3 className="font-display text-2xl font-semibold text-jc-ink sm:text-[1.65rem]">Find products</h3>
-                    <p className="mt-1 max-w-xl text-sm text-jc-muted">
-                      Type the item, choose how many you need, then search. We will say if that quantity is in stock.
-                    </p>
-                  </div>
-                </div>
+              <div className="px-5 pb-3 pt-4 sm:px-8">
+                <h3 className="font-display text-lg font-semibold text-jc-ink">Find products</h3>
+                <p className="mt-1 text-sm text-jc-muted">Type the item, then say how many.</p>
               </div>
-
-              <div className="relative px-5 py-6 sm:px-8">
-                <p className="text-xs font-semibold uppercase tracking-wide text-jc-muted">Search catalogue</p>
-                <div className="relative mt-2">
-                  <div className="flex gap-1 rounded-2xl border-2 border-jc-border bg-white p-1 shadow-sm transition focus-within:border-jc-brand focus-within:shadow-md focus-within:ring-4 focus-within:ring-jc-brand/10">
-                    <span className="flex w-11 shrink-0 items-center justify-center text-lg opacity-80" aria-hidden>
-                      🔍
-                    </span>
-                    <input
-                      value={shopQ}
-                      onChange={(e) => {
-                        setShopQ(e.target.value);
-                        setShopSuggestOpen(true);
-                      }}
-                      onFocus={() => setShopSuggestOpen(true)}
-                      onBlur={() => {
-                        setTimeout(() => setShopSuggestOpen(false), 180);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          void runSearch();
-                        }
-                      }}
-                      className="min-w-0 flex-1 border-0 bg-transparent py-3 pr-2 text-sm outline-none ring-0 placeholder:text-jc-muted/60"
-                      placeholder="Item code or product name"
-                      autoComplete="off"
-                    />
-                    <AmazonQty value={shopQty} onChange={setShopQty} />
-                    <button
-                      type="button"
-                      className="shrink-0 rounded-xl bg-jc-brand px-4 py-2.5 text-sm font-semibold text-white shadow-md transition hover:bg-jc-brand-light disabled:opacity-55"
-                      onClick={() => void runSearch()}
-                      disabled={shopLoading}
-                    >
-                      {shopLoading ? "…" : "Search"}
-                    </button>
-                  </div>
-                  {shopSuggestOpen && shopSuggestions.length > 0 ? (
-                    <ul className="absolute left-0 right-0 top-full z-20 mt-2 max-h-52 overflow-auto rounded-xl border border-jc-border bg-white py-1 shadow-jc-lg">
-                      {shopSuggestions.map((s) => (
-                        <li key={s.catalog_product_id}>
-                          <button
-                            type="button"
-                            className="w-full px-4 py-2.5 text-left text-sm hover:bg-jc-bg"
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={() => pickSuggestion(s)}
-                          >
-                            <span className="font-medium text-jc-ink">{s.our_product_id}</span>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                </div>
-              </div>
-
-              {shopErr ? (
-                <p className="mx-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 sm:mx-8">
-                  {shopErr}
-                </p>
-              ) : null}
-
-              {!shopDidSearch && !shopLoading && !shopErr && shopResults.length === 0 ? (
-                <div className="mx-5 mb-6 flex flex-col items-center rounded-2xl border border-dashed border-jc-border/90 bg-gradient-to-b from-jc-bg/80 to-white px-6 py-10 text-center sm:mx-8">
-                  <span className="text-4xl" aria-hidden>
-                    🛍️
-                  </span>
-                  <p className="mt-4 font-display text-lg font-semibold text-jc-ink">Start with a search</p>
-                  <p className="mt-2 max-w-sm text-sm text-jc-muted">
-                    Type an item and the quantity you need, then tap Search.
-                  </p>
-                </div>
-              ) : null}
+              <ShopFinder
+                token={token}
+                active={portalTab === "availability"}
+                loadFailed={shopErr !== ""}
+                onSearch={loadShop}
+                onInvalidate={invalidateShop}
+              />
 
               {shopLoading ? (
-                <div className="grid gap-6 px-5 pb-8 sm:grid-cols-2 sm:px-8">
+                <div className="grid gap-6 px-5 py-6 sm:grid-cols-2 sm:px-8">
                   {[0, 1, 2, 3].map((i) => (
                     <div
                       key={i}
@@ -820,11 +705,12 @@ export default function CustomerPortalPage() {
                     </div>
                   ))}
                 </div>
-              ) : shopResults.length > 0 ? (
-                <div className="space-y-10 px-5 pb-8 sm:px-8">
+              ) : null}
+
+              {!shopLoading && shopResults.length > 0 ? (
+                <div className="space-y-10 px-5 py-6 sm:px-8">
                   {shopResults.map((p) => {
-                    const typedQty = addQty[p.catalog_product_id] ?? shopQty;
-                    const wanted = Math.floor(Number(typedQty)) || 0;
+                    const wanted = shopWanted;
                     const live = stockForWanted(Number(p.quantity_on_hand ?? 0), wanted);
                     const shown = { ...p, stock_status: live };
                     const short = live !== "in_stock";
@@ -838,15 +724,13 @@ export default function CustomerPortalPage() {
                           <ProductTile
                             compact={short}
                             p={shown}
-                            qty={typedQty}
-                            onQty={(next) => setAddQty((prev) => ({ ...prev, [p.catalog_product_id]: next }))}
-                            onAdd={() => addProductToCart(shown, typedQty)}
+                            onAdd={() => addProductToCart(shown, String(wanted))}
                           />
                         </div>
                         {short ? (
                           <div className="min-w-0 rounded-2xl border border-amber-200/80 bg-amber-50/40 p-3 sm:p-4">
                             <h3 className="font-display text-base font-semibold text-jc-ink">
-                              Alternatives with more than {wanted || "this"} in stock
+                              Alternatives with more than {wanted} in stock
                             </h3>
                             {alts.length === 0 ? (
                               <p className="mt-2 text-sm text-jc-muted">No alternative has more than this quantity.</p>
@@ -854,15 +738,12 @@ export default function CustomerPortalPage() {
                               <div className="mt-3 grid gap-3 sm:grid-cols-2">
                                 {alts.map((a) => {
                                   const alt = { ...altProduct(a), stock_status: "in_stock" };
-                                  const altQty = addQty[alt.catalog_product_id] ?? typedQty;
                                   return (
                                     <ProductTile
                                       compact
                                       key={alt.catalog_product_id}
                                       p={alt}
-                                      qty={altQty}
-                                      onQty={(next) => setAddQty((prev) => ({ ...prev, [alt.catalog_product_id]: next }))}
-                                      onAdd={() => addProductToCart(alt, altQty)}
+                                      onAdd={() => addProductToCart(alt, String(wanted))}
                                     />
                                   );
                                 })}
@@ -874,14 +755,10 @@ export default function CustomerPortalPage() {
                     );
                   })}
                 </div>
-              ) : shopDidSearch && !shopLoading && !shopErr ? (
-                <div className="mx-5 mb-8 flex flex-col items-center rounded-2xl border border-jc-border bg-jc-bg/40 px-6 py-10 text-center sm:mx-8">
-                  <span className="text-3xl" aria-hidden>
-                    🔎
-                  </span>
-                  <p className="mt-3 font-display text-base font-semibold text-jc-ink">No matches</p>
-                  <p className="mt-2 max-w-sm text-sm text-jc-muted">Try another item number.</p>
-                </div>
+              ) : null}
+
+              {!shopLoading && shopDidSearch && !shopErr && shopResults.length === 0 ? (
+                <p className="px-5 pb-6 text-sm font-medium text-jc-ink sm:px-8">No matches. Try another item number.</p>
               ) : null}
 
               {cartLines.length > 0 ? (
@@ -899,7 +776,8 @@ export default function CustomerPortalPage() {
                 </div>
               ) : null}
             </div>
-          ) : portalTab === "order_now" ? (
+          </div>
+          {portalTab === "order_now" ? (
             <div className="overflow-hidden rounded-3xl border border-jc-border/80 bg-jc-card shadow-jc-lg ring-1 ring-black/[0.03]">
               <div className="border-b border-jc-border/90 bg-gradient-to-r from-jc-bg-deep/80 to-white px-5 py-6 sm:px-8">
                 <h3 className="font-display text-2xl font-semibold text-jc-ink">Your bag</h3>
@@ -1064,7 +942,7 @@ export default function CustomerPortalPage() {
                 )}
               </div>
             </div>
-          ) : (
+          ) : portalTab === "my_orders" ? (
             <div className="overflow-hidden rounded-3xl border border-jc-border/80 bg-jc-card shadow-jc-lg ring-1 ring-black/[0.03]">
               <div className="flex flex-col gap-4 border-b border-jc-border/90 bg-gradient-to-r from-white via-jc-bg/30 to-jc-bg-deep/40 px-5 py-6 sm:flex-row sm:items-center sm:justify-between sm:px-8">
                 <div>
@@ -1191,7 +1069,7 @@ export default function CustomerPortalPage() {
                 )}
               </div>
             </div>
-          )}
+          ) : null}
         </div>
       )}
       {stockPopup ? (

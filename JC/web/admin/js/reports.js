@@ -26,6 +26,8 @@ const Reports = (() => {
   let printCarry = "";
   let printOpen = {};
   let stockAlbums = [];
+  let markingScope = "all";
+  let markingPicked = {};
 
   const MODES = [
     { id: "today", label: "Today" },
@@ -66,6 +68,7 @@ const Reports = (() => {
       { id: "valuation", label: "Valuation" },
       { id: "movers", label: "Fast / slow" },
       { id: "low", label: "Low stock" },
+      { id: "markings", label: "Markings" },
       { id: "returns", label: "Returns" },
       { id: "debit-notes", label: "Debit notes" },
     ],
@@ -297,7 +300,7 @@ const Reports = (() => {
       </div>`;
       return;
     }
-    const noDates = chip === "valuation" || chip === "ageing" || chip === "low"
+    const noDates = chip === "valuation" || chip === "ageing" || chip === "low" || chip === "markings"
       || (chip === "ledgers" && ["products", "staff", "routes", "freight", "customers", "vendors", "expenses"].includes(ledgerKind));
     if (noDates) {
       el.innerHTML = `<div class="rep-filters">
@@ -413,12 +416,13 @@ const Reports = (() => {
     if (!slot) return;
     const caret = (typeof OrdersUI !== "undefined" && OrdersUI.captureSearchCaret)
       ? OrdersUI.captureSearchCaret("reports-hub-search") : null;
-    const searchable = ["sales", "sales-book", "day-bills", "transport", "receipt-book", "daybook", "purchases", "payments", "ledgers", "ageing", "customer-sales", "vendor-purchases", "item-sales", "item-purchases", "stock-wise", "item-outward", "stock-journal", "valuation", "movers", "low", "returns", "debit-notes", "gst-sales", "gst-purchases", "cashbook", "expense-cat", "sticker-prints"].includes(chip);
+    const searchable = ["sales", "sales-book", "day-bills", "transport", "receipt-book", "daybook", "purchases", "payments", "ledgers", "ageing", "customer-sales", "vendor-purchases", "item-sales", "item-purchases", "stock-wise", "item-outward", "stock-journal", "valuation", "movers", "low", "markings", "returns", "debit-notes", "gst-sales", "gst-purchases", "cashbook", "expense-cat", "sticker-prints"].includes(chip);
     if (!searchable) { slot.innerHTML = ""; return; }
     const ph = chip === "sticker-prints" ? "Search party name or number…"
       : chip === "day-bills" ? "Search bill, party, city…"
       : chip === "ledgers"
       ? (ledgerKind === "staff" ? "Search staff…" : ledgerKind === "products" ? "Search products…" : ledgerKind === "customers" || ledgerKind === "vendors" ? "Search name, person, city…" : "Search…")
+      : chip === "markings" ? "Search marking, item, vendor item, category…"
       : chip.includes("item") || chip === "stock-wise" || chip === "valuation" || chip === "movers" || chip === "low" ? "Search product…"
         : chip === "ageing" ? "Search name, person, city…"
         : "Search…";
@@ -556,6 +560,119 @@ const Reports = (() => {
       ${cards ? "" : empty("No prints", "No sticker was printed in these dates.")}`;
   }
 
+  function setMarkingScope(scope) {
+    markingScope = scope === "marked" || scope === "unmarked" ? scope : "all";
+    markingPicked = {};
+    loadChip();
+  }
+
+  function toggleMarkingPick(id, on) {
+    if (on) markingPicked[id] = true;
+    else delete markingPicked[id];
+    const count = document.getElementById("mark-picked-count");
+    if (count) count.textContent = String(Object.keys(markingPicked).length);
+  }
+
+  async function saveProductMarking(id) {
+    const input = document.getElementById(`mark-one-${id}`);
+    const marking = input ? input.value : "";
+    try {
+      await ctx.api("/reports/product-markings/apply", {
+        method: "POST",
+        body: JSON.stringify({ marking, product_ids: [id] }),
+      });
+      ctx.toast("Marking saved", "success");
+      loadChip();
+    } catch (e) {
+      ctx.toast(e.message || "Could not save the marking", "error");
+    }
+  }
+
+  async function applyMarkingToPicked() {
+    const ids = Object.keys(markingPicked).map(Number).filter(Boolean);
+    if (!ids.length) return ctx.toast("Pick the products first", "error");
+    const marking = document.getElementById("mark-apply")?.value || "";
+    try {
+      const res = await ctx.api("/reports/product-markings/apply", {
+        method: "POST",
+        body: JSON.stringify({ marking, product_ids: ids }),
+      });
+      markingPicked = {};
+      ctx.toast(`Updated ${res.updated} product${res.updated === 1 ? "" : "s"}`, "success");
+      loadChip();
+    } catch (e) {
+      ctx.toast(e.message || "Could not apply the marking", "error");
+    }
+  }
+
+  async function renameMarking() {
+    const oldMarking = document.getElementById("mark-old")?.value || "";
+    const newMarking = document.getElementById("mark-new")?.value || "";
+    if (!oldMarking) return ctx.toast("Pick the marking to rename", "error");
+    if (!newMarking.trim()) return ctx.toast("Type the new marking", "error");
+    try {
+      const res = await ctx.api("/reports/product-markings/rename", {
+        method: "POST",
+        body: JSON.stringify({ old_marking: oldMarking, new_marking: newMarking }),
+      });
+      ctx.toast(`Renamed on ${res.updated} product${res.updated === 1 ? "" : "s"}`, "success");
+      loadChip();
+    } catch (e) {
+      ctx.toast(e.message || "Could not rename the marking", "error");
+    }
+  }
+
+  async function renderMarkings(body) {
+    const params = new URLSearchParams();
+    if (hubSearch.trim()) params.set("q", hubSearch.trim());
+    params.set("marked", markingScope);
+    const data = await ctx.api(`/reports/product-markings?${params.toString()}`, {}, 0);
+    const items = data.items || [];
+    const markings = data.markings || [];
+    const scopeBtn = (id, label) => `<button type="button" class="btn btn-sm ${markingScope === id ? "btn-primary" : "btn-secondary"}" onclick="Reports.setMarkingScope('${id}')">${label}</button>`;
+    const cards = items.map(it => {
+      const cats = [it.category, it.second_category, it.category_3].filter(Boolean).join(" · ");
+      const picked = !!markingPicked[it.id];
+      return `<article class="print-party-card">
+        <label class="mark-card">
+          <input type="checkbox" ${picked ? "checked" : ""} onchange="Reports.toggleMarkingPick(${it.id}, this.checked)" />
+          <strong class="print-party-name">${ctx.esc(it.our_product_id)}</strong>
+          <span class="print-mode-flag">${it.marking ? ctx.esc(it.marking) : "NO MARKING"}</span>
+          <span class="print-party-meta">${ctx.esc(it.vendor_product_id || "—")}${it.vendor_alias ? ` · ${ctx.esc(it.vendor_alias)}` : ""}${it.vendor_name ? ` · ${ctx.esc(it.vendor_name)}` : ""}</span>
+          <span class="print-party-meta">${ctx.esc(cats || "No category")}${it.year_group ? ` · ${ctx.esc(it.year_group)}` : ""}</span>
+        </label>
+        <div class="mark-edit">
+          <input class="input" id="mark-one-${it.id}" value="${ctx.esc(it.marking || "")}" placeholder="Marking" />
+          <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.saveProductMarking(${it.id})">Save</button>
+        </div>
+      </article>`;
+    }).join("");
+    const options = markings.map(name => `<option value="${ctx.esc(name)}">${ctx.esc(name)}</option>`).join("");
+    body.innerHTML = `
+      <p class="fin-panel-sub" style="margin:0 0 12px;">Every live product. Red text is the marking. Search by marking, item, vendor item, alias, or category.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+        ${scopeBtn("all", "All")}
+        ${scopeBtn("marked", "With marking")}
+        ${scopeBtn("unmarked", "Without marking")}
+      </div>
+      <div class="mark-tools">
+        <label class="label">New or existing marking
+          <input class="input" id="mark-apply" placeholder="Fragile" />
+        </label>
+        <button type="button" class="btn btn-primary btn-sm" onclick="Reports.applyMarkingToPicked()">Apply to selected (<span id="mark-picked-count">${Object.keys(markingPicked).length}</span>)</button>
+        <label class="label">Rename
+          <select class="input" id="mark-old"><option value="">Pick a marking</option>${options}</select>
+        </label>
+        <label class="label">New name
+          <input class="input" id="mark-new" placeholder="Handle with care" />
+        </label>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.renameMarking()">Rename</button>
+      </div>
+      <p class="print-party-meta" style="margin:0 0 12px;">Showing ${items.length}</p>
+      <div class="print-party-grid">${cards}</div>
+      ${cards ? "" : empty("No products", "Nothing matches this search.")}`;
+  }
+
   async function loadChip() {
     const body = document.getElementById("reports-body");
     if (!body) return;
@@ -581,6 +698,7 @@ const Reports = (() => {
       else if (chip === "valuation") await renderValuation(body);
       else if (chip === "movers") await renderMovers(body);
       else if (chip === "low") await renderLow(body);
+      else if (chip === "markings") await renderMarkings(body);
       else if (chip === "returns") await renderReturns(body);
       else if (chip === "debit-notes") await renderDebitNotes(body);
       else if (chip === "gst-sales" || chip === "gst-purchases") await renderGst(body);
@@ -1652,5 +1770,6 @@ const Reports = (() => {
     openLedger, openStaffLedger, openExpenseLedger, addExpenseHead, addExpenseSubhead, addExpenseSource, renameExpenseSource, deleteExpenseSource, openCashLedger, backFromLedger, openDoc,
     shareDaybook, waDaybook, shareStockSummary, shareAgeing, waAgeing, exportExcel,
     printCurrent, exportCurrentExcel, setHideVoids, setJournalReportKind, setStockYear, setPrintCarry, togglePrintGroup, toggleStockAlbum,
+    setMarkingScope, toggleMarkingPick, saveProductMarking, applyMarkingToPicked, renameMarking,
   };
 })();

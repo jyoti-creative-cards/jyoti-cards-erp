@@ -4,6 +4,7 @@ from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -465,6 +466,64 @@ def ledger_route_detail(route_id: int, db: Session = Depends(get_db), auth: Auth
     if not data:
         raise HTTPException(404, "route not found")
     return data
+
+
+class MarkingApplyIn(BaseModel):
+    marking: str = ""
+    product_ids: list[int] = Field(default_factory=list)
+
+
+class MarkingRenameIn(BaseModel):
+    old_marking: str
+    new_marking: str
+
+
+@router.get("/product-markings")
+def product_markings_report(
+    q: str = Query("", max_length=120),
+    marked: str = Query("all", pattern="^(all|marked|unmarked)$"),
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    from app.services.product_markings import list_product_markings
+
+    return list_product_markings(db, q=q, marked=marked)
+
+
+@router.post("/product-markings/apply")
+def product_markings_apply(
+    body: MarkingApplyIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    from app.services import response_cache
+    from app.services.product_markings import apply_marking
+
+    try:
+        count = apply_marking(db, body.product_ids, body.marking)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    response_cache.invalidate("catalog:")
+    response_cache.invalidate("stock:")
+    return {"updated": count}
+
+
+@router.post("/product-markings/rename")
+def product_markings_rename(
+    body: MarkingRenameIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    from app.services import response_cache
+    from app.services.product_markings import rename_marking
+
+    try:
+        count = rename_marking(db, body.old_marking, body.new_marking)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    response_cache.invalidate("catalog:")
+    response_cache.invalidate("stock:")
+    return {"updated": count}
 
 
 @router.get("/ledgers/cash/book")

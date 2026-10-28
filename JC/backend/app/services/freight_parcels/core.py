@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -226,6 +226,20 @@ def _parcel_dict(
     }
 
 
+def _parcel_day_bounds(day: str) -> tuple[datetime, datetime] | None:
+    if not day or day == "all":
+        return None
+    if day == "today":
+        chosen = datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Kolkata")).date()
+    else:
+        try:
+            chosen = date.fromisoformat(day)
+        except ValueError:
+            raise HTTPException(400, "bad date") from None
+    start_local = datetime(chosen.year, chosen.month, chosen.day, tzinfo=ZoneInfo("Asia/Kolkata"))
+    return start_local.astimezone(timezone.utc), (start_local + timedelta(days=1)).astimezone(timezone.utc)
+
+
 def list_parcels(
     db: Session,
     *,
@@ -247,13 +261,12 @@ def list_parcels(
     elif status == "picked":
         q = q.filter(CustomerBill.freight_picked_at.isnot(None))
     # Day-scoped consistently with every other queue in the app now: day=today shows
-    # only bills created today, day=all shows the full backlog regardless of status —
-    # nothing is ever lost, it just moves from Today to Past.
-    if day == "today":
-        local_now = datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Kolkata"))
-        start_local = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
-        day_start = start_local.astimezone(timezone.utc)
-        day_end = (start_local + timedelta(days=1)).astimezone(timezone.utc)
+    # only bills created today, a YYYY-MM-DD shows that IST day, day=all shows the
+    # full backlog regardless of status — nothing is ever lost, it just moves from
+    # Today to Past.
+    bounds = _parcel_day_bounds(day)
+    if bounds is not None:
+        day_start, day_end = bounds
         q = q.filter(CustomerBill.created_at >= day_start, CustomerBill.created_at < day_end)
     rows = q.order_by(CustomerBill.created_at.desc(), CustomerBill.id.desc()).limit(300).all()
     agent_ids = {b.freight_agent_id for b in rows if b.freight_agent_id}

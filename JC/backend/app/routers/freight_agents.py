@@ -183,7 +183,7 @@ def create_freight_agent(body: FreightAgentIn, db: Session = Depends(get_db), au
 def list_all_parcels(
     agent_id: Optional[int] = Query(None),
     status: str = Query("all", pattern="^(all|pending|picked)$"),
-    day: str = Query("all", pattern="^(all|today)$"),
+    day: str = Query("all", pattern=r"^(all|today|\d{4}-\d{2}-\d{2})$"),
     db: Session = Depends(get_db),
     # Dispatch is the very next step after billing for every non-admin staffer with
     # customer_orders.write — this used to be require_admin, so the parcel list (and

@@ -66,6 +66,18 @@ from app.services.void_service import void_customer_bill, void_customer_placemen
 
 from app.routers.customer_orders.router import router
 
+def _listed_day(day: str) -> date | None:
+    """`today` is the IST day. A `YYYY-MM-DD` is that calendar day. `all` is every day."""
+    if day == "all":
+        return None
+    if day == "today":
+        return today_ist()
+    try:
+        return date.fromisoformat(day)
+    except ValueError:
+        raise HTTPException(400, "bad date") from None
+
+
 def _sort_business_date(value: date | datetime | None) -> tuple[int, datetime]:
     if isinstance(value, datetime):
         ts = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
@@ -322,7 +334,7 @@ def _summary(db: Session, order: CustomerOrder) -> CustomerOrderSummary:
 @router.get("", response_model=List[CustomerOrderSummary])
 def list_customer_orders(
     bucket: str = Query("open", pattern="^(summary|received|open|billed|cancelled|closed)$"),
-    day: str = Query("all", pattern="^(all|today)$"),
+    day: str = Query("all", pattern=r"^(all|today|\d{4}-\d{2}-\d{2})$"),
     search: Optional[str] = None,
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("customer_orders.read")),
@@ -333,9 +345,10 @@ def list_customer_orders(
         bucket = "open"
         day = "today"
 
+    listed = _listed_day(day)
     day_start = day_end = None
-    if day == "today":
-        day_start, day_end = ist_day_bounds_utc(today_ist())
+    if listed is not None:
+        day_start, day_end = ist_day_bounds_utc(listed)
 
     product_match_cids = _customer_ids_matching_product_search(db, search, bucket=bucket)
 
@@ -525,8 +538,8 @@ def list_customer_orders(
                 CustomerBill.deleted_at.is_(None),
             )
         )
-        if day_start is not None:
-            bill_q = bill_q.filter(CustomerBill.bill_date == today_ist())
+        if listed is not None:
+            bill_q = bill_q.filter(CustomerBill.bill_date == listed)
         grouped: dict[int, list[CustomerBill]] = defaultdict(list)
         for bill in bill_q.all():
             grouped[int(bill.customer_id)].append(bill)

@@ -60,6 +60,12 @@ def test_pending_parcel_from_yesterday_moves_from_today_to_past(db):
     assert any(r["bill_id"] == bill.id for r in all_rows)
 
 
+def test_parcel_list_follows_a_chosen_day(db):
+    old = _bill(db, created_at=datetime(2026, 8, 1, 6, 0, tzinfo=timezone.utc))
+    rows = list_parcels(db, status="all", day="2026-08-13")
+    assert not any(r["bill_id"] == old.id for r in rows)
+
+
 def test_fresh_pending_parcel_shows_in_today_dispatch_queue(db):
     bill = _bill(db, created_at=datetime.now(timezone.utc))
 

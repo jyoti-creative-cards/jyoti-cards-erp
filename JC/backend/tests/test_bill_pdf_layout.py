@@ -263,3 +263,31 @@ def test_net_rate_bill_hides_disc_column():
     assert "Scan to Pay" in text
     assert "Disc. %" not in text
     assert "22.50" in text
+
+
+def test_narration_is_highlighted_at_the_top_left():
+    pdf = render_customer_bill_pdf(
+        bill_id=21,
+        order_id=21,
+        bill_number="B21",
+        customer_name="Sharma Gift House",
+        customer_company=None,
+        totals=_totals(1, gst=False),
+        narration="BY HAND",
+        copies=1,
+        with_labels=False,
+    )
+    from io import BytesIO
+
+    from pypdf import PdfReader
+
+    hits = []
+
+    def visitor(text, cm, tm, fontDict, fontSize):
+        if text and "BY HAND" in text:
+            hits.append(float(tm[5]))
+
+    PdfReader(BytesIO(pdf)).pages[0].extract_text(visitor_text=visitor)
+    assert hits
+    assert min(hits) > 700
+    assert "1 .93 .45 rg" in _pdf_text(pdf)

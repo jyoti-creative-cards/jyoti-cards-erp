@@ -2,8 +2,29 @@
     return hubMode === "queue" || hubMode === "needs_action" || hubMode === "today";
   }
 
+  function selectedListDay() {
+    return document.getElementById("co-print-day")?.value || "";
+  }
+
   function dayParam() {
+    const picked = selectedListDay();
+    if (picked && !(isTodayMode() && picked === localToday())) return picked;
     return isTodayMode() ? "today" : "all";
+  }
+
+  function ensurePrintDay() {
+    const input = document.getElementById("co-print-day");
+    if (input && !input.value && isTodayMode()) input.value = localToday();
+  }
+
+  function setPrintDay(value) {
+    const input = document.getElementById("co-print-day");
+    if (input) input.value = value || "";
+    hubExpandedCustomerId = null;
+    hubExpandCache = {};
+    syncHubChrome();
+    if (isDispatchBucket()) loadDispatch();
+    else loadList();
   }
 
   function isDispatchBucket() {
@@ -56,7 +77,10 @@
     return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
   }
 
-  function init(context) { ctx = context; }
+  function init(context) {
+    ctx = context;
+    ensurePrintDay();
+  }
 
   function syncHubChrome() {
     const chips = document.getElementById("co-bucket-bar");
@@ -85,10 +109,17 @@
     const hint = document.getElementById("co-list-hint");
     if (title) {
       const stage = BUCKET_LABELS[currentBucket] || "Orders";
+      const picked = selectedListDay();
+      const specific = picked && picked !== localToday();
       if (dispatch) {
         const sub = dispatchStatus === "picked" ? "Picked" : dispatchStatus === "all" ? "All parcels" : "Pending pick";
-        title.textContent = today ? `Today · ${sub}` : sub;
+        title.textContent = specific
+          ? `${ctx.fmtDay?.(picked) || picked} · ${sub}`
+          : (today ? `Today · ${sub}` : sub);
         if (hint) hint.textContent = BUCKET_HINTS["dispatch"] || "";
+      } else if (specific) {
+        title.textContent = `${ctx.fmtDay?.(picked) || picked} · ${stage}`;
+        if (hint) hint.textContent = "";
       } else {
         const showToday = today && !NOT_DAY_SCOPED_BUCKETS.includes(currentBucket);
         title.textContent = showToday ? `Today · ${stage}` : stage;
@@ -156,6 +187,8 @@
     }
     if (mode === "browse" || mode === "past") hubMode = "past";
     else hubMode = "queue";
+    const printDay = document.getElementById("co-print-day");
+    if (printDay) printDay.value = hubMode === "past" ? "" : localToday();
     if (!PAST_BUCKETS.includes(currentBucket)) currentBucket = "open";
     hubExpandedCustomerId = null;
     hubExpandCache = {};

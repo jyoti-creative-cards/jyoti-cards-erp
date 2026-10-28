@@ -143,9 +143,9 @@ def _draw_footer(
         c.setFont("Helvetica-Bold", size)
         c.drawString(LEFT, _y(632), words)
 
-        c.setFont("Helvetica-Oblique", 8)
-        c.drawString(LEFT, _y(652), "Remarks:")
         if remarks:
+            c.setFont("Helvetica-Oblique", 8)
+            c.drawString(LEFT, _y(652), "Remarks:")
             c.setFont("Helvetica", 9)
             c.drawString(LEFT, _y(666), remarks[:90])
         _draw_pay_qr(c, pay_qr)

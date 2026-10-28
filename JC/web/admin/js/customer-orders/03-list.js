@@ -22,6 +22,7 @@
     hubExpandedCustomerId = null;
     hubExpandCache = {};
     if (!PAST_BUCKETS.includes(currentBucket)) currentBucket = "open";
+    ensurePrintDay();
     syncHubChrome();
     loadList();
     App.updateGlobalBack?.();

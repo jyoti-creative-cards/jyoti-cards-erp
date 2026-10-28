@@ -146,7 +146,9 @@ def render_copies_pdf(
     images = _load_images(item_image_urls or {})
     photos = _photos_for(item_rows, images)
     grand = totals.get("rounded_grand_total") or totals.get("grand_total") or "0.00"
-    remarks = _txt(narration, 90) or _txt(customer_notes, 90)
+    note = _txt(customer_notes, 90)
+    narr = _txt(narration, 180)
+    remarks = "" if not note or note == narr else note
     invoice_no = _txt(bill_number, 20) or str(bill_id)
 
     # Header height depends on which party lines we have. Measure it once.
@@ -173,6 +175,7 @@ def render_copies_pdf(
         marker_2=marker_2,
         agent_name=agent_name,
         agent_phone=agent_phone,
+        narration=narration,
     )
     pages = _paginate(running, closing, len(photos), table_top)
 
@@ -195,6 +198,7 @@ def render_copies_pdf(
         marker_2=marker_2,
         agent_name=agent_name,
         agent_phone=agent_phone,
+        narration=narration,
     )
     buf = BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)

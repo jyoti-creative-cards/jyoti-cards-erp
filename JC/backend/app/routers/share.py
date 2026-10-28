@@ -59,6 +59,20 @@ def _pdf_response(data: bytes, filename: str) -> Response:
     return Response(content=data, media_type="application/pdf", headers=headers)
 
 
+def _duplicate_bill_pdf(db: Session, bill_id: int) -> bytes | None:
+    """Render one duplicate. Hold the bill row — the PDF lives on that object only."""
+    from app.services.doc_gen import generate_customer_bill_document
+
+    bill = db.get(CustomerBill, bill_id)
+    if bill is None:
+        return None
+    generate_customer_bill_document(
+        db, bill_id, copies=1, with_labels=True, persist=False, copy_label="DUPLICATE",
+    )
+    fresh = getattr(bill, "_pdf_bytes", None)
+    return fresh or None
+
+
 @router.get("/bills/duplicates.pdf")
 def duplicate_day_pdf(
     day: date = Query(...),
@@ -66,11 +80,7 @@ def duplicate_day_pdf(
     auth: AuthContext = Depends(require_permission("customer_orders.read")),
 ):
     """Every invoice of one day, each page headed DUPLICATE. The bill button stays ORIGINAL."""
-    from io import BytesIO
-
     from pypdf import PdfWriter
-
-    from app.services.doc_gen import generate_customer_bill_document
 
     bills = (
         db.query(CustomerBill)
@@ -84,10 +94,7 @@ def duplicate_day_pdf(
     )
     writer = PdfWriter()
     for bill in bills:
-        generate_customer_bill_document(
-            db, bill.id, copies=1, with_labels=True, persist=False, copy_label="DUPLICATE",
-        )
-        fresh = getattr(bill, "_pdf_bytes", None)
+        fresh = _duplicate_bill_pdf(db, int(bill.id))
         if fresh:
             writer.append(BytesIO(fresh))
     if not writer.pages:
@@ -118,7 +125,6 @@ def _build_duplicate_day(job_id: str, bill_ids: list[int]) -> None:
     from pypdf import PdfWriter
 
     from app.db.session import SessionLocal
-    from app.services.doc_gen import generate_customer_bill_document
 
     db = SessionLocal()
     writer = PdfWriter()
@@ -126,11 +132,7 @@ def _build_duplicate_day(job_id: str, bill_ids: list[int]) -> None:
     try:
         for index, bill_id in enumerate(bill_ids, 1):
             try:
-                generate_customer_bill_document(
-                    db, bill_id, copies=1, with_labels=True, persist=False, copy_label="DUPLICATE",
-                )
-                bill = db.get(CustomerBill, bill_id)
-                fresh = getattr(bill, "_pdf_bytes", None) if bill else None
+                fresh = _duplicate_bill_pdf(db, bill_id)
                 if fresh:
                     writer.append(BytesIO(fresh))
                 else:

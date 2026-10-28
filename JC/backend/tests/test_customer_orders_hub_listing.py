@@ -149,6 +149,29 @@ def test_billed_bucket_prefers_newer_bill_date_over_old_null_bill_date_created_a
     assert row.display_date == today
 
 
+def test_billed_bucket_follows_the_chosen_day(db):
+    """The invoice date next to Print all invoice must not list every open bill."""
+    cust = _customer(db, "Date Filter Co", "9000000006")
+    db.add(CustomerBill(
+        customer_id=cust.id, bill_number="B-AUG-1",
+        subtotal_inclusive=Decimal("100"), grand_total=Decimal("100"),
+        created_by_type="admin", created_by_name="Test Admin",
+        bill_date=date(2026, 8, 1),
+    ))
+    db.add(CustomerBill(
+        customer_id=cust.id, bill_number="B-AUG-2",
+        subtotal_inclusive=Decimal("50"), grand_total=Decimal("50"),
+        created_by_type="admin", created_by_name="Test Admin",
+        bill_date=date(2026, 8, 2),
+    ))
+    db.commit()
+
+    rows = list_customer_orders(bucket="billed", day="2026-08-01", db=db, auth=AUTH)
+    assert len(rows) == 1
+    assert rows[0].bill_count == 1
+    assert rows[0].bills[0].bill_number == "B-AUG-1"
+
+
 def test_billed_bucket_empty_returns_empty_list(db):
     assert list_customer_orders(bucket="billed", day="all", db=db, auth=AUTH) == []
 

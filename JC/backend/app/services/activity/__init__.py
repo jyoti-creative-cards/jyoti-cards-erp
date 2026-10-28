@@ -1,10 +1,7 @@
 """activity package. Import from app.services.activity."""
 
-from app.services.activity import core as _core
-
-for _name, _value in vars(_core).items():
-    if _name.startswith("__") and _name.endswith("__"):
-        continue
-    globals()[_name] = _value
-
-__all__ = getattr(_core, "__all__", [name for name in vars(_core) if not name.startswith("_")])
+_core_path = __import__("pathlib").Path(__file__).with_name("core.py")
+exec(compile(_core_path.read_text(encoding="utf-8"), str(_core_path), "exec"), globals())
+del _core_path
+if "__all__" not in globals():
+    __all__ = [name for name in globals() if not name.startswith("_")]

@@ -1,9 +1,9 @@
-"""Implementation lives in app.services.bill_pdf_parts."""
-from app.services.bill_pdf_parts.actions import bill_item_headers
-from app.services.bill_pdf_parts.build_summary_rows import _build_summary_rows
-from app.services.bill_pdf_parts.common import _dec, _draw_amount, _draw_charge, _draw_footer, _draw_item, _draw_photos, _draw_total, _draw_verticals, _fit, _indian_words, _inr_words, _money, _photo_height, _photo_layout, _printed_token, _qty_text, _two_digits, _txt, _under_1000, _wrap, _y
-from app.services.bill_pdf_parts.draw_header import _draw_header, _paginate, _draw_page, _draw_table_head, _creation_token, _row_height, _day_token
-from app.services.bill_pdf_parts.render_copies_pdf import render_copies_pdf, _running_and_closing, _build_rows, render_customer_bill_pdf, _cash_discount_mode, _line_qty, _disc_text, _load_images, _as_date, _fetch_reader, _photos_for, _addon_qty, _line_gross, _addon_label, _description
+"""Implementation lives in app.services.customer_bill_pdf."""
+from app.services.customer_bill_pdf.actions import bill_item_headers
+from app.services.customer_bill_pdf.build_summary_rows import _build_summary_rows
+from app.services.customer_bill_pdf.common import _dec, _draw_amount, _draw_charge, _draw_footer, _draw_item, _draw_photos, _draw_total, _draw_verticals, _fit, _indian_words, _inr_words, _money, _photo_height, _photo_layout, _printed_token, _qty_text, _two_digits, _txt, _under_1000, _wrap, _y
+from app.services.customer_bill_pdf.draw_header import _draw_header, _paginate, _draw_page, _draw_table_head, _creation_token, _row_height, _day_token
+from app.services.customer_bill_pdf.render_copies_pdf import render_copies_pdf, _running_and_closing, _build_rows, render_customer_bill_pdf, _cash_discount_mode, _line_qty, _disc_text, _load_images, _as_date, _fetch_reader, _photos_for, _addon_qty, _line_gross, _addon_label, _description
 
 __all__ = [
     "_addon_label",

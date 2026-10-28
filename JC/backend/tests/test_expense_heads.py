@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from app.db.session import Base
 from app.models.expense import Expense, ExpenseHead, ExpenseSubhead
 from app.routers.expenses import ExpenseIn, expense_head_tree, resolve_expense_category
-from app.services.reports_extended import expense_ledger_detail
+from app.services.reports.extended import expense_ledger_detail
 
 
 def _db():

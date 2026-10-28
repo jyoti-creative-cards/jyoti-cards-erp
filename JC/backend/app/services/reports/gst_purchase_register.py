@@ -410,7 +410,7 @@ def gst_sales_register(db: Session, from_date: Optional[date], to_date: Optional
                 "status": "cancelled" if cancelled else "open",
             }
         )
-    from app.services.report_parts.lists import _bill_serial
+    from app.services.reports.lists import _bill_serial
     out.sort(key=lambda row: _bill_serial(row.get("doc_number")))
     return out
 

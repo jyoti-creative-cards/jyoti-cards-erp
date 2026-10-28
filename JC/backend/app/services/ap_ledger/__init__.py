@@ -1,4 +1,4 @@
-"""report_pdfs package. Import from app.services.report_pdfs."""
+"""ap_ledger package. Import from app.services.ap_ledger."""
 
 _core_path = __import__("pathlib").Path(__file__).with_name("core.py")
 exec(compile(_core_path.read_text(encoding="utf-8"), str(_core_path), "exec"), globals())

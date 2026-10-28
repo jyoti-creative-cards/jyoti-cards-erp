@@ -704,7 +704,7 @@ def test_debit_note_stays_live_while_vendor_bill_locks(db):
 
 
 def test_item_report_groups_by_id_and_uses_present_labels(db):
-    from app.services.reports_extended import item_wise_purchases, item_wise_sales
+    from app.services.reports.extended import item_wise_purchases, item_wise_sales
 
     customer, prod, vendor = _setup(db)
     old_code = prod.our_product_id

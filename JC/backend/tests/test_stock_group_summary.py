@@ -16,7 +16,7 @@ from app.models.customer_order import CustomerOrder, CustomerOrderLine, Customer
 from app.models.customer_return import CustomerReturn, CustomerReturnLine
 from app.models.stock import StockLedger, StockReceipt, StockReceiptLine
 from app.models.vendor import Vendor
-from app.services.reports_extra.stock_group_summary import stock_group_summary
+from app.services.reports.stock_group_summary import stock_group_summary
 from app.services.stock_summary_pdf import render_stock_summary_pdf, render_stock_summary_pdf_from
 
 DAY = date(2026, 10, 19)

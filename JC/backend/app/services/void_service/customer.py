@@ -25,7 +25,7 @@ from app.services.activity import log_from_auth
 from app.services.open_lines import add_to_open, reduce_from_open
 from app.services.stock_receipt import add_stock
 
-from app.services.void_parts.common import _customer_label
+from app.services.void_service.common import _customer_label
 
 def void_customer_bill(db: Session, auth: AuthContext, bill_id: int, reason: Optional[str]) -> dict:
     from app.models.accounts_receivable import ArLedgerEntry

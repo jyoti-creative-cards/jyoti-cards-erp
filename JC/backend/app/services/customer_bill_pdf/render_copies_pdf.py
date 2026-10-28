@@ -58,8 +58,8 @@ _BELOW_20 = [
 ]
 _TENS = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"]
 
-from app.services.bill_pdf_parts.common import _dec, _money, _txt
-from app.services.bill_pdf_parts.draw_header import _draw_header, _draw_page, _paginate
+from app.services.customer_bill_pdf.common import _dec, _money, _txt
+from app.services.customer_bill_pdf.draw_header import _draw_header, _draw_page, _paginate
 
 
 def _default_pay_qr() -> bytes | None:

@@ -13,7 +13,7 @@ from app.models.customer import Customer
 from app.models.customer_bill import CustomerBill, CustomerBillLine
 from app.models.stock import StockBalance
 from app.models.vendor import Vendor
-from app.services.reports_extended import billed_item_outward
+from app.services.reports.extended import billed_item_outward
 
 
 def test_staff_is_not_blocked_by_permissions():

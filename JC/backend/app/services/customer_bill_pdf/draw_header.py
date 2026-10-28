@@ -56,7 +56,7 @@ _BELOW_20 = [
 ]
 _TENS = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"]
 
-from app.services.bill_pdf_parts.common import _draw_charge, _draw_footer, _draw_item, _draw_photos, _draw_total, _draw_verticals, _photo_height, _printed_token, _txt, _wrap, _y
+from app.services.customer_bill_pdf.common import _draw_charge, _draw_footer, _draw_item, _draw_photos, _draw_total, _draw_verticals, _photo_height, _printed_token, _txt, _wrap, _y
 
 def _draw_header(
     c: canvas.Canvas,

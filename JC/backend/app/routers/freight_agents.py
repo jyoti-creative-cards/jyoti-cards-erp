@@ -19,7 +19,7 @@ from app.services.freight_ledger import (
     post_freight_settlement,
 )
 from app.services.freight_parcels import list_parcels, pick_parcel, reassign_parcel
-from app.services.report_pdfs import render_freight_payment_pdf
+from app.services.reports.pdfs import render_freight_payment_pdf
 from app.services.storage import (
     freight_payment_key,
     presigned_url,

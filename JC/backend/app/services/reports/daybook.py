@@ -16,7 +16,7 @@ from app.models.vendor import Vendor
 from app.models.city import City
 from app.services.biz_date import ist_day_bounds_utc, ist_range_bounds_utc
 
-from app.services.report_parts.bounds import _customer_labels, _payment_in_range, _range_bounds, _vendor_labels
+from app.services.reports.bounds import _customer_labels, _payment_in_range, _range_bounds, _vendor_labels
 
 def daybook(
     db: Session,

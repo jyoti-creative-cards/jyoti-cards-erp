@@ -9,7 +9,7 @@ from app.models.customer_bill import CustomerBill
 from app.models.city import City
 from app.services.money import as_signed_decrease, as_signed_increase, mag
 
-from app.services.ar_ledger_parts.labels import _doc_status
+from app.services.ar_ledger.labels import _doc_status
 
 def build_ar_ledger(db: Session, customer_id: int) -> list[dict]:
     entries = (

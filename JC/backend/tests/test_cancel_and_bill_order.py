@@ -19,8 +19,8 @@ from app.services.customer_bills.cancel import _drop_sale_from_orders, _return_b
 from app.services.customer_selling.confirm import settle_confirmed_after_bill
 from app.services.customer_bills.read import get_process_lines
 from app.services.passwords import hash_password
-from app.services.report_parts.lists import list_sales
-from app.services.reports_extra.stock_group_summary import stock_group_summary
+from app.services.reports.lists import list_sales
+from app.services.reports.stock_group_summary import stock_group_summary
 
 DAY = date(2026, 10, 19)
 WHEN = datetime(2026, 10, 19, 6, 0, tzinfo=timezone.utc)

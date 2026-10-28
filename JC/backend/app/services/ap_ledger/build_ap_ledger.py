@@ -19,7 +19,7 @@ from app.services.cost_visibility import hide_cost
 from app.services.money import as_signed_decrease, as_signed_increase, mag
 from app.services.storage import presigned_url
 
-from app.services.ap_ledger_parts.sync_receipt_extra_cash_ledger import debit_note_payable_effect
+from app.services.ap_ledger.sync_receipt_extra_cash_ledger import debit_note_payable_effect
 
 def build_ap_ledger(db: Session, vendor_id: int, *, auth: Optional[AuthContext] = None) -> list[dict]:
     from app.services.debit_notes import infer_direction

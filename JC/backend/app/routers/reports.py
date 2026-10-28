@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.deps import AuthContext, require_admin
 from app.services import reports as svc
-from app.services import reports_extended as ext
+from app.services.reports import extended as ext
 from app.services.ar_ledger import build_ar_ledger, customer_ar_totals, _customer_label
 from app.services.ap_ledger import build_ap_ledger, vendor_ap_totals, _vendor_label
 

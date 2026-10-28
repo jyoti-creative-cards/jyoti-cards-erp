@@ -24,7 +24,7 @@ from app.services.storage import presigned_url
 
 _IST = ZoneInfo("Asia/Kolkata")
 
-from app.services.ledger_parts.common import _actor_fields, _doc_status, _fmt_amount, _line_name, _occurred_at_from_display, _product_maps, _sortable_ts
+from app.services.ledger.common import _actor_fields, _doc_status, _fmt_amount, _line_name, _occurred_at_from_display, _product_maps, _sortable_ts
 
 def build_customer_ledger(db: Session, customer_id: int, *, show_actor: bool = True) -> List[EntityLedgerEntry]:
     """Orders placed, bills sold, payments collected, returns — full customer activity."""

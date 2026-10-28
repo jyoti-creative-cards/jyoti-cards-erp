@@ -29,7 +29,7 @@ from app.models.vendor import Vendor
 from app.services.ar_ledger import batch_customer_outstanding
 from app.services.reports import _customer_labels, _range_bounds, _vendor_labels, list_payments
 
-from app.services.reports_extra.gst_purchase_register import _fmt
+from app.services.reports.gst_purchase_register import _fmt
 
 def item_wise_purchases(db: Session, from_date: Optional[date], to_date: Optional[date]) -> list[dict]:
     start, end = _range_bounds(from_date, to_date)

@@ -57,7 +57,7 @@ _BELOW_20 = [
 ]
 _TENS = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"]
 
-from app.services.bill_pdf_parts.common import _money
+from app.services.customer_bill_pdf.common import _money
 
 def _build_summary_rows(totals: Dict[str, Any], gst_on: bool, gst_label: str) -> list[list[str]]:
     rows: list[list[str]] = []

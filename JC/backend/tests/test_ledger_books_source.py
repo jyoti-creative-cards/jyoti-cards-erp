@@ -15,7 +15,7 @@ from app.models.vendor import Vendor
 from app.services.customer_order_flow import create_received_placement
 from app.services.doc_gen import customer_order_source_line
 from app.services.reports import daybook, list_payments, list_sales
-from app.services.reports_extended import stock_wise
+from app.services.reports.extended import stock_wise
 from app.services.stock_receipt import annotate_stock_ledger
 
 

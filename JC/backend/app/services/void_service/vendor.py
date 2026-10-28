@@ -25,7 +25,7 @@ from app.services.activity import log_from_auth
 from app.services.open_lines import add_to_open, reduce_from_open
 from app.services.stock_receipt import add_stock
 
-from app.services.void_parts.common import _reapply_item_dn_stock, _reverse_item_dn_stock, _vendor_label
+from app.services.void_service.common import _reapply_item_dn_stock, _reverse_item_dn_stock, _vendor_label
 
 def void_receipt(db: Session, auth: AuthContext, receipt_id: int, reason: Optional[str]) -> dict:
     receipt = db.get(StockReceipt, receipt_id)

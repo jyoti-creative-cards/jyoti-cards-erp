@@ -17,7 +17,7 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, Tabl
 
 from app.services.company_info import company_lines
 
-from app.services.pdf_parts.common import _code_pair, _header, _ist_fmt, _safe, add_page_number
+from app.services.pdf_documents.common import _code_pair, _header, _ist_fmt, _safe, add_page_number
 
 def render_customer_return_pdf(
     *,

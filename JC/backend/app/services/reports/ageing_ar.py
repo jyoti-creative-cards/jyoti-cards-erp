@@ -29,7 +29,7 @@ from app.models.vendor import Vendor
 from app.services.ar_ledger import batch_customer_outstanding
 from app.services.reports import _customer_labels, _range_bounds, _vendor_labels, list_payments
 
-from app.services.reports_extra.gst_purchase_register import _fmt
+from app.services.reports.gst_purchase_register import _fmt
 
 def ageing_ar(db: Session, as_of: Optional[date] = None) -> dict:
     """Two queries: ledger columns, then names for parties that have rows."""

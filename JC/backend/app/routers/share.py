@@ -25,7 +25,7 @@ from app.models.freight_agent import FreightAgent, FreightLedgerEntry
 from app.models.vendor import Vendor
 from app.services.activity import log_from_auth
 from app.services.doc_jobs import bill_file_pdf_bytes, bill_pdf_bytes
-from app.services.report_pdfs import (
+from app.services.reports.pdfs import (
     render_ageing_pdf,
     render_ap_statement_pdf,
     render_ar_statement_pdf,

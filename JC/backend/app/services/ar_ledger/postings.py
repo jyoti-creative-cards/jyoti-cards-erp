@@ -9,7 +9,7 @@ from app.models.customer_bill import CustomerBill
 from app.models.city import City
 from app.services.money import as_signed_decrease, as_signed_increase, mag
 
-from app.services.ar_ledger_parts.account import get_or_create_ar_account
+from app.services.ar_ledger.account import get_or_create_ar_account
 
 def post_bill_entry(
     db: Session,

@@ -10,7 +10,7 @@ from app.main import app
 from app.models.catalog_product import CatalogProduct
 from app.models.vendor import Vendor
 from app.routers.stock.list_stock import entry_items
-from app.services.report_pdfs import _pdf_day
+from app.services.reports.pdfs import _pdf_day
 
 
 def test_entry_lists_are_on_the_api():

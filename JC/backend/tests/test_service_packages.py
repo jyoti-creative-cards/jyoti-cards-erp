@@ -2,7 +2,7 @@ from pathlib import Path
 
 import app.main  # noqa: F401
 
-ALLOWED_LOOSE = ["ap_ledger.py"]
+ALLOWED_LOOSE = []
 
 
 def test_loose_service_modules_are_packages():

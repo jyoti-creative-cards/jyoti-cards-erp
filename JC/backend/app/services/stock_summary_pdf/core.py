@@ -18,7 +18,7 @@ from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, 
 from sqlalchemy.orm import Session
 
 from app.services.company_info import COMPANY_NAME
-from app.services.reports_extra.stock_group_summary import stock_group_summary
+from app.services.reports.stock_group_summary import stock_group_summary
 
 
 def _indian(value: Decimal) -> str:

@@ -19,7 +19,7 @@ from app.services.company_info import company_lines
 from app.services.customer_bill_pdf import _money as _money_grouped
 from app.services.pdf_documents import add_page_number
 from app.services.reports import daybook
-from app.services.reports_extended import ageing_ap, ageing_ar
+from app.services.reports.extended import ageing_ap, ageing_ar
 
 
 def _pdf_day(value) -> str:

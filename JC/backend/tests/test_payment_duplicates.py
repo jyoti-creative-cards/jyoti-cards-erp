@@ -1,4 +1,4 @@
-"""A second payment with the same party, amount, date, and bank is flagged."""
+"""A second payment with the same party, amount, and date is flagged."""
 from datetime import date
 from decimal import Decimal
 
@@ -12,7 +12,7 @@ from app.services.ar_ledger import post_payment_entry
 from app.services.payment_duplicates import same_payment_clashes
 
 
-def test_same_party_amount_date_and_bank_is_a_duplicate():
+def test_same_party_amount_and_date_is_a_duplicate():
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(bind=engine)
     db = sessionmaker(bind=engine)()
@@ -36,5 +36,5 @@ def test_same_party_amount_date_and_bank_is_a_duplicate():
         db, ArLedgerEntry, party_field="customer_id", party_id=customer.id,
         amount=Decimal("5000"), pay_day=day, payment_mode="Cash",
     )
-    assert other_bank == []
+    assert len(other_bank) == 1
     db.close()

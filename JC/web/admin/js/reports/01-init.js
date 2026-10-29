@@ -232,9 +232,13 @@
   }
 
   function reportActionButtons() {
+    const pdf = (chip === "sales" || chip === "sales-book")
+      ? `<button type="button" class="btn btn-secondary btn-sm" onclick="Reports.downloadSalesPdf()">PDF</button>`
+      : "";
     return `<div class="rep-presets" style="margin-left:auto;">
       <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.printCurrent()">Print</button>
       <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.exportCurrentExcel()">Excel</button>
+      ${pdf}
     </div>`;
   }
 
@@ -650,6 +654,15 @@
         else if (r.kind === "purchase" && r.ref_id) cells._onclick = `Stock.openReceiptDetail(${Number(r.ref_id)})`;
         return cells;
       }), "Quiet day", "No entries in this range. Try another range.")}`;
+  }
+
+  async function downloadSalesPdf() {
+    try {
+      const name = fromDate && toDate && fromDate !== toDate
+        ? `sales_${fromDate}_${toDate}.pdf`
+        : `sales_${fromDate || toDate || "all"}.pdf`;
+      await DocShare.openPdf(`/share/sales/pdf${rangeQs()}`, { filename: name });
+    } catch (e) { ctx.toast(e.message, "error"); }
   }
 
   function daybookShareQs() {

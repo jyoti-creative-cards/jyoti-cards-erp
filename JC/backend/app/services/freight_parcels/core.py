@@ -46,11 +46,14 @@ def ensure_bill_freight_charge(
     customer_name: str,
     actor_name: str,
 ) -> None:
-    """Keep one agent charge in step with the bill. Bus + agent + amount posts it.
-    Transport and self-pickup do not. The customer ledger stays the one bill total."""
+    """Keep one agent charge in step with the bill.
+
+    Bus or transport, with an agent and an amount, posts it. Self-pickup does
+    not. The customer ledger stays the one bill total.
+    """
     mode = bill.transport_mode or ("bus" if bill.freight_agent_id else "self_pickup")
     amt = (bill.freight_charges or Decimal("0")).quantize(Decimal("0.01"))
-    if mode != "bus" or not bill.freight_agent_id or amt <= 0:
+    if mode not in ("bus", "transport") or not bill.freight_agent_id or amt <= 0:
         if charge_for_bill(db, bill.id):
             remove_charge_for_bill(db, bill.id)
         return
@@ -88,10 +91,16 @@ def sync_bill_freight_on_edit(
     customer_name: str,
     actor_name: str,
 ) -> None:
-    """Update freight on a bill. A picked parcel can still move to another agent."""
+    """Update freight on a bill. A picked parcel can still move to another agent.
+
+    The bill screen sends an agent only for bus. A transport bill that already
+    has an agent keeps that agent, so an edit does not drop the freight charge.
+    """
+    if freight_agent_id is None and bill.freight_agent_id and (bill.transport_mode == "transport"):
+        freight_agent_id = bill.freight_agent_id
     bill.freight_agent_id = freight_agent_id
     bill.freight_charges = freight_charges
-    if freight_agent_id:
+    if freight_agent_id and bill.transport_mode not in ("bus", "transport"):
         bill.transport_mode = "bus"
     ensure_bill_freight_charge(db, bill, customer_name=customer_name, actor_name=actor_name)
 

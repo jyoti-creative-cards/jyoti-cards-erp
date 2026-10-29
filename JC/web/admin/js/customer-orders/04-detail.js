@@ -111,7 +111,7 @@
         <div class="ord-hub-list">${(currentOrder.bills || []).map(b => {
         const openKey = `bill-${b.id}`;
         const expanded = coExpandedId === openKey;
-        const canEditBill = canWrite && (b.lines || []).every(ln => ln.status === "billed");
+        const canEditBill = canWrite && billEditableToday(b.created_at) && (b.lines || []).every(ln => ln.status === "billed");
         const hasFreight = b.transport_mode === "bus" || !!(b.freight_agent_id);
         const modeLbl = b.transport_mode === "bus" ? "Bus" : b.transport_mode === "transport" ? "Transport" : b.transport_mode === "self_pickup" ? "Self-pickup" : (hasFreight ? "Bus" : "");
         const hideDisc = !!b.hide_discount_column;
@@ -132,8 +132,10 @@
           { label: "Download PDF", onclick: `CustomerOrders.openBillDoc(${b.id}, false)` },
           { label: "WhatsApp", onclick: `CustomerOrders.shareBillWhatsApp(${b.id})` },
         ];
-        if (canWrite) {
+        if (canWrite && billEditableToday(b.created_at)) {
           more.push({ label: "Edit bill number", onclick: `CustomerOrders.promptEditBillNumber(${b.id}, ${JSON.stringify(b.bill_number || "")})` });
+        }
+        if (canWrite) {
           more.push({ label: "Update payment QR", onclick: `CustomerOrders.uploadBillQr(${b.id})` });
           if (b.has_custom_qr) {
             more.push({ label: "Use default payment QR", onclick: `CustomerOrders.resetBillQr(${b.id})` });
@@ -401,6 +403,7 @@
   }
 
   function promptReason(title, onOk, needKey = true) {
+    if (ctx.isAdmin?.()) needKey = false;
     document.getElementById("modal-title").textContent = title;
     document.getElementById("modal-body").innerHTML = `
       ${needKey ? `<label class="label">Your cancel key</label>
@@ -642,8 +645,8 @@
   function cancelBill(billId) {
     document.getElementById("modal-title").textContent = "Cancel this bill";
     document.getElementById("modal-body").innerHTML = `
-      <label class="label">Your cancel key</label>
-      <input class="input" id="co-cancel-key" type="password" autocomplete="off" placeholder="Your own key" style="width:100%;margin-bottom:12px;" />
+      ${ctx.isAdmin?.() ? "" : `<label class="label">Your cancel key</label>
+      <input class="input" id="co-cancel-key" type="password" autocomplete="off" placeholder="Your own key" style="width:100%;margin-bottom:12px;" />`}
       <label class="label">Reason (required)</label>
       <textarea class="input" id="co-reason-input" rows="3" style="width:100%;"></textarea>
       <p style="font-size:13px;color:var(--muted);margin:10px 0 0;">Cancel only the bill when the order is right and the bill is wrong, such as transport or charges. The order stays booked. Cancel the complete order when this sale should not stay.</p>`;
@@ -654,9 +657,9 @@
     const go = (keepOrder) => {
       const reason = (document.getElementById("co-reason-input")?.value || "").trim();
       const passKey = (document.getElementById("co-cancel-key")?.value || "").trim();
-      if (!passKey) return ctx.toast("Enter your cancel key", "error");
+      if (!ctx.isAdmin?.() && !passKey) return ctx.toast("Enter your cancel key", "error");
       if (!reason) return ctx.toast("Enter a reason", "error");
-      window.__jcCancelKey = passKey;
+      window.__jcCancelKey = ctx.isAdmin?.() ? "" : passKey;
       App.closeModal();
       ctx.showLoading?.();
       ctx.api(`/customer-orders/bills/${billId}/cancel`, {

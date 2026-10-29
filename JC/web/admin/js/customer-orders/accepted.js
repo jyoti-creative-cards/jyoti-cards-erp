@@ -158,6 +158,20 @@ const CustomerOrders = (() => {
     return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
   }
 
+  function billEditableToday(createdAt) {
+    if (ctx.isAdmin?.()) return true;
+    if (!createdAt) return false;
+    const created = new Date(createdAt);
+    if (Number.isNaN(created.getTime())) return false;
+    const day = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Kolkata",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    return day.format(created) === day.format(new Date());
+  }
+
   function init(context) {
     ctx = context;
     ensurePrintDay();
@@ -542,7 +556,7 @@ const CustomerOrders = (() => {
         p.customer_phone || null,
       ].filter(Boolean).join(" · ");
       const actions = [];
-      if (canWrite) {
+      if (canWrite && billEditableToday(p.created_at)) {
         actions.push(`<button type="button" class="btn btn-secondary btn-sm" onclick="CustomerOrders.openEditBill(${p.bill_id})">Edit</button>`);
       }
       if (pending && canWrite) {
@@ -741,7 +755,8 @@ const CustomerOrders = (() => {
     }
     if (currentBucket === "billed") {
       if (canMoney) more.push({ label: "Collect payment", onclick: `CustomerOrders.goCollectPayment(${o.customer_id})` });
-      if (canWrite) more.push({ label: "Edit bill", onclick: `CustomerOrders.editLatestBill(${o.customer_id})` });
+      const billChips = Array.isArray(o.bills) ? o.bills : [];
+      if (canWrite && (ctx.isAdmin?.() || billChips.some(b => billEditableToday(b.created_at)))) more.push({ label: "Edit bill", onclick: `CustomerOrders.editLatestBill(${o.customer_id})` });
       if (canWrite) more.push({ label: "Close order", onclick: `CustomerOrders.openCloseBatch(${o.customer_id})` });
     }
     if (canWrite && openQty > 0 && currentBucket === "open") {
@@ -973,7 +988,7 @@ const CustomerOrders = (() => {
         <div class="ord-hub-list">${(currentOrder.bills || []).map(b => {
         const openKey = `bill-${b.id}`;
         const expanded = coExpandedId === openKey;
-        const canEditBill = canWrite && (b.lines || []).every(ln => ln.status === "billed");
+        const canEditBill = canWrite && billEditableToday(b.created_at) && (b.lines || []).every(ln => ln.status === "billed");
         const hasFreight = b.transport_mode === "bus" || !!(b.freight_agent_id);
         const modeLbl = b.transport_mode === "bus" ? "Bus" : b.transport_mode === "transport" ? "Transport" : b.transport_mode === "self_pickup" ? "Self-pickup" : (hasFreight ? "Bus" : "");
         const hideDisc = !!b.hide_discount_column;
@@ -994,8 +1009,10 @@ const CustomerOrders = (() => {
           { label: "Download PDF", onclick: `CustomerOrders.openBillDoc(${b.id}, false)` },
           { label: "WhatsApp", onclick: `CustomerOrders.shareBillWhatsApp(${b.id})` },
         ];
-        if (canWrite) {
+        if (canWrite && billEditableToday(b.created_at)) {
           more.push({ label: "Edit bill number", onclick: `CustomerOrders.promptEditBillNumber(${b.id}, ${JSON.stringify(b.bill_number || "")})` });
+        }
+        if (canWrite) {
           more.push({ label: "Update payment QR", onclick: `CustomerOrders.uploadBillQr(${b.id})` });
           if (b.has_custom_qr) {
             more.push({ label: "Use default payment QR", onclick: `CustomerOrders.resetBillQr(${b.id})` });
@@ -1263,6 +1280,7 @@ const CustomerOrders = (() => {
   }
 
   function promptReason(title, onOk, needKey = true) {
+    if (ctx.isAdmin?.()) needKey = false;
     document.getElementById("modal-title").textContent = title;
     document.getElementById("modal-body").innerHTML = `
       ${needKey ? `<label class="label">Your cancel key</label>
@@ -1504,8 +1522,8 @@ const CustomerOrders = (() => {
   function cancelBill(billId) {
     document.getElementById("modal-title").textContent = "Cancel this bill";
     document.getElementById("modal-body").innerHTML = `
-      <label class="label">Your cancel key</label>
-      <input class="input" id="co-cancel-key" type="password" autocomplete="off" placeholder="Your own key" style="width:100%;margin-bottom:12px;" />
+      ${ctx.isAdmin?.() ? "" : `<label class="label">Your cancel key</label>
+      <input class="input" id="co-cancel-key" type="password" autocomplete="off" placeholder="Your own key" style="width:100%;margin-bottom:12px;" />`}
       <label class="label">Reason (required)</label>
       <textarea class="input" id="co-reason-input" rows="3" style="width:100%;"></textarea>
       <p style="font-size:13px;color:var(--muted);margin:10px 0 0;">Cancel only the bill when the order is right and the bill is wrong, such as transport or charges. The order stays booked. Cancel the complete order when this sale should not stay.</p>`;
@@ -1516,9 +1534,9 @@ const CustomerOrders = (() => {
     const go = (keepOrder) => {
       const reason = (document.getElementById("co-reason-input")?.value || "").trim();
       const passKey = (document.getElementById("co-cancel-key")?.value || "").trim();
-      if (!passKey) return ctx.toast("Enter your cancel key", "error");
+      if (!ctx.isAdmin?.() && !passKey) return ctx.toast("Enter your cancel key", "error");
       if (!reason) return ctx.toast("Enter a reason", "error");
-      window.__jcCancelKey = passKey;
+      window.__jcCancelKey = ctx.isAdmin?.() ? "" : passKey;
       App.closeModal();
       ctx.showLoading?.();
       ctx.api(`/customer-orders/bills/${billId}/cancel`, {
@@ -1791,8 +1809,9 @@ const CustomerOrders = (() => {
       const detail = await ctx.api(`/customer-orders/customer/${customerId}?bucket=billed`, {}, 0);
       const bills = detail?.bills || [];
       if (!bills.length) return ctx.toast("No bills to edit", "error");
-      const editable = bills.find(b => (b.lines || []).length && (b.lines || []).every(ln => ln.status === "billed"));
-      const bill = editable || bills[0];
+      const editable = bills.find(b => (b.lines || []).length && (b.lines || []).every(ln => ln.status === "billed") && billEditableToday(b.created_at));
+      if (!editable) return ctx.toast("You can edit a bill only on the day it was made", "error");
+      const bill = editable;
       detailCustomerId = customerId;
       currentOrder = detail;
       await openEditBill(bill.id);
@@ -1815,6 +1834,11 @@ const CustomerOrders = (() => {
       ]);
       if (bill.cancelled_at) {
         ctx.toast("Cannot edit — bill cancelled", "error");
+        editBillId = null;
+        return;
+      }
+      if (!billEditableToday(bill.created_at)) {
+        ctx.toast("You can edit a bill only on the day it was made", "error");
         editBillId = null;
         return;
       }

@@ -309,3 +309,46 @@ def render_freight_payment_pdf(
         story.append(t)
     doc.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
     return buf.getvalue()
+
+
+def render_sales_pdf(db: Session, from_date: Optional[date] = None, to_date: Optional[date] = None) -> bytes:
+    from app.services.reports.lists import list_sales
+
+    items = list_sales(db, from_date, to_date)
+    live = [row for row in items if row.get("status") != "cancelled"]
+    total = sum((float(row.get("amount") or 0) for row in live), 0.0)
+    if from_date and to_date and from_date != to_date:
+        title = f"Sales bills — {from_date.isoformat()} to {to_date.isoformat()}"
+    elif from_date or to_date:
+        title = f"Sales bills — {(from_date or to_date).isoformat()}"
+    else:
+        title = "Sales bills — all dates"
+    doc, buf, styles = _doc()
+    story = [
+        Paragraph(title, styles["Heading1"]),
+        Paragraph(f"Bills {len(live)} · Amount {_money(total)}", styles["Normal"]),
+        Spacer(1, 10),
+    ]
+    rows = [["Date", "Number", "Party", "Amount"]]
+    for row in items:
+        amount = row.get("amount") or "0"
+        if row.get("status") == "cancelled":
+            amount = f"{amount} cancelled"
+        rows.append([
+            row.get("date") or "",
+            (row.get("doc_number") or "")[:18],
+            (row.get("party_label") or "")[:42],
+            amount,
+        ])
+    rows.append(["", "", "Total", _money(total)])
+    table = Table(rows, colWidths=[70, 70, 220, 80])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e2e8f0")),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+    ]))
+    story.append(table)
+    doc.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
+    return buf.getvalue()

@@ -260,6 +260,18 @@ def post_customer_sticker_print(
         if city is not None and city.deleted_at is None:
             city_name = city.name
     saved = record_sticker_print(db, row, city_name, auth.actor_name)
+    from app.services.activity import log_from_auth
+
+    log_from_auth(
+        db,
+        auth,
+        action="sticker_print",
+        entity_type="customer",
+        entity_id=row.id,
+        entity_label=row.business_name,
+        detail="Sticker printed",
+    )
+    db.commit()
     return print_payload(saved)
 
 @router.get("/{customer_id}/sticker")

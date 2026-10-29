@@ -1,4 +1,4 @@
-"""Warn when the same party, amount, date, and bank account is paid twice."""
+"""Warn when the same party, amount, and date is paid twice."""
 
 from __future__ import annotations
 
@@ -26,7 +26,6 @@ def same_payment_clashes(
     payment_mode: str | None,
 ) -> list[dict]:
     wanted = _money(amount)
-    mode = (payment_mode or "").strip().lower()
     rows = (
         db.query(model)
         .filter(
@@ -50,9 +49,6 @@ def same_payment_clashes(
         if row_day != pay_day:
             continue
         if _money(row.amount) != wanted:
-            continue
-        row_mode = (row.payment_mode or "").strip().lower()
-        if row_mode != mode:
             continue
         clashes.append({
             "id": row.id,

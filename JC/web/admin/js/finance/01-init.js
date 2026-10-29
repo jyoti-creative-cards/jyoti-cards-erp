@@ -334,7 +334,7 @@
     } catch (e) {
       if (!(e.status === 409 && e.detail && e.detail.matches)) throw e;
       const lines = e.detail.matches.map(m => `₹${m.total} · ${m.mode || "—"} · ${m.date || ""}`).join("\n");
-      if (!window.confirm(`This could be a duplicate payment.\nSame party, same amount, same date, same bank account.\n\n${lines}\n\nSave it anyway?`)) {
+      if (!window.confirm(`This could be a duplicate payment.\nSame party, same amount, same date.\n\n${lines}\n\nSave it anyway?`)) {
         const cancel = new Error("Not saved");
         cancel.cancelled = true;
         throw cancel;

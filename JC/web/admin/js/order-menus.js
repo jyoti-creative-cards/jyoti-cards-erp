@@ -124,7 +124,7 @@ const OrderMenus = (() => {
       body.innerHTML = `
         ${message ? `<p style="margin:0 0 12px;font-size:13px;color:var(--muted);">${ctx.esc(message)}</p>` : ""}
         ${detailsHtml || ""}
-        ${danger ? `<label class="label" style="margin-top:14px;">Your cancel key</label>
+        ${danger && !ctx.isAdmin?.() ? `<label class="label" style="margin-top:14px;">Your cancel key</label>
         <input class="input" id="vo-confirm-key" type="password" autocomplete="off" placeholder="Your own key" style="width:100%;margin-bottom:8px;" />` : ""}
         ${showReason ? `<label class="label" style="margin-top:14px;">${ctx.esc(reasonLabel || (requireReason ? "Note (required)" : "Note (optional)"))}</label>
           <textarea class="input" id="vo-confirm-reason" rows="3" style="width:100%;" placeholder="Why?"></textarea>` : ""}`;

@@ -398,6 +398,9 @@
       arDetail = await ctx.api(`/accounts-receivable/customer/${customerId}`, {}, 0);
       currentCustomer = customerId;
       arTab = opts?.tab === "ledger" || opts?.tab === "payments" ? opts.tab : "statement";
+      arExpandAll = false;
+      arDetailGen += 1;
+      arLineCache = { bills: {}, returns: {} };
       document.getElementById("finance-hub")?.classList.add("hidden");
       document.getElementById("finance-ar-detail")?.classList.remove("hidden");
       renderArDetail();
@@ -410,6 +413,11 @@
   function setArTab(tab) {
     arTab = tab;
     renderArDetail();
+  }
+
+  async function refreshOpenAr() {
+    if (!currentCustomer) return;
+    await openCustomerAr(currentCustomer, { tab: arTab });
   }
 
   function renderArDetail() {
@@ -435,10 +443,13 @@
       });
     }
     const tabs = `
-      <div class="fin-tabs">
-        <button type="button" class="fin-tab ${arTab === "statement" ? "is-active" : ""}" onclick="Finance.setArTab('statement')">Statement</button>
-        <button type="button" class="fin-tab ${arTab === "ledger" ? "is-active" : ""}" onclick="Finance.setArTab('ledger')">Ledger</button>
-        <button type="button" class="fin-tab ${arTab === "payments" ? "is-active" : ""}" onclick="Finance.setArTab('payments')">Payments</button>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <div class="fin-tabs">
+          <button type="button" class="fin-tab ${arTab === "statement" ? "is-active" : ""}" onclick="Finance.setArTab('statement')">Statement</button>
+          <button type="button" class="fin-tab ${arTab === "ledger" ? "is-active" : ""}" onclick="Finance.setArTab('ledger')">Ledger</button>
+          <button type="button" class="fin-tab ${arTab === "payments" ? "is-active" : ""}" onclick="Finance.setArTab('payments')">Payments</button>
+        </div>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.toggleArDetails()">${arExpandAll ? "Hide details" : "View details"}</button>
       </div>`;
     let content = "";
     if (arTab === "statement") content = renderArStatement();

@@ -85,6 +85,7 @@
   function renderCustomerActions(id, openingDue, openingAsOn) {
     const el = document.getElementById("customer-actions-wrap");
     if (!el) return;
+    customerActionMeta = { id, openingDue, openingAsOn };
     const canSell = canWrite("customer_orders");
     const canSeeAr = isAdmin() || can("ar.read");
     const canCollectAr = isAdmin() || can("ar.write");
@@ -101,6 +102,7 @@
     if (canSeeAr) {
       bits.push(`<button class="btn btn-secondary btn-sm" onclick="App.showCustomerMoneyLedger(${id})">Ledger</button>`);
     }
+    bits.push(`<button type="button" class="btn btn-secondary btn-sm" onclick="App.setCustomerLedgerDetails(${customerLedgerExpandAll ? "false" : "true"})">${customerLedgerExpandAll ? "Hide details" : "View details"}</button>`);
     if (due && canCollectAr) {
       bits.push(`<button class="btn btn-secondary btn-sm" onclick="App.collectCustomer(${id})">Collect</button>`);
     }
@@ -147,7 +149,7 @@
         }
       }
       renderCustomerActions(id, cust?.opening_balance_due, cust?.opening_balance_as_on);
-      if (wrap) wrap.innerHTML = renderCustomerStatement(id);
+      if (wrap) wrap.innerHTML = renderCustomerStatement(id, { showExpand: false });
     } catch (e) {
       if (wrap) wrap.innerHTML = `<p style="color:var(--danger);font-size:13px;">${esc(e.message)}</p>`;
     }
@@ -197,7 +199,7 @@
     </label>`;
   }
 
-  function renderCustomerStatement(customerId) {
+  function renderCustomerStatement(customerId, opts = {}) {
     let orders = customerLedger.filter(e => e.event_type === "order_placed" || e.event_type === "order_cancelled");
     let bills = customerLedger.filter(e => e.event_type === "customer_bill");
     let payments = customerLedger.filter(e => e.event_type === "ar_payment");
@@ -325,7 +327,10 @@
     const emptyNote = customerLedger.length
       ? `<p style="color:var(--muted);font-size:13px;">No real entries. Uncheck Real entries only to see voids.</p>`
       : `<p style="color:var(--muted);font-size:13px;">Nothing yet. Place an order or bill this customer.</p>`;
-    return `<div class="detail-section"><h4>Activity</h4>${customerRealBar()}<button type="button" class="btn btn-secondary btn-sm" style="margin:0 0 10px 8px;" onclick="App.setCustomerLedgerDetails(${customerLedgerExpandAll ? "false" : "true"})">${customerLedgerExpandAll ? "Hide details" : "View details"}</button>${sections.length ? sections.join("") : emptyNote}</div>`;
+    const expandBtn = opts.showExpand === false
+      ? ""
+      : `<button type="button" class="btn btn-secondary btn-sm" style="margin:0 0 10px 8px;" onclick="App.setCustomerLedgerDetails(${customerLedgerExpandAll ? "false" : "true"})">${customerLedgerExpandAll ? "Hide details" : "View details"}</button>`;
+    return `<div class="detail-section"><h4>Activity</h4>${customerRealBar()}${expandBtn}${sections.length ? sections.join("") : emptyNote}</div>`;
   }
 
   function ledgerRowOpen(entryId) {
@@ -335,7 +340,7 @@
 
   function repaintLedgers() {
     const wrap = document.getElementById("customer-ledger-wrap");
-    if (wrap && detailId) wrap.innerHTML = renderCustomerStatement(detailId);
+    if (wrap && detailId) wrap.innerHTML = renderCustomerStatement(detailId, { showExpand: false });
     const view = document.getElementById("view-party-ledger");
     const page = document.getElementById("party-ledger-body");
     if (page && view && !view.classList.contains("hidden") && partyLedgerCustomerId) {
@@ -347,6 +352,9 @@
     customerLedgerExpandAll = !!on;
     if (!on) customerLedgerOpenIds = new Set();
     repaintLedgers();
+    if (customerActionMeta && detailMode === "customer" && detailId) {
+      renderCustomerActions(customerActionMeta.id, customerActionMeta.openingDue, customerActionMeta.openingAsOn);
+    }
   }
 
   function toggleCustomerLedgerRow(entryId) {

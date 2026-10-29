@@ -21,6 +21,9 @@
     if (lookupDesk() || orderTaker() || stickerDesk()) return false;
     return authMode === "admin" || authMode === "staff";
   }
+  function isOwnerAdmin() {
+    return authMode === "admin";
+  }
   function can(perm) { return isAdmin() || permissions.has(perm); }
   function canWrite(resource) { return can(resource + ".write"); }
   function canRead(resource) { return can(resource + ".read"); }

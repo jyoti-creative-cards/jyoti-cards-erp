@@ -118,7 +118,8 @@
     }
     if (currentBucket === "billed") {
       if (canMoney) more.push({ label: "Collect payment", onclick: `CustomerOrders.goCollectPayment(${o.customer_id})` });
-      if (canWrite) more.push({ label: "Edit bill", onclick: `CustomerOrders.editLatestBill(${o.customer_id})` });
+      const billChips = Array.isArray(o.bills) ? o.bills : [];
+      if (canWrite && (ctx.isAdmin?.() || billChips.some(b => billEditableToday(b.created_at)))) more.push({ label: "Edit bill", onclick: `CustomerOrders.editLatestBill(${o.customer_id})` });
       if (canWrite) more.push({ label: "Close order", onclick: `CustomerOrders.openCloseBatch(${o.customer_id})` });
     }
     if (canWrite && openQty > 0 && currentBucket === "open") {

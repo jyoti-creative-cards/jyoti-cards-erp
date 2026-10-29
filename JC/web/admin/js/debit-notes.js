@@ -473,7 +473,7 @@ const DebitNotes = (() => {
   async function voidFromList(noteId) {
     if (!listCtx) return;
     const { vendorId, receiptId, receivingLines, onDone } = listCtx;
-    if (!ctx.isAdmin?.()) {
+    if (!ctx.isOwnerAdmin?.()) {
       const passKey = prompt("Your cancel key");
       if (passKey == null || !String(passKey).trim()) return ctx.toast("Enter your cancel key", "error");
       window.__jcCancelKey = String(passKey).trim();

@@ -77,6 +77,20 @@
     return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
   }
 
+  function billEditableToday(createdAt) {
+    if (ctx.isAdmin?.()) return true;
+    if (!createdAt) return false;
+    const created = new Date(createdAt);
+    if (Number.isNaN(created.getTime())) return false;
+    const day = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Kolkata",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    return day.format(created) === day.format(new Date());
+  }
+
   function init(context) {
     ctx = context;
     ensurePrintDay();

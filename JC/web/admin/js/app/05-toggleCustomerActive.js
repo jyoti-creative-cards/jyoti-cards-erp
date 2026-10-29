@@ -469,7 +469,7 @@
     apiBase: () => API,
     headers,
     checkBackend,
-    can, canWrite, canRead, isAdmin,
+    can, canWrite, canRead, isAdmin, isOwnerAdmin,
     get staffUser() { return staffUser; },
     showView,
     showPeopleTab,

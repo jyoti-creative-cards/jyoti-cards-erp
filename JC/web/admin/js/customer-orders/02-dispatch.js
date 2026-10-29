@@ -58,7 +58,7 @@
         p.customer_phone || null,
       ].filter(Boolean).join(" · ");
       const actions = [];
-      if (canWrite) {
+      if (canWrite && billEditableToday(p.created_at)) {
         actions.push(`<button type="button" class="btn btn-secondary btn-sm" onclick="CustomerOrders.openEditBill(${p.bill_id})">Edit</button>`);
       }
       if (pending && canWrite) {

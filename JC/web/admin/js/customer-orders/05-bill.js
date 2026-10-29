@@ -217,8 +217,9 @@
       const detail = await ctx.api(`/customer-orders/customer/${customerId}?bucket=billed`, {}, 0);
       const bills = detail?.bills || [];
       if (!bills.length) return ctx.toast("No bills to edit", "error");
-      const editable = bills.find(b => (b.lines || []).length && (b.lines || []).every(ln => ln.status === "billed"));
-      const bill = editable || bills[0];
+      const editable = bills.find(b => (b.lines || []).length && (b.lines || []).every(ln => ln.status === "billed") && billEditableToday(b.created_at));
+      if (!editable) return ctx.toast("You can edit a bill only on the day it was made", "error");
+      const bill = editable;
       detailCustomerId = customerId;
       currentOrder = detail;
       await openEditBill(bill.id);
@@ -241,6 +242,11 @@
       ]);
       if (bill.cancelled_at) {
         ctx.toast("Cannot edit — bill cancelled", "error");
+        editBillId = null;
+        return;
+      }
+      if (!billEditableToday(bill.created_at)) {
+        ctx.toast("You can edit a bill only on the day it was made", "error");
         editBillId = null;
         return;
       }

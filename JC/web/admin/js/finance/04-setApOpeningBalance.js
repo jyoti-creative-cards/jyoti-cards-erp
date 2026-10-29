@@ -91,6 +91,93 @@
     return stampRunningBalance(visibleMoneyEntries(entries));
   }
 
+  async function pool(items, limit, fn) {
+    const queue = items.slice();
+    const n = Math.min(limit, queue.length);
+    if (!n) return;
+    await Promise.all(Array.from({ length: n }, async () => {
+      while (queue.length) await fn(queue.shift());
+    }));
+  }
+
+  async function toggleArDetails() {
+    if (!arDetail) return;
+    if (arExpandAll) {
+      arExpandAll = false;
+      arDetailGen += 1;
+      renderArDetail();
+      return;
+    }
+    const gen = ++arDetailGen;
+    arExpandAll = true;
+    renderArDetail();
+    const entries = arDetail.entries || [];
+    const billIds = [...new Set(entries.map(e => e.bill_id).filter(Boolean))].filter(id => !arLineCache.bills[id]);
+    const returnIds = [...new Set(entries.map(e => e.return_id).filter(Boolean))].filter(id => !arLineCache.returns[id]);
+    await pool(billIds, 6, async (id) => {
+      if (gen !== arDetailGen) return;
+      try {
+        arLineCache.bills[id] = await ctx.api(`/customer-orders/bills/${id}`, {}, 0);
+      } catch {
+        arLineCache.bills[id] = { lines: [], error: true };
+      }
+    });
+    await pool(returnIds, 6, async (id) => {
+      if (gen !== arDetailGen) return;
+      try {
+        arLineCache.returns[id] = await ctx.api(`/customer-returns/${id}`, {}, 0);
+      } catch {
+        arLineCache.returns[id] = { lines: [], error: true };
+      }
+    });
+    if (gen !== arDetailGen || !arExpandAll) return;
+    renderArDetail();
+  }
+
+  function arExpandedRow(e, colspan) {
+    if (!arExpandAll || (!e.bill_id && !e.return_id)) return "";
+    const doc = e.bill_id ? arLineCache.bills[e.bill_id] : arLineCache.returns[e.return_id];
+    if (!doc) {
+      return `<tr><td colspan="${colspan}" style="background:#f8fafc;font-size:12px;color:var(--muted);padding:8px 12px;">Loading lines…</td></tr>`;
+    }
+    if (doc.error) {
+      return `<tr><td colspan="${colspan}" style="font-size:12px;color:var(--danger);padding:8px 12px;">Could not load lines</td></tr>`;
+    }
+    const lines = doc.lines || [];
+    let table = "";
+    if (e.bill_id) {
+      const body = lines.map(ln => `<tr>
+        <td>${ctx.esc(ln.our_product_id)}</td>
+        <td>${ln.quantity_shipped}</td>
+        <td>${fmtPrice(ln.unit_price)}</td>
+        <td>${ln.discount_percent ? ctx.esc(String(ln.discount_percent)) + "%" : "—"}</td>
+        <td>${fmtPrice(ln.net_rate)}</td>
+        <td>${fmtPrice(ln.line_total)}</td>
+      </tr>`).join("") || `<tr><td colspan="6">No lines</td></tr>`;
+      const charges = (doc.additional_charges || []).filter(c => Number(c.amount) > 0)
+        .map(c => `${ctx.esc(c.name)} ${fmtPrice(c.amount)}`).join(" · ");
+      const freight = Number(doc.freight_charges) > 0
+        ? `Transport ${fmtPrice(doc.freight_charges)}${doc.transport_receipt_number ? " · " + ctx.esc(doc.transport_receipt_number) : ""}`
+        : "";
+      const extra = [freight, charges, doc.narration ? ctx.esc(doc.narration) : ""].filter(Boolean).join(" · ");
+      table = `${extra ? `<div style="font-size:12px;margin-bottom:6px;">${extra}</div>` : ""}
+        <table class="data fin-mini"><thead><tr>
+          <th>Item</th><th>Qty</th><th>Rate</th><th>Disc</th><th>Net</th><th>Total</th>
+        </tr></thead><tbody>${body}</tbody></table>`;
+    } else {
+      const body = lines.map(ln => `<tr>
+        <td>${ctx.esc(ln.our_product_id)}</td>
+        <td>${ln.quantity_returned ?? "—"}</td>
+        <td>${fmtPrice(ln.sold_unit_price)}</td>
+        <td>${fmtPrice(ln.line_calculated)}</td>
+      </tr>`).join("") || `<tr><td colspan="4">No lines</td></tr>`;
+      table = `<table class="data fin-mini"><thead><tr>
+          <th>Item</th><th>Qty</th><th>Rate</th><th>Amount</th>
+        </tr></thead><tbody>${body}</tbody></table>`;
+    }
+    return `<tr><td colspan="${colspan}" style="background:#f8fafc;padding:8px 12px;">${table}</td></tr>`;
+  }
+
   function renderArStatement() {
     const bills = newestFirst(stampRunningBalance(
       visibleMoneyEntries(arDetail.entries).filter(e => e.entry_type === "bill" || e.entry_type === "credit_note" || e.entry_type === "opening_balance")
@@ -108,13 +195,13 @@
         <td>${ctx.esc(e.display_name || e.description)}${moneyDocButton(e)}</td>
         <td>${fmtPrice(e.display_amount != null && e.display_amount !== "" ? e.display_amount : e.signed_amount)}</td>
         <td><strong>${fmtPrice(e.running_balance)}</strong></td>
-      </tr>`;}).join("")}
+      </tr>${arExpandedRow(e, 5)}`;}).join("")}
     </tbody></table></div>`;
   }
 
   function moneyDocButton(e) {
     if (e.return_id) return ` <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();Returns.openReturn(${e.return_id})">View</button>`;
-    if (e.bill_id) return ` <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();Finance.viewCustomerBill(${e.bill_id})">View detail</button> <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();App.showView('selling');CustomerOrders.openEditBill(${e.bill_id})">Edit</button>`;
+    if (e.bill_id) return ` <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();Finance.viewCustomerBill(${e.bill_id})">View detail</button> <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();App.showView('selling');CustomerOrders.openEditBill(${e.bill_id})">Edit</button> <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();CustomerOrders.cancelBill(${e.bill_id}, true)">Cancel</button>`;
     return "";
   }
 
@@ -163,7 +250,7 @@
           <td>${ctx.esc(e.display_name || e.description)}${moneyDocButton(e)}</td>
           <td>${fmtPrice(e.display_amount != null && e.display_amount !== "" ? e.display_amount : e.signed_amount)}</td>
           <td><strong>${fmtPrice(e.running_balance)}</strong></td>
-        </tr>`;}).join("")}
+        </tr>${arExpandedRow(e, 5)}`;}).join("")}
       </tbody></table>
     </div>`;
   }

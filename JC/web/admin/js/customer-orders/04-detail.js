@@ -403,7 +403,7 @@
   }
 
   function promptReason(title, onOk, needKey = true) {
-    if (ctx.isAdmin?.()) needKey = false;
+    if (ctx.isOwnerAdmin?.()) needKey = false;
     document.getElementById("modal-title").textContent = title;
     document.getElementById("modal-body").innerHTML = `
       ${needKey ? `<label class="label">Your cancel key</label>
@@ -429,7 +429,7 @@
     promptReason("Cancel line", async (reason) => {
       ctx.showLoading?.();
       try {
-        await ctx.api(`/customer-orders/open-lines/${lineId}/cancel`, { method: "POST", body: JSON.stringify({ reason }) });
+        await ctx.api(`/customer-orders/open-lines/${lineId}/cancel`, { method: "POST", headers: { "X-Cancel-Key": window.__jcCancelKey || "" }, body: JSON.stringify({ reason }) });
         ctx.toast("Line cancelled — billed kept", "success");
         ctx.invalidateCache?.("/customer-orders");
         ctx.invalidateCache?.("/stock");
@@ -452,6 +452,7 @@
       try {
         await ctx.api(`/customer-orders/placements/${placementId}/cancel`, {
           method: "POST",
+          headers: { "X-Cancel-Key": window.__jcCancelKey || "" },
           body: JSON.stringify({ reason }),
         });
         ctx.toast(hasBilled ? "Remaining cancelled — billed kept" : "Order cancelled", "success");
@@ -642,10 +643,10 @@
     }, false);
   }
 
-  function cancelBill(billId) {
+  function cancelBill(billId, fromMoney) {
     document.getElementById("modal-title").textContent = "Cancel this bill";
     document.getElementById("modal-body").innerHTML = `
-      ${ctx.isAdmin?.() ? "" : `<label class="label">Your cancel key</label>
+      ${ctx.isOwnerAdmin?.() ? "" : `<label class="label">Your cancel key</label>
       <input class="input" id="co-cancel-key" type="password" autocomplete="off" placeholder="Your own key" style="width:100%;margin-bottom:12px;" />`}
       <label class="label">Reason (required)</label>
       <textarea class="input" id="co-reason-input" rows="3" style="width:100%;"></textarea>
@@ -657,20 +658,24 @@
     const go = (keepOrder) => {
       const reason = (document.getElementById("co-reason-input")?.value || "").trim();
       const passKey = (document.getElementById("co-cancel-key")?.value || "").trim();
-      if (!ctx.isAdmin?.() && !passKey) return ctx.toast("Enter your cancel key", "error");
+      if (!ctx.isOwnerAdmin?.() && !passKey) return ctx.toast("Enter your cancel key", "error");
       if (!reason) return ctx.toast("Enter a reason", "error");
-      window.__jcCancelKey = ctx.isAdmin?.() ? "" : passKey;
+      window.__jcCancelKey = ctx.isOwnerAdmin?.() ? "" : passKey;
+      const cancelKey = window.__jcCancelKey || "";
       App.closeModal();
       ctx.showLoading?.();
       ctx.api(`/customer-orders/bills/${billId}/cancel`, {
         method: "POST",
+        headers: { "X-Cancel-Key": cancelKey },
         body: JSON.stringify({ reason, keep_order: keepOrder }),
       }).then(async () => {
         ctx.toast(keepOrder ? "Bill cancelled. Order stays booked." : "Bill and order cancelled. Stock released.", "success");
         ctx.invalidateCache?.("/customer-orders");
         ctx.invalidateCache?.("/freight-agents");
         ctx.invalidateCache?.("/stock");
-        await openDetail(detailCustomerId, keepOrder ? "open" : "open");
+        ctx.invalidateCache?.("/accounts-receivable");
+        if (fromMoney) await Finance.refreshOpenAr?.();
+        else if (detailCustomerId) await openDetail(detailCustomerId, "open");
       }).catch(e => ctx.toast(e.message, "error"))
         .finally(() => ctx.hideLoading?.());
     };

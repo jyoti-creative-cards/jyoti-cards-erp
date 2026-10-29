@@ -693,7 +693,7 @@
   }
 
   async function voidJournal(id) {
-    if (!ctx.isAdmin?.()) {
+    if (!ctx.isOwnerAdmin?.()) {
       const passKey = window.prompt("Your cancel key");
       if (!passKey || !passKey.trim()) return ctx.toast("Enter your cancel key", "error");
       window.__jcCancelKey = passKey.trim();

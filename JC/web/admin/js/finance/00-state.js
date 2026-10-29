@@ -12,6 +12,9 @@ const Finance = (() => {
   let arDetail = null;
   let apTab = "statement";
   let arTab = "statement";
+  let arExpandAll = false;
+  let arDetailGen = 0;
+  let arLineCache = { bills: {}, returns: {} };
   let expandedBillId = null;
   let freightAgents = [];
   let freightAgentId = null;

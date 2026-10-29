@@ -32,6 +32,7 @@ const App = (() => {
   let customerLedgerExpanded = null;
   let customerLedgerOpenIds = new Set();
   let customerLedgerExpandAll = false;
+  let customerActionMeta = null;
   let partyLedgerCustomerId = null;
   let partyLedgerParties = null;
   let shortcutMode = "";

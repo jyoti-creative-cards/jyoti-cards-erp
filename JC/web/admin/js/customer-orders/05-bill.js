@@ -433,7 +433,14 @@
       direct,
     });
     billEditSearch = "";
+    const focusIdx = processLines.length - 1;
     renderProcessWizard();
+    requestAnimationFrame(() => {
+      const qty = document.querySelector(`[data-ship-for="${focusIdx}"]`);
+      if (!qty) return;
+      qty.focus();
+      qty.select();
+    });
   }
 
   function removeProcessLine(idx) {

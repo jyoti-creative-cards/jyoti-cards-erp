@@ -397,6 +397,20 @@ def _biz_day(value):
     return None
 
 
+def _party_with_city(name: str | None, city: str | None) -> str | None:
+    label = (name or "").strip()
+    place = (city or "").strip()
+    if not place:
+        return label or None
+    if not label:
+        return place
+    low = label.casefold()
+    tail = place.casefold()
+    if low.endswith(tail) or f"— {tail}" in low or f"· {tail}" in low:
+        return label
+    return f"{label} · {place}"
+
+
 def annotate_stock_ledger(db: Session, entries: list) -> list[dict]:
     """Party, bill number, and which voucher a stock line opens."""
     reservation_bills = _bills_for_reservations(db, entries)
@@ -426,6 +440,45 @@ def annotate_stock_ledger(db: Session, entries: list) -> list[dict]:
         placements = {
             p.id: p for p in db.query(CustomerOrderPlacement).filter(CustomerOrderPlacement.id.in_(placement_ids)).all()
         }
+    from app.models.city import City
+    from app.models.customer import Customer
+    from app.models.customer_order import CustomerOrder
+
+    order_ids = {p.customer_order_id for p in placements.values() if p.customer_order_id}
+    orders = {}
+    if order_ids:
+        orders = {o.id: o for o in db.query(CustomerOrder).filter(CustomerOrder.id.in_(order_ids)).all()}
+    customer_ids = {b.customer_id for b in bills.values() if b.customer_id}
+    customer_ids |= {r.customer_id for r in returns.values() if r.customer_id}
+    customer_ids |= {o.customer_id for o in orders.values() if o.customer_id}
+    for matched in reservation_bills.values():
+        if matched is not None and getattr(matched, "customer_id", None):
+            customer_ids.add(matched.customer_id)
+    vendor_ids = {r.vendor_id for r in receipts.values() if r.vendor_id}
+    customers = {}
+    vendors = {}
+    if customer_ids:
+        customers = {c.id: c for c in db.query(Customer).filter(Customer.id.in_(customer_ids)).all()}
+    if vendor_ids:
+        vendors = {v.id: v for v in db.query(Vendor).filter(Vendor.id.in_(vendor_ids)).all()}
+    city_ids = {c.city_id for c in customers.values() if c.city_id}
+    city_ids |= {v.city_id for v in vendors.values() if v.city_id}
+    cities = {}
+    if city_ids:
+        cities = {c.id: c.name for c in db.query(City).filter(City.id.in_(city_ids)).all()}
+
+    def city_for_customer(customer_id):
+        customer = customers.get(customer_id)
+        if not customer or not customer.city_id:
+            return None
+        return cities.get(customer.city_id)
+
+    def city_for_vendor(vendor_id):
+        vendor = vendors.get(vendor_id)
+        if not vendor or not vendor.city_id:
+            return None
+        return cities.get(vendor.city_id)
+
     out = []
     for e in entries:
         bill_number = None
@@ -478,12 +531,34 @@ def annotate_stock_ledger(db: Session, entries: list) -> list[dict]:
             ret = returns.get(e.reference_id)
             if ret is not None:
                 display = _biz_day(ret.created_at)
+        city = None
+        if e.reference_type == "customer_bill" and e.reference_id:
+            bill = bills.get(e.reference_id)
+            if bill is not None:
+                city = city_for_customer(bill.customer_id)
+        elif e.reference_type == "customer_return" and e.reference_id:
+            ret = returns.get(e.reference_id)
+            if ret is not None:
+                city = city_for_customer(ret.customer_id)
+        elif e.reference_type == "customer_placement" and e.reference_id:
+            placement = placements.get(e.reference_id)
+            order = orders.get(placement.customer_order_id) if placement is not None else None
+            if order is not None:
+                city = city_for_customer(order.customer_id)
+            if city is None:
+                matched = reservation_bills.get(e.id)
+                if matched is not None:
+                    city = city_for_customer(getattr(matched, "customer_id", None))
+        elif e.reference_type == "stock_receipt" and e.reference_id:
+            receipt = receipts.get(e.reference_id)
+            if receipt is not None:
+                city = city_for_vendor(receipt.vendor_id)
         out.append({
             "id": e.id,
             "entry_type": e.entry_type,
             "quantity_delta": e.quantity_delta,
             "balance_after": e.balance_after,
-            "party": e.party,
+            "party": _party_with_city(e.party, city),
             "notes": e.notes,
             "created_at": e.created_at,
             "reference_type": e.reference_type,

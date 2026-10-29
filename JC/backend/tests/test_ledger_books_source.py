@@ -8,6 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from app.db.session import Base
 from app.models.accounts_receivable import ArLedgerEntry
 from app.models.catalog_product import CatalogProduct
+from app.models.city import City
 from app.models.customer import Customer
 from app.models.customer_bill import CustomerBill, CustomerBillLine
 from app.models.stock import StockBalance, StockLedger, StockReceipt
@@ -78,6 +79,54 @@ def test_stock_ledger_carries_bill_and_party():
     assert sale["quantity_delta"] == -10
     assert recv["bill_number"] == "VB-9"
     assert recv["voucher_kind"] == "stock_receipt"
+    db.close()
+
+
+def test_stock_ledger_party_shows_city():
+    db = _db()
+    city = City(name="Dewas")
+    db.add(city)
+    db.flush()
+    vendor = Vendor(business_name="Paper House", phone="9000000011", city_id=city.id)
+    db.add(vendor)
+    db.flush()
+    prod = CatalogProduct(
+        our_product_id="5152", vendor_id=vendor.id, vendor_product_id="V5152",
+        buying_price=Decimal("10"), selling_price=Decimal("20"), category="ALBUM",
+    )
+    db.add(prod)
+    db.flush()
+    customer = Customer(
+        business_name="Sharma Cards", phone="9000000012", password_hash="x", city_id=city.id,
+    )
+    db.add(customer)
+    db.flush()
+    bill = CustomerBill(
+        customer_id=customer.id, bill_number="JC-101",
+        subtotal_inclusive=Decimal("20"), discount_amount=Decimal("0"),
+        taxable_value=Decimal("20"), gst_amount=Decimal("0"), grand_total=Decimal("20"),
+        created_by_type="admin", created_by_name="Admin", bill_date=date.today(),
+    )
+    db.add(bill)
+    db.flush()
+    receipt = StockReceipt(
+        vendor_id=vendor.id, receipt_type="vendor_order", bill_number="VB-10",
+        received_by_type="admin", received_by_name="Admin", bill_status="billed",
+    )
+    db.add(receipt)
+    db.flush()
+    db.add(StockLedger(
+        catalog_product_id=prod.id, entry_type="sold", quantity_delta=-1, balance_after=1,
+        reference_type="customer_bill", reference_id=bill.id, party="Sharma Cards",
+    ))
+    db.add(StockLedger(
+        catalog_product_id=prod.id, entry_type="received", quantity_delta=1, balance_after=1,
+        reference_type="stock_receipt", reference_id=receipt.id, party="Paper House — Dewas",
+    ))
+    db.flush()
+    rows = annotate_stock_ledger(db, db.query(StockLedger).order_by(StockLedger.id.asc()).all())
+    assert rows[0]["party"] == "Sharma Cards · Dewas"
+    assert rows[1]["party"] == "Paper House — Dewas"
     db.close()
 
 

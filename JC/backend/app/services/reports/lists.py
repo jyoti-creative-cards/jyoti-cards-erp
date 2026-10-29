@@ -129,6 +129,7 @@ def list_payments(db: Session, from_date: Optional[date] = None, to_date: Option
                 "date": (e.value_date.isoformat() if e.value_date else (e.created_at.date().isoformat() if e.created_at else None)),
                 "created_at": e.created_at.isoformat() if e.created_at else None,
                 "description": e.description,
+                "payment_mode": e.payment_mode or "",
             }
         )
 
@@ -152,6 +153,7 @@ def list_payments(db: Session, from_date: Optional[date] = None, to_date: Option
                 "date": (e.value_date.isoformat() if e.value_date else (e.created_at.date().isoformat() if e.created_at else None)),
                 "created_at": e.created_at.isoformat() if e.created_at else None,
                 "description": e.description,
+                "payment_mode": e.payment_mode or "",
             }
         )
 
@@ -173,11 +175,110 @@ def list_payments(db: Session, from_date: Optional[date] = None, to_date: Option
                 "date": e.created_at.date().isoformat() if e.created_at else None,
                 "created_at": e.created_at.isoformat() if e.created_at else None,
                 "description": e.notes or "Freight settlement",
+                "payment_mode": "CASH",
             }
         )
 
     out.sort(key=lambda x: x.get("created_at") or "", reverse=True)
     return out[:500]
+
+
+def payment_account_report(
+    db: Session,
+    from_date: Optional[date] = None,
+    to_date: Optional[date] = None,
+    mode: Optional[str] = None,
+    party: Optional[str] = None,
+    product: Optional[str] = None,
+) -> dict:
+    """Customer collections, one row per account. Cash, NC, and ICICI stay apart."""
+    wanted_mode = (mode or "").strip().lower()
+    party_text = (party or "").strip().lower()
+    product_text = (product or "").strip()
+    product_customers = None
+    if product_text:
+        like = f"%{product_text}%"
+        q = (
+            db.query(CustomerBill.customer_id)
+            .join(CustomerBillLine, CustomerBillLine.bill_id == CustomerBill.id)
+            .filter(
+                CustomerBill.deleted_at.is_(None),
+                CustomerBill.cancelled_at.is_(None),
+                CustomerBillLine.our_product_id.ilike(like),
+            )
+        )
+        if from_date is not None:
+            q = q.filter(CustomerBill.bill_date >= from_date)
+        if to_date is not None:
+            q = q.filter(CustomerBill.bill_date <= to_date)
+        product_customers = {row[0] for row in q.distinct().all()}
+
+    reversed_ids = {
+        row[0]
+        for row in db.query(ArLedgerEntry.reverses_entry_id)
+        .filter(
+            ArLedgerEntry.entry_type == "payment_reversal",
+            ArLedgerEntry.deleted_at.is_(None),
+            ArLedgerEntry.reverses_entry_id.isnot(None),
+        )
+        .all()
+        if row[0]
+    }
+    rows = (
+        db.query(ArLedgerEntry)
+        .filter(
+            ArLedgerEntry.entry_type == "payment",
+            ArLedgerEntry.deleted_at.is_(None),
+            _payment_in_ist_range(ArLedgerEntry, from_date, to_date),
+        )
+        .order_by(ArLedgerEntry.value_date.desc(), ArLedgerEntry.id.desc())
+        .all()
+    )
+    labels = _customer_labels(db, {row.customer_id for row in rows})
+    items = []
+    totals: dict[str, Decimal] = {}
+    for row in rows:
+        if row.id in reversed_ids:
+            continue
+        if product_customers is not None and row.customer_id not in product_customers:
+            continue
+        account = (row.payment_mode or "").strip() or "UNSET"
+        if wanted_mode and account.lower() != wanted_mode:
+            continue
+        party_label = labels.get(row.customer_id) or f"Customer #{row.customer_id}"
+        blob = " ".join([
+            party_label,
+            row.payment_ref or "",
+            row.payment_comment or "",
+            row.description or "",
+        ]).lower()
+        if party_text and party_text not in blob:
+            continue
+        amount = abs(Decimal(str(row.amount or 0)))
+        totals[account] = totals.get(account, Decimal("0")) + amount
+        shown = row.value_date or (row.created_at.date() if row.created_at else None)
+        items.append({
+            "id": row.id,
+            "date": shown.isoformat() if shown else None,
+            "account": account,
+            "party_id": row.customer_id,
+            "party_label": party_label,
+            "reference": row.payment_ref or "",
+            "comment": row.payment_comment or "",
+            "amount": format(amount, "f"),
+            "entered_by": row.created_by_name or "",
+        })
+    accounts = [
+        {"account": name, "amount": format(amount, "f"), "count": sum(1 for item in items if item["account"] == name)}
+        for name, amount in sorted(totals.items(), key=lambda pair: pair[0].lower())
+    ]
+    all_amount = sum(totals.values(), Decimal("0"))
+    return {
+        "accounts": accounts,
+        "all_total": format(all_amount, "f"),
+        "count": len(items),
+        "items": items[:3000],
+    }
 
 
 def list_day_bills(db: Session, day: date) -> dict:

@@ -83,6 +83,21 @@ def payments_report(
     return {"items": svc.list_payments(db, from_date, to_date)}
 
 
+@router.get("/payment-accounts")
+def payment_accounts_report(
+    from_date: Optional[date] = Query(None),
+    to_date: Optional[date] = Query(None),
+    mode: str = Query("", max_length=80),
+    party: str = Query("", max_length=120),
+    product: str = Query("", max_length=120),
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    return svc.payment_account_report(
+        db, from_date, to_date, mode=mode, party=party, product=product,
+    )
+
+
 @router.get("/daybook")
 def daybook_report(
     day: Optional[date] = Query(None, description="YYYY-MM-DD, one day. Ignored when from_date or to_date is set."),

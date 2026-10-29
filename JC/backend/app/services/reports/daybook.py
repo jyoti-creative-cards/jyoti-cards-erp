@@ -93,6 +93,7 @@ def daybook(
                 "amount": format(abs(e.amount), "f"),
                 "signed": format(e.amount, "f"),
                 "ref_id": e.id,
+                "mode": (e.payment_mode or "").strip(),
                 "at": e.created_at.isoformat() if e.created_at else None,
             }
         )
@@ -112,6 +113,7 @@ def daybook(
                 "amount": format(abs(e.amount), "f"),
                 "signed": format(e.amount, "f"),
                 "ref_id": e.id,
+                "mode": (e.payment_mode or "").strip(),
                 "at": e.created_at.isoformat() if e.created_at else None,
             }
         )
@@ -201,10 +203,21 @@ def daybook(
         )
 
     rows.sort(key=lambda r: r.get("at") or "")
-    cash_in = sum((Decimal(r["amount"]) for r in rows if r["kind"] == "payment_in"), Decimal("0"))
-    # Freight settle already creates an Expense — count expense only (avoid double cash-out)
+    def _cash_mode(row: dict) -> bool:
+        return (row.get("mode") or "").strip().upper() == "CASH"
+
+    cash_in = sum(
+        (Decimal(r["amount"]) for r in rows if r["kind"] == "payment_in" and _cash_mode(r)),
+        Decimal("0"),
+    )
+    # Freight settle already creates an Expense — count expense only (avoid double cash-out).
+    # NC, ICICI, and the other accounts are not cash.
     cash_out = sum(
-        (Decimal(r["amount"]) for r in rows if r["kind"] in ("payment_out", "expense")),
+        (
+            Decimal(r["amount"])
+            for r in rows
+            if r["kind"] == "expense" or (r["kind"] == "payment_out" and _cash_mode(r))
+        ),
         Decimal("0"),
     )
     span = None

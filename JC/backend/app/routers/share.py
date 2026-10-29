@@ -32,6 +32,7 @@ from app.services.reports.pdfs import (
     render_daybook_pdf,
     render_freight_payment_pdf,
     render_freight_statement_pdf,
+    render_payment_accounts_pdf,
     render_sales_pdf,
 )
 from app.services.stock_summary_pdf import render_stock_summary_pdf
@@ -316,6 +317,25 @@ def sales_pdf(
         name = f"sales_{(from_date or to_date).isoformat()}.pdf"
     else:
         name = "sales.pdf"
+    return _pdf_response(pdf, name)
+
+
+@router.get("/payment-accounts/pdf")
+def payment_accounts_pdf(
+    from_date: Optional[date] = Query(None),
+    to_date: Optional[date] = Query(None),
+    mode: str = Query("", max_length=80),
+    party: str = Query("", max_length=120),
+    product: str = Query("", max_length=120),
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    pdf = render_payment_accounts_pdf(
+        db, from_date=from_date, to_date=to_date, mode=mode, party=party, product=product,
+    )
+    name = "payment-accounts.pdf"
+    if from_date and to_date:
+        name = f"payments_{from_date.isoformat()}_{to_date.isoformat()}.pdf"
     return _pdf_response(pdf, name)
 
 

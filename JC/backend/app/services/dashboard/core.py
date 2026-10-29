@@ -65,9 +65,11 @@ def build_dashboard(db: Session) -> dict:
                    AND created_at >= :day_start AND created_at <= :day_end) AS purchase_count,
               (SELECT COALESCE(SUM(amount), 0) FROM jc_ar_ledger_entries
                  WHERE entry_type IN ('payment', 'payment_reversal') AND deleted_at IS NULL
+                   AND upper(coalesce(payment_mode, '')) = 'CASH'
                    AND created_at >= :day_start AND created_at <= :day_end) AS cash_in_raw,
               (SELECT COALESCE(SUM(amount), 0) FROM jc_ap_ledger_entries
                  WHERE entry_type IN ('payment', 'payment_reversal') AND deleted_at IS NULL
+                   AND upper(coalesce(payment_mode, '')) = 'CASH'
                    AND created_at >= :day_start AND created_at <= :day_end) AS cash_out_raw
             """
         ),

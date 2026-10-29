@@ -143,6 +143,9 @@ def cashbook(db: Session, from_date: Optional[date], to_date: Optional[date]) ->
     start, end = _range_bounds(from_date, to_date)
     rows: list[dict] = []
     for p in payments:
+        mode = (p.get("payment_mode") or "").strip().upper()
+        if p["doc_type"] in ("ar_payment", "ap_payment") and mode != "CASH":
+            continue
         signed = Decimal(str(p["amount"])) if p["direction"] == "in" else -Decimal(str(p["amount"]))
         rows.append(
             {

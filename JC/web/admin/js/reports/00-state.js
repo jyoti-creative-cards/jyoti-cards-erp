@@ -27,6 +27,9 @@ const Reports = (() => {
   let stockAlbums = [];
   let markingScope = "all";
   let markingPicked = {};
+  let payMode = "";
+  let payParty = "";
+  let payProduct = "";
 
   const MODES = [
     { id: "today", label: "Today" },
@@ -45,7 +48,7 @@ const Reports = (() => {
       { id: "day-bills", label: "Day bills" },
       { id: "receipt-book", label: "Receipt book" },
       { id: "purchases", label: "Purchase bills" },
-      { id: "payments", label: "Payments" },
+      { id: "payments", label: "Payment accounts" },
     ],
     books: [
       { id: "sales-book", label: "Sales book" },

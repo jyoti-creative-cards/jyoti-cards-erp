@@ -352,3 +352,49 @@ def render_sales_pdf(db: Session, from_date: Optional[date] = None, to_date: Opt
     story.append(table)
     doc.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
     return buf.getvalue()
+
+
+def render_payment_accounts_pdf(
+    db: Session,
+    from_date: Optional[date] = None,
+    to_date: Optional[date] = None,
+    mode: Optional[str] = None,
+    party: Optional[str] = None,
+    product: Optional[str] = None,
+) -> bytes:
+    from app.services.reports.lists import payment_account_report
+
+    data = payment_account_report(db, from_date, to_date, mode=mode, party=party, product=product)
+    if from_date and to_date and from_date != to_date:
+        title = f"Payment accounts — {from_date.isoformat()} to {to_date.isoformat()}"
+    elif from_date or to_date:
+        title = f"Payment accounts — {(from_date or to_date).isoformat()}"
+    else:
+        title = "Payment accounts — all dates"
+    bits = [f"{row['account']} {_money(row['amount'])}" for row in data.get("accounts") or []]
+    doc, buf, styles = _doc()
+    story = [
+        Paragraph(title, styles["Heading1"]),
+        Paragraph((" · ".join(bits) + f" · All {_money(data.get('all_total'))}").strip(" ·"), styles["Normal"]),
+        Spacer(1, 10),
+    ]
+    rows = [["Date", "Account", "Party", "Reference", "Amount", "Entered by"]]
+    for item in data.get("items") or []:
+        rows.append([
+            item.get("date") or "",
+            (item.get("account") or "")[:14],
+            (item.get("party_label") or "")[:32],
+            (item.get("reference") or "")[:16],
+            _money(item.get("amount")),
+            (item.get("entered_by") or "")[:16],
+        ])
+    table = Table(rows, colWidths=[62, 62, 140, 70, 70, 70])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e2e8f0")),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+    ]))
+    story.append(table)
+    doc.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
+    return buf.getvalue()

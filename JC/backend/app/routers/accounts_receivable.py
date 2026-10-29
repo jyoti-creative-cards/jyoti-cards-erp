@@ -22,6 +22,7 @@ from app.schemas.accounts_receivable import (
 )
 from app.services.activity import log_from_auth
 from app.services.biz_date import today_ist
+from app.services.payment_mode_pick import resolve_payment_account
 from app.services import response_cache
 from app.services.ar_ledger import (
     build_ar_ledger,
@@ -37,6 +38,22 @@ from app.services.payment_reverse import reverse_ar_payment
 from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/accounts-receivable", tags=["accounts-receivable"])
+
+
+def _payment_account(db: Session, payment_mode_id: int | None, reference: str | None) -> tuple[str | None, str]:
+    from app.models.payment_mode import PaymentMode
+
+    selected = None
+    if payment_mode_id:
+        mode = db.get(PaymentMode, payment_mode_id)
+        if not mode or not mode.is_active:
+            raise HTTPException(400, "invalid payment mode")
+        selected = mode.name
+    names = [row[0] for row in db.query(PaymentMode.name).filter(PaymentMode.is_active.is_(True)).all()]
+    account, ref = resolve_payment_account(selected, reference, names)
+    if names and not account:
+        raise HTTPException(400, "select a payment mode")
+    return account, ref
 
 
 def _customer_label(db: Session, customer_id: int) -> str:
@@ -128,21 +145,7 @@ def settle_customer_ar(
         raise HTTPException(404, "customer not found")
     lock_ar_account(db, customer_id)
     amount = body.amount.quantize(Decimal("0.01"))
-
-    from app.models.payment_mode import PaymentMode
-
-    mode_name = None
-    if body.payment_mode_id:
-        mode = db.get(PaymentMode, body.payment_mode_id)
-        if not mode or not mode.is_active:
-            raise HTTPException(400, "invalid payment mode")
-        mode_name = mode.name
-    else:
-        active_modes = db.query(PaymentMode).filter(PaymentMode.is_active.is_(True)).count()
-        if active_modes:
-            raise HTTPException(400, "select a payment mode")
-
-    ref = (body.payment_ref or "").strip() or (mode_name or "Payment")
+    mode_name, ref = _payment_account(db, body.payment_mode_id, body.payment_ref)
     desc_bits = [f"Payment {ref}"]
     if mode_name:
         desc_bits.append(f"via {mode_name}")
@@ -198,21 +201,7 @@ def record_customer_payment(
         raise HTTPException(404, "customer not found")
     lock_ar_account(db, customer_id)
     amount = body.amount.quantize(Decimal("0.01"))
-
-    from app.models.payment_mode import PaymentMode
-
-    mode_name = None
-    if body.payment_mode_id:
-        mode = db.get(PaymentMode, body.payment_mode_id)
-        if not mode or not mode.is_active:
-            raise HTTPException(400, "invalid payment mode")
-        mode_name = mode.name
-    else:
-        active_modes = db.query(PaymentMode).filter(PaymentMode.is_active.is_(True)).count()
-        if active_modes:
-            raise HTTPException(400, "select a payment mode")
-
-    ref = (body.payment_ref or "").strip() or (mode_name or "Payment")
+    mode_name, ref = _payment_account(db, body.payment_mode_id, body.payment_ref)
     desc_bits = [f"Payment {ref}"]
     if mode_name:
         desc_bits.append(f"via {mode_name}")

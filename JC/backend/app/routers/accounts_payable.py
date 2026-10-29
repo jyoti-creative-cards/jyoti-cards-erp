@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.deps import AuthContext, require_admin, require_permission
 from app.services.cancel_key import require_cancel_key
+from app.services.payment_mode_pick import resolve_payment_account
 from app.models.accounts_payable import ApLedgerEntry
 from app.models.vendor import Vendor
 from app.schemas.accounts_payable import (
@@ -39,6 +40,22 @@ from app.services.payment_reverse import reverse_ap_payment
 from app.services.storage import payment_receipt_key, presigned_url, storage_configured, upload_bytes, vendor_folder_slug
 
 router = APIRouter(prefix="/accounts-payable", tags=["accounts-payable"])
+
+
+def _payment_account(db: Session, payment_mode_id: int | None, reference: str | None) -> tuple[str | None, str]:
+    from app.models.payment_mode import PaymentMode
+
+    selected = None
+    if payment_mode_id:
+        mode = db.get(PaymentMode, payment_mode_id)
+        if not mode or not mode.is_active:
+            raise HTTPException(400, "invalid payment mode")
+        selected = mode.name
+    names = [row[0] for row in db.query(PaymentMode.name).filter(PaymentMode.is_active.is_(True)).all()]
+    account, ref = resolve_payment_account(selected, reference, names)
+    if names and not account:
+        raise HTTPException(400, "select a payment mode")
+    return account, ref
 
 
 @router.get("", response_model=List[ApVendorSummary])
@@ -124,21 +141,7 @@ def settle_vendor_ap(
     if outstanding <= 0:
         raise HTTPException(400, "no outstanding balance to settle")
     amount = body.amount.quantize(Decimal("0.01"))
-
-    from app.models.payment_mode import PaymentMode
-
-    mode_name = None
-    if body.payment_mode_id:
-        mode = db.get(PaymentMode, body.payment_mode_id)
-        if not mode or not mode.is_active:
-            raise HTTPException(400, "invalid payment mode")
-        mode_name = mode.name
-    else:
-        # Mirrors accounts_receivable.py's settle — once modes are configured,
-        # don't let a client that skipped/failed the picker post a mode-less entry.
-        active_modes = db.query(PaymentMode).filter(PaymentMode.is_active.is_(True)).count()
-        if active_modes:
-            raise HTTPException(400, "select a payment mode")
+    mode_name, ref = _payment_account(db, body.payment_mode_id, body.payment_ref)
 
     pay_day = body.value_date or today_ist()
     from app.services.payment_duplicates import reject_duplicate_payment
@@ -150,11 +153,11 @@ def settle_vendor_ap(
         db,
         vendor_id=vendor_id,
         amount=amount,
-        payment_ref=body.payment_ref.strip(),
+        payment_ref=ref,
         payment_receipt_key=body.payment_receipt_key,
         payment_comment=body.comment,
         payment_mode=mode_name,
-        description=f"Payment {body.payment_ref.strip()} — ₹{amount}",
+        description=f"Payment {ref} via {mode_name or '—'} — ₹{amount}",
         actor_type=auth.actor_type,
         actor_id=auth.actor_id,
         actor_name=auth.actor_name,
@@ -195,19 +198,7 @@ def record_vendor_payment(
     if outstanding <= 0:
         raise HTTPException(400, "No outstanding balance on this vendor to record a payment against")
     amount = body.amount.quantize(Decimal("0.01"))
-
-    from app.models.payment_mode import PaymentMode
-
-    mode_name = None
-    if body.payment_mode_id:
-        mode = db.get(PaymentMode, body.payment_mode_id)
-        if not mode or not mode.is_active:
-            raise HTTPException(400, "invalid payment mode")
-        mode_name = mode.name
-    else:
-        active_modes = db.query(PaymentMode).filter(PaymentMode.is_active.is_(True)).count()
-        if active_modes:
-            raise HTTPException(400, "select a payment mode")
+    mode_name, ref = _payment_account(db, body.payment_mode_id, body.payment_ref)
 
     pay_day = body.value_date or today_ist()
     from app.services.payment_duplicates import reject_duplicate_payment
@@ -219,11 +210,11 @@ def record_vendor_payment(
         db,
         vendor_id=vendor_id,
         amount=amount,
-        payment_ref=body.payment_ref.strip(),
+        payment_ref=ref,
         payment_receipt_key=body.payment_receipt_key,
         payment_comment=body.comment,
         payment_mode=mode_name,
-        description=f"Payment {body.payment_ref.strip()} — ₹{amount}",
+        description=f"Payment {ref} via {mode_name or '—'} — ₹{amount}",
         actor_type=auth.actor_type,
         actor_id=auth.actor_id,
         actor_name=auth.actor_name,

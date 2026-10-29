@@ -1801,16 +1801,17 @@ const Finance = (() => {
     const entries = liveMoneyEntries(arDetail.entries);
     const reversed = reversedPaymentIds(arDetail.entries || []);
     const pays = newestFirst(entries.filter(e => e.entry_type === "payment" || e.entry_type === "payment_reversal"));
-    if (!pays.length) return OrdersUI.emptyState({ title: "No payments yet", sub: "Collect above when cash comes in." });
+    if (!pays.length) return OrdersUI.emptyState({ title: "No payments yet", sub: "Collect above. NC, cash, and ICICI stay in their own account." });
     return `<div class="card table-wrap"><table class="data"><thead><tr>
-      <th>When</th><th>Reference</th><th>Comment</th><th>Amount</th><th>Balance</th><th></th>
+      <th>When</th><th>Account</th><th>Reference</th><th>Comment</th><th>Amount</th><th>Balance</th><th></th>
     </tr></thead><tbody>
       ${pays.map(p => {
         const isRev = p.entry_type === "payment_reversal";
         const undone = reversed.has(p.id);
         return `<tr>
         <td style="font-size:12px;">${fmtDocDate(p.display_date || p.value_date || p.created_at)}</td>
-        <td><strong>${ctx.esc(p.display_name || p.payment_ref || "—")}</strong>
+        <td><strong>${ctx.esc(p.payment_mode || "—")}</strong></td>
+        <td><strong>${ctx.esc(p.payment_ref || p.display_name || "—")}</strong>
           ${isRev ? ` <span class="badge badge-amber">Reversal</span>` : ""}
           ${undone ? ` <span class="badge badge-amber">Reversed</span>` : ""}
         </td>

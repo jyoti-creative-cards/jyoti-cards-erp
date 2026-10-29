@@ -27,6 +27,9 @@ const Reports = (() => {
   let stockAlbums = [];
   let markingScope = "all";
   let markingPicked = {};
+  let payMode = "";
+  let payParty = "";
+  let payProduct = "";
 
   const MODES = [
     { id: "today", label: "Today" },
@@ -45,7 +48,7 @@ const Reports = (() => {
       { id: "day-bills", label: "Day bills" },
       { id: "receipt-book", label: "Receipt book" },
       { id: "purchases", label: "Purchase bills" },
-      { id: "payments", label: "Payments" },
+      { id: "payments", label: "Payment accounts" },
     ],
     books: [
       { id: "sales-book", label: "Sales book" },
@@ -331,6 +334,8 @@ const Reports = (() => {
   function reportActionButtons() {
     const pdf = (chip === "sales" || chip === "sales-book")
       ? `<button type="button" class="btn btn-secondary btn-sm" onclick="Reports.downloadSalesPdf()">PDF</button>`
+      : (chip === "payments")
+      ? `<button type="button" class="btn btn-secondary btn-sm" onclick="Reports.downloadPaymentsPdf()">PDF</button>`
       : "";
     return `<div class="rep-presets" style="margin-left:auto;">
       <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.printCurrent()">Print</button>
@@ -753,6 +758,15 @@ const Reports = (() => {
       }), "Quiet day", "No entries in this range. Try another range.")}`;
   }
 
+  async function downloadPaymentsPdf() {
+    try {
+      const name = fromDate && toDate ? `payments_${fromDate}_${toDate}.pdf` : "payment-accounts.pdf";
+      await DocShare.openPdf(`/share/payment-accounts/pdf${rangeQs({
+        mode: payMode, party: payParty, product: payProduct,
+      })}`, { filename: name });
+    } catch (e) { ctx.toast(e.message, "error"); }
+  }
+
   async function downloadSalesPdf() {
     try {
       const name = fromDate && toDate && fromDate !== toDate
@@ -934,20 +948,67 @@ const Reports = (() => {
   }
 
   async function renderPayments(body) {
-    const data = await ctx.api(`/reports/payments${rangeQs()}`, {}, 0);
-    const items = (data.items || []).filter(it => matchSearch(it.doc_number, it.party_label, it.description));
-    body.innerHTML = items.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
-      <th>Date</th><th>Dir</th><th>Ref</th><th>Party</th><th>Amount</th><th>Note</th>
-    </tr></thead><tbody>
-      ${items.map(it => `<tr>
-        <td>${ctx.esc(it.date || "—")}</td>
-        <td><span class="badge ${it.direction === "in" ? "badge-green" : "badge-amber"}">${it.direction === "in" ? "In" : "Out"}</span></td>
-        <td style="font-family:monospace;font-size:12px;">${ctx.esc(it.doc_number || "—")}</td>
-        <td>${ctx.esc(it.party_label || "—")}</td>
-        <td>${fmtPrice(it.amount)}</td>
-        <td style="color:var(--muted);font-size:13px;">${ctx.esc(it.description || "—")}</td>
-      </tr>`).join("")}
-    </tbody></table></div>` : empty("No payments", "Widen dates to see cash in and out.");
+    const data = await ctx.api(`/reports/payment-accounts${rangeQs({
+      mode: payMode, party: payParty, product: payProduct,
+    })}`, {}, 0);
+    const accounts = data.accounts || [];
+    const modeOptions = ["", ...accounts.map(a => a.account).filter(name => name && name !== payMode), ...(payMode ? [payMode] : [])];
+    const seen = new Set();
+    const options = modeOptions.filter(name => {
+      const key = name.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    const cards = accounts.map(a => `
+      <div class="fin-stat"><span class="fin-stat-label">${ctx.esc(a.account)}</span><strong>${fmtPrice(a.amount)}</strong></div>
+    `).join("");
+    const items = data.items || [];
+    body.innerHTML = `
+      <p class="fin-panel-sub" style="margin:0 0 12px;">Each account is separate. NC is not cash. ICICI is not cash. All is the sum of the accounts shown.</p>
+      <div class="rep-filters" style="margin-bottom:12px;">
+        <label class="label">Account
+          <select class="input" id="pay-mode" onchange="Reports.setPayMode(this.value)">
+            <option value="">All accounts</option>
+            ${options.filter(Boolean).map(name => `<option value="${ctx.esc(name)}"${name === payMode ? " selected" : ""}>${ctx.esc(name)}</option>`).join("")}
+          </select>
+        </label>
+        <label class="label">Party
+          <input class="input" id="pay-party" value="${ctx.esc(payParty)}" placeholder="Party name" />
+        </label>
+        <label class="label">Product
+          <input class="input" id="pay-product" value="${ctx.esc(payProduct)}" placeholder="Item on a bill" />
+        </label>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.applyPayFilters()">Show</button>
+      </div>
+      <div class="fin-hub-strip" style="margin-bottom:16px;">
+        ${cards}
+        <div class="fin-stat"><span class="fin-stat-label">All</span><strong>${fmtPrice(data.all_total || 0)}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">Payments</span><strong>${data.count || 0}</strong></div>
+      </div>
+      ${items.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
+        <th>Date</th><th>Account</th><th>Party</th><th>Reference</th><th>Amount</th><th>Entered by</th>
+      </tr></thead><tbody>
+        ${items.map(it => `<tr class="clickable" onclick="Finance.openCustomerAr(${it.party_id})">
+          <td>${ctx.esc(it.date || "—")}</td>
+          <td><strong>${ctx.esc(it.account || "—")}</strong></td>
+          <td>${ctx.esc(it.party_label || "—")}</td>
+          <td>${ctx.esc(it.reference || "—")}</td>
+          <td>${fmtPrice(it.amount)}</td>
+          <td>${ctx.esc(it.entered_by || "—")}</td>
+        </tr>`).join("")}
+      </tbody></table></div>` : empty("No payments", "Nothing in this account for these dates.")}`;
+  }
+
+  function setPayMode(value) {
+    payMode = value || "";
+    loadChip();
+  }
+
+  function applyPayFilters() {
+    payParty = document.getElementById("pay-party")?.value.trim() || "";
+    payProduct = document.getElementById("pay-product")?.value.trim() || "";
+    loadChip();
   }
 
   async function renderPartyAgg(body, path, ledger) {
@@ -1778,7 +1839,8 @@ const Reports = (() => {
     setDatePreset, onRangeChange, onDayBillChange, setDayBillToday, onThresholdChange,
     openLedger, openStaffLedger, openExpenseLedger, addExpenseHead, addExpenseSubhead, addExpenseSource, renameExpenseSource, deleteExpenseSource, openCashLedger, backFromLedger, openDoc,
     shareDaybook, waDaybook, shareStockSummary, shareAgeing, waAgeing, exportExcel,
-    printCurrent, exportCurrentExcel, downloadSalesPdf, setHideVoids, setJournalReportKind, setStockYear, setPrintCarry, togglePrintGroup, toggleStockAlbum,
+    printCurrent, exportCurrentExcel, downloadSalesPdf, downloadPaymentsPdf, setHideVoids, setJournalReportKind, setStockYear, setPrintCarry, togglePrintGroup, toggleStockAlbum,
     setMarkingScope, toggleMarkingPick, saveProductMarking, applyMarkingToPicked, renameMarking,
+    setPayMode, applyPayFilters,
   };
 })();

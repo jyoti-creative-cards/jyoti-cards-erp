@@ -1218,7 +1218,7 @@ const App = (() => {
     if (mode === "bill") billCustomer(id);
     else if (mode === "ledger") {
       showView("money");
-      Finance.openCustomerAr?.(id);
+      Finance.openCustomerAr?.(id, { tab: "ledger" });
     } else {
       showView("products");
       Products.openProductDetail?.(id);

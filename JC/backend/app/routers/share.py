@@ -34,6 +34,7 @@ from app.services.reports.pdfs import (
     render_freight_statement_pdf,
     render_payment_accounts_pdf,
     render_sales_pdf,
+    statement_pdf_filename,
 )
 from app.services.stock_summary_pdf import render_stock_summary_pdf
 router = APIRouter(prefix="/share", tags=["share"])
@@ -267,9 +268,13 @@ def ar_statement_pdf(
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_admin),
 ):
-    if not db.get(Customer, customer_id):
+    cust = db.get(Customer, customer_id)
+    if not cust:
         raise HTTPException(404, "customer not found")
-    return _pdf_response(render_ar_statement_pdf(db, customer_id), f"ar_{customer_id}.pdf")
+    from app.services.ar_ledger import build_ar_ledger
+    entries = build_ar_ledger(db, customer_id)
+    name = statement_pdf_filename(cust.business_name, entries)
+    return _pdf_response(render_ar_statement_pdf(db, customer_id), name)
 
 
 @router.get("/statements/ap/{vendor_id}/pdf")
@@ -457,7 +462,8 @@ def whatsapp_share(
             raise HTTPException(404, "customer not found")
         phone = phone or cust.phone
         pdf = render_ar_statement_pdf(db, cust.id)
-        filename = f"statement_{cust.id}.pdf"
+        from app.services.ar_ledger import build_ar_ledger
+        filename = statement_pdf_filename(cust.business_name, build_ar_ledger(db, cust.id))
         caption = body.caption or f"Statement — {cust.business_name}"
     elif body.kind == "ap_statement":
         vend = db.get(Vendor, body.id or 0)

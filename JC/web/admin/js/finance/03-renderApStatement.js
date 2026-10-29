@@ -397,7 +397,7 @@
     try {
       arDetail = await ctx.api(`/accounts-receivable/customer/${customerId}`, {}, 0);
       currentCustomer = customerId;
-      arTab = "statement";
+      arTab = opts?.tab === "ledger" || opts?.tab === "payments" ? opts.tab : "statement";
       document.getElementById("finance-hub")?.classList.add("hidden");
       document.getElementById("finance-ar-detail")?.classList.remove("hidden");
       renderArDetail();

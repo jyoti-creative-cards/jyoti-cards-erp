@@ -30,6 +30,29 @@ def _pdf_day(value) -> str:
     return text[:10]
 
 
+def statement_pdf_filename(party: str, entries: list) -> str:
+    """meet_printing_press_28_10_2026_to_30_10_2026.pdf"""
+    import re
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    slug = re.sub(r"[^a-z0-9]+", "_", (party or "party").lower()).strip("_")[:60] or "party"
+    days = []
+    for entry in entries or []:
+        day = _pdf_day(entry.get("value_date") or entry.get("created_at"))
+        if len(day) >= 10:
+            days.append(day[:10])
+    today = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+    start = min(days) if days else today
+    end = today
+
+    def dmy(iso: str) -> str:
+        year, month, day = iso.split("-")
+        return f"{day}_{month}_{year}"
+
+    return f"{slug}_{dmy(start)}_to_{dmy(end)}.pdf"
+
+
 def _money(v) -> str:
     # Indian digit grouping (12,34,567.00), matching customer_bill_pdf._money — these
     # statements were previously using plain US-style ",.2f" grouping, inconsistent
@@ -64,7 +87,7 @@ def render_ar_statement_pdf(db: Session, customer_id: int) -> bytes:
         Spacer(1, 10),
     ]
     rows = [["Date", "Type", "Particulars", "Amount", "Balance"]]
-    for e in reversed(entries):
+    for e in entries:
         rows.append([
             _pdf_day(e.get("value_date") or e.get("created_at")),
             e.get("entry_type") or "",

@@ -114,7 +114,7 @@
 
   function moneyDocButton(e) {
     if (e.return_id) return ` <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();Returns.openReturn(${e.return_id})">View</button>`;
-    if (e.bill_id) return ` <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();Finance.viewCustomerBill(${e.bill_id})">View detail</button>`;
+    if (e.bill_id) return ` <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();Finance.viewCustomerBill(${e.bill_id})">View detail</button> <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();App.showView('selling');CustomerOrders.openEditBill(${e.bill_id})">Edit</button>`;
     return "";
   }
 

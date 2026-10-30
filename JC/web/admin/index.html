@@ -181,6 +181,13 @@
               <span class="big-tile-desc">Add routes, then link each city</span>
               <span class="big-tile-count" id="hub-routes-cities-count">0 routes</span>
             </button>
+            <button type="button" class="big-tile ui-tile setup-tile setup-tile-delivery" onclick="App.showSetupTab('catalog')">
+              <span class="setup-tile-tag">Catalog</span>
+              <span class="big-tile-letter">C</span>
+              <span class="big-tile-title">Item categories</span>
+              <span class="big-tile-desc">Add category, series, unit, and year</span>
+              <span class="big-tile-count" id="hub-catalog-count">Categories</span>
+            </button>
             <button type="button" class="big-tile ui-tile setup-tile setup-tile-delivery" id="setup-tile-freight" onclick="App.showSetupTab('freight')">
               <span class="setup-tile-tag">Delivery</span>
               <span class="big-tile-letter">F</span>
@@ -230,6 +237,18 @@
               <span class="big-tile-desc">Excel sheets + full zip</span>
               <span class="big-tile-count">Download</span>
             </button>
+          </div>
+        </div>
+        <div id="setup-catalog" class="hidden">
+          <div class="setup-page">
+            <button type="button" class="btn btn-secondary setup-page-back" onclick="App.showSetupHub()">← Back to Setup</button>
+            <div class="ui-hero setup-page-hero">
+              <div>
+                <h2 class="setup-page-title">Item categories</h2>
+                <p class="setup-page-sub">Categories, series, units, and year groups used when you add a product.</p>
+              </div>
+            </div>
+            <div id="lookup-sections"></div>
           </div>
         </div>
         <div id="setup-export" class="hidden">
@@ -1251,7 +1270,7 @@
   <script src="js/payment-modes.js?v=ui62"></script>
   <script src="js/freight-agents.js?v=ui66"></script>
   <script src="js/calculator.js?v=ui2"></script>
-  <script src="app.js?v=ui102"></script>
+  <script src="app.js?v=ui103"></script>
   <script src="js/commission-agents.js?v=ui1"></script>
   <script src="js/whatsapp-inbox.js?v=ui2"></script>
 </body>

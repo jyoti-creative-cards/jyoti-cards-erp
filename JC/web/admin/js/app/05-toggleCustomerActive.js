@@ -353,11 +353,22 @@
     } catch (e) { toast(e.message, "error"); }
   }
 
+  async function loadCatalogSetup() {
+    const page = document.getElementById("lookup-sections");
+    if (page) page.innerHTML = `<p style="color:var(--muted);">Loading…</p>`;
+    try {
+      lookups = await api("/lookups", {}, 0);
+      renderLookupSections();
+    } catch (e) {
+      if (page) page.innerHTML = `<p style="color:var(--danger);">${esc(e.message || "Could not load categories")}</p>`;
+    }
+  }
+
   function renderLookupSections() {
     const el = document.getElementById("lookup-sections");
     if (!el) return;
     const types = [
-      ["category", "Categories", "category", "C", "e.g. Wedding, Birthday, Festival"],
+      ["category", "Categories", "category", "C", "e.g. ALBUM NO. 01, BOX"],
       ["series", "Series", "series", "S", "e.g. Premium, Economy, Gold"],
       ["unit", "Units", "unit", "U", "e.g. pcs, pack, box"],
       ["year_group", "Year Groups", "year group", "Y", "e.g. 2025, 2026"],

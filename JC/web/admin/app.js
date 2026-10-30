@@ -864,6 +864,7 @@ const App = (() => {
     document.getElementById("setup-paymodes")?.classList.add("hidden");
     document.getElementById("setup-freight")?.classList.add("hidden");
     document.getElementById("setup-export")?.classList.add("hidden");
+    document.getElementById("setup-catalog")?.classList.add("hidden");
     updateSetupHubCounts();
   }
 
@@ -878,6 +879,7 @@ const App = (() => {
     document.getElementById("setup-paymodes")?.classList.toggle("hidden", tab !== "paymodes");
     document.getElementById("setup-freight")?.classList.toggle("hidden", tab !== "freight");
     document.getElementById("setup-export")?.classList.toggle("hidden", tab !== "export");
+    document.getElementById("setup-catalog")?.classList.toggle("hidden", tab !== "catalog");
     if (tab === "routes") { renderRoutesTable(); renderCitiesTable(); }
     if (tab === "staff") StaffMgmt.load();
     if (tab === "activity") loadActivity({ tableId: "setup-activity-table", personId: "setup-activity-person-filter", actionId: "setup-activity-action-filter", whatId: "setup-activity-what-filter", whereId: "setup-activity-where-filter", dateId: "setup-activity-date-filter", initPerson: true });
@@ -885,6 +887,7 @@ const App = (() => {
     if (tab === "billseries") BillSeries.load();
     if (tab === "paymodes") PaymentModes.load();
     if (tab === "freight") FreightAgentsSetup.load();
+    if (tab === "catalog") loadCatalogSetup();
   }
 
   async function downloadExportKind(kind) {
@@ -2954,11 +2957,22 @@ const App = (() => {
     } catch (e) { toast(e.message, "error"); }
   }
 
+  async function loadCatalogSetup() {
+    const page = document.getElementById("lookup-sections");
+    if (page) page.innerHTML = `<p style="color:var(--muted);">Loading…</p>`;
+    try {
+      lookups = await api("/lookups", {}, 0);
+      renderLookupSections();
+    } catch (e) {
+      if (page) page.innerHTML = `<p style="color:var(--danger);">${esc(e.message || "Could not load categories")}</p>`;
+    }
+  }
+
   function renderLookupSections() {
     const el = document.getElementById("lookup-sections");
     if (!el) return;
     const types = [
-      ["category", "Categories", "category", "C", "e.g. Wedding, Birthday, Festival"],
+      ["category", "Categories", "category", "C", "e.g. ALBUM NO. 01, BOX"],
       ["series", "Series", "series", "S", "e.g. Premium, Economy, Gold"],
       ["unit", "Units", "unit", "U", "e.g. pcs, pack, box"],
       ["year_group", "Year Groups", "year group", "Y", "e.g. 2025, 2026"],
@@ -3363,6 +3377,7 @@ const App = (() => {
       } catch (e) {
         showLoginShell(e?.message || "Could not open app — check login / network");
       }
+      return;
     }
   }
 

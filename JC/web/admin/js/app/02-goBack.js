@@ -196,6 +196,7 @@
     document.getElementById("setup-paymodes")?.classList.add("hidden");
     document.getElementById("setup-freight")?.classList.add("hidden");
     document.getElementById("setup-export")?.classList.add("hidden");
+    document.getElementById("setup-catalog")?.classList.add("hidden");
     updateSetupHubCounts();
   }
 
@@ -210,6 +211,7 @@
     document.getElementById("setup-paymodes")?.classList.toggle("hidden", tab !== "paymodes");
     document.getElementById("setup-freight")?.classList.toggle("hidden", tab !== "freight");
     document.getElementById("setup-export")?.classList.toggle("hidden", tab !== "export");
+    document.getElementById("setup-catalog")?.classList.toggle("hidden", tab !== "catalog");
     if (tab === "routes") { renderRoutesTable(); renderCitiesTable(); }
     if (tab === "staff") StaffMgmt.load();
     if (tab === "activity") loadActivity({ tableId: "setup-activity-table", personId: "setup-activity-person-filter", actionId: "setup-activity-action-filter", whatId: "setup-activity-what-filter", whereId: "setup-activity-where-filter", dateId: "setup-activity-date-filter", initPerson: true });
@@ -217,6 +219,7 @@
     if (tab === "billseries") BillSeries.load();
     if (tab === "paymodes") PaymentModes.load();
     if (tab === "freight") FreightAgentsSetup.load();
+    if (tab === "catalog") loadCatalogSetup();
   }
 
   async function downloadExportKind(kind) {

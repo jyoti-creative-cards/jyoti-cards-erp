@@ -272,6 +272,7 @@
       } catch (e) {
         showLoginShell(e?.message || "Could not open app — check login / network");
       }
+      return;
     }
   }
 

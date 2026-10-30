@@ -648,10 +648,9 @@
     document.getElementById("modal-body").innerHTML = `
       <label class="label">Reason (required)</label>
       <textarea class="input" id="co-reason-input" rows="3" style="width:100%;"></textarea>
-      <p style="font-size:13px;color:var(--muted);margin:10px 0 12px;">Cancel only the bill when the order is right and the bill is wrong, such as transport or charges. The order stays booked. Cancel the complete order when this sale should not stay.</p>
-      <label class="label">Your cancel key</label>
-      <input class="input" id="co-cancel-key" type="password" autocomplete="off" placeholder="Your own key" style="width:100%;" />`;
+      <p style="font-size:13px;color:var(--muted);margin:10px 0 0;">Cancel only the bill when the order is right and the bill is wrong, such as transport or charges. The order stays booked. Cancel the complete order when this sale should not stay.</p>`;
     document.getElementById("modal-footer").innerHTML = `
+      ${ctx.isOwnerAdmin?.() ? "" : `<input class="input" id="co-cancel-key" type="password" autocomplete="off" placeholder="Your cancel key" style="flex:1;min-width:140px;" />`}
       <button class="btn btn-secondary" onclick="App.closeModal()">Back</button>
       <button class="btn btn-secondary" id="co-cancel-bill-only">Cancel bill, keep order</button>
       <button class="btn btn-danger" id="co-cancel-bill-all">Cancel complete order</button>`;

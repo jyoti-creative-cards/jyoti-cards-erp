@@ -81,6 +81,14 @@ const Products = (() => {
     return num.toLocaleString("en-IN");
   }
 
+  function qtySigned(n) {
+    const num = Number(n);
+    if (!Number.isFinite(num)) return "0";
+    const text = Math.abs(num).toLocaleString("en-IN");
+    if (num < 0) return `<span class="prod-qty-neg">−${text}</span>`;
+    return text;
+  }
+
   function showAddons() {
     addonMode = true;
     const title = document.getElementById("products-panel-title");
@@ -656,6 +664,7 @@ const Products = (() => {
           addon_count: p.addon_count || 0,
           alt_count: p.alt_count || 0,
           qty: p.quantity_on_hand,
+          reserved_qty: p.reserved_qty || 0,
           stock_status: p.stock_status,
           image_urls: p.image_urls,
           open: () => openProductDetail(p.catalog_product_id, "stock"),
@@ -901,8 +910,16 @@ const Products = (() => {
               : `<div class="prod-card-cat"><span class="prod-cat-badge is-empty">No category</span></div>`)}
             ${it.marking ? `<div class="prod-card-cat"><span class="marking-flag">${ctx.esc(it.marking)}</span></div>` : ""}
             ${(isStockProduct || showsAddonStock) ? `<div class="prod-card-qty-block">
-              <span class="prod-card-qty-num">${fmtQty(it.qty ?? 0)}</span>
-              <span class="prod-card-qty-label">on hand</span>
+              <div class="prod-card-qty-pair">
+                <div>
+                  <span class="prod-card-qty-num">${qtySigned(it.qty ?? 0)}</span>
+                  <span class="prod-card-qty-label">available</span>
+                </div>
+                ${it.kind === "product" ? `<div>
+                  <span class="prod-card-qty-num">${fmtQty(it.reserved_qty ?? 0)}</span>
+                  <span class="prod-card-qty-label">reserved</span>
+                </div>` : ""}
+              </div>
             </div>` : ""}
             ${priceFootHtml(it, { stockMode: isStockProduct })}
             ${canOrder ? `<button type="button" class="btn btn-primary btn-sm prod-card-order" onclick="event.stopPropagation();Products.bookThisProduct(${it.id})">Create order</button>` : ""}
@@ -919,7 +936,7 @@ const Products = (() => {
         <th>Category 1</th>
         <th>Category 2</th>
         <th>Category 3</th>
-        ${mainTab === "stock" ? "<th>On hand</th><th>Status</th>" : ""}
+        ${mainTab === "stock" ? "<th>Available</th><th>Reserved</th><th>Status</th>" : ""}
         <th>Sell</th>
         <th>Buy</th>
         <th></th>
@@ -938,7 +955,8 @@ const Products = (() => {
           <td>${ctx.esc(it.category || "—")}</td>
           <td>${ctx.esc(it.second_category || "—")}</td>
           <td>${ctx.esc(it.category_3 || "—")}</td>
-          ${mainTab === "stock" ? `<td class="prod-list-qty-cell">${(it.kind === "product" || it.kind === "addon") ? `<strong class="prod-list-qty-big">${it.qty ?? 0}</strong>` : "—"}</td>
+          ${mainTab === "stock" ? `<td class="prod-list-qty-cell">${(it.kind === "product" || it.kind === "addon") ? `<strong class="prod-list-qty-big">${qtySigned(it.qty ?? 0)}</strong>` : "—"}</td>
+          <td class="prod-list-qty-cell">${it.kind === "product" ? fmtQty(it.reserved_qty ?? 0) : "—"}</td>
           <td>${st ? `<span class="badge ${st.cls === "is-ok" ? "badge-green" : st.cls === "is-low" ? "badge-amber" : st.cls === "is-neg" ? "badge-red" : "badge-gray"}">${st.label}</span>` : "—"}</td>` : ""}
           <td class="prod-list-price">${it.kind === "product" ? (hasRealSell(it) ? fmtPrice(it.selling_price) : '<span class="prod-price-missing">Not set</span>') : "—"}</td>
           <td class="prod-list-price is-buy">${it.buying_price != null && it.buying_price !== "" ? fmtPrice(it.buying_price) : "—"}</td>
@@ -1052,7 +1070,7 @@ const Products = (() => {
           </div>
         </div>
         <div class="review-grid" style="margin:16px 0 20px;">
-          ${ctx.reviewRow("On hand", stock.quantity_on_hand)}
+          ${ctx.reviewRow("Available", qtySigned(stock.quantity_on_hand), true)}
           ${ctx.reviewRow("Status", (stock.stock_status || "").replace(/_/g, " "))}
           ${ctx.reviewRow("Pending order (vendor inbound)", stock.quantity_pending)}
         </div>
@@ -1149,7 +1167,8 @@ const Products = (() => {
             <span class="badge badge-green">Sell ${sell != null && sell !== "" ? fmtPrice(sell) : "—"}</span>
             <span class="badge badge-blue">Buy ${buy != null ? fmtPrice(buy) : "—"}</span>
             ${stock
-              ? `<span class="badge badge-blue">On hand: ${stock.quantity_on_hand}</span>
+              ? `<span class="badge ${Number(stock.quantity_on_hand) < 0 ? "badge-red" : "badge-blue"}">Available: ${qtySigned(stock.quantity_on_hand)}</span>
+                 <span class="badge badge-amber">Reserved: ${fmtQty((stock.reserved_by_party || []).reduce((sum, r) => sum + Number(r.unconfirmed || 0) + Number(r.to_bill || 0), 0))}</span>
                  <span class="badge ${statusBadge}">${ctx.esc((stock.stock_status || "").replace(/_/g, " "))}</span>`
               : `<span class="badge badge-gray">No stock yet</span>`}
             ${cat?.category ? `<span class="badge badge-gray">${ctx.esc(cat.category)}</span>` : ""}

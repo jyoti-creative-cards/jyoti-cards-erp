@@ -68,7 +68,7 @@
           </div>
         </div>
         <div class="review-grid" style="margin:16px 0 20px;">
-          ${ctx.reviewRow("On hand", stock.quantity_on_hand)}
+          ${ctx.reviewRow("Available", qtySigned(stock.quantity_on_hand), true)}
           ${ctx.reviewRow("Status", (stock.stock_status || "").replace(/_/g, " "))}
           ${ctx.reviewRow("Pending order (vendor inbound)", stock.quantity_pending)}
         </div>
@@ -165,7 +165,8 @@
             <span class="badge badge-green">Sell ${sell != null && sell !== "" ? fmtPrice(sell) : "—"}</span>
             <span class="badge badge-blue">Buy ${buy != null ? fmtPrice(buy) : "—"}</span>
             ${stock
-              ? `<span class="badge badge-blue">On hand: ${stock.quantity_on_hand}</span>
+              ? `<span class="badge ${Number(stock.quantity_on_hand) < 0 ? "badge-red" : "badge-blue"}">Available: ${qtySigned(stock.quantity_on_hand)}</span>
+                 <span class="badge badge-amber">Reserved: ${fmtQty((stock.reserved_by_party || []).reduce((sum, r) => sum + Number(r.unconfirmed || 0) + Number(r.to_bill || 0), 0))}</span>
                  <span class="badge ${statusBadge}">${ctx.esc((stock.stock_status || "").replace(/_/g, " "))}</span>`
               : `<span class="badge badge-gray">No stock yet</span>`}
             ${cat?.category ? `<span class="badge badge-gray">${ctx.esc(cat.category)}</span>` : ""}

@@ -48,7 +48,7 @@ from app.schemas.ledger import StockLedgerDetail
 from app.models.debit_note import DebitNote
 from app.services.ap_ledger import debit_note_payable_effect, receipt_bill_amount, receipt_debit_note_total
 from app.services.activity import log_from_auth
-from app.services.order_summary import pending_qty_by_product, placed_qty_by_product, received_qty_by_product, reserved_by_party
+from app.services.order_summary import pending_qty_by_product, placed_qty_by_product, received_qty_by_product, reserved_by_party, reserved_qty_by_product
 from app.services.stock_receipt import get_open_order
 from app.services.doc_gen import generate_vendor_receipt_document
 from app.services import response_cache
@@ -599,6 +599,7 @@ def browse_stock(
             .all()
         ):
             alt_counts[int(pid)] = int(cnt)
+    reserved = reserved_qty_by_product(db, page_ids)
     items: list[StockProductSummary] = []
     for product, balance, vendor, city, addons in rows:
         on_hand = int(balance.quantity_on_hand) if balance else 0
@@ -621,6 +622,7 @@ def browse_stock(
             year_group=product.year_group,
             marking=product.marking,
             quantity_on_hand=on_hand,
+            reserved_qty=int(reserved.get(product.id, 0)),
             low_stock_threshold=threshold,
             stock_status=admin_stock_status_label(on_hand, threshold),
             selling_price=(
@@ -671,7 +673,7 @@ def browse_stock_products(
     auth: AuthContext = Depends(require_permission("stock.read")),
 ) -> StockBrowsePage:
     cache_key = (
-        f"stock:page:v1:{(search or '').replace(chr(0), '')}:{(year_group or '').replace(chr(0), '')}:"
+        f"stock:page:v2:{(search or '').replace(chr(0), '')}:{(year_group or '').replace(chr(0), '')}:"
         f"{vendor_id or ''}:{category or ''}:{price_min}:{price_max}:{stock_status or ''}:"
         f"{int(no_sell_price)}:{int(no_addons)}:{int(no_alternatives)}:{limit}:{offset}:cost={int(can_see_cost(auth))}"
     )

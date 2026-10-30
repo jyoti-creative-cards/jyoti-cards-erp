@@ -149,10 +149,11 @@
     forceCreditOverride = false;
     if (!quiet) ctx.showLoading?.();
     try {
+      try { await ctx.api("/bill-series/ensure-next", { method: "POST" }, 0); } catch (_) {}
       const [pctx, agents, series] = await Promise.all([
         ctx.api(`/customer-orders/customer/${detailCustomerId}/process-context`, {}, 0),
         ctx.api("/freight-agents?names_only=1", {}, 30000),
-        ctx.api("/bill-series", {}, 30000),
+        ctx.api("/bill-series", {}, 0),
       ]);
       processContext = pctx;
       billOnAgent = true;
@@ -196,8 +197,7 @@
       transportReceiptNumber = "";
       packagingCharges = "";
       additionalCharges = [{ name: "", amount: "" }];
-      const actualSeries = billSeries.find(s => String(s.name || "").trim().toLowerCase() === "actual");
-      billSeriesId = String((actualSeries || billSeries[0] || {}).id || "");
+      billSeriesId = defaultBillSeriesId(billSeries);
       customerNotes = pctx.default_narration || "";
       narration = "";
       billDate = localToday();
@@ -227,8 +227,45 @@
     finally { ctx.hideLoading?.(); }
   }
 
+  function defaultBillSeriesId(rows) {
+    const letters = (rows || []).filter(s => /^[A-Za-z]$/.test(String(s.prefix || "").trim()) && Number(s.start_num) === 1 && Number(s.end_num) === 1000);
+    letters.sort((a, b) => String(a.prefix).toUpperCase().localeCompare(String(b.prefix).toUpperCase()));
+    if (letters.length) return String(letters[letters.length - 1].id);
+    const actual = (rows || []).find(s => String(s.name || "").trim().toLowerCase() === "actual");
+    return String((actual || (rows || [])[0] || {}).id || "");
+  }
+
+  function askEditCancelKey() {
+    if (ctx.isOwnerAdmin?.()) {
+      window.__jcCancelKey = "";
+      return Promise.resolve(true);
+    }
+    return new Promise(resolve => {
+      document.getElementById("modal-title").textContent = "Edit this bill";
+      document.getElementById("modal-body").innerHTML = `
+        <label class="label">Your cancel key</label>
+        <input class="input" id="co-edit-cancel-key" type="password" autocomplete="off" placeholder="Your own key" style="width:100%;" />
+        <p style="font-size:13px;color:var(--muted);margin:10px 0 0;">Editing a bill needs the same key as cancelling one.</p>`;
+      document.getElementById("modal-footer").innerHTML = `
+        <button class="btn btn-secondary" id="co-edit-key-back">Back</button>
+        <button class="btn btn-primary" id="co-edit-key-ok">Continue</button>`;
+      document.getElementById("co-edit-key-back").onclick = () => { App.closeModal(); resolve(false); };
+      document.getElementById("co-edit-key-ok").onclick = () => {
+        const key = (document.getElementById("co-edit-cancel-key")?.value || "").trim();
+        if (!key) return ctx.toast("Enter your cancel key", "error");
+        window.__jcCancelKey = key;
+        App.closeModal();
+        resolve(true);
+      };
+      document.getElementById("modal").classList.remove("hidden");
+      document.getElementById("co-edit-cancel-key")?.focus();
+    });
+  }
+
   async function openEditBill(billId) {
     if (!billId) return;
+    const allowed = await askEditCancelKey();
+    if (!allowed) return;
     editBillId = billId;
     processStep = 1;
     processBusy = false;
@@ -715,13 +752,11 @@
   }
   function billEditMatchesHtml() {
     const q = billEditSearch.trim().toLowerCase();
-    const matches = q
-      ? billEditProducts.filter(p => String(p.our_product_id || "").toLowerCase().includes(q)).slice(0, 8)
-      : [];
+    const matches = q ? billEditProducts.slice(0, 8) : [];
     if (matches.length) {
       return `<div style="display:flex;flex-direction:column;gap:4px;">${matches.map(p => `
         <button type="button" class="btn btn-secondary btn-sm" style="justify-content:flex-start;" onclick="CustomerOrders.addBillEditProduct(${p.catalog_product_id})">
-          ${ctx.esc(p.our_product_id)} · ${fmtPrice(p.selling_price)} · stock ${p.quantity_on_hand ?? 0}
+          ${ctx.esc(p.our_product_id)}${p.vendor_product_id ? " · " + ctx.esc(p.vendor_product_id) : ""} · ${fmtPrice(p.selling_price)} · stock ${p.quantity_on_hand ?? 0}
         </button>`).join("")}</div>`;
     }
     if (q) return `<p style="font-size:12px;color:var(--muted);">${billEditSearchPending ? "Searching…" : "No matches"}</p>`;

@@ -19,7 +19,7 @@
     setOfflinePlacedOn,
     setForceCredit, setBillOnAgent, printDayDuplicates,
     processNext, processBack, submitProcess, backFromBillDuplicate, proceedBillDuplicate, toggleBillOrder, toggleAllBillOrders,
-    confirmOrder, _doConfirm, cancelOpenLine, cancelPlacement, cancelCustomerOpen, cancelEntireReceived, cancelAllOpen, editOpenLine, editReceivedLine, deleteReceivedLine, openEditPlacement, closeBillLine, cancelBill, voidBill, voidPlacement, openBillDoc, shareBillWhatsApp, uploadBillQr, resetBillQr,
+    confirmOrder, _doConfirm, cancelOpenLine, cancelPlacement, cancelCustomerOpen, cancelEntireReceived, cancelAllOpen, editOpenLine, editReceivedLine, deleteReceivedLine, openEditPlacement, closeBillLine, cancelBill, voidBill, voidPlacement, openBillDoc, printStoredBill, downloadStoredBill, shareBillWhatsApp, uploadBillQr, resetBillQr,
     openOfflineWizard, closeOfflineWizard, renderOfflineWizard,
     pickOfflineCustomer, onOfflineCustomerSearch, setOfflineNotes, previewOrder, backFromOrderPreview,
     onOfflineSearchInput, onOfflineSearchKey, onOfflineQtyKey, toggleOfflineProduct, pickOfflineProduct, removeOfflineLine, skipOfflineAddon,

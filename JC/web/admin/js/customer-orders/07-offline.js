@@ -38,10 +38,11 @@
     const scored = [];
     for (const p of entryItems || []) {
       const id = String(p.our_product_id || "").toLowerCase();
+      const alias = String(p.vendor_product_id || "").toLowerCase();
       let score = 0;
-      if (id === needle) score = 100;
-      else if (id.startsWith(needle)) score = 80;
-      else if (id.includes(needle)) score = 40;
+      if (id === needle || (alias && alias === needle)) score = 100;
+      else if (id.startsWith(needle) || (alias && alias.startsWith(needle))) score = 80;
+      else if (id.includes(needle) || (alias && alias.includes(needle))) score = 40;
       else continue;
       scored.push({ p, score, id });
     }
@@ -358,7 +359,7 @@
     const rows = filterEntryItems(offlineSearchQuery);
     offlineSearchResults = rows;
     box.innerHTML = rows.map(p =>
-      `<button type="button" class="btn btn-secondary btn-sm" style="display:block;width:100%;text-align:left;margin-top:4px;" onclick="CustomerOrders.pickOfflineProduct(${p.catalog_product_id})">${ctx.esc(p.our_product_id)} · stock ${p.quantity_on_hand ?? 0}${p.selling_price ? " · " + fmtPrice(p.selling_price) : ""}</button>`
+      `<button type="button" class="btn btn-secondary btn-sm" style="display:block;width:100%;text-align:left;margin-top:4px;" onclick="CustomerOrders.pickOfflineProduct(${p.catalog_product_id})">${ctx.esc(p.our_product_id)}${p.vendor_product_id ? " · " + ctx.esc(p.vendor_product_id) : ""} · stock ${p.quantity_on_hand ?? 0}${p.selling_price ? " · " + fmtPrice(p.selling_price) : ""}</button>`
     ).join("") || (String(offlineSearchQuery || "").trim() ? `<p style="font-size:13px;color:var(--muted);margin:6px 0 0;">No match</p>` : "");
   }
 

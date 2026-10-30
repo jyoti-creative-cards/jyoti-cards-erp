@@ -131,6 +131,22 @@ def _series_stats(db: Session, row: BillSeries) -> dict:
     }
 
 
+@router.post("/ensure-next", response_model=BillSeriesPublic)
+def ensure_next_bill_series(
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_any_permission("customer_orders.write", "customer_orders.read")),
+):
+    """Open the next letter series (C1-1000 after B1-1000) when the current one is finished."""
+    from app.services.bill_series_alloc import ensure_next_letter_series
+
+    row = ensure_next_letter_series(db)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="no letter bill series to continue")
+    db.commit()
+    db.refresh(row)
+    return _to_public(row)
+
+
 @router.get("", response_model=List[BillSeriesPublic])
 def list_bill_series(db: Session = Depends(get_db), auth: AuthContext = Depends(require_any_permission("vendor_orders.read", "customer_orders.read"))):
     rows = db.query(BillSeries).filter(BillSeries.is_active.is_(True)).order_by(BillSeries.id.asc()).all()

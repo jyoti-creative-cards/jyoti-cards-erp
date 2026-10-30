@@ -58,6 +58,14 @@
     return num.toLocaleString("en-IN");
   }
 
+  function qtySigned(n) {
+    const num = Number(n);
+    if (!Number.isFinite(num)) return "0";
+    const text = Math.abs(num).toLocaleString("en-IN");
+    if (num < 0) return `<span class="prod-qty-neg">−${text}</span>`;
+    return text;
+  }
+
   function showAddons() {
     addonMode = true;
     const title = document.getElementById("products-panel-title");

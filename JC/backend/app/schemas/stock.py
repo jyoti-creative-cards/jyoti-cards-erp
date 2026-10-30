@@ -40,6 +40,7 @@ class StockProductSummary(BaseModel):
     year_group: Optional[str] = None
     marking: Optional[str] = None
     quantity_on_hand: int
+    reserved_qty: int = 0
     low_stock_threshold: int = 5
     stock_status: str = "out_of_stock"
     selling_price: Optional[str]
@@ -92,6 +93,8 @@ class ReservedByPartyRow(BaseModel):
     billed_not_dispatched: int = 0  # billed, not yet closed/dispatched
     total_held: int = 0
     bill_id: Optional[int] = None
+    city_name: Optional[str] = None
+    placement_id: Optional[int] = None
 
 
 class StockProductDetail(StockProductSummary):

@@ -54,6 +54,7 @@
           addon_count: p.addon_count || 0,
           alt_count: p.alt_count || 0,
           qty: p.quantity_on_hand,
+          reserved_qty: p.reserved_qty || 0,
           stock_status: p.stock_status,
           image_urls: p.image_urls,
           open: () => openProductDetail(p.catalog_product_id, "stock"),
@@ -299,8 +300,16 @@
               : `<div class="prod-card-cat"><span class="prod-cat-badge is-empty">No category</span></div>`)}
             ${it.marking ? `<div class="prod-card-cat"><span class="marking-flag">${ctx.esc(it.marking)}</span></div>` : ""}
             ${(isStockProduct || showsAddonStock) ? `<div class="prod-card-qty-block">
-              <span class="prod-card-qty-num">${fmtQty(it.qty ?? 0)}</span>
-              <span class="prod-card-qty-label">on hand</span>
+              <div class="prod-card-qty-pair">
+                <div>
+                  <span class="prod-card-qty-num">${qtySigned(it.qty ?? 0)}</span>
+                  <span class="prod-card-qty-label">available</span>
+                </div>
+                ${it.kind === "product" ? `<div>
+                  <span class="prod-card-qty-num">${fmtQty(it.reserved_qty ?? 0)}</span>
+                  <span class="prod-card-qty-label">reserved</span>
+                </div>` : ""}
+              </div>
             </div>` : ""}
             ${priceFootHtml(it, { stockMode: isStockProduct })}
             ${canOrder ? `<button type="button" class="btn btn-primary btn-sm prod-card-order" onclick="event.stopPropagation();Products.bookThisProduct(${it.id})">Create order</button>` : ""}
@@ -317,7 +326,7 @@
         <th>Category 1</th>
         <th>Category 2</th>
         <th>Category 3</th>
-        ${mainTab === "stock" ? "<th>On hand</th><th>Status</th>" : ""}
+        ${mainTab === "stock" ? "<th>Available</th><th>Reserved</th><th>Status</th>" : ""}
         <th>Sell</th>
         <th>Buy</th>
         <th></th>
@@ -336,7 +345,8 @@
           <td>${ctx.esc(it.category || "—")}</td>
           <td>${ctx.esc(it.second_category || "—")}</td>
           <td>${ctx.esc(it.category_3 || "—")}</td>
-          ${mainTab === "stock" ? `<td class="prod-list-qty-cell">${(it.kind === "product" || it.kind === "addon") ? `<strong class="prod-list-qty-big">${it.qty ?? 0}</strong>` : "—"}</td>
+          ${mainTab === "stock" ? `<td class="prod-list-qty-cell">${(it.kind === "product" || it.kind === "addon") ? `<strong class="prod-list-qty-big">${qtySigned(it.qty ?? 0)}</strong>` : "—"}</td>
+          <td class="prod-list-qty-cell">${it.kind === "product" ? fmtQty(it.reserved_qty ?? 0) : "—"}</td>
           <td>${st ? `<span class="badge ${st.cls === "is-ok" ? "badge-green" : st.cls === "is-low" ? "badge-amber" : st.cls === "is-neg" ? "badge-red" : "badge-gray"}">${st.label}</span>` : "—"}</td>` : ""}
           <td class="prod-list-price">${it.kind === "product" ? (hasRealSell(it) ? fmtPrice(it.selling_price) : '<span class="prod-price-missing">Not set</span>') : "—"}</td>
           <td class="prod-list-price is-buy">${it.buying_price != null && it.buying_price !== "" ? fmtPrice(it.buying_price) : "—"}</td>

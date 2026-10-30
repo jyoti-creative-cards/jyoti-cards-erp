@@ -8,6 +8,6 @@
     openReceiptPdf, fetchReceiptPdf, openEditReceipt, selectPendingReceipt, changePendingReceipt,
     voidReceipt, editPendingDebitNote,
     removeEditLine, toggleEditAddPicker, onEditAddSearch, addEditLine,
-    reservedByPartyTable,
+    reservedByPartyTable, openCustomerHold,
   };
 })();

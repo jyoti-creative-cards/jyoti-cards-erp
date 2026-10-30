@@ -856,6 +856,8 @@ body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Ro
 .prod-card-stock.is-low .prod-card-qty-block { background: #fffbeb; }
 .prod-card-stock.is-out .prod-card-qty-block { background: #f1f5f9; }
 .prod-card-stock.is-neg .prod-card-qty-block { background: #fef2f2; }
+.prod-card-qty-pair { display: flex; gap: 14px; align-items: flex-end; }
+.prod-qty-neg { color: #b91c1c; font-weight: 800; }
 .prod-card-qty-num {
   font-size: 22px;
   font-weight: 800;

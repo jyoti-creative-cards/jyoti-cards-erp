@@ -84,31 +84,42 @@ const Stock = (() => {
     const body = shown.length ? shown.map(r => {
       const parts = partyHoldParts(r);
       const billId = Number(r.bill_id) || 0;
-      const click = billId
-        ? `Stock.openVoucher('customer_bill', ${billId})`
-        : `Stock.toastNoBill()`;
-      const status = parts.billed > 0 && parts.reserved > 0
-        ? "Billed · Reserved"
-        : parts.billed > 0 ? "Billed" : "Reserved";
-      return `<tr class="clickable" onclick="${click}">
-        <td>${ctx.esc(r.customer_name)}</td>
+      const bucket = Number(r.unconfirmed) > 0 ? "received" : "open";
+      const orderBtn = parts.reserved > 0
+        ? `<button type="button" class="btn btn-ghost btn-sm" onclick="Stock.openCustomerHold(${Number(r.customer_id) || 0}, '${bucket}')">Open order</button>`
+        : "";
+      const billBtn = billId
+        ? `<button type="button" class="btn btn-ghost btn-sm" onclick="Stock.openVoucher('customer_bill', ${billId})">Open bill</button>`
+        : "";
+      return `<tr>
+        <td><strong>${ctx.esc(r.customer_name || "—")}</strong></td>
+        <td>${ctx.esc(r.city_name || "—")}</td>
         <td>${parts.reserved}</td>
         <td>${parts.billed}</td>
-        <td><strong>${status}</strong></td>
+        <td style="white-space:nowrap;">${orderBtn} ${billBtn}</td>
       </tr>`;
-    }).join("") : `<tr><td colspan="4" style="color:var(--muted);">Nothing in this filter</td></tr>`;
+    }).join("") : `<tr><td colspan="5" style="color:var(--muted);">Nothing in this filter</td></tr>`;
     return `<div class="detail-section" id="party-hold-block">
         <h4>Who has this item</h4>
-        <p style="color:var(--muted);font-size:12px;margin:0 0 8px;">Reserved is an order or a confirmed order that is not billed yet. Billed is already invoiced. Click a party to open the bill.</p>
+        <p style="color:var(--muted);font-size:12px;margin:0 0 8px;">Reserved is not billed yet. Billed is already invoiced. Open order or Open bill shows the full document.</p>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px;">
           ${chip("all", "All")}
           ${chip("reserved", "Reserved")}
           ${chip("billed", "Billed")}
         </div>
         <table class="data history-table"><thead><tr>
-          <th>Party</th><th>Reserved</th><th>Billed</th><th>Status</th>
+          <th>Party</th><th>City</th><th>Reserved</th><th>Billed</th><th></th>
         </tr></thead><tbody>${body}</tbody></table>
       </div>`;
+  }
+
+  function openCustomerHold(customerId, bucket) {
+    if (!customerId) return;
+    if (typeof App !== "undefined" && App.closeDetail) App.closeDetail();
+    if (typeof App !== "undefined" && App.showView) App.showView("selling");
+    if (typeof CustomerOrders !== "undefined" && CustomerOrders.openDetail) {
+      CustomerOrders.openDetail(customerId, bucket || "open");
+    }
   }
   async function load() {
     if (typeof Products !== "undefined" && Products.refreshHub) await Products.refreshHub();
@@ -2414,6 +2425,6 @@ const Stock = (() => {
     openReceiptPdf, fetchReceiptPdf, openEditReceipt, selectPendingReceipt, changePendingReceipt,
     voidReceipt, editPendingDebitNote,
     removeEditLine, toggleEditAddPicker, onEditAddSearch, addEditLine,
-    reservedByPartyTable,
+    reservedByPartyTable, openCustomerHold,
   };
 })();

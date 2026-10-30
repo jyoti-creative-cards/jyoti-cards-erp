@@ -356,3 +356,7 @@ def test_reserved_by_party_breakdown(db):
     assert by_name["C2"]["to_bill"] == 5  # 8 confirmed - 3 billed
     assert by_name["C2"]["billed_not_dispatched"] == 3
     assert by_name["C2"]["total_held"] == 8
+    assert "city_name" in by_name["C1"]
+    from app.services.order_summary import reserved_qty_by_product
+    held = reserved_qty_by_product(db, [prod.id])
+    assert held[prod.id] == 10  # 5 not confirmed + 5 waiting to bill; the billed 3 is not reserved

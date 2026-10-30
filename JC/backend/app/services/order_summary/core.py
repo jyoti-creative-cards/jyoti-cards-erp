@@ -130,10 +130,34 @@ def reserved_by_party(db: Session, catalog_product_id: int) -> list[dict]:
     if not result:
         return []
 
-    names = {
-        c.id: c.business_name
-        for c in db.query(Customer.id, Customer.business_name).filter(Customer.id.in_(result.keys())).all()
-    }
+    from app.models.city import City
+
+    info = (
+        db.query(Customer.id, Customer.business_name, City.name)
+        .outerjoin(City, City.id == Customer.city_id)
+        .filter(Customer.id.in_(result.keys()))
+        .all()
+    )
+    names = {row[0]: row[1] for row in info}
+    cities = {row[0]: row[2] for row in info}
+    place_rows = (
+        db.query(CustomerOrder.customer_id, CustomerOrderPlacement.id)
+        .join(CustomerOrderLine, CustomerOrderLine.placement_id == CustomerOrderPlacement.id)
+        .join(CustomerOrder, CustomerOrderPlacement.customer_order_id == CustomerOrder.id)
+        .filter(
+            CustomerOrder.customer_id.in_(result.keys()),
+            CustomerOrder.bucket == "received",
+            CustomerOrder.is_open.is_(True),
+            CustomerOrderLine.catalog_product_id == catalog_product_id,
+            CustomerOrderLine.status == "active",
+            CustomerOrderLine.quantity > CustomerOrderLine.quantity_billed,
+        )
+        .order_by(CustomerOrderPlacement.id.asc())
+        .all()
+    )
+    placement_for: dict[int, int] = {}
+    for customer_id, placement_id in place_rows:
+        placement_for.setdefault(customer_id, placement_id)
     from app.models.customer_bill import CustomerBill, CustomerBillLine
 
     latest_bill: dict[int, int] = {}
@@ -157,8 +181,51 @@ def reserved_by_party(db: Session, catalog_product_id: int) -> list[dict]:
         if total <= 0:
             continue
         row["customer_name"] = names.get(customer_id, f"Customer #{customer_id}")
+        row["city_name"] = cities.get(customer_id)
+        row["placement_id"] = placement_for.get(customer_id)
         row["total_held"] = total
         row["bill_id"] = latest_bill.get(customer_id)
         out.append(row)
     out.sort(key=lambda r: -r["total_held"])
     return out
+
+
+def reserved_qty_by_product(db: Session, product_ids: list[int]) -> dict[int, int]:
+    """Units held on an order that is not billed yet. Available stock is quantity_on_hand."""
+    from app.models.customer_order import CustomerOpenLine, CustomerOrder, CustomerOrderLine, CustomerOrderPlacement
+
+    ids = [int(i) for i in product_ids]
+    totals = {i: 0 for i in ids}
+    if not ids:
+        return totals
+    unconfirmed = (
+        db.query(
+            CustomerOrderLine.catalog_product_id,
+            func.sum(CustomerOrderLine.quantity - func.coalesce(CustomerOrderLine.quantity_billed, 0)),
+        )
+        .join(CustomerOrderPlacement, CustomerOrderLine.placement_id == CustomerOrderPlacement.id)
+        .join(CustomerOrder, CustomerOrderPlacement.customer_order_id == CustomerOrder.id)
+        .filter(
+            CustomerOrderLine.catalog_product_id.in_(ids),
+            CustomerOrder.bucket == "received",
+            CustomerOrder.is_open.is_(True),
+            CustomerOrderLine.status == "active",
+            CustomerOrderLine.quantity > CustomerOrderLine.quantity_billed,
+        )
+        .group_by(CustomerOrderLine.catalog_product_id)
+        .all()
+    )
+    for pid, qty in unconfirmed:
+        totals[int(pid)] = totals.get(int(pid), 0) + max(0, int(qty or 0))
+    waiting = (
+        db.query(CustomerOpenLine.catalog_product_id, func.sum(CustomerOpenLine.quantity_open))
+        .filter(
+            CustomerOpenLine.catalog_product_id.in_(ids),
+            CustomerOpenLine.quantity_open > 0,
+        )
+        .group_by(CustomerOpenLine.catalog_product_id)
+        .all()
+    )
+    for pid, qty in waiting:
+        totals[int(pid)] = totals.get(int(pid), 0) + int(qty or 0)
+    return totals

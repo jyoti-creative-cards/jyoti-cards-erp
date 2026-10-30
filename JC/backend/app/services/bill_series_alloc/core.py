@@ -7,6 +7,55 @@ from app.models.bill_series import BillSeries
 from app.models.customer_bill import CustomerBill
 
 
+def _letter_series(row: BillSeries) -> str | None:
+    prefix = (row.prefix or "").strip().upper()
+    if len(prefix) == 1 and prefix.isalpha() and row.start_num == 1 and row.end_num == 1000:
+        return prefix
+    return None
+
+
+def _series_exhausted(row: BillSeries) -> bool:
+    next_num = row.current_num + 1 if row.current_num >= row.start_num else row.start_num
+    return next_num > row.end_num
+
+
+def ensure_next_letter_series(db: Session) -> BillSeries | None:
+    """When B1-1000 is finished, open C1-1000, then D, and so on.
+
+    Leaves any other series alone. Returns the letter series that still has numbers,
+    creating the next letter only when the latest one is used up.
+    """
+    rows = db.query(BillSeries).filter(BillSeries.is_active.is_(True)).all()
+    by_letter: dict[str, BillSeries] = {}
+    for row in rows:
+        letter = _letter_series(row)
+        if letter and letter not in by_letter:
+            by_letter[letter] = row
+    if not by_letter:
+        return None
+    letter = max(by_letter)
+    while True:
+        row = by_letter[letter]
+        if not _series_exhausted(row):
+            return row
+        nxt = chr(ord(letter) + 1)
+        if nxt > "Z":
+            return None
+        if nxt not in by_letter:
+            created = BillSeries(
+                name=f"{nxt}1-1000",
+                prefix=nxt,
+                start_num=1,
+                end_num=1000,
+                current_num=0,
+                is_active=True,
+            )
+            db.add(created)
+            db.flush()
+            return created
+        letter = nxt
+
+
 def bill_series_preview(db: Session, series_id: int) -> dict:
     row = db.get(BillSeries, series_id)
     if not row or not row.is_active:

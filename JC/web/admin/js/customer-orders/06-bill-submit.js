@@ -158,6 +158,48 @@
     }
   }
 
+  async function fetchStoredBill(billId) {
+    const headers = { ...(ctx.headers?.() || {}) };
+    delete headers["Content-Type"];
+    const base = (ctx.apiBase?.() || "").replace(/\/$/, "");
+    const res = await fetch(`${base}/customer-orders/bills/${billId}/stored-pdf`, { headers });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error("Could not open the saved bill");
+    return res.blob();
+  }
+
+  async function printStoredBill(billId) {
+    ctx.showLoading?.();
+    try {
+      const blob = await fetchStoredBill(billId);
+      if (!blob) return ctx.toast("Saved bill is not ready yet", "error");
+      const url = URL.createObjectURL(blob);
+      const w = window.open(url, "_blank");
+      if (!w) return ctx.toast("Allow pop-ups to print", "error");
+      setTimeout(() => { try { w.focus(); w.print(); } catch (_) {} }, 700);
+    } catch (e) {
+      ctx.toast(e.message || "Could not print", "error");
+    } finally { ctx.hideLoading?.(); }
+  }
+
+  async function downloadStoredBill(billId) {
+    ctx.showLoading?.();
+    try {
+      const blob = await fetchStoredBill(billId);
+      if (!blob) return ctx.toast("Saved bill is not ready yet", "error");
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "bill.pdf";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    } catch (e) {
+      ctx.toast(e.message || "Could not download", "error");
+    } finally { ctx.hideLoading?.(); }
+  }
+
   async function openBillDoc(billId, print) {
     ctx.showLoading?.();
     try {

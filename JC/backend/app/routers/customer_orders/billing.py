@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.deps import AuthContext, require_admin, require_permission
+from app.services.biz_date import today_ist, to_ist
 from app.services.cancel_key import require_cancel_key
 from app.models.catalog_product import CatalogProduct
 from app.models.city import City
@@ -37,7 +38,7 @@ from app.schemas.customer_order import (
     CloseableItemOut,
     CloseBatchIn,
 )
-from app.services.storage import customer_bill_qr_key, presigned_url, presigned_urls, storage_configured, upload_bytes
+from app.services.storage import customer_bill_qr_key, download_bytes, presigned_url, presigned_urls, storage_configured, upload_bytes
 from decimal import Decimal
 
 from app.models.freight_agent import FreightAgent
@@ -343,6 +344,18 @@ def void_bill_endpoint(
     response_cache.invalidate("catalog:")
     return result
 
+_EDIT_SAME_DAY = "You can edit a bill only on the day it was made"
+
+
+def _staff_may_edit_bill(auth: AuthContext, bill: CustomerBill) -> None:
+    """Admin edits any day. Staff edit only on the IST day the bill was created."""
+    if auth.is_admin:
+        return
+    created = bill.created_at
+    if created is None or to_ist(created).date() != today_ist():
+        raise HTTPException(403, _EDIT_SAME_DAY)
+
+
 @router.post("/bills/{bill_id}/edit-preview")
 def preview_edit_bill_endpoint(
     bill_id: int,
@@ -355,6 +368,10 @@ def preview_edit_bill_endpoint(
     of a divergent client-side estimate that silently dropped GST/extra charges."""
     from app.services.customer_bill_process import preview_edit_customer_bill
 
+    bill = db.get(CustomerBill, bill_id)
+    if not bill:
+        raise HTTPException(404, "bill not found")
+    _staff_may_edit_bill(auth, bill)
     extra = [{"name": c.name, "amount": c.amount} for c in body.additional_charges] if body.additional_charges else None
     totals = preview_edit_customer_bill(
         db,
@@ -374,7 +391,7 @@ def preview_edit_bill_endpoint(
     db.rollback()  # this endpoint must never persist — _prepare_edit_bill_totals only reads
     return totals
 
-@router.put("/bills/{bill_id}")
+@router.put("/bills/{bill_id}", dependencies=[Depends(require_cancel_key)])
 def update_bill_endpoint(
     bill_id: int,
     body: EditBillIn,
@@ -386,6 +403,7 @@ def update_bill_endpoint(
         raise HTTPException(404, "bill not found")
     if bill.cancelled_at:
         raise HTTPException(400, "bill cancelled")
+    _staff_may_edit_bill(auth, bill)
     customer = db.get(Customer, bill.customer_id)
     extra = [{"name": c.name, "amount": c.amount} for c in body.additional_charges] if body.additional_charges else None
     try:
@@ -446,6 +464,7 @@ def patch_bill_number(
         raise HTTPException(404, "bill not found")
     if bill.cancelled_at:
         raise HTTPException(400, "cannot edit — bill cancelled")
+    _staff_may_edit_bill(auth, bill)
     new_num = (body.bill_number or "").strip()
     if not new_num:
         raise HTTPException(400, "bill number required")
@@ -490,6 +509,35 @@ def patch_bill_number(
     from app.services.doc_jobs import enqueue_bill_pdf
     enqueue_bill_pdf(bill.id)
     return {"ok": True, "bill_id": bill.id, "bill_number": bill.bill_number}
+
+@router.get("/bills/{bill_id}/stored-pdf")
+def stored_bill_pdf(
+    bill_id: int,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("customer_orders.read")),
+):
+    """The saved bill file. Does not draw a new PDF."""
+    from urllib.parse import quote
+
+    from fastapi.responses import Response
+
+    bill = db.get(CustomerBill, bill_id)
+    if not bill or not bill.document_key:
+        raise HTTPException(404, "saved bill is not ready")
+    data = download_bytes(bill.document_key)
+    if not data:
+        raise HTTPException(404, "saved bill is not ready")
+    customer = db.get(Customer, bill.customer_id)
+    party = customer.business_name if customer else ""
+    safe = f"{bill.bill_number or 'bill'}.pdf".replace('"', "")
+    if party:
+        safe = f"{bill.bill_number or 'bill'} {party}.pdf".replace('"', "")
+    ascii_name = safe.encode("ascii", "ignore").decode() or "bill.pdf"
+    headers = {
+        "Content-Disposition": f'inline; filename="{ascii_name}"; filename*=UTF-8\'\'{quote(safe)}',
+    }
+    return Response(content=data, media_type="application/pdf", headers=headers)
+
 
 @router.get("/bills/{bill_id}/document")
 def get_bill_document(

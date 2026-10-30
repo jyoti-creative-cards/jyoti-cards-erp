@@ -241,11 +241,11 @@
       return Promise.resolve(true);
     }
     return new Promise(resolve => {
-      document.getElementById("modal-title").textContent = "Edit this bill";
+      document.getElementById("modal-title").textContent = "Save this edited bill";
       document.getElementById("modal-body").innerHTML = `
         <label class="label">Your cancel key</label>
         <input class="input" id="co-edit-cancel-key" type="password" autocomplete="off" placeholder="Your own key" style="width:100%;" />
-        <p style="font-size:13px;color:var(--muted);margin:10px 0 0;">Editing a bill needs the same key as cancelling one.</p>`;
+        <p style="font-size:13px;color:var(--muted);margin:10px 0 0;">Saving an edited bill needs the same key as cancelling one.</p>`;
       document.getElementById("modal-footer").innerHTML = `
         <button class="btn btn-secondary" id="co-edit-key-back">Back</button>
         <button class="btn btn-primary" id="co-edit-key-ok">Continue</button>`;
@@ -264,8 +264,6 @@
 
   async function openEditBill(billId) {
     if (!billId) return;
-    const allowed = await askEditCancelKey();
-    if (!allowed) return;
     editBillId = billId;
     processStep = 1;
     processBusy = false;

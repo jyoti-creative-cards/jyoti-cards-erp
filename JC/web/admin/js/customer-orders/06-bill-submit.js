@@ -10,6 +10,12 @@
       return ctx.toast("Enter transport charges", "error");
     }
     if (!editBillId && !billSeriesId) return ctx.toast("Select a bill series", "error");
+    if (editBillId) {
+      const allowed = await askEditCancelKey();
+      if (!allowed) return;
+    } else {
+      window.__jcCancelKey = "";
+    }
     processBusy = true;
     showBillReady({ bill_number: "Saving…", grand_total: "", bill_id: 0, pending: true });
     try {
@@ -18,6 +24,7 @@
       if (editBillId) {
         res = await ctx.api(`/customer-orders/bills/${editBillId}`, {
           method: "PUT",
+          headers: { "X-Cancel-Key": window.__jcCancelKey || "" },
           body: JSON.stringify(body),
         });
       } else {

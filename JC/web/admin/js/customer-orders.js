@@ -1528,11 +1528,11 @@ const CustomerOrders = (() => {
   function cancelBill(billId, fromMoney) {
     document.getElementById("modal-title").textContent = "Cancel this bill";
     document.getElementById("modal-body").innerHTML = `
-      ${ctx.isOwnerAdmin?.() ? "" : `<label class="label">Your cancel key</label>
-      <input class="input" id="co-cancel-key" type="password" autocomplete="off" placeholder="Your own key" style="width:100%;margin-bottom:12px;" />`}
       <label class="label">Reason (required)</label>
       <textarea class="input" id="co-reason-input" rows="3" style="width:100%;"></textarea>
-      <p style="font-size:13px;color:var(--muted);margin:10px 0 0;">Cancel only the bill when the order is right and the bill is wrong, such as transport or charges. The order stays booked. Cancel the complete order when this sale should not stay.</p>`;
+      <p style="font-size:13px;color:var(--muted);margin:10px 0 12px;">Cancel only the bill when the order is right and the bill is wrong, such as transport or charges. The order stays booked. Cancel the complete order when this sale should not stay.</p>
+      <label class="label">Your cancel key</label>
+      <input class="input" id="co-cancel-key" type="password" autocomplete="off" placeholder="Your own key" style="width:100%;" />`;
     document.getElementById("modal-footer").innerHTML = `
       <button class="btn btn-secondary" onclick="App.closeModal()">Back</button>
       <button class="btn btn-secondary" id="co-cancel-bill-only">Cancel bill, keep order</button>
@@ -1844,11 +1844,11 @@ const CustomerOrders = (() => {
       return Promise.resolve(true);
     }
     return new Promise(resolve => {
-      document.getElementById("modal-title").textContent = "Edit this bill";
+      document.getElementById("modal-title").textContent = "Save this edited bill";
       document.getElementById("modal-body").innerHTML = `
         <label class="label">Your cancel key</label>
         <input class="input" id="co-edit-cancel-key" type="password" autocomplete="off" placeholder="Your own key" style="width:100%;" />
-        <p style="font-size:13px;color:var(--muted);margin:10px 0 0;">Editing a bill needs the same key as cancelling one.</p>`;
+        <p style="font-size:13px;color:var(--muted);margin:10px 0 0;">Saving an edited bill needs the same key as cancelling one.</p>`;
       document.getElementById("modal-footer").innerHTML = `
         <button class="btn btn-secondary" id="co-edit-key-back">Back</button>
         <button class="btn btn-primary" id="co-edit-key-ok">Continue</button>`;
@@ -1867,8 +1867,6 @@ const CustomerOrders = (() => {
 
   async function openEditBill(billId) {
     if (!billId) return;
-    const allowed = await askEditCancelKey();
-    if (!allowed) return;
     editBillId = billId;
     processStep = 1;
     processBusy = false;
@@ -2618,6 +2616,12 @@ const CustomerOrders = (() => {
       return ctx.toast("Enter transport charges", "error");
     }
     if (!editBillId && !billSeriesId) return ctx.toast("Select a bill series", "error");
+    if (editBillId) {
+      const allowed = await askEditCancelKey();
+      if (!allowed) return;
+    } else {
+      window.__jcCancelKey = "";
+    }
     processBusy = true;
     showBillReady({ bill_number: "Saving…", grand_total: "", bill_id: 0, pending: true });
     try {
@@ -2626,6 +2630,7 @@ const CustomerOrders = (() => {
       if (editBillId) {
         res = await ctx.api(`/customer-orders/bills/${editBillId}`, {
           method: "PUT",
+          headers: { "X-Cancel-Key": window.__jcCancelKey || "" },
           body: JSON.stringify(body),
         });
       } else {

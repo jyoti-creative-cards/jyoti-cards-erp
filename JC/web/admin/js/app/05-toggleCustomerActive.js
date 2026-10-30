@@ -357,11 +357,54 @@
     const page = document.getElementById("lookup-sections");
     if (page) page.innerHTML = `<p style="color:var(--muted);">Loading…</p>`;
     try {
-      lookups = await api("/lookups", {}, 0);
-      renderLookupSections();
+      const names = await api("/catalog/categories", {}, 0);
+      renderCatalogCategories(names || []);
     } catch (e) {
       if (page) page.innerHTML = `<p style="color:var(--danger);">${esc(e.message || "Could not load categories")}</p>`;
     }
+  }
+
+  function renderCatalogCategories(names) {
+    const el = document.getElementById("lookup-sections");
+    if (!el) return;
+    const list = names || [];
+    const chips = list.length
+      ? list.map(name => `<span class="lookup-chip"><span class="lookup-chip-text">${esc(name)}</span></span>`).join("")
+      : `<p class="lookup-empty">No categories yet.</p>`;
+    const canAdd = canWrite("catalog") || canWrite("setup") || isAdmin();
+    el.innerHTML = `<section class="lookup-card">
+      <div class="lookup-card-head">
+        <span class="lookup-card-letter">C</span>
+        <div>
+          <h3 class="lookup-card-title">Categories</h3>
+          <p class="lookup-card-hint">Album, box, and the other groups already on products.</p>
+        </div>
+        <span class="lookup-card-count">${list.length}</span>
+      </div>
+      <div class="lookup-chip-list">${chips}</div>
+      ${canAdd ? `<form class="lookup-add-row" onsubmit="event.preventDefault();App.submitCatalogCategory();">
+        <input id="catalog-category-input" class="input lookup-add-input" type="text" maxlength="120" placeholder="Type a new category…" autocomplete="off" />
+        <button type="submit" class="btn btn-primary">Add</button>
+      </form>` : ""}
+    </section>`;
+  }
+
+  async function submitCatalogCategory() {
+    const input = document.getElementById("catalog-category-input");
+    const val = (input?.value || "").trim();
+    if (!val) {
+      toast("Enter a category name", "error");
+      input?.focus();
+      return;
+    }
+    try {
+      const res = await api("/catalog/categories", { method: "POST", body: JSON.stringify({ value: val }) });
+      Catalog.forgetProductCategories?.();
+      Products.forgetLookups?.();
+      renderCatalogCategories(res.categories || []);
+      toast(res.created ? "Added" : "Already in the list", "success");
+      document.getElementById("catalog-category-input")?.focus();
+    } catch (e) { toast(e.message, "error"); }
   }
 
   function renderLookupSections() {

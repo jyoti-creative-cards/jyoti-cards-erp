@@ -33,6 +33,7 @@ from app.schemas.catalog import (
     VendorOption,
 )
 from app.services.activity import log_from_auth
+from app.services.catalog_categories import add_category_name, list_category_names
 from app.services.cost_visibility import (
     can_see_cost,
     hide_cost,
@@ -118,21 +119,36 @@ def product_options(db: Session = Depends(get_db)) -> list[dict]:
     )
     return [{"id": int(r.id), "our_product_id": r.our_product_id} for r in rows]
 
+class CategoryCreate(BaseModel):
+    value: str
+
+
 @router.get("/categories", dependencies=[Depends(require_permission("catalog.read"))])
 def list_product_categories(db: Session = Depends(get_db)) -> list[str]:
-    """Category dropdown values, taken from the products themselves."""
-    rows = (
-        db.query(CatalogProduct.category, CatalogProduct.second_category, CatalogProduct.category_3)
-        .filter(CatalogProduct.is_active.is_(True), CatalogProduct.deleted_at.is_(None))
-        .all()
-    )
-    found: set[str] = set()
-    for category, second, third in rows:
-        for value in (category, second, third):
-            text = (value or "").strip()
-            if text:
-                found.add(text)
-    return sorted(found, key=str.lower)
+    """Category names already on products, plus names saved from Setup."""
+    return list_category_names(db)
+
+
+@router.post("/categories", dependencies=[Depends(require_permission("catalog.write"))])
+def create_product_category(
+    body: CategoryCreate,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("catalog.write")),
+) -> dict:
+    try:
+        name, created = add_category_name(db, body.value)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    if created:
+        log_from_auth(
+            db,
+            auth,
+            action="create",
+            entity_type="catalog_category",
+            entity_label=name,
+        )
+        db.commit()
+    return {"value": name, "created": created, "categories": list_category_names(db)}
 
 @router.get("/year-groups", dependencies=[Depends(require_permission("catalog.read"))])
 def list_product_year_groups(db: Session = Depends(get_db)) -> list[str]:

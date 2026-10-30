@@ -296,6 +296,10 @@
   let productCategories = [];
   let productYearGroups = [];
 
+  function forgetProductCategories() {
+    productCategories = [];
+  }
+
   async function ensureProductCategories() {
     if (productCategories.length) return productCategories;
     try {

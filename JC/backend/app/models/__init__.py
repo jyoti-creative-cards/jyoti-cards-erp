@@ -4,6 +4,7 @@ from app.models.activity_log import ActivityLog
 from app.models.catalog_addon_link import CatalogAddonLink
 from app.models.catalog_alternative import CatalogAlternative
 from app.models.catalog_product import CatalogProduct
+from app.models.saved_category import SavedCategory
 from app.models.city import City
 from app.models.customer import Customer
 from app.models.entity_history import EntityHistory
@@ -34,7 +35,7 @@ from app.models.runtime_flag import RuntimeFlag
 
 __all__ = [
     "ActivityLog", "AddonProduct", "AddonStockLedger", "CatalogAddonLink", "CatalogAlternative",
-    "CatalogProduct", "City", "Customer", "CustomerOrder", "CustomerOrderLine", "CustomerOrderPlacement", "CustomerOpenLine",
+    "CatalogProduct", "SavedCategory", "City", "Customer", "CustomerOrder", "CustomerOrderLine", "CustomerOrderPlacement", "CustomerOpenLine",
     "CustomerBill", "CustomerBillLine", "BillSeries", "FreightAgent", "FreightLedgerEntry", "Expense", "ExpenseHead", "ExpenseSource", "ExpenseSubhead",
     "CustomerArAccount", "ArLedgerEntry", "PaymentMode", "CustomerReturn", "CustomerReturnLine", "ManualLoss",
     "PriceHistory", "Route", "Staff", "Vendor",

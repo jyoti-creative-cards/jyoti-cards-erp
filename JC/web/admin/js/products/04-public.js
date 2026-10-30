@@ -5,6 +5,6 @@
     openItem, openProductDetail, bookThisProduct, saveBulkSellPrices,
     openAlternativesManager, closeAlternativesManager, onAltsBoardSearch,
     openAltPicker, closeAltPicker, onAltPickerSearch, addAlternative, removeAlternative,
-    enlargeImage, closeLightbox,
+    enlargeImage, closeLightbox, forgetLookups,
   };
 })();

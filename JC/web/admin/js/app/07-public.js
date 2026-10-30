@@ -13,7 +13,7 @@
     setCustomerStatusTab, toggleInactiveCustomers, toggleMissingPhoneFilter, setCustomerOpeningBalance, saveCustomerOpeningBalance,
     toggleCustomerLedgerRow, setCustomerLedgerDetails, setCustomerRealOnly, showCustomerMoneyLedger, onPartyLedgerSearch, pickPartyLedger, exportPartyLedger, printPartyLedger, openShortcut, closeShortcut, onShortcutSearch, pickShortcut, openSelling, billCustomer, collectCustomer, openCustomerMoney,
     loadRecycleBin, setRecycleTab, openRecycleDetail, restoreItem, purgeItem,
-    addLookup, submitLookup, editLookup, deleteLookup, openCustomerLedgerEntry, createCustomerOrder,
+    addLookup, submitLookup, submitCatalogCategory, editLookup, deleteLookup, openCustomerLedgerEntry, createCustomerOrder,
     setOrderTakerMode, onOrderTakerStock, onOrderTakerCustomer, pickOrderTakerCustomer, clearOrderTakerCustomer, onOrderTakerItem, addOrderTakerItem, removeOrderTakerLine, saveOrderTakerOrder,
     closeModal, init, searchItemLookup, setWhatsappSends,
     downloadExportKind, downloadBackupZip,

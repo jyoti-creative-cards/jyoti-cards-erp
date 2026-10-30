@@ -441,6 +441,11 @@ const Products = (() => {
     await load();
   }
 
+  function forgetLookups() {
+    lookups.categories = [];
+    lookups.year_groups = [];
+  }
+
   async function ensureLookups() {
     if (lookups.categories.length && lookups.year_groups.length) return;
     try {
@@ -1487,6 +1492,6 @@ const Products = (() => {
     openItem, openProductDetail, bookThisProduct, saveBulkSellPrices,
     openAlternativesManager, closeAlternativesManager, onAltsBoardSearch,
     openAltPicker, closeAltPicker, onAltPickerSearch, addAlternative, removeAlternative,
-    enlargeImage, closeLightbox,
+    enlargeImage, closeLightbox, forgetLookups,
   };
 })();

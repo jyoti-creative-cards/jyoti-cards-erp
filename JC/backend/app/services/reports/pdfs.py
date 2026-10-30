@@ -75,7 +75,7 @@ def render_ar_statement_pdf(db: Session, customer_id: int) -> bytes:
     totals = customer_ar_totals(db, customer_id)
     entries = build_ar_ledger(db, customer_id)
     story = [
-        Paragraph("Customer statement (AR)", styles["Heading1"]),
+        Paragraph("Customer ledger", styles["Heading1"]),
         Paragraph(_customer_label(db, customer_id), styles["Heading3"]),
         Spacer(1, 6),
         Paragraph(
@@ -91,8 +91,8 @@ def render_ar_statement_pdf(db: Session, customer_id: int) -> bytes:
         rows.append([
             _pdf_day(e.get("value_date") or e.get("created_at")),
             e.get("entry_type") or "",
-            (e.get("description") or "")[:48],
-            _money(e.get("signed_amount") or e.get("amount")),
+            (e.get("display_name") or e.get("description") or "")[:80],
+            _money(e.get("display_amount") or e.get("signed_amount") or e.get("amount")),
             _money(e.get("running_balance")),
         ])
     t = Table(rows, colWidths=[70, 70, 200, 80, 80])

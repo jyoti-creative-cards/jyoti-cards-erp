@@ -397,7 +397,7 @@
     try {
       arDetail = await ctx.api(`/accounts-receivable/customer/${customerId}`, {}, 0);
       currentCustomer = customerId;
-      arTab = opts?.tab === "ledger" || opts?.tab === "payments" ? opts.tab : "statement";
+      arTab = opts?.tab === "statement" || opts?.tab === "payments" ? opts.tab : "ledger";
       arExpandAll = false;
       arDetailGen += 1;
       arLineCache = { bills: {}, returns: {} };
@@ -437,7 +437,9 @@
         actionsHtml: `
             ${(ctx.can?.("customer_orders.write") || ctx.isAdmin?.()) ? `<button class="btn btn-primary" onclick="CustomerOrders.openOfflineWizard(${currentCustomer})">Create order</button>` : ""}
             ${(ctx.isAdmin?.() || ctx.can?.("ar.write")) ? `<button class="btn btn-primary" onclick="Finance.openArSettle()">Collect</button>` : ""}
-            <button class="btn btn-secondary" onclick="Finance.shareArStatement()">Print / PDF / WA</button>
+            <button class="btn btn-secondary" onclick="Finance.printCustomerLedger()">Print</button>
+            <button class="btn btn-secondary" onclick="Finance.downloadCustomerLedger()">PDF</button>
+            <button class="btn btn-secondary" onclick="Finance.excelCustomerLedger()">Excel</button>
             ${ctx.isAdmin?.() ? `<button class="btn btn-secondary" onclick="Finance.setArOpeningBalance()">Set opening</button>` : ""}
             <button class="btn btn-secondary" onclick="App.openCustomerDetail(${currentCustomer})">Open customer</button>`,
       });
@@ -474,6 +476,41 @@
       <div style="margin-bottom:12px;">${tabs}</div>
       ${realEntriesBar()}
       ${content}`;
+  }
+
+  async function printCustomerLedger() {
+    if (!currentCustomer) return;
+    ctx.showLoading?.();
+    try {
+      await DocShare.openPdf(`/share/statements/ar/${currentCustomer}/pdf`, { print: true, filename: "ledger.pdf" });
+    } catch (e) { ctx.toast(e.message || "Could not print the ledger", "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  async function downloadCustomerLedger() {
+    if (!currentCustomer) return;
+    ctx.showLoading?.();
+    try {
+      await DocShare.openPdf(`/share/statements/ar/${currentCustomer}/pdf`, { print: false, filename: "ledger.pdf" });
+    } catch (e) { ctx.toast(e.message || "Could not download the ledger", "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  function excelCustomerLedger() {
+    if (!currentCustomer || !arDetail) return ctx.toast("Open a party first", "error");
+    const typeLabel = { bill: "Bill", credit_note: "Credit Note", opening_balance: "Opening", payment: "Payment", payment_reversal: "Reversal" };
+    const rows = [["When", "Type", "Description", "Amount", "Balance"]];
+    for (const e of newestFirst(liveMoneyEntries(arDetail.entries))) {
+      rows.push([
+        fmtDocDate(e.display_date || e.value_date || e.created_at),
+        typeLabel[e.entry_type] || e.entry_type || "",
+        e.display_name || e.description || "",
+        e.display_amount != null && e.display_amount !== "" ? e.display_amount : e.signed_amount,
+        e.running_balance,
+      ]);
+    }
+    const name = String(arDetail.customer_label || "party-ledger").replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "") || "party-ledger";
+    Xlsx.download(`${name}.xlsx`, rows);
   }
 
   function shareArStatement() {

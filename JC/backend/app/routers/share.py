@@ -266,7 +266,7 @@ def bill_pdf(
 def ar_statement_pdf(
     customer_id: int,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(require_admin),
+    auth: AuthContext = Depends(require_permission("ar.read")),
 ):
     cust = db.get(Customer, customer_id)
     if not cust:

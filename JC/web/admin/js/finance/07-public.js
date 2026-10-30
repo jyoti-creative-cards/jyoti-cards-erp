@@ -8,7 +8,7 @@
     openCustomerAr, refreshOpenAr, setArTab, toggleArDetails, openArSettle, closeArSettle, submitArSettle, onArSettleAmount,
     toggleCollectDateLock, onCollectDateInput,
     undoArPayment, undoApPayment, setRealEntriesOnly, viewCustomerBill,
-    shareArStatement, shareApStatement,
+    shareArStatement, printCustomerLedger, downloadCustomerLedger, excelCustomerLedger, shareApStatement,
     setArOpeningBalance, setApOpeningBalance, saveArOpeningBalance, saveApOpeningBalance,
     openExpenseForm, onExpenseHeadChange, addExpenseHead, addExpenseSubhead, addExpenseSource, renameExpenseSource, deleteExpenseSource, editExpense, saveExpenseEdit, closeExpenseForm, submitExpense, deleteExpense, onExpenseFilterChange, clearExpenseFilters,
     setJournalKind, setJournalLedger, setJournalMode, setJournalField, setJournalLine, removeJournalLine, searchJournalProduct,

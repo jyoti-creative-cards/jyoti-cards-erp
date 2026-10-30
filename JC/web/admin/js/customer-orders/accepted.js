@@ -1837,25 +1837,33 @@ const CustomerOrders = (() => {
       window.__jcCancelKey = "";
       return Promise.resolve(true);
     }
+    // The bill screen is a full-page layer. A second dialog opens underneath it,
+    // so the key has to sit in this screen's own footer.
     return new Promise(resolve => {
-      document.getElementById("modal-title").textContent = "Save this edited bill";
-      document.getElementById("modal-body").innerHTML = `
-        <label class="label">Your cancel key</label>
-        <input class="input" id="co-edit-cancel-key" type="password" autocomplete="off" placeholder="Your own key" style="width:100%;" />
-        <p style="font-size:13px;color:var(--muted);margin:10px 0 0;">Saving an edited bill needs the same key as cancelling one.</p>`;
-      document.getElementById("modal-footer").innerHTML = `
-        <button class="btn btn-secondary" id="co-edit-key-back">Back</button>
-        <button class="btn btn-primary" id="co-edit-key-ok">Continue</button>`;
-      document.getElementById("co-edit-key-back").onclick = () => { App.closeModal(); resolve(false); };
-      document.getElementById("co-edit-key-ok").onclick = () => {
-        const key = (document.getElementById("co-edit-cancel-key")?.value || "").trim();
+      const footer = document.getElementById("co-wizard-footer");
+      if (!footer) {
+        resolve(false);
+        return;
+      }
+      footer.innerHTML = `
+        <input class="input" id="co-edit-cancel-key" type="password" autocomplete="off" placeholder="Your cancel key" style="flex:1;min-width:160px;" />
+        <button type="button" class="btn btn-secondary" id="co-edit-key-back">Back</button>
+        <button type="button" class="btn btn-primary" id="co-edit-key-ok">Save bill</button>`;
+      const input = document.getElementById("co-edit-cancel-key");
+      input?.focus();
+      const stop = (ok) => resolve(ok);
+      document.getElementById("co-edit-key-back").onclick = () => {
+        renderProcessWizard();
+        stop(false);
+      };
+      const go = () => {
+        const key = (input?.value || "").trim();
         if (!key) return ctx.toast("Enter your cancel key", "error");
         window.__jcCancelKey = key;
-        App.closeModal();
-        resolve(true);
+        stop(true);
       };
-      document.getElementById("modal").classList.remove("hidden");
-      document.getElementById("co-edit-cancel-key")?.focus();
+      document.getElementById("co-edit-key-ok").onclick = go;
+      input?.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
     });
   }
 

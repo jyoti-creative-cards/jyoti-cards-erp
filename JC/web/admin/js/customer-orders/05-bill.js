@@ -380,11 +380,16 @@
     finally { ctx.hideLoading?.(); }
   }
 
-  function closeProcessWizard() {
+  function closeProcessWizard(opts) {
     document.getElementById("co-wizard")?.classList.add("hidden");
     editBillId = null;
     editBillNumber = "";
     editBillOriginalQty = {};
+    if (opts && opts.done && window.__jcLedgerReturn) {
+      App.returnToLedger?.();
+      return;
+    }
+    if (window.__jcLedgerReturn && window.__jcLedgerReturn.kind === "money") window.__jcLedgerReturn = null;
   }
 
   /** Lines whose qty on this bill edit dropped below what was originally billed —
@@ -915,16 +920,21 @@
   function applySelectedOrders() {
     const direct = processLines.filter(l => l.direct);
     const chosen = new Set(selectedPlacementIds.map(Number));
+    const byCid = new Map((processContext?.lines || []).map(l => [Number(l.catalog_product_id), l]));
+    const seen = [];
     const qty = {};
     for (const order of billableOrders) {
       if (!chosen.has(Number(order.placement_id))) continue;
       for (const ln of order.lines || []) {
         const cid = Number(ln.catalog_product_id);
+        if (!seen.includes(cid)) seen.push(cid);
         qty[cid] = (qty[cid] || 0) + Number(ln.quantity || 0);
       }
     }
-    const booked = (processContext?.lines || []).filter(l => qty[l.catalog_product_id] > 0).map(l => {
-      const q = Math.min(Number(l.quantity_open) || 0, qty[l.catalog_product_id] || 0);
+    const booked = seen.map(cid => {
+      const l = byCid.get(cid);
+      if (!l || !(qty[cid] > 0)) return null;
+      const q = Math.min(Number(l.quantity_open) || 0, qty[cid] || 0);
       return {
         ...l,
         quantity_open: q,
@@ -936,7 +946,7 @@
         skip_addon_ids: l.skip_addon_ids || [],
         direct: false,
       };
-    }).filter(l => l.quantity_open > 0);
+    }).filter(l => l && l.quantity_open > 0);
     const bookedIds = new Set(booked.map(l => Number(l.catalog_product_id)));
     processLines = booked.concat(direct.filter(l => !bookedIds.has(Number(l.catalog_product_id))));
     return processLines.length > 0;

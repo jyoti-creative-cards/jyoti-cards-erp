@@ -932,6 +932,9 @@ const CustomerOrders = (() => {
     }
     const canWrite = !!ctx.canWrite?.("customer_orders");
     const canMoney = !!ctx.isAdmin?.() || !!ctx.canWrite?.("ar") || !!ctx.canWrite?.("finance");
+    const ledgerBack = window.__jcLedgerReturn
+      ? `<button type="button" class="btn btn-secondary btn-sm" style="margin:0 0 12px;" onclick="App.returnToLedger()">← Back to ledger</button>`
+      : "";
 
     if (currentBucket === "open") {
       const lines = currentOrder.open_lines || [];
@@ -948,6 +951,7 @@ const CustomerOrders = (() => {
       </div>` : "";
       const canBill = canWrite && (lines.length || waiting.length);
       el.innerHTML = `
+        ${ledgerBack}
         ${cashWarningHtml(currentOrder)}
         ${canBill ? `<div class="ui-toolbar" style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">
           <button class="btn btn-primary" onclick="CustomerOrders.processOrder()">Create Bill</button>
@@ -979,6 +983,7 @@ const CustomerOrders = (() => {
 
     if (currentBucket === "billed" && (currentOrder.bills || []).length) {
       el.innerHTML = `
+        ${ledgerBack}
         ${cashWarningHtml(currentOrder)}
         <div class="ui-toolbar" style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">
           ${canWrite ? `<button class="btn btn-primary btn-sm" onclick="CustomerOrders.goToDispatch()">Dispatch</button>` : ""}
@@ -1053,6 +1058,7 @@ const CustomerOrders = (() => {
     if (currentBucket === "received") {
       const placements = currentOrder.placements || [];
       el.innerHTML = `
+        ${ledgerBack}
         ${cashWarningHtml(currentOrder)}
         ${canWrite && placements.length ? `<div class="ui-toolbar" style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">
           <button class="btn btn-primary btn-sm" onclick="CustomerOrders.confirmOrder(${detailCustomerId})">✓ Confirm order</button>
@@ -1110,7 +1116,7 @@ const CustomerOrders = (() => {
 
     // cancelled / closed / billed-without-bills fallback
     const placements = currentOrder.placements || [];
-    el.innerHTML = `<div class="ord-hub-list">${placements.length ? placements.map(p => {
+    el.innerHTML = `${ledgerBack}<div class="ord-hub-list">${placements.length ? placements.map(p => {
       const openKey = `hist-${p.id}`;
       const expanded = coExpandedId === openKey;
       const linesHtml = `<table class="data vo-hub-table"><thead><tr><th>Product</th><th>Qty</th><th>Billed</th><th>Rate</th></tr></thead><tbody>
@@ -1551,6 +1557,7 @@ const CustomerOrders = (() => {
         ctx.invalidateCache?.("/stock");
         ctx.invalidateCache?.("/accounts-receivable");
         if (fromMoney) await Finance.refreshOpenAr?.();
+        else if (window.__jcLedgerReturn) await App.returnToLedger?.();
         else if (detailCustomerId) await openDetail(detailCustomerId, "open");
       }).catch(e => ctx.toast(e.message, "error"))
         .finally(() => ctx.hideLoading?.());
@@ -1976,11 +1983,16 @@ const CustomerOrders = (() => {
     finally { ctx.hideLoading?.(); }
   }
 
-  function closeProcessWizard() {
+  function closeProcessWizard(opts) {
     document.getElementById("co-wizard")?.classList.add("hidden");
     editBillId = null;
     editBillNumber = "";
     editBillOriginalQty = {};
+    if (opts && opts.done && window.__jcLedgerReturn) {
+      App.returnToLedger?.();
+      return;
+    }
+    if (window.__jcLedgerReturn && window.__jcLedgerReturn.kind === "money") window.__jcLedgerReturn = null;
   }
 
   /** Lines whose qty on this bill edit dropped below what was originally billed —
@@ -2511,16 +2523,21 @@ const CustomerOrders = (() => {
   function applySelectedOrders() {
     const direct = processLines.filter(l => l.direct);
     const chosen = new Set(selectedPlacementIds.map(Number));
+    const byCid = new Map((processContext?.lines || []).map(l => [Number(l.catalog_product_id), l]));
+    const seen = [];
     const qty = {};
     for (const order of billableOrders) {
       if (!chosen.has(Number(order.placement_id))) continue;
       for (const ln of order.lines || []) {
         const cid = Number(ln.catalog_product_id);
+        if (!seen.includes(cid)) seen.push(cid);
         qty[cid] = (qty[cid] || 0) + Number(ln.quantity || 0);
       }
     }
-    const booked = (processContext?.lines || []).filter(l => qty[l.catalog_product_id] > 0).map(l => {
-      const q = Math.min(Number(l.quantity_open) || 0, qty[l.catalog_product_id] || 0);
+    const booked = seen.map(cid => {
+      const l = byCid.get(cid);
+      if (!l || !(qty[cid] > 0)) return null;
+      const q = Math.min(Number(l.quantity_open) || 0, qty[cid] || 0);
       return {
         ...l,
         quantity_open: q,
@@ -2532,7 +2549,7 @@ const CustomerOrders = (() => {
         skip_addon_ids: l.skip_addon_ids || [],
         direct: false,
       };
-    }).filter(l => l.quantity_open > 0);
+    }).filter(l => l && l.quantity_open > 0);
     const bookedIds = new Set(booked.map(l => Number(l.catalog_product_id)));
     processLines = booked.concat(direct.filter(l => !bookedIds.has(Number(l.catalog_product_id))));
     return processLines.length > 0;
@@ -2717,7 +2734,10 @@ const CustomerOrders = (() => {
         <p style="margin:12px 0 0;font-size:13px;color:var(--muted);">Print is the original and the duplicate. Download is the original only.</p>`;
     }
     if (footer) {
-      footer.innerHTML = `<button type="button" class="btn btn-secondary" onclick="CustomerOrders.closeProcessWizard()">Done</button>`;
+      const backLedger = window.__jcLedgerReturn
+        ? `<button type="button" class="btn btn-primary" onclick="CustomerOrders.closeProcessWizard({done:true})">Back to ledger</button>`
+        : `<button type="button" class="btn btn-secondary" onclick="CustomerOrders.closeProcessWizard()">Done</button>`;
+      footer.innerHTML = backLedger;
     }
     document.getElementById("co-wizard")?.classList.remove("hidden");
   }

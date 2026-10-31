@@ -435,12 +435,14 @@
       if (e.event_type === "ar_payment" && e.details?.reversed) return false;
       return true;
     });
-    for (const e of visible) {
+      for (const e of visible) {
       const d = e.details || {};
       const kind = e.event_type === "order_placed" ? "Order" : e.event_type === "order_cancelled" ? "Cancelled order" : e.event_type === "customer_bill" ? "Bill" : e.event_type === "ar_payment" ? "Payment" : e.event_type === "customer_return" ? "Return" : e.event_type === "ar_opening" ? "Opening" : e.event_type;
       lines.push([fmtDate(e.occurred_at), kind, e.title || "", e.summary || "", "", "", "", ""]);
-      for (const l of d.lines || []) {
-        lines.push(["", "", "", "", l.our_product_id || "", l.quantity ?? "", l.unit_price ?? l.selling_price ?? "", l.billed_amount ?? ""]);
+      if (customerLedgerExpandAll || ledgerRowOpen(e.id)) {
+        for (const l of d.lines || []) {
+          lines.push(["", "", "", "", l.our_product_id || "", l.quantity ?? "", l.unit_price ?? l.selling_price ?? "", l.billed_amount ?? ""]);
+        }
       }
       if (e.event_type === "ar_payment") {
         lines.push(["", "", d.payment_ref || "", d.comment || "", "", "", "", d.amount || ""]);
@@ -472,6 +474,8 @@
   }
 
   function openSelling(customerId, bucket = "open") {
+    const fromParty = partyLedgerCustomerId && !document.getElementById("view-party-ledger")?.classList.contains("hidden");
+    if (fromParty) rememberLedgerReturn("party", customerId || partyLedgerCustomerId);
     closeDetail();
     showView("selling");
     CustomerOrders.setHubMode?.("past");
@@ -481,6 +485,8 @@
   }
 
   async function billCustomer(customerId) {
+    const fromParty = partyLedgerCustomerId && !document.getElementById("view-party-ledger")?.classList.contains("hidden");
+    if (fromParty) rememberLedgerReturn("party", customerId || partyLedgerCustomerId);
     closeDetail();
     showView("selling");
     await CustomerOrders.openDetail?.(customerId, "open");
@@ -532,6 +538,24 @@
       openCustomerDetail(id, { tab: "activity" });
     } catch (e) { toast(e.message, "error"); }
     finally { hideLoading?.(); }
+  }
+
+  function rememberLedgerReturn(kind, customerId) {
+    window.__jcLedgerReturn = { kind, customerId: Number(customerId) || 0 };
+  }
+
+  function returnToLedger() {
+    const back = window.__jcLedgerReturn;
+    if (!back || !back.customerId) return false;
+    window.__jcLedgerReturn = null;
+    if (back.kind === "money") {
+      if (currentViewName !== "money") showView("money");
+      Finance.openCustomerAr?.(back.customerId);
+      return true;
+    }
+    showView("party-ledger");
+    pickPartyLedger(back.customerId);
+    return true;
   }
 
   function openCustomerLedgerEntry(customerId) {

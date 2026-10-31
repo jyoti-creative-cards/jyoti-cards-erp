@@ -482,7 +482,7 @@
     if (!currentCustomer) return;
     ctx.showLoading?.();
     try {
-      await DocShare.openPdf(`/share/statements/ar/${currentCustomer}/pdf`, { print: true, filename: "ledger.pdf" });
+      await DocShare.openPdf(`/share/statements/ar/${currentCustomer}/pdf${arExpandAll ? "?details=1" : ""}`, { print: true, filename: "ledger.pdf" });
     } catch (e) { ctx.toast(e.message || "Could not print the ledger", "error"); }
     finally { ctx.hideLoading?.(); }
   }
@@ -491,7 +491,7 @@
     if (!currentCustomer) return;
     ctx.showLoading?.();
     try {
-      await DocShare.openPdf(`/share/statements/ar/${currentCustomer}/pdf`, { print: false, filename: "ledger.pdf" });
+      await DocShare.openPdf(`/share/statements/ar/${currentCustomer}/pdf${arExpandAll ? "?details=1" : ""}`, { print: false, filename: "ledger.pdf" });
     } catch (e) { ctx.toast(e.message || "Could not download the ledger", "error"); }
     finally { ctx.hideLoading?.(); }
   }

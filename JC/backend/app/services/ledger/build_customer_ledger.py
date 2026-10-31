@@ -64,7 +64,7 @@ def build_customer_ledger(db: Session, customer_id: int, *, show_actor: bool = T
     placement_ids = [p.id for p, _ in placements]
     olines_by: dict[int, list] = defaultdict(list)
     if placement_ids:
-        for ln in db.query(CustomerOrderLine).filter(CustomerOrderLine.placement_id.in_(placement_ids)).all():
+        for ln in db.query(CustomerOrderLine).filter(CustomerOrderLine.placement_id.in_(placement_ids)).order_by(CustomerOrderLine.id.asc()).all():
             olines_by[ln.placement_id].append(ln)
     order_ids = {
         ln.catalog_product_id
@@ -136,7 +136,7 @@ def build_customer_ledger(db: Session, customer_id: int, *, show_actor: bool = T
     bill_ids = [b.id for b in bills]
     blines_by: dict[int, list] = defaultdict(list)
     if bill_ids:
-        for ln in db.query(CustomerBillLine).filter(CustomerBillLine.bill_id.in_(bill_ids)).all():
+        for ln in db.query(CustomerBillLine).filter(CustomerBillLine.bill_id.in_(bill_ids)).order_by(CustomerBillLine.id.asc()).all():
             blines_by[ln.bill_id].append(ln)
     bill_names, _bill_vendor_codes = _product_maps(
         db,

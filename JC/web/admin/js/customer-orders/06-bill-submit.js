@@ -111,7 +111,10 @@
         <p style="margin:12px 0 0;font-size:13px;color:var(--muted);">Print is the original and the duplicate. Download is the original only.</p>`;
     }
     if (footer) {
-      footer.innerHTML = `<button type="button" class="btn btn-secondary" onclick="CustomerOrders.closeProcessWizard()">Done</button>`;
+      const backLedger = window.__jcLedgerReturn
+        ? `<button type="button" class="btn btn-primary" onclick="CustomerOrders.closeProcessWizard({done:true})">Back to ledger</button>`
+        : `<button type="button" class="btn btn-secondary" onclick="CustomerOrders.closeProcessWizard()">Done</button>`;
+      footer.innerHTML = backLedger;
     }
     document.getElementById("co-wizard")?.classList.remove("hidden");
   }

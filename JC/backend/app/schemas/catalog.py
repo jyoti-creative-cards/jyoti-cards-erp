@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import List, Optional
 
@@ -143,6 +143,7 @@ class CatalogUpdate(BaseModel):
     marking: Optional[str] = Field(None, max_length=200)
     buying_price: Optional[Decimal] = Field(None, ge=0)
     selling_price: Optional[Decimal] = Field(None, ge=0)
+    selling_effective_from: Optional[date] = None
     image_keys: Optional[List[str]] = None
     alternative_our_product_ids: Optional[List[str]] = Field(None, max_length=3)
     addon_links: Optional[List[AddonLinkIn]] = None

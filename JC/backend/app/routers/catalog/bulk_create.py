@@ -169,6 +169,11 @@ def update_product(
     data = body.model_dump(exclude_unset=True)
     alt_ids = data.pop("alternative_our_product_ids", None)
     addon_links = data.pop("addon_links", None)
+    effective_from = data.pop("selling_effective_from", None)
+
+    old_buy = row.buying_price
+    old_sell = row.selling_price
+    old_started = row.created_at.date() if row.created_at else None
 
     if "our_product_id" in data and data["our_product_id"]:
         new_id = data["our_product_id"].strip()
@@ -197,26 +202,37 @@ def update_product(
         yg = year_key(row.year_group) or "—"
         raise HTTPException(409, f"product id {row.our_product_id} already exists for year group {yg}")
 
-    price_changed = False
     if "buying_price" in data and data["buying_price"] is not None:
         row.buying_price = data["buying_price"].quantize(Decimal("0.01"))
-        price_changed = True
         del data["buying_price"]
     if "selling_price" in data:
         row.selling_price = coerce_selling_price(row.buying_price, data["selling_price"])
-        price_changed = True
         del data["selling_price"]
-    elif price_changed:
-        # buy changed alone — clear accidental sell==buy copy
+    elif row.buying_price != old_buy:
         coerced = coerce_selling_price(row.buying_price, row.selling_price)
         if coerced != row.selling_price:
             row.selling_price = coerced
+
+    def _money(value):
+        if value is None:
+            return None
+        return Decimal(str(value)).quantize(Decimal("0.01"))
+
+    price_changed = _money(row.buying_price) != _money(old_buy) or _money(row.selling_price) != _money(old_sell)
 
     for k, v in data.items():
         setattr(row, k, v)
 
     if price_changed:
-        record_price_change(db, "catalog_product", row.id, row.buying_price, row.selling_price)
+        record_price_change(
+            db,
+            "catalog_product",
+            row.id,
+            row.buying_price or Decimal("0"),
+            row.selling_price,
+            effective_from=effective_from,
+            previous=(old_buy or Decimal("0"), old_sell, old_started),
+        )
 
     if alt_ids is not None:
         alt_db_ids = []
@@ -407,7 +423,7 @@ def get_product(product_id: int, db: Session = Depends(get_db), auth: AuthContex
                 addon_our_product_id=addon.our_product_id, addon_name=addon.name or addon.our_product_id,
                 quantity=lk.quantity, image_urls=presigned_urls(addon.image_keys or []),
             ))
-    ph = [{"buying_price": hide_cost(format(p.buying_price, "f"), auth), "selling_price": format(p.selling_price, "f") if p.selling_price else None, "recorded_at": p.recorded_at.isoformat()} for p in list_price_history(db, "catalog_product", product_id)]
+    ph = [{"buying_price": hide_cost(format(p.buying_price, "f"), auth), "selling_price": format(p.selling_price, "f") if p.selling_price else None, "recorded_at": p.recorded_at.isoformat(), "effective_from": p.effective_from.isoformat() if p.effective_from else None} for p in list_price_history(db, "catalog_product", product_id)]
     eh = [
         {
             "change_summary": hide_cost_in_diff_summary(h.change_summary, auth),

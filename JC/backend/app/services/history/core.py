@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any, Optional
 
@@ -101,12 +101,34 @@ def record_price_change(
     entity_id: int,
     buying_price: Decimal,
     selling_price: Optional[Decimal] = None,
+    effective_from: Optional[date] = None,
+    previous: Optional[tuple] = None,
 ) -> None:
+    """Store the new rate. previous is (buy, sell, started_on) for the rate being replaced, written once."""
+    from app.services.biz_date import today_ist
+
+    when = effective_from or today_ist()
+    if previous is not None:
+        already = (
+            db.query(PriceHistory.id)
+            .filter(PriceHistory.entity_type == entity_type, PriceHistory.entity_id == entity_id)
+            .first()
+        )
+        if already is None:
+            old_buy, old_sell, started = previous
+            db.add(PriceHistory(
+                entity_type=entity_type,
+                entity_id=entity_id,
+                buying_price=old_buy if old_buy is not None else Decimal("0"),
+                selling_price=old_sell,
+                effective_from=started or when,
+            ))
     db.add(PriceHistory(
         entity_type=entity_type,
         entity_id=entity_id,
-        buying_price=buying_price,
+        buying_price=buying_price if buying_price is not None else Decimal("0"),
         selling_price=selling_price,
+        effective_from=when,
     ))
 
 

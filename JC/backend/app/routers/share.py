@@ -265,6 +265,7 @@ def bill_pdf(
 @router.get("/statements/ar/{customer_id}/pdf")
 def ar_statement_pdf(
     customer_id: int,
+    details: bool = Query(False),
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("ar.read")),
 ):
@@ -274,7 +275,7 @@ def ar_statement_pdf(
     from app.services.ar_ledger import build_ar_ledger
     entries = build_ar_ledger(db, customer_id)
     name = statement_pdf_filename(cust.business_name, entries)
-    return _pdf_response(render_ar_statement_pdf(db, customer_id), name)
+    return _pdf_response(render_ar_statement_pdf(db, customer_id, details=details), name)
 
 
 @router.get("/statements/ap/{vendor_id}/pdf")

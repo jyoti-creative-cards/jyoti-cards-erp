@@ -70,7 +70,7 @@ def _doc() -> tuple[SimpleDocTemplate, list, object]:
     return doc, buf, styles
 
 
-def render_ar_statement_pdf(db: Session, customer_id: int) -> bytes:
+def render_ar_statement_pdf(db: Session, customer_id: int, details: bool = False) -> bytes:
     doc, buf, styles = _doc()
     totals = customer_ar_totals(db, customer_id)
     entries = build_ar_ledger(db, customer_id)
@@ -87,6 +87,22 @@ def render_ar_statement_pdf(db: Session, customer_id: int) -> bytes:
         Spacer(1, 10),
     ]
     rows = [["Date", "Type", "Particulars", "Amount", "Balance"]]
+    lines_by: dict[int, list] = {}
+    if details:
+        from collections import defaultdict
+
+        from app.models.customer_bill import CustomerBillLine
+
+        bill_ids = [e.get("bill_id") for e in entries if e.get("bill_id")]
+        lines_by = defaultdict(list)
+        if bill_ids:
+            for ln in (
+                db.query(CustomerBillLine)
+                .filter(CustomerBillLine.bill_id.in_(bill_ids))
+                .order_by(CustomerBillLine.id.asc())
+                .all()
+            ):
+                lines_by[int(ln.bill_id)].append(ln)
     for e in entries:
         rows.append([
             _pdf_day(e.get("value_date") or e.get("created_at")),
@@ -95,6 +111,15 @@ def render_ar_statement_pdf(db: Session, customer_id: int) -> bytes:
             _money(e.get("display_amount") or e.get("signed_amount") or e.get("amount")),
             _money(e.get("running_balance")),
         ])
+        if details and e.get("bill_id"):
+            for ln in lines_by.get(int(e["bill_id"]), []):
+                rows.append([
+                    "",
+                    "",
+                    f"{ln.our_product_id} × {ln.quantity_shipped} @ {_money(ln.unit_price)}",
+                    _money(ln.line_total),
+                    "",
+                ])
     t = Table(rows, colWidths=[70, 70, 200, 80, 80])
     t.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e2e8f0")),

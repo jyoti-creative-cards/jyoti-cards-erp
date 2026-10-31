@@ -11,7 +11,7 @@
     openCustomerDetail, closeDetail, openCustomerEdit, closeEditModal, saveCustomer,
     deleteCustomer, toggleCustomerActive, restoreCustomer, sendCredentials,
     setCustomerStatusTab, toggleInactiveCustomers, toggleMissingPhoneFilter, setCustomerOpeningBalance, saveCustomerOpeningBalance,
-    toggleCustomerLedgerRow, setCustomerLedgerDetails, setCustomerRealOnly, showCustomerMoneyLedger, onPartyLedgerSearch, pickPartyLedger, exportPartyLedger, printPartyLedger, openShortcut, closeShortcut, onShortcutSearch, pickShortcut, openSelling, billCustomer, collectCustomer, openCustomerMoney,
+    toggleCustomerLedgerRow, setCustomerLedgerDetails, setCustomerRealOnly, showCustomerMoneyLedger, onPartyLedgerSearch, pickPartyLedger, exportPartyLedger, printPartyLedger, rememberLedgerReturn, returnToLedger, openShortcut, closeShortcut, onShortcutSearch, pickShortcut, openSelling, billCustomer, collectCustomer, openCustomerMoney,
     loadRecycleBin, setRecycleTab, openRecycleDetail, restoreItem, purgeItem,
     addLookup, submitLookup, submitCatalogCategory, editLookup, deleteLookup, openCustomerLedgerEntry, createCustomerOrder,
     setOrderTakerMode, onOrderTakerStock, onOrderTakerCustomer, pickOrderTakerCustomer, clearOrderTakerCustomer, onOrderTakerItem, addOrderTakerItem, removeOrderTakerLine, saveOrderTakerOrder,

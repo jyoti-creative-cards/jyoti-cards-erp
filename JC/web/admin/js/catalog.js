@@ -227,9 +227,7 @@ const Catalog = (() => {
       : '<p style="color:var(--muted);font-size:14px;">No add-on links</p>';
 
     const priceHist = p.price_history?.length
-      ? `<table class="data"><thead><tr><th>Buy</th><th>Sell</th><th>Recorded</th></tr></thead><tbody>
-          ${p.price_history.map(h => `<tr><td>${fmtPrice(h.buying_price)}</td><td>${h.selling_price ? fmtPrice(h.selling_price) : "—"}</td><td style="font-size:13px;">${ctx.fmtDate(h.recorded_at)}</td></tr>`).join("")}
-        </tbody></table>`
+      ? priceHistoryHtml(p.price_history)
       : '<p style="color:var(--muted);font-size:14px;">No price history</p>';
 
     const changeHist = ctx.changeHistoryTable
@@ -542,6 +540,22 @@ const Catalog = (() => {
   }
 
 // @slice 02-renderWizard
+  function priceHistoryHtml(rows) {
+    const list = (rows || []).slice().sort((a, b) => String(a.effective_from || a.recorded_at || "").localeCompare(String(b.effective_from || b.recorded_at || "")));
+    if (!list.length) return `<p style="color:var(--muted);font-size:13px;">No earlier rate.</p>`;
+    const day = (v) => {
+      const text = String(v || "");
+      return ctx.fmtDay ? ctx.fmtDay(text.slice(0, 10)) : text.slice(0, 10);
+    };
+    return `<table class="data"><thead><tr><th>Sell</th><th>Buy</th><th>From</th><th>Until</th></tr></thead><tbody>
+      ${list.map((h, i) => {
+        const next = list[i + 1];
+        const until = next ? day(next.effective_from || next.recorded_at) : "Present";
+        return `<tr><td>${h.selling_price ? fmtPrice(h.selling_price) : "—"}</td><td>${h.buying_price ? fmtPrice(h.buying_price) : "—"}</td><td>${day(h.effective_from || h.recorded_at)}</td><td>${until}</td></tr>`;
+      }).join("")}
+    </tbody></table>`;
+  }
+
   function renderWizard() {
     renderWizardSteps();
     const body = document.getElementById("catalog-wizard-body");
@@ -842,13 +856,20 @@ const Catalog = (() => {
           <label class="label">Year Group ${ctx.isAdmin?.() ? "" : "(admin only)"}</label>
           ${yearSelectHtml(p.year_group || DEFAULT_YEAR_GROUP, { id: "ce-year_group" })}
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr 180px;gap:12px;align-items:end;">
           <div><label class="label">Buying Price</label>
             ${p.buying_price === "—"
               ? `<input id="ce-buying_price" class="input" type="text" value="Hidden — no cost access" disabled title="You don't have costs.read, so this can't be viewed or changed here." />`
               : `<input id="ce-buying_price" class="input" type="number" min="0" step="0.01" value="${ctx.esc(p.buying_price)}" />`}</div>
           <div><label class="label">Selling Price</label>
             <input id="ce-selling_price" class="input" type="number" min="0" step="0.01" value="${ctx.esc(p.selling_price || "")}" /></div>
+          <div><label class="label">Effective from</label>
+            <input id="ce-rate-from" class="input" type="date" value="${new Date().toISOString().slice(0, 10)}" /></div>
+        </div>
+        <div>
+          <p style="margin:0 0 6px;font-size:13px;"><strong>Present sell ${p.selling_price ? fmtPrice(p.selling_price) : "—"}</strong></p>
+          ${priceHistoryHtml(p.price_history)}
+          <p style="margin:6px 0 0;font-size:12px;color:var(--muted);">The date is used only when the buy or sell rate changes. Older bills keep the rate they were made with.</p>
         </div>
         <div style="padding:12px;border:1px dashed var(--border);border-radius:10px;background:#f8fafc;">
           <label class="label">Marking</label>
@@ -977,6 +998,7 @@ const Catalog = (() => {
         : undefined,
       selling_price: document.getElementById("ce-selling_price").value
         ? Number(document.getElementById("ce-selling_price").value) : null,
+      selling_effective_from: document.getElementById("ce-rate-from")?.value || null,
       image_keys: imageKeys,
       alternative_our_product_ids: altIds,
       addon_links: addonLinks,

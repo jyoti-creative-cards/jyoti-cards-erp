@@ -207,9 +207,7 @@
       : '<p style="color:var(--muted);font-size:14px;">No add-on links</p>';
 
     const priceHist = p.price_history?.length
-      ? `<table class="data"><thead><tr><th>Buy</th><th>Sell</th><th>Recorded</th></tr></thead><tbody>
-          ${p.price_history.map(h => `<tr><td>${fmtPrice(h.buying_price)}</td><td>${h.selling_price ? fmtPrice(h.selling_price) : "—"}</td><td style="font-size:13px;">${ctx.fmtDate(h.recorded_at)}</td></tr>`).join("")}
-        </tbody></table>`
+      ? priceHistoryHtml(p.price_history)
       : '<p style="color:var(--muted);font-size:14px;">No price history</p>';
 
     const changeHist = ctx.changeHistoryTable

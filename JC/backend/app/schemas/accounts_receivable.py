@@ -8,10 +8,11 @@ from pydantic import BaseModel, Field
 
 
 class ArLedgerEntryOut(BaseModel):
-    id: int
+    id: Union[int, str]
     entry_type: str
     amount: str
     signed_amount: str
+    display_amount: Optional[str] = None
     running_balance: str
     description: str
     bill_id: Optional[int] = None

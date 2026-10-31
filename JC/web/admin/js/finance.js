@@ -1583,7 +1583,7 @@ const Finance = (() => {
     if (!currentCustomer) return;
     ctx.showLoading?.();
     try {
-      await DocShare.openPdf(`/share/statements/ar/${currentCustomer}/pdf`, { print: true, filename: "ledger.pdf" });
+      await DocShare.openPdf(`/share/statements/ar/${currentCustomer}/pdf${arExpandAll ? "?details=1" : ""}`, { print: true, filename: "ledger.pdf" });
     } catch (e) { ctx.toast(e.message || "Could not print the ledger", "error"); }
     finally { ctx.hideLoading?.(); }
   }
@@ -1592,7 +1592,7 @@ const Finance = (() => {
     if (!currentCustomer) return;
     ctx.showLoading?.();
     try {
-      await DocShare.openPdf(`/share/statements/ar/${currentCustomer}/pdf`, { print: false, filename: "ledger.pdf" });
+      await DocShare.openPdf(`/share/statements/ar/${currentCustomer}/pdf${arExpandAll ? "?details=1" : ""}`, { print: false, filename: "ledger.pdf" });
     } catch (e) { ctx.toast(e.message || "Could not download the ledger", "error"); }
     finally { ctx.hideLoading?.(); }
   }
@@ -1878,7 +1878,7 @@ const Finance = (() => {
 
   function moneyDocButton(e) {
     if (e.return_id) return ` <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();Returns.openReturn(${e.return_id})">View</button>`;
-    if (e.bill_id) return ` <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();Finance.viewCustomerBill(${e.bill_id})">View detail</button> <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();App.showView('selling');CustomerOrders.openEditBill(${e.bill_id})">Edit</button> <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();CustomerOrders.cancelBill(${e.bill_id}, true)">Cancel</button> <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();CustomerOrders.openBillDoc(${e.bill_id}, false)">Download</button> <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();CustomerOrders.printStoredBill(${e.bill_id})">Print</button>`;
+    if (e.bill_id) return ` <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();Finance.viewCustomerBill(${e.bill_id})">View detail</button> <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();App.rememberLedgerReturn('money', ${currentCustomer});CustomerOrders.openEditBill(${e.bill_id})">Edit</button> <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();CustomerOrders.cancelBill(${e.bill_id}, true)">Cancel</button> <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();CustomerOrders.openBillDoc(${e.bill_id}, false)">Download</button> <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();CustomerOrders.printStoredBill(${e.bill_id})">Print</button>`;
     return "";
   }
 

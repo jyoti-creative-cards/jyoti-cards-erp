@@ -55,6 +55,9 @@
     }
     const canWrite = !!ctx.canWrite?.("customer_orders");
     const canMoney = !!ctx.isAdmin?.() || !!ctx.canWrite?.("ar") || !!ctx.canWrite?.("finance");
+    const ledgerBack = window.__jcLedgerReturn
+      ? `<button type="button" class="btn btn-secondary btn-sm" style="margin:0 0 12px;" onclick="App.returnToLedger()">← Back to ledger</button>`
+      : "";
 
     if (currentBucket === "open") {
       const lines = currentOrder.open_lines || [];
@@ -71,6 +74,7 @@
       </div>` : "";
       const canBill = canWrite && (lines.length || waiting.length);
       el.innerHTML = `
+        ${ledgerBack}
         ${cashWarningHtml(currentOrder)}
         ${canBill ? `<div class="ui-toolbar" style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">
           <button class="btn btn-primary" onclick="CustomerOrders.processOrder()">Create Bill</button>
@@ -102,6 +106,7 @@
 
     if (currentBucket === "billed" && (currentOrder.bills || []).length) {
       el.innerHTML = `
+        ${ledgerBack}
         ${cashWarningHtml(currentOrder)}
         <div class="ui-toolbar" style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">
           ${canWrite ? `<button class="btn btn-primary btn-sm" onclick="CustomerOrders.goToDispatch()">Dispatch</button>` : ""}
@@ -176,6 +181,7 @@
     if (currentBucket === "received") {
       const placements = currentOrder.placements || [];
       el.innerHTML = `
+        ${ledgerBack}
         ${cashWarningHtml(currentOrder)}
         ${canWrite && placements.length ? `<div class="ui-toolbar" style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;">
           <button class="btn btn-primary btn-sm" onclick="CustomerOrders.confirmOrder(${detailCustomerId})">✓ Confirm order</button>
@@ -233,7 +239,7 @@
 
     // cancelled / closed / billed-without-bills fallback
     const placements = currentOrder.placements || [];
-    el.innerHTML = `<div class="ord-hub-list">${placements.length ? placements.map(p => {
+    el.innerHTML = `${ledgerBack}<div class="ord-hub-list">${placements.length ? placements.map(p => {
       const openKey = `hist-${p.id}`;
       const expanded = coExpandedId === openKey;
       const linesHtml = `<table class="data vo-hub-table"><thead><tr><th>Product</th><th>Qty</th><th>Billed</th><th>Rate</th></tr></thead><tbody>
@@ -674,6 +680,7 @@
         ctx.invalidateCache?.("/stock");
         ctx.invalidateCache?.("/accounts-receivable");
         if (fromMoney) await Finance.refreshOpenAr?.();
+        else if (window.__jcLedgerReturn) await App.returnToLedger?.();
         else if (detailCustomerId) await openDetail(detailCustomerId, "open");
       }).catch(e => ctx.toast(e.message, "error"))
         .finally(() => ctx.hideLoading?.());

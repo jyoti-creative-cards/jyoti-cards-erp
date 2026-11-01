@@ -176,11 +176,12 @@
           </div>
           ${images}
         </div>
-        <div class="prod-detail-tabs">
+        <div class="prod-detail-tabs" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           ${tabBtn("stock", "Stock / Ledger")}
           ${tabBtn("catalog", "Catalog")}
           ${tabBtn("addons", "Add-ons")}
           ${tabBtn("alts", "Alternatives")}
+          ${(cat?.marking || stock?.marking) ? `<span class="marking-flag">${ctx.esc(cat?.marking || stock?.marking)}</span>` : ""}
         </div>
         <div class="prod-detail-pane" data-pane="stock" style="${sec === "stock" ? "" : "display:none;"}">${stockPane}</div>
         <div class="prod-detail-pane" data-pane="catalog" style="${sec === "catalog" ? "" : "display:none;"}">${catalogPane}</div>

@@ -123,7 +123,14 @@ const CommissionAgents = (() => {
       <div class="card" style="padding:12px;">
         <h3 style="margin:0 0 8px;">Ledger</h3>
         ${(data.ledger || []).length ? `<table class="data"><thead><tr><th>Date</th><th>Entry</th><th>Amount</th><th>Balance</th></tr></thead><tbody>
-          ${data.ledger.map((row) => `<tr><td>${esc(row.date)}</td><td>${esc(row.description)}${row.party_name ? " · " + esc(row.party_name) : ""}</td><td>${money(row.amount)}</td><td>${money(row.balance)}</td></tr>`).join("")}
+          ${data.ledger.map((row) => {
+            const party = row.party_name ? `<strong>${esc(row.party_name)}</strong>` : "";
+            const text = row.description || "";
+            const entry = party && text.toLowerCase().indexOf(String(row.party_name).toLowerCase()) === -1
+              ? `${party} · ${esc(text)}`
+              : (party && !text ? party : esc(text));
+            return `<tr><td>${esc(row.date)}</td><td>${entry}</td><td>${money(row.amount)}</td><td>${money(row.balance)}</td></tr>`;
+          }).join("")}
         </tbody></table>` : `<p style="color:var(--muted);">No entries yet.</p>`}
       </div>`;
   }

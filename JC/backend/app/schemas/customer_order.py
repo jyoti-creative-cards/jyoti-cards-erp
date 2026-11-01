@@ -60,6 +60,8 @@ class CustomerOpenLineOut(BaseModel):
 class BilledBillChip(BaseModel):
     bill_number: str
     grand_total: str
+    created_at: Optional[datetime] = None
+    narration: Optional[str] = None
 
 
 class HubSearchLine(BaseModel):
@@ -90,6 +92,7 @@ class CustomerOrderSummary(BaseModel):
     marker_2: Optional[str] = None
     payment_type: Optional[str] = None
     city_name: Optional[str] = None
+    narration: Optional[str] = None
     search_text: str = ""
     prices: List[str] = []
     search_lines: List[HubSearchLine] = []

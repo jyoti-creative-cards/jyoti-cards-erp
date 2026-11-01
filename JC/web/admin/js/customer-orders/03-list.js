@@ -100,7 +100,8 @@
       const billBits = chips.map(b => {
         const num = b.bill_number ? `Bill ${ctx.esc(b.bill_number)}` : "";
         const amt = b.grand_total != null && b.grand_total !== "" ? fmtPrice(b.grand_total) : "";
-        return [num, amt].filter(Boolean).join(" · ");
+        const note = b.narration ? ctx.esc(b.narration) : "";
+        return [num, amt, note].filter(Boolean).join(" · ");
       }).filter(Boolean);
       statText = billBits.length
         ? billBits.join("<br>")
@@ -109,6 +110,9 @@
       statText = `${o.placement_count || 0} placement${(o.placement_count || 0) !== 1 ? "s" : ""}`;
     }
     if (src) statText += (statText ? " · " : "") + src;
+    if (o.narration && currentBucket !== "billed") {
+      statText += (statText ? "<br>" : "") + ctx.esc(o.narration);
+    }
 
     // More menu
     const more = [];

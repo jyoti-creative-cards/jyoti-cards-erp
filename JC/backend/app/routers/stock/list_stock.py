@@ -272,6 +272,8 @@ def entry_items(
             .limit(12)
             .all()
         )
+        ids = [product.id for product, _qty in rows]
+        reserved = reserved_qty_by_product(db, ids)
         out = []
         for product, qty in rows:
             price = effective_selling_price(product.buying_price, product.selling_price)
@@ -283,6 +285,7 @@ def entry_items(
                 "year_group": product.year_group,
                 "selling_price": format(price, "f") if price is not None else None,
                 "quantity_on_hand": int(qty or 0),
+                "reserved_qty": int(reserved.get(product.id, 0)),
                 "addons": [],
                 "priced_addons": [],
             })

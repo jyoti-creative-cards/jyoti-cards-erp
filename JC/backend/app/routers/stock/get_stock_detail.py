@@ -105,9 +105,21 @@ def get_stock_detail(
         .order_by(StockLedger.created_at.desc(), StockLedger.id.desc())
         .all()
     )
+    from datetime import date, datetime
+
     from app.services.stock_receipt import annotate_stock_ledger
 
-    ledger = [StockLedgerEntry(**row) for row in annotate_stock_ledger(db, ledger_rows)]
+    def _ledger_day(row: dict):
+        value = row.get("display_date") or row.get("created_at")
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+        return date.min
+
+    raw_ledger = annotate_stock_ledger(db, ledger_rows)
+    raw_ledger.sort(key=lambda row: (_ledger_day(row), int(row.get("id") or 0)), reverse=True)
+    ledger = [StockLedgerEntry(**row) for row in raw_ledger]
 
     from app.models.addon_product import AddonProduct
     from app.models.catalog_addon_link import CatalogAddonLink

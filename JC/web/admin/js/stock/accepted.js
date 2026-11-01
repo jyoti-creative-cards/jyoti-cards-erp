@@ -2089,7 +2089,12 @@ const Stock = (() => {
     stockLedgerKind = "all";
     const totals = stockPieceTotals(visibleStockRows(stockLedgerRows));
     stockLedgerKind = savedKind;
-    const shown = visibleStockRows(stockLedgerRows);
+    const shown = visibleStockRows(stockLedgerRows).slice().sort((a, b) => {
+      const da = String(a.display_date || a.created_at || "").slice(0, 10);
+      const db = String(b.display_date || b.created_at || "").slice(0, 10);
+      if (da !== db) return db.localeCompare(da);
+      return Number(b.id || 0) - Number(a.id || 0);
+    });
     const chip = (id, label) => `<button type="button" class="btn btn-sm ${stockLedgerKind === id ? "btn-primary" : "btn-secondary"}" onclick="Stock.setLedgerKind('${id}')">${label}</button>`;
     const body = shown.length ? shown.map(e => {
       const when = ctx.fmtDay?.(e.display_date || e.created_at) || "—";

@@ -37,7 +37,8 @@ const Finance = (() => {
   let journalForm = null;
   let settleFile = null;
   let freightSettleFile = null;
-  let freightPayMode = "settle"; // settle | advance
+  let freightPayMode = "settle"; // settle | advance | adjust | edit
+  let freightEditId = null;
   let paymentModes = [];
   let chipCounts = { due: 0, ar: 0, ap: 0, freight: 0 };
   let dues = null; // from GET /finance/dues — single money API
@@ -2844,6 +2845,7 @@ const Finance = (() => {
     const actions = [];
     if (due > 0) actions.push(`<button class="btn btn-primary" onclick="Finance.openFreightSettle()">Settle</button>`);
     actions.push(`<button class="btn btn-secondary" onclick="Finance.openFreightAdvance()">Pay advance</button>`);
+    actions.push(`<button class="btn btn-secondary" onclick="Finance.openFreightAdjust()">Adjustment</button>`);
     actions.push(`<button class="btn btn-secondary" onclick="Finance.shareFreightStatement()">Print / PDF</button>`);
     if (hero) {
       hero.innerHTML = HubUI.pageHero({
@@ -2869,10 +2871,14 @@ const Finance = (() => {
             const isCharge = r.entry_type === "charge";
             const party = isCharge
               ? (r.party_label || r.notes || "—")
-              : (r.transaction_ref || "—");
+              : (r.head || r.transaction_ref || "—");
             const badge = r.entry_type === "charge" ? "badge-amber"
-              : r.entry_type === "advance" ? "badge-blue" : "badge-green";
+              : r.entry_type === "advance" ? "badge-blue"
+              : r.entry_type === "adjustment" ? "badge-gray" : "badge-green";
             const links = [];
+            if (r.entry_type === "settlement" || r.entry_type === "advance" || r.entry_type === "adjustment") {
+              links.push(`<button type="button" class="btn btn-secondary btn-sm" onclick="Finance.openFreightEdit(${r.id})">Edit</button>`);
+            }
             if (r.has_document) links.push(`<button type="button" class="btn btn-secondary btn-sm" onclick="Finance.printFreightPayment(${r.id})">Print</button>`);
             if (r.payment_receipt_url) links.push(`<a href="${ctx.esc(r.payment_receipt_url)}" target="_blank" class="btn btn-secondary btn-sm">Receipt</a>`);
             return `<tr>
@@ -2901,6 +2907,8 @@ const Finance = (() => {
     if (footerBtn) footerBtn.textContent = "Settle";
     document.getElementById("freight-settle-body").innerHTML = `
       <p style="margin:0 0 12px;color:var(--muted);">Pay ${ctx.esc(agent.name)} against due ${fmtPrice(due)}. Party names print on the voucher.</p>
+      <label class="label">Date *</label>
+      <input type="date" class="input" id="freight-settle-date" value="${new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" })}" style="margin-bottom:12px;" />
       <label class="label">Transaction ID *</label>
       <input class="input" id="freight-settle-ref" style="margin-bottom:12px;" placeholder="UTR, cheque #, etc." />
       <label class="label">Amount (₹) *</label>
@@ -2924,6 +2932,8 @@ const Finance = (() => {
     if (footerBtn) footerBtn.textContent = "Pay advance";
     document.getElementById("freight-settle-body").innerHTML = `
       <p style="margin:0 0 12px;color:var(--muted);">Prepaid to ${ctx.esc(agent.name)}. Future freight charges adjust against this${adv > 0 ? ` (now ${fmtPrice(adv)} left)` : ""}.</p>
+      <label class="label">Date *</label>
+      <input type="date" class="input" id="freight-settle-date" value="${new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" })}" style="margin-bottom:12px;" />
       <label class="label">Transaction ID *</label>
       <input class="input" id="freight-settle-ref" style="margin-bottom:12px;" placeholder="UTR, cheque #, etc." />
       <label class="label">Advance amount (₹) *</label>
@@ -2942,6 +2952,64 @@ const Finance = (() => {
   function closeFreightSettle() {
     document.getElementById("freight-settle-modal")?.classList.add("hidden");
     freightSettleFile = null;
+  }
+
+  function openFreightAdjust() {
+    freightPayMode = "adjust";
+    freightEditId = null;
+    freightSettleFile = null;
+    const agent = freightAgents.find(a => a.id === freightAgentId);
+    if (!agent) return;
+    const title = document.querySelector("#freight-settle-modal .modal-header h3");
+    if (title) title.textContent = "Freight adjustment";
+    const footerBtn = document.querySelector("#freight-settle-modal .modal-footer .btn-primary");
+    if (footerBtn) footerBtn.textContent = "Save adjustment";
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+    document.getElementById("freight-settle-body").innerHTML = `
+      <p style="margin:0 0 12px;color:var(--muted);">This shows on ${ctx.esc(agent.name)}'s ledger and on Expenses, under the head you type.</p>
+      <label class="label">Head *</label>
+      <input class="input" id="freight-adjust-head" style="margin-bottom:12px;" placeholder="Short, loading, round off" />
+      <label class="label">Effect *</label>
+      <select class="input" id="freight-adjust-dir" style="margin-bottom:12px;">
+        <option value="owe_more">We owe more</option>
+        <option value="owe_less">We owe less</option>
+      </select>
+      <label class="label">Date *</label>
+      <input type="date" class="input" id="freight-settle-date" value="${today}" style="margin-bottom:12px;" />
+      <label class="label">Amount (₹) *</label>
+      <input type="number" step="0.01" class="input" id="freight-settle-amount" style="margin-bottom:12px;" />
+      <label class="label">Notes</label>
+      <input class="input" id="freight-settle-notes" />`;
+    document.getElementById("freight-settle-modal")?.classList.remove("hidden");
+  }
+
+  function openFreightEdit(entryId) {
+    const row = (freightLedger || []).find(r => Number(r.id) === Number(entryId));
+    if (!row) return;
+    freightPayMode = "edit";
+    freightEditId = entryId;
+    freightSettleFile = null;
+    const title = document.querySelector("#freight-settle-modal .modal-header h3");
+    if (title) title.textContent = "Edit freight entry";
+    const footerBtn = document.querySelector("#freight-settle-modal .modal-footer .btn-primary");
+    if (footerBtn) footerBtn.textContent = "Save";
+    const day = String(row.value_date || row.display_date || "").slice(0, 10);
+    const dir = Number(row.signed_amount) < 0 ? "owe_less" : "owe_more";
+    document.getElementById("freight-settle-body").innerHTML = `
+      <label class="label">Date *</label>
+      <input type="date" class="input" id="freight-settle-date" value="${ctx.esc(day)}" style="margin-bottom:12px;" />
+      <label class="label">Amount (₹) *</label>
+      <input type="number" step="0.01" class="input" id="freight-settle-amount" value="${ctx.esc(row.amount)}" style="margin-bottom:12px;" />
+      ${row.entry_type === "adjustment" ? `<label class="label">Head *</label>
+      <input class="input" id="freight-adjust-head" value="${ctx.esc(row.head || "")}" style="margin-bottom:12px;" />
+      <label class="label">Effect *</label>
+      <select class="input" id="freight-adjust-dir" style="margin-bottom:12px;">
+        <option value="owe_more" ${dir === "owe_more" ? "selected" : ""}>We owe more</option>
+        <option value="owe_less" ${dir === "owe_less" ? "selected" : ""}>We owe less</option>
+      </select>` : `<label class="label">Notes</label>
+      <input class="input" id="freight-settle-notes" value="${ctx.esc(row.notes || "")}" />`}
+    `;
+    document.getElementById("freight-settle-modal")?.classList.remove("hidden");
   }
 
   function shareFreightStatement() {
@@ -2965,7 +3033,9 @@ const Finance = (() => {
   }
 
   async function submitFreightSettle() {
-    if (!freightAgentId) return;
+    if (!freightAgentId && freightPayMode !== "edit") return;
+    if (freightPayMode === "adjust") return submitFreightAdjust();
+    if (freightPayMode === "edit") return submitFreightEdit();
     const ref = (document.getElementById("freight-settle-ref")?.value || "").trim();
     const amount = parseFloat(document.getElementById("freight-settle-amount")?.value || "0");
     const notes = (document.getElementById("freight-settle-notes")?.value || "").trim() || null;
@@ -2997,7 +3067,13 @@ const Finance = (() => {
       }
       const result = await ctx.api(`/freight-agents/${fid}/${path}`, {
         method: "POST",
-        body: JSON.stringify({ amount, transaction_ref: ref, notes, payment_receipt_key: key }),
+        body: JSON.stringify({
+          amount,
+          transaction_ref: ref,
+          notes,
+          payment_receipt_key: key,
+          pay_date: document.getElementById("freight-settle-date")?.value || null,
+        }),
       });
       ctx.toast(asAdvance ? "Advance paid" : "Settled", "success");
       closeFreightSettle();
@@ -3023,6 +3099,54 @@ const Finance = (() => {
           });
         }, 200);
       }
+      loadOverviewSilent();
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  async function submitFreightAdjust() {
+    const head = (document.getElementById("freight-adjust-head")?.value || "").trim();
+    const amount = parseFloat(document.getElementById("freight-settle-amount")?.value || "0");
+    const direction = document.getElementById("freight-adjust-dir")?.value || "owe_more";
+    const notes = (document.getElementById("freight-settle-notes")?.value || "").trim() || null;
+    const pay_date = document.getElementById("freight-settle-date")?.value || null;
+    if (!head) return ctx.toast("Enter the head", "error");
+    if (!(amount > 0)) return ctx.toast("Enter amount", "error");
+    const fid = freightAgentId;
+    ctx.showLoading?.();
+    try {
+      await ctx.api(`/freight-agents/${fid}/adjust`, {
+        method: "POST",
+        body: JSON.stringify({ head, amount, direction, notes, pay_date }),
+      });
+      ctx.toast("Adjustment saved", "success");
+      closeFreightSettle();
+      freightAgents = await ctx.api("/freight-agents", {}, 0);
+      await openFreightAgent(fid);
+      loadOverviewSilent();
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  async function submitFreightEdit() {
+    const amount = parseFloat(document.getElementById("freight-settle-amount")?.value || "0");
+    const pay_date = document.getElementById("freight-settle-date")?.value || null;
+    const notes = document.getElementById("freight-settle-notes") ? ((document.getElementById("freight-settle-notes").value || "").trim() || null) : undefined;
+    const head = document.getElementById("freight-adjust-head")?.value?.trim() || null;
+    const direction = document.getElementById("freight-adjust-dir")?.value || null;
+    if (!(amount > 0)) return ctx.toast("Enter amount", "error");
+    ctx.showLoading?.();
+    try {
+      const body = { amount, pay_date };
+      if (notes !== undefined) body.notes = notes;
+      if (head) body.head = head;
+      if (direction) body.direction = direction;
+      await ctx.api(`/freight-agents/entries/${freightEditId}`, { method: "PATCH", body: JSON.stringify(body) });
+      ctx.toast("Saved", "success");
+      const fid = freightAgentId;
+      closeFreightSettle();
+      freightAgents = await ctx.api("/freight-agents", {}, 0);
+      await openFreightAgent(fid);
       loadOverviewSilent();
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
@@ -3764,7 +3888,7 @@ const Finance = (() => {
     pickJournalProduct, previewJournal, printJournalPreview, exportJournalExcel, saveJournal, voidJournal,
     editApPayment, saveApPaymentEdit, editArPayment, saveArPaymentEdit,
     openLossForm, closeLossForm, submitLoss, deleteLoss,
-    openFreightAgent, openFreightSettle, openFreightAdvance, closeFreightSettle, submitFreightSettle,
+    openFreightAgent, openFreightSettle, openFreightAdvance, openFreightAdjust, openFreightEdit, closeFreightSettle, submitFreightSettle,
     setFreightSettleFile, shareFreightStatement, printFreightPayment,
   };
 })();

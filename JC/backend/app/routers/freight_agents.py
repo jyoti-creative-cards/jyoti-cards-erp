@@ -13,6 +13,8 @@ from app.deps import AuthContext, require_admin, require_any_permission, require
 from app.models.expense import Expense
 from app.models.freight_agent import FreightAgent, FreightLedgerEntry
 from app.services.activity import log_from_auth
+from app.services.biz_date import today_ist
+from app.services.money import as_signed_decrease, as_signed_increase, mag
 from app.services.freight_ledger import (
     agent_freight_totals,
     build_freight_ledger,
@@ -59,6 +61,8 @@ class FreightLedgerOut(BaseModel):
     expense_id: Optional[int] = None
     transaction_ref: Optional[str] = None
     notes: Optional[str] = None
+    head: Optional[str] = None
+    value_date: Optional[date] = None
     payment_receipt_url: Optional[str] = None
     has_document: bool = False
     created_by_name: str
@@ -71,6 +75,7 @@ class FreightSettleIn(BaseModel):
     transaction_ref: str = Field(..., min_length=1, max_length=200)
     notes: Optional[str] = None
     payment_receipt_key: Optional[str] = None
+    pay_date: Optional[date] = None
 
 
 class FreightAdvanceIn(BaseModel):
@@ -78,6 +83,23 @@ class FreightAdvanceIn(BaseModel):
     transaction_ref: str = Field(..., min_length=1, max_length=200)
     notes: Optional[str] = None
     payment_receipt_key: Optional[str] = None
+    pay_date: Optional[date] = None
+
+
+class FreightAdjustIn(BaseModel):
+    head: str = Field(..., min_length=1, max_length=120)
+    amount: Decimal = Field(..., gt=0)
+    direction: str = "owe_more"
+    notes: Optional[str] = None
+    pay_date: Optional[date] = None
+
+
+class FreightEntryEditIn(BaseModel):
+    amount: Decimal = Field(..., gt=0)
+    pay_date: Optional[date] = None
+    notes: Optional[str] = None
+    head: Optional[str] = None
+    direction: Optional[str] = None
 
 
 class FreightReassignIn(BaseModel):
@@ -286,6 +308,8 @@ def get_ledger(agent_id: int, db: Session = Depends(get_db), auth: AuthContext =
             expense_id=r.get("expense_id"),
             transaction_ref=r.get("transaction_ref"),
             notes=r.get("notes"),
+            head=r.get("head"),
+            value_date=r.get("value_date"),
             payment_receipt_url=r.get("payment_receipt_url"),
             has_document=bool(r.get("has_document")),
             created_by_name=r["created_by_name"],
@@ -306,9 +330,11 @@ def _pay_freight(
     payment_receipt_key: Optional[str],
     auth: AuthContext,
     as_advance: bool,
+    pay_date: Optional[date] = None,
 ) -> dict:
     totals = agent_freight_totals(db, agent.id)
     due = totals["due"]
+    when = pay_date or today_ist()
     if as_advance:
         entry_type = "advance"
         expense_desc = f"Freight advance — {agent.name}"
@@ -323,7 +349,7 @@ def _pay_freight(
         action = "freight_settle"
 
     expense = Expense(
-        expense_date=date.today(),
+        expense_date=when,
         category="transport",
         description=expense_desc,
         amount=amount,
@@ -344,6 +370,7 @@ def _pay_freight(
         actor_name=auth.actor_name,
         payment_receipt_key=payment_receipt_key,
         entry_type=entry_type,
+        value_date=when,
     )
     _store_payment_pdf(db, agent, entry)
     log_from_auth(
@@ -395,6 +422,7 @@ def settle_freight_agent(
         payment_receipt_key=body.payment_receipt_key,
         auth=auth,
         as_advance=False,
+        pay_date=body.pay_date,
     )
 
 
@@ -424,7 +452,108 @@ def pay_freight_advance(
         payment_receipt_key=body.payment_receipt_key,
         auth=auth,
         as_advance=True,
+        pay_date=body.pay_date,
     )
+
+
+@router.post("/{agent_id}/adjust", status_code=201)
+def adjust_freight_agent(
+    agent_id: int,
+    body: FreightAdjustIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    agent = db.query(FreightAgent).filter(FreightAgent.id == agent_id).with_for_update().first()
+    if not agent:
+        raise HTTPException(404, "freight agent not found")
+    head = " ".join(body.head.split())
+    if not head:
+        raise HTTPException(400, "Enter the head")
+    owe_less = body.direction == "owe_less"
+    amount = body.amount.quantize(Decimal("0.01"))
+    when = body.pay_date or today_ist()
+    signed = as_signed_decrease(amount) if owe_less else as_signed_increase(amount)
+    expense = Expense(
+        expense_date=when,
+        category=head,
+        description=f"Freight adjustment — {agent.name} — {head}",
+        amount=amount,
+        reference=head,
+        freight_agent_id=agent.id,
+        is_cash=False,
+        created_by_name=auth.actor_name,
+    )
+    db.add(expense)
+    db.flush()
+    entry = post_freight_settlement(
+        db,
+        agent_id=agent.id,
+        amount=amount,
+        expense_id=expense.id,
+        transaction_ref=head,
+        notes=body.notes or head,
+        actor_name=auth.actor_name,
+        entry_type="adjustment",
+        value_date=when,
+        head=head,
+        signed_amount=signed,
+    )
+    log_from_auth(
+        db, auth, action="freight_adjust", entity_type="freight_agent", entity_id=agent.id,
+        entity_label=agent.name, detail=f"{head} ₹{amount}",
+    )
+    db.commit()
+    return {"ok": True, "entry_id": entry.id, "expense_id": expense.id}
+
+
+@router.patch("/entries/{entry_id}")
+def edit_freight_entry(
+    entry_id: int,
+    body: FreightEntryEditIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    entry = db.get(FreightLedgerEntry, entry_id)
+    if not entry:
+        raise HTTPException(404, "entry not found")
+    if entry.entry_type not in ("settlement", "advance", "adjustment"):
+        raise HTTPException(400, "Only a payment or an adjustment can be edited")
+    agent = db.query(FreightAgent).filter(FreightAgent.id == entry.freight_agent_id).with_for_update().first()
+    amount = body.amount.quantize(Decimal("0.01"))
+    if entry.entry_type == "settlement":
+        due = agent_freight_totals(db, agent.id)["due"]
+        room = due + mag(entry.amount)
+        if amount > room:
+            raise HTTPException(400, f"cannot settle more than due ₹{room}")
+        signed = as_signed_decrease(amount)
+    elif entry.entry_type == "advance":
+        signed = as_signed_decrease(amount)
+    else:
+        direction = body.direction
+        if direction not in ("owe_more", "owe_less"):
+            direction = "owe_less" if entry.amount < 0 else "owe_more"
+        signed = as_signed_decrease(amount) if direction == "owe_less" else as_signed_increase(amount)
+        if body.head:
+            entry.head = " ".join(body.head.split())
+    entry.amount = signed
+    if body.pay_date:
+        entry.value_date = body.pay_date
+    if body.notes is not None:
+        entry.notes = body.notes.strip() or None
+    if entry.expense_id:
+        expense = db.get(Expense, entry.expense_id)
+        if expense:
+            expense.amount = amount
+            if body.pay_date:
+                expense.expense_date = body.pay_date
+            if entry.entry_type == "adjustment" and entry.head:
+                expense.category = entry.head
+                expense.description = f"Freight adjustment — {agent.name} — {entry.head}"
+                expense.reference = entry.head
+    from app.services.freight_ledger import recompute_balance_due
+    recompute_balance_due(db, agent.id)
+    db.commit()
+    return {"ok": True, "entry_id": entry.id}
 
 
 @router.post("/upload-payment-receipt")

@@ -12,6 +12,7 @@ balance_due on FreightAgent is a cache of outstanding (can be negative).
 
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 from typing import Optional
 
@@ -94,19 +95,24 @@ def post_freight_settlement(
     payment_receipt_key: Optional[str] = None,
     document_key: Optional[str] = None,
     entry_type: str = "settlement",
+    value_date=None,
+    head: Optional[str] = None,
+    signed_amount: Optional[Decimal] = None,
 ) -> FreightLedgerEntry:
-    if entry_type not in ("settlement", "advance"):
+    if entry_type not in ("settlement", "advance", "adjustment"):
         entry_type = "settlement"
     entry = FreightLedgerEntry(
         freight_agent_id=agent_id,
         entry_type=entry_type,
-        amount=as_signed_decrease(amount),
+        amount=signed_amount if signed_amount is not None else as_signed_decrease(amount),
         expense_id=expense_id,
         transaction_ref=transaction_ref,
         notes=notes,
         payment_receipt_key=payment_receipt_key,
         document_key=document_key,
         created_by_name=actor_name,
+        value_date=value_date,
+        head=head,
     )
     db.add(entry)
     db.flush()
@@ -155,7 +161,11 @@ def build_freight_ledger(db: Session, agent_id: int) -> list[dict]:
     rows = (
         db.query(FreightLedgerEntry)
         .filter(FreightLedgerEntry.freight_agent_id == agent_id)
-        .order_by(FreightLedgerEntry.created_at.asc(), FreightLedgerEntry.id.asc())
+        .order_by(
+            FreightLedgerEntry.value_date.asc().nullsfirst(),
+            FreightLedgerEntry.created_at.asc(),
+            FreightLedgerEntry.id.asc(),
+        )
         .all()
     )
     bill_ids = [e.customer_bill_id for e in rows if e.customer_bill_id]
@@ -196,12 +206,14 @@ def build_freight_ledger(db: Session, agent_id: int) -> list[dict]:
                 "expense_id": e.expense_id,
                 "transaction_ref": e.transaction_ref,
                 "notes": e.notes,
+                "head": e.head,
+                "value_date": e.value_date.isoformat() if e.value_date else None,
                 "payment_receipt_url": presigned_url(e.payment_receipt_key) if e.payment_receipt_key else None,
                 "document_key": e.document_key,
                 "has_document": bool(e.document_key),
                 "created_by_name": e.created_by_name,
                 "created_at": e.created_at.isoformat() if e.created_at else None,
-                "display_date": view.get("display_date") or e.created_at,
+                "display_date": e.value_date or view.get("display_date") or e.created_at,
             }
         )
     out.reverse()

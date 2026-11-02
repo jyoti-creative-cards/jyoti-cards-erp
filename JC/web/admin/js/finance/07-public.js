@@ -16,7 +16,7 @@
     pickJournalProduct, previewJournal, printJournalPreview, exportJournalExcel, saveJournal, voidJournal,
     editApPayment, saveApPaymentEdit, editArPayment, saveArPaymentEdit,
     openLossForm, closeLossForm, submitLoss, deleteLoss,
-    openFreightAgent, openFreightSettle, openFreightAdvance, closeFreightSettle, submitFreightSettle,
+    openFreightAgent, openFreightSettle, openFreightAdvance, openFreightAdjust, openFreightEdit, closeFreightSettle, submitFreightSettle,
     setFreightSettleFile, shareFreightStatement, printFreightPayment,
   };
 })();

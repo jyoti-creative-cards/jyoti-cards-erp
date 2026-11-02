@@ -17,6 +17,7 @@ from app.models.catalog_product import CatalogProduct
 from app.models.city import City
 from app.models.stock import StockBalance, StockLedger, StockReceipt, StockReceiptLine
 from app.models.vendor import Vendor
+from app.services.product_markings import display_marking, marking_labels
 from app.schemas.stock import (
     BillPreviewIn,
     BillPreviewOut,
@@ -199,6 +200,9 @@ def list_stock(
         params,
     ).mappings().all()
 
+    from app.services.product_markings import marking_labels
+    mark_by_id = marking_labels(db, [int(r["catalog_product_id"]) for r in rows])
+
     out: list[StockProductSummary] = []
     for r in rows:
         qty = int(r["quantity_on_hand"] or 0)
@@ -221,7 +225,7 @@ def list_stock(
                 category_3=r["category_3"],
                 series=r["series"],
                 year_group=r["year_group"],
-                marking=r["marking"],
+                marking=mark_by_id[int(r["catalog_product_id"])] if int(r["catalog_product_id"]) in mark_by_id else r["marking"],
                 quantity_on_hand=qty,
                 low_stock_threshold=th,
                 stock_status=admin_stock_status_label(qty, th),
@@ -381,7 +385,7 @@ def _list_stock_sqlite(
                 category_3=product.category_3,
                 series=product.series,
                 year_group=product.year_group,
-                marking=product.marking,
+                marking=display_marking(db, product),
                 quantity_on_hand=qty,
                 low_stock_threshold=th,
                 stock_status=admin_stock_status_label(qty, th),
@@ -603,6 +607,7 @@ def browse_stock(
         ):
             alt_counts[int(pid)] = int(cnt)
     reserved = reserved_qty_by_product(db, page_ids)
+    mark_by_id = marking_labels(db, page_ids)
     items: list[StockProductSummary] = []
     for product, balance, vendor, city, addons in rows:
         on_hand = int(balance.quantity_on_hand) if balance else 0
@@ -623,7 +628,7 @@ def browse_stock(
             category_3=product.category_3,
             series=product.series,
             year_group=product.year_group,
-            marking=product.marking,
+            marking=mark_by_id[product.id] if product.id in mark_by_id else product.marking,
             quantity_on_hand=on_hand,
             reserved_qty=int(reserved.get(product.id, 0)),
             low_stock_threshold=threshold,

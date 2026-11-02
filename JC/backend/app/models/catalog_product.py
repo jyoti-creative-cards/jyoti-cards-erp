@@ -38,3 +38,6 @@ class CatalogProduct(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+from app.models import product_marking as _product_marking  # noqa: F401  keep dated markings in create_all

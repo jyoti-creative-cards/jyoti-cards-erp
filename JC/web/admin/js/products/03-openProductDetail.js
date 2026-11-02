@@ -14,21 +14,30 @@
         ? `<p style="margin:0 0 12px;"><span class="marking-flag">${ctx.esc(marking)}</span></p>`
         : "";
     }
-    return `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 12px;">
-      <label class="label" style="margin:0;">Marking</label>
-      <input id="prod-marking" class="input" maxlength="200" placeholder="Monday, Thursday tak aayega" value="${ctx.esc(marking || "")}" style="max-width:320px;" />
-      <button type="button" class="btn btn-secondary btn-sm" onclick="Products.saveMarking(${id}, '${section}')">Save</button>
+    return `<div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin:0 0 12px;">
+      <div><label class="label" style="margin:0;">Marking</label>
+        <input id="prod-marking" class="input" maxlength="200" placeholder="Monday" value="" style="max-width:220px;" /></div>
+      <div><label class="label" style="margin:0;">From</label>
+        <input id="prod-mark-from" class="input" type="date" value="${new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" })}" /></div>
+      <div><label class="label" style="margin:0;">Until</label>
+        <input id="prod-mark-until" class="input" type="date" value="2099-12-31" /></div>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="Products.saveMarking(${id}, '${section}')">Add</button>
+      ${marking ? `<span class="marking-flag">${ctx.esc(marking)}</span>` : ""}
     </div>`;
   }
 
   async function saveMarking(id, section) {
     const marking = document.getElementById("prod-marking")?.value.trim() || "";
+    const starts_on = document.getElementById("prod-mark-from")?.value;
+    const ends_on = document.getElementById("prod-mark-until")?.value;
+    if (!marking) return ctx.toast("Type the marking", "error");
+    if (!starts_on || !ends_on) return ctx.toast("Pick the dates", "error");
     try {
-      await ctx.api(`/catalog/products/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ marking: marking || null }),
+      await ctx.api("/reports/product-markings/assign", {
+        method: "POST",
+        body: JSON.stringify({ marking, product_ids: [id], starts_on, ends_on }),
       });
-      ctx.toast(marking ? "Marking saved" : "Marking cleared", "success");
+      ctx.toast("Marking saved", "success");
       await openProductDetail(id, section || "stock");
     } catch (e) { ctx.toast(e.message, "error"); }
   }

@@ -67,6 +67,7 @@ from app.services import response_cache
 from app.schemas.stock import VoidIn
 from app.services.void_service import void_customer_bill, void_customer_placement
 
+from app.services.product_markings import display_marking
 from app.routers.customer_orders.router import router
 
 @router.get("/customer/{customer_id}/process-context", response_model=ProcessContextOut)
@@ -102,7 +103,7 @@ def get_process_context(
                 quantity_on_hand=ln["quantity_on_hand"],
                 image_urls=presigned_urls(keys),
                 addons=ln.get("addons") or [],
-                marking=prod.marking if prod else None,
+                marking=display_marking(db, prod) if prod else None,
             )
         )
     city = db.get(City, customer.city_id) if customer.city_id else None

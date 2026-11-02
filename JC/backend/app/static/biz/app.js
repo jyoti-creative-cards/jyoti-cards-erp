@@ -9,12 +9,14 @@ const state = {
   rateMax: "",
   query: "",
   searchSeq: 0,
+  holdCaret: false,
+  caret: 0,
   tab: "summary",
   productId: 0,
   billId: 0,
-  receiptId: 0,
-  error: "",
-  stack: [],
+  picked: {},
+  markRows: [],
+  markHits: [],
 };
 
 const titles = {
@@ -101,7 +103,8 @@ function homeView(data) {
     <div class="tiles">
       ${tiles.map(([id, label, amount]) => `<button class="tile" data-metric="${id}"><span>${label}</span><b>${inr(amount)}</b></button>`).join("")}
     </div>
-    ${heads ? `<div class="card" style="margin-top:12px;"><div class="muted">Expenses by head</div>${heads}</div>` : ""}`;
+    ${heads ? `<div class="card" style="margin-top:12px;"><div class="muted">Expenses by head</div>${heads}</div>` : ""}
+    <button class="tile" id="open-marking" style="margin-top:12px;"><span>Marking</span><b>Add dates</b></button>`;
 }
 
 function bars(rows) {
@@ -148,8 +151,8 @@ function searchView(items) {
       <button type="button" data-mode="party">Party</button>
       <button type="button" class="on" data-mode="items">Items</button>
     </div>
-    <label class="search">Item number<input id="q" value="${esc(state.query)}" placeholder="9443" /></label>
-    <div class="list">${searchHits(items, state.query)}</div>`;
+    <label class="search">Item number<input id="q" value="${esc(state.query)}" placeholder="9443" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" inputmode="numeric" /></label>
+    <div id="item-hits" class="search-results">${searchHits(items, state.query)}</div>`;
 }
 
 function summaryStats(title, block) {
@@ -222,6 +225,9 @@ function restore(prev) {
   state.mode = prev.mode;
 }
 function bind() {
+  document.querySelectorAll("[data-mode]").forEach((btn) => btn.addEventListener("pointerdown", () => {
+    state.holdCaret = false;
+  }));
   document.querySelectorAll("[data-mode]").forEach((btn) => btn.addEventListener("click", () => {
     state.mode = btn.getAttribute("data-mode");
     state.screen = state.mode === "items" ? "search" : "home";
@@ -242,6 +248,59 @@ function bind() {
     readDates();
     render();
   }));
+  document.getElementById("open-marking")?.addEventListener("click", () => {
+    state.stack.push(snapshot());
+    state.screen = "marking";
+    state.query = "";
+    state.picked = {};
+    render();
+  });
+  document.querySelectorAll("[data-pick]").forEach((btn) => btn.addEventListener("click", () => {
+    const id = btn.getAttribute("data-pick");
+    if (state.picked[id]) delete state.picked[id];
+    else state.picked[id] = true;
+    render();
+  }));
+  document.getElementById("mq")?.addEventListener("input", (ev) => {
+    state.query = ev.target.value;
+    clearTimeout(state._mt);
+    state._mt = setTimeout(async () => {
+      await render();
+      const box = document.getElementById("mq");
+      if (box) {
+        box.focus();
+        const end = box.value.length;
+        box.setSelectionRange(end, end);
+      }
+    }, 250);
+  });
+  document.getElementById("madd")?.addEventListener("click", async () => {
+    const product_ids = Object.keys(state.picked).map(Number);
+    const marking = document.getElementById("mtext")?.value || "";
+    const starts_on = document.getElementById("mfrom")?.value;
+    const ends_on = document.getElementById("muntil")?.value;
+    try {
+      await api("/api/v1/biz/markings", { method: "POST", body: JSON.stringify({ marking, product_ids, starts_on, ends_on }) });
+      state.picked = {};
+      render();
+    } catch (e) { alert(e.message); }
+  });
+  document.querySelectorAll("[data-msave]").forEach((btn) => btn.addEventListener("click", async () => {
+    const id = btn.getAttribute("data-msave");
+    const marking = document.querySelector(`[data-mtext="${id}"]`)?.value || "";
+    const starts_on = document.querySelector(`[data-mfrom="${id}"]`)?.value;
+    const ends_on = document.querySelector(`[data-muntil="${id}"]`)?.value;
+    try {
+      await api(`/api/v1/biz/markings/${id}`, { method: "PATCH", body: JSON.stringify({ marking, starts_on, ends_on }) });
+      render();
+    } catch (e) { alert(e.message); }
+  }));
+  document.querySelectorAll("[data-mdel]").forEach((btn) => btn.addEventListener("click", async () => {
+    try {
+      await api(`/api/v1/biz/markings/${btn.getAttribute("data-mdel")}`, { method: "DELETE" });
+      render();
+    } catch (e) { alert(e.message); }
+  });
   document.getElementById("back")?.addEventListener("click", () => {
     const prev = state.stack.pop();
     if (prev) restore(prev);
@@ -276,9 +335,16 @@ function bind() {
   }));
   const q = document.getElementById("q");
   q?.addEventListener("input", () => {
+    state.holdCaret = true;
     state.query = q.value;
+    state.caret = q.selectionStart ?? q.value.length;
     clearTimeout(state._t);
     state._t = setTimeout(refreshItemSearch, 200);
+  });
+  q?.addEventListener("keyup", () => { state.caret = q.selectionStart ?? q.value.length; });
+  q?.addEventListener("blur", () => {
+    if (!state.holdCaret || state.screen !== "search") return;
+    placeSearchCaret(q);
   });
   ["from", "to", "rate-min", "rate-max"].forEach((id) => {
     document.getElementById(id)?.addEventListener("change", () => {
@@ -290,33 +356,98 @@ function bind() {
   });
 }
 
+function placeSearchCaret(box) {
+  if (!box || !box.isConnected || !state.holdCaret || state.screen !== "search" || state._placing) return;
+  const pos = Number.isInteger(state.caret) ? state.caret : box.value.length;
+  state._placing = true;
+  try {
+    if (document.activeElement !== box) box.focus({ preventScroll: true });
+    box.setSelectionRange(pos, pos);
+  } catch (e) { /* phone keyboard stays if focus is refused */ }
+  state._placing = false;
+}
+
 function bindSearchHits() {
-  document.querySelectorAll("#app .list [data-item]").forEach((btn) => btn.addEventListener("click", () => {
+  document.querySelectorAll("#item-hits [data-item]").forEach((btn) => {
+    btn.addEventListener("pointerdown", () => { state.holdCaret = false; });
+    btn.addEventListener("click", () => {
     readDates();
     state.stack.push(snapshot());
     state.productId = Number(btn.getAttribute("data-item"));
     state.tab = "summary";
     state.screen = "item";
     state.mode = "items";
+    state.holdCaret = false;
     render();
-  }));
+    });
+  });
 }
 
 async function refreshItemSearch() {
   const seq = ++state.searchSeq;
   const query = state.query.trim();
-  const list = document.querySelector("#app .list");
+  const list = document.getElementById("item-hits");
   const box = document.getElementById("q");
-  if (!list || !box || state.screen !== "search") return render();
+  if (!list || !box || state.screen !== "search") {
+    if (state.holdCaret) return;
+    return render();
+  }
   try {
     const data = query ? await api(`/api/v1/biz/items?q=${encodeURIComponent(query)}`) : { items: [] };
     if (seq !== state.searchSeq || state.screen !== "search") return;
-    list.innerHTML = searchHits(data.items, query);
+    const live = document.getElementById("q");
+    const hits = document.getElementById("item-hits");
+    if (!live || !hits || live !== box) return;
+    hits.innerHTML = searchHits(data.items, query);
     bindSearchHits();
+    placeSearchCaret(live);
   } catch (e) {
     if (seq !== state.searchSeq) return;
-    list.innerHTML = `<p class="err">${esc(e.message)}</p>`;
+    const hits = document.getElementById("item-hits");
+    if (hits) hits.innerHTML = `<p class="err">${esc(e.message)}</p>`;
+    placeSearchCaret(document.getElementById("q"));
   }
+}
+
+function markingView() {
+  const hits = (state.markHits || []).map((item) => {
+    const on = !!state.picked[item.id];
+    return `<button class="hit" data-pick="${item.id}">
+      <strong>${on ? "✓ " : ""}${esc(item.name)}</strong>
+      <span class="muted">${esc(item.category || "")}</span>
+    </button>`;
+  }).join("");
+  const rows = (state.markRows || []).map((row) => `<div class="card" style="margin-top:8px;">
+      <strong>${esc(row.our_product_id)}</strong>
+      <div class="muted">${row.active ? "Showing now" : "Not showing now"}</div>
+      <input data-mtext="${row.id}" value="${esc(row.text)}" />
+      <div class="dates">
+        <label>From<input type="date" data-mfrom="${row.id}" value="${esc(row.starts_on)}" /></label>
+        <label>Until<input type="date" data-muntil="${row.id}" value="${esc(row.ends_on)}" /></label>
+      </div>
+      <button type="button" data-msave="${row.id}">Save</button>
+      <button type="button" data-mdel="${row.id}">Delete</button>
+    </div>`).join("");
+  const today = today();
+  return `<button class="back" id="back">Back</button>
+    <h1>Marking</h1>
+    <label class="search">Find items<input id="mq" value="${esc(state.query)}" placeholder="5401" /></label>
+    <div id="mark-hits">${hits}</div>
+    <label>Marking<input id="mtext" maxlength="200" placeholder="Monday" /></label>
+    <div class="dates">
+      <label>From<input type="date" id="mfrom" value="${today}" /></label>
+      <label>Until<input type="date" id="muntil" value="2099-12-31" /></label>
+    </div>
+    <button type="button" id="madd">Add to selected</button>
+    <h2>Already set</h2>
+    ${rows || `<p class="muted">None yet.</p>`}`;
+}
+
+async function loadMarking() {
+  const q = state.query.trim();
+  const data = await api(`/api/v1/biz/markings?q=${encodeURIComponent(q)}`);
+  state.markRows = data.items || [];
+  state.markHits = data.items_search || [];
 }
 
 async function render() {
@@ -324,6 +455,10 @@ async function render() {
     if (state.screen === "home") {
       const data = await api(`/api/v1/biz/home${qs()}`);
       return renderShell(homeView(data));
+    }
+    if (state.screen === "marking") {
+      await loadMarking();
+      return renderShell(markingView());
     }
     if (state.screen === "drill") {
       const data = await api(`/api/v1/biz/drill${qs({
@@ -335,6 +470,7 @@ async function render() {
       return renderShell(drillView(data));
     }
     if (state.screen === "search") {
+      if (document.getElementById("q")) return refreshItemSearch();
       const data = state.query.trim() ? await api(`/api/v1/biz/items?q=${encodeURIComponent(state.query.trim())}`) : { items: [] };
       return renderShell(searchView(data.items));
     }

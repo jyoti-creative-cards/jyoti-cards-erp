@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String, Text, func
+from sqlalchemy import Date, DateTime, ForeignKey, Integer, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -25,9 +25,11 @@ class FreightLedgerEntry(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     freight_agent_id: Mapped[int] = mapped_column(Integer, ForeignKey("jc_freight_agents.id", ondelete="CASCADE"), nullable=False, index=True)
-    # opening_balance (+) | charge (+) | settlement (−) | advance (−)
+    # opening_balance (+) | charge (+) | settlement (−) | advance (−) | adjustment (+ or −)
     entry_type: Mapped[str] = mapped_column(String(20), nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    value_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    head: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     customer_bill_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("jc_customer_bills.id", ondelete="SET NULL"), nullable=True)
     expense_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("jc_expenses.id", ondelete="SET NULL"), nullable=True)
     transaction_ref: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)

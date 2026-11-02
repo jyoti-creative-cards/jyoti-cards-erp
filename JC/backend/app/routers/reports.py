@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.deps import AuthContext, require_admin
+from app.deps import AuthContext, require_admin, require_permission
 from app.services import reports as svc
 from app.services.reports import extended as ext
 from app.services.ar_ledger import build_ar_ledger, customer_ar_totals, _customer_label
@@ -488,9 +488,87 @@ class MarkingApplyIn(BaseModel):
     product_ids: list[int] = Field(default_factory=list)
 
 
+class MarkingAssignIn(BaseModel):
+    marking: str
+    product_ids: list[int] = Field(default_factory=list)
+    starts_on: date
+    ends_on: date
+
+
+class MarkingEditIn(BaseModel):
+    marking: str
+    starts_on: date
+    ends_on: date
+
+
 class MarkingRenameIn(BaseModel):
     old_marking: str
     new_marking: str
+
+
+@router.get("/product-markings/assignments")
+def product_marking_assignments(
+    q: str = Query("", max_length=120),
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("catalog.read")),
+):
+    from app.services.product_markings import list_assignments
+    return {"items": list_assignments(db, q=q)}
+
+
+@router.post("/product-markings/assign", status_code=201)
+def product_markings_assign(
+    body: MarkingAssignIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("catalog.write")),
+):
+    from app.services import response_cache
+    from app.services.product_markings import assign_marking
+    try:
+        count = assign_marking(db, body.product_ids, body.marking, body.starts_on, body.ends_on)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    db.commit()
+    response_cache.invalidate("catalog:")
+    response_cache.invalidate("stock:")
+    return {"assigned": count}
+
+
+@router.patch("/product-markings/{marking_id}")
+def product_marking_edit(
+    marking_id: int,
+    body: MarkingEditIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("catalog.write")),
+):
+    from app.services import response_cache
+    from app.services.product_markings import update_marking
+    try:
+        update_marking(db, marking_id, text=body.marking, starts_on=body.starts_on, ends_on=body.ends_on)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    db.commit()
+    response_cache.invalidate("catalog:")
+    response_cache.invalidate("stock:")
+    return {"ok": True}
+
+
+@router.delete("/product-markings/{marking_id}")
+def product_marking_delete(
+    marking_id: int,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("catalog.write")),
+):
+    from app.services import response_cache
+    from app.services.product_markings import delete_marking
+    try:
+        delete_marking(db, marking_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    db.commit()
+    response_cache.invalidate("catalog:")
+    response_cache.invalidate("stock:")
+    return {"ok": True}
 
 
 @router.get("/product-markings")

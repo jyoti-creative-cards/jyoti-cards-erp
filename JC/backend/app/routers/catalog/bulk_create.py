@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session, aliased
 
 from app.db.session import get_db
 from app.deps import AuthContext, get_auth_context, require_permission
+from app.services.product_markings import display_marking
 from app.models.addon_product import AddonProduct
 from app.models.catalog_addon_link import CatalogAddonLink
 from app.models.catalog_alternative import CatalogAlternative
@@ -322,7 +323,7 @@ def _to_public(
         series=row.series,
         unit=row.unit,
         year_group=row.year_group,
-        marking=row.marking,
+        marking=display_marking(db, row),
         buying_price=hide_cost(format(row.buying_price, "f") if row.buying_price is not None else None, auth),
         selling_price=(
             format(eff, "f")

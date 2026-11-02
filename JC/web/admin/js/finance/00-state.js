@@ -36,7 +36,8 @@ const Finance = (() => {
   let journalForm = null;
   let settleFile = null;
   let freightSettleFile = null;
-  let freightPayMode = "settle"; // settle | advance
+  let freightPayMode = "settle"; // settle | advance | adjust | edit
+  let freightEditId = null;
   let paymentModes = [];
   let chipCounts = { due: 0, ar: 0, ap: 0, freight: 0 };
   let dues = null; // from GET /finance/dues — single money API

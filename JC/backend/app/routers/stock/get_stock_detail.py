@@ -16,6 +16,7 @@ from app.models.catalog_product import CatalogProduct
 from app.models.city import City
 from app.models.stock import StockBalance, StockLedger, StockReceipt, StockReceiptLine
 from app.models.vendor import Vendor
+from app.services.product_markings import display_marking
 from app.schemas.stock import (
     BillPreviewIn,
     BillPreviewOut,
@@ -190,7 +191,7 @@ def _product_public(
         "category": row.category,
         "series": row.series,
         "year_group": row.year_group,
-        "marking": row.marking,
+        "marking": display_marking(db, row),
         "quantity_on_hand": balance,
         "low_stock_threshold": threshold,
         "stock_status": admin_stock_status_label(balance, threshold),

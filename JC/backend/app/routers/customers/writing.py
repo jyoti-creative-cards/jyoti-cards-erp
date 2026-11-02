@@ -23,7 +23,7 @@ from app.services.soft_delete import apply_is_active
 from app.services.activity import log_from_auth
 from app.services.ledger import build_customer_ledger
 from app.services.history import TRACKED_FIELDS, diff_summary, list_entity_history, record_entity_history, row_snapshot
-from app.services.passwords import generate_portal_password, hash_password
+from app.services.passwords import customer_portal_password, hash_password
 from app.services import response_cache
 logger = logging.getLogger("jc.customers")
 
@@ -64,7 +64,8 @@ def create_customer(body: CustomerCreate, db: Session = Depends(get_db), auth: A
     if existing is not None and existing.is_active and existing.deleted_at is None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="phone already registered")
 
-    plain = generate_portal_password()
+    display_name = (body.person_name or "").strip() or body.business_name.strip()
+    plain = customer_portal_password(display_name, phone)
     route_id = _route_from_city(db, body.city_id)
     _assert_unique_party(
         db,
@@ -72,7 +73,6 @@ def create_customer(body: CustomerCreate, db: Session = Depends(get_db), auth: A
         body.city_id,
         exclude_id=existing.id if existing is not None else None,
     )
-    display_name = (body.person_name or "").strip() or body.business_name.strip()
 
     # Soft-deleted / inactive row still holds unique phone — recycle it.
     if existing is not None:
@@ -294,7 +294,7 @@ def reset_password(customer_id: int, db: Session = Depends(get_db)) -> dict:
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="customer not found")
 
-    plain = generate_portal_password()
+    plain = customer_portal_password((row.person_name or "").strip() or row.business_name, row.phone)
     row.password_hash = hash_password(plain)
     db.add(row)
     db.commit()
@@ -315,7 +315,7 @@ def resend_whatsapp(customer_id: int, db: Session = Depends(get_db)) -> dict:
     row = db.get(Customer, customer_id)
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="customer not found")
-    plain = generate_portal_password()
+    plain = customer_portal_password((row.person_name or "").strip() or row.business_name, row.phone)
     row.password_hash = hash_password(plain)
     db.add(row)
     db.commit()

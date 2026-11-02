@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 from typing import List, Optional, Union
 
 from pydantic import BaseModel, Field
@@ -188,6 +189,11 @@ class AdditionalChargeIn(BaseModel):
     amount: str
 
 
+class BillCatalogIn(BaseModel):
+    catalog_id: int
+    price: Decimal = Decimal("0")
+
+
 class ProcessBillIn(BaseModel):
     lines: List[ProcessLineIn]
     placement_ids: List[int] = []
@@ -206,6 +212,7 @@ class ProcessBillIn(BaseModel):
     bill_date: Optional[date] = None  # backdate; default = today
     on_commission_agent: Optional[bool] = None
     confirm_duplicate: bool = False
+    catalogs: List[BillCatalogIn] = []
 
 
 class EditBillLineIn(BaseModel):

@@ -1,7 +1,7 @@
   async function submitProcess() {
     if (processBusy || !detailCustomerId) return;
     if (!processLines.some(l => Number(l.quantity_to_ship) > 0)) return ctx.toast("Enter a quantity", "error");
-    if (!transportMode) return ctx.toast("Select transport", "error");
+    if (!transportMode) return ctx.toast("Select how this is sent", "error");
     if (transportMode === "bus") {
       if (!freightAgentId) return ctx.toast("Select the freight agent", "error");
       if (String(freightCharges || "").trim() === "") return ctx.toast("Enter freight", "error");

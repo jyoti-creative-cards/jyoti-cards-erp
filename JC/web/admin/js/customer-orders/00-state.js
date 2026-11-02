@@ -13,6 +13,8 @@ const CustomerOrders = (() => {
   let hubExpandedCustomerId = null;
   let hubExpandCache = {};
   let detailCustomerId = null;
+  let dueCatalogs = [];
+  let pickedCatalogs = {};
 
   let dispatchParcels = [];
   let dispatchAgents = [];

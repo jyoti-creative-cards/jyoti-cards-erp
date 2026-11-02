@@ -221,7 +221,10 @@ def submit_process_bill(
     customer = db.get(Customer, customer_id)
     if not customer:
         raise HTTPException(404, "customer not found")
-    extra = [{"name": c.name, "amount": c.amount} for c in body.additional_charges] if body.additional_charges else None
+    extra = [{"name": c.name, "amount": c.amount} for c in body.additional_charges] if body.additional_charges else []
+    from app.services.our_catalogs import bill_catalog_charges, save_bill_catalogs
+    catalog_charges, _printed = bill_catalog_charges(db, customer_id, [c.model_dump() for c in body.catalogs])
+    extra = (extra or []) + catalog_charges
     bill = process_customer_bill(
         db,
         customer_id=customer_id,
@@ -247,6 +250,13 @@ def submit_process_bill(
         placement_ids=body.placement_ids or None,
         on_commission_agent=body.on_commission_agent,
         confirm_duplicate=bool(body.confirm_duplicate),
+    )
+    save_bill_catalogs(
+        db,
+        bill_id=bill.id,
+        customer_id=customer_id,
+        catalogs=[c.model_dump() for c in body.catalogs],
+        issued_on=body.bill_date,
     )
     log_from_auth(db, auth, action="bill", entity_type="customer_order", entity_id=bill.id, entity_label=customer.business_name, detail=f"Bill {bill.bill_number}")
     db.commit()

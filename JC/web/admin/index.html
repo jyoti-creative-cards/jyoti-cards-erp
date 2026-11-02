@@ -443,6 +443,7 @@
             <div class="ord-mode-toggle" id="products-mode" role="tablist">
               <button type="button" class="ord-mode-btn active" id="ptab-stock" data-mode="stock" onclick="Products.setMainTab('stock')">On hand</button>
               <button type="button" class="ord-mode-btn" id="ptab-catalog" data-mode="catalog" onclick="Products.setMainTab('catalog')">Catalog</button>
+              <button type="button" class="ord-mode-btn" id="ptab-ours" data-mode="ours" onclick="Products.setMainTab('ours')">Our catalogs</button>
             </div>
             <div class="ord-action-chips" id="products-action-chips" role="tablist"></div>
 
@@ -467,6 +468,7 @@
             </div>
 
             <div id="products-content" class="prod-content"></div>
+            <div id="our-catalog-panel" class="hidden"></div>
           </div>
         </div>
       </div>
@@ -1252,12 +1254,13 @@
   <script src="js/vendors.js?v=ui86"></script>
   <script src="js/catalog.js?v=ui84"></script>
   <script src="js/addon-products.js?v=ui98"></script>
-  <script src="js/products.js?v=ui100"></script>
+  <script src="js/products.js?v=ui101"></script>
+  <script src="js/our-catalogs.js?v=ui1"></script>
   <script src="js/staff.js?v=ui81"></script>
   <script src="js/vendor-orders.js?v=ui87"></script>
   <script src="js/xlsx.js?v=ui1"></script>
   <script src="js/share.js?v=ui64"></script>
-  <script src="js/customer-orders.js?v=ui144"></script>
+  <script src="js/customer-orders.js?v=ui145"></script>
   <script src="js/returns.js?v=ui76"></script>
   <script src="js/debit-notes.js?v=ui76"></script>
   <script src="js/stock.js?v=ui99"></script>

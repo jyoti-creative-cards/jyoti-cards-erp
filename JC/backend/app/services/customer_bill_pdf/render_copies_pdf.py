@@ -268,6 +268,18 @@ def _running_and_closing(
                     "label": _txt(ac["name"], 40) or "Charge",
                     "amount": _dec(ac["amount"]),
                 })
+    for cat in totals.get("catalogs") or []:
+        if not isinstance(cat, dict):
+            continue
+        label = _txt(cat.get("name"), 40)
+        if not label:
+            continue
+        price = _dec(cat.get("price"))
+        if price > 0:
+            continue
+        already = int(cat.get("already") or 0)
+        note = " (another copy)" if already else ""
+        charges.append({"kind": "charge", "label": f"Catalogue {label}{note}", "amount": Decimal("0")})
 
     closing: list[dict] = []
     if cash:

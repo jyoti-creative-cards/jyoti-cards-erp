@@ -27,12 +27,17 @@
       });
     const extra = additionalCharges.filter(c => c.name.trim() && c.amount.trim() && Number(c.amount) > 0)
       .map(c => ({ name: c.name.trim(), amount: String(c.amount) }));
+    const catalogs = !editBillId ? Object.entries(pickedCatalogs).map(([id, price]) => ({
+      catalog_id: Number(id),
+      price: String(price === "" || price == null ? "0" : price),
+    })) : [];
     const body = {
       lines,
       gst_enabled: gstEnabled,
       gst_rate_percent: Number(gstRate) || 18,
       narration: narration.trim() || null,
       additional_charges: extra,
+      catalogs,
       force_credit_override: !!forceCreditOverride,
       confirm_duplicate: !!billConfirmDuplicate,
     };
@@ -200,6 +205,9 @@
       billSeriesId = defaultBillSeriesId(billSeries);
       customerNotes = pctx.default_narration || "";
       narration = "";
+      dueCatalogs = [];
+      pickedCatalogs = {};
+      try { dueCatalogs = await ctx.api(`/our-catalogs/for-customer/${detailCustomerId}`, {}, 0) || []; } catch (_) { dueCatalogs = []; }
       billDate = localToday();
       billEditSearch = "";
       processStep = billableOrders.length ? 0 : 1;
@@ -569,6 +577,7 @@
     }
     if (String(packagingCharges || "").trim() !== "") extra += Number(packagingCharges) || 0;
     for (const c of additionalCharges || []) extra += Number(c.amount) || 0;
+    for (const price of Object.values(pickedCatalogs)) extra += Number(price) || 0;
     return { qty, amount: amount + extra };
   }
 
@@ -717,6 +726,19 @@
           <input class="input" placeholder="Name" value="${ctx.esc(c.name)}" oninput="CustomerOrders.setAddCharge(${i}, 'name', this.value)" />
           <input class="input" placeholder="₹" style="width:110px;" value="${ctx.esc(c.amount)}" oninput="CustomerOrders.setAddCharge(${i}, 'amount', this.value)" />
         </div>`).join("")}
+      ${dueCatalogs.length && !editBillId ? `<label class="label">Catalogues for this party</label>
+        <p style="margin:0 0 8px;font-size:13px;color:var(--muted);">Ones that should go to them are listed first. Price stays 0 unless you charge.</p>
+        ${dueCatalogs.map(c => {
+          const on = Object.prototype.hasOwnProperty.call(pickedCatalogs, c.id);
+          const again = Number(c.received) > 0;
+          return `<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap;">
+            <label style="display:flex;gap:8px;align-items:center;flex:1;">
+              <input type="checkbox" ${on ? "checked" : ""} onchange="CustomerOrders.toggleBillCatalog(${c.id}, this.checked)" />
+              <span><strong>${ctx.esc(c.name)}</strong> · ${c.copies_left} left${again ? ` · already received ${c.received}` : (c.needs_send ? " · to send" : "")}</span>
+            </label>
+            ${on ? `<input class="input" style="width:90px;" inputmode="decimal" value="${ctx.esc(pickedCatalogs[c.id] ?? "0")}" oninput="CustomerOrders.setBillCatalogPrice(${c.id}, this.value)" />` : ""}
+          </div>`;
+        }).join("")}` : ""}
       <button type="button" class="btn btn-secondary btn-sm" onclick="CustomerOrders.addChargeRow()">+ Charge</button>
       <label style="display:flex;gap:8px;align-items:center;margin:12px 0;">
         <input type="checkbox" ${gstEnabled ? "checked" : ""} onchange="CustomerOrders.setGst(this.checked)" /> GST
@@ -890,6 +912,20 @@
     else skipped.add(id);
     ln.skip_addon_ids = [...skipped];
     renderProcessWizard();
+  }
+
+  function toggleBillCatalog(id, on) {
+    if (on) {
+      if (!Object.prototype.hasOwnProperty.call(pickedCatalogs, id)) pickedCatalogs[id] = "0";
+    } else {
+      delete pickedCatalogs[id];
+    }
+    renderProcessWizard();
+  }
+
+  function setBillCatalogPrice(id, value) {
+    pickedCatalogs[id] = value;
+    renderWizardTotalsBar();
   }
 
   function setNarration(v) { narration = v; }

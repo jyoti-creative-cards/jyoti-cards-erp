@@ -117,14 +117,27 @@
   }
 
   function setMainTab(tab) {
+    const ours = tab === "ours";
     mainTab = tab === "catalog" ? "catalog" : "stock";
     catalogOffset = 0;
     attentionFilter = "all";
     filters.stock_status = "";
-    document.getElementById("ptab-stock")?.classList.toggle("active", mainTab === "stock");
-    document.getElementById("ptab-catalog")?.classList.toggle("active", mainTab === "catalog");
+    document.getElementById("ptab-stock")?.classList.toggle("active", !ours && mainTab === "stock");
+    document.getElementById("ptab-catalog")?.classList.toggle("active", !ours && mainTab === "catalog");
+    document.getElementById("ptab-ours")?.classList.toggle("active", ours);
+    document.getElementById("our-catalog-panel")?.classList.toggle("hidden", !ours);
+    document.querySelector("#products-unified .prod-toolbar")?.classList.toggle("hidden", ours);
+    document.getElementById("products-action-chips")?.classList.toggle("hidden", ours);
+    document.getElementById("products-content")?.classList.toggle("hidden", ours);
+    document.getElementById("products-filters-wrap")?.classList.toggle("hidden", ours || !filtersOpen);
     const title = document.getElementById("products-panel-title");
     const sub = document.getElementById("products-panel-sub");
+    if (ours) {
+      if (title) title.textContent = "Our catalogs";
+      if (sub) sub.textContent = "Catalogues we make and send to parties";
+      OurCatalogs.load?.();
+      return;
+    }
     if (title) title.textContent = "Products";
     if (sub) {
       sub.textContent = mainTab === "stock"

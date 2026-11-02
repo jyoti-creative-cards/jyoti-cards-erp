@@ -233,12 +233,14 @@ def cancel_customer_bill(
     fresh order — that reserves stock again the normal way.
     """
     from app.services.freight_parcels import remove_charge_for_bill
+    from app.services.our_catalogs import release_bill_catalogs
 
     bill = db.get(CustomerBill, bill_id)
     if not bill:
         raise HTTPException(404, "bill not found")
     if bill.cancelled_at:
         raise HTTPException(400, "bill already cancelled")
+    release_bill_catalogs(db, bill.id)
 
     customer = db.get(Customer, bill.customer_id)
     customer_name = customer.business_name if customer else f"Customer #{bill.customer_id}"

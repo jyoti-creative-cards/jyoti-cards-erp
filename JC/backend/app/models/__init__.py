@@ -24,6 +24,7 @@ from app.models.freight_agent import FreightAgent, FreightLedgerEntry
 from app.models.commission_agent import CommissionAgent, CommissionLedgerEntry
 from app.models.expense import Expense, ExpenseHead, ExpenseSource, ExpenseSubhead
 from app.models.stock_journal import StockJournal, StockJournalLine
+from app.models.our_catalog import OurCatalog, OurCatalogLine, OurCatalogAssignment, OurCatalogIssue
 from app.models.accounts_receivable import CustomerArAccount, ArLedgerEntry
 from app.models.customer_return import CustomerReturn, CustomerReturnLine
 from app.models.manual_loss import ManualLoss
@@ -41,7 +42,7 @@ __all__ = [
     "PriceHistory", "Route", "Staff", "Vendor",
     "VendorOrder", "VendorOrderLine", "VendorOrderPlacement", "VendorOpenLine",
     "StockBalance", "StockLedger", "StockReceipt", "StockReceiptLine",
-    "StockJournal", "StockJournalLine",
+    "StockJournal", "StockJournalLine", "OurCatalog", "OurCatalogLine", "OurCatalogAssignment", "OurCatalogIssue",
     "DebitNote", "VendorApAccount", "ApLedgerEntry",
     "StickerLabel", "StickerPrint",
     "WhatsAppMessage",

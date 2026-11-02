@@ -15,10 +15,13 @@ from app.services.biz_date import today_ist
 from app.services.our_catalogs import (
     assign_parties,
     catalog_detail,
+    delete_issue,
     for_customer,
     import_sample_journals,
     list_catalogs,
     record_issue,
+    unassign_party,
+    update_issue,
 )
 from app.services.stock_journal import post_journal
 from app.models.our_catalog import OurCatalog, OurCatalogLine
@@ -48,6 +51,11 @@ class IssueIn(BaseModel):
     price: Decimal = Decimal("0")
     issued_on: Optional[date] = None
     note: Optional[str] = None
+
+
+class IssueUpdate(BaseModel):
+    copies: int = Field(..., gt=0)
+    issued_on: Optional[date] = None
 
 
 @router.get("")
@@ -112,6 +120,28 @@ def assign(catalog_id: int, body: AssignIn, db: Session = Depends(get_db), auth:
     added = assign_parties(db, catalog_id, body.customer_ids)
     db.commit()
     return {"added": added}
+
+
+@router.delete("/{catalog_id}/assign/{customer_id}")
+def unassign(catalog_id: int, customer_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("catalog.write"))):
+    unassign_party(db, catalog_id, customer_id)
+    db.commit()
+    return catalog_detail(db, catalog_id)
+
+
+@router.patch("/issues/{issue_id}")
+def edit_issue(issue_id: int, body: IssueUpdate, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("catalog.write"))):
+    issue = update_issue(db, issue_id, copies=body.copies, issued_on=body.issued_on)
+    catalog_id = issue.catalog_id
+    db.commit()
+    return catalog_detail(db, catalog_id)
+
+
+@router.delete("/issues/{issue_id}")
+def remove_issue(issue_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("catalog.write"))):
+    catalog_id = delete_issue(db, issue_id)
+    db.commit()
+    return catalog_detail(db, catalog_id)
 
 
 @router.post("/{catalog_id}/issues", status_code=201)

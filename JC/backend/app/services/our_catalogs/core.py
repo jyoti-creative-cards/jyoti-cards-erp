@@ -172,6 +172,50 @@ def assign_parties(db: Session, catalog_id: int, customer_ids: list[int]) -> int
     return added
 
 
+def unassign_party(db: Session, catalog_id: int, customer_id: int) -> None:
+    row = (
+        db.query(OurCatalogAssignment)
+        .filter(OurCatalogAssignment.catalog_id == catalog_id, OurCatalogAssignment.customer_id == customer_id)
+        .first()
+    )
+    if row:
+        db.delete(row)
+        db.flush()
+
+
+def _manual_issue(db: Session, issue_id: int) -> OurCatalogIssue:
+    issue = db.get(OurCatalogIssue, issue_id)
+    if not issue:
+        raise HTTPException(404, "record not found")
+    if issue.bill_id:
+        raise HTTPException(400, "This copy is on a bill. Cancel that bill to change it.")
+    return issue
+
+
+def update_issue(db: Session, issue_id: int, *, copies: int, issued_on: date | None) -> OurCatalogIssue:
+    issue = _manual_issue(db, issue_id)
+    if copies < 1:
+        raise HTTPException(400, "Enter how many copies")
+    catalog = db.get(OurCatalog, issue.catalog_id)
+    sent = issued_copies(db, issue.catalog_id) - int(issue.copies) + copies
+    if catalog and sent > catalog.copies_made:
+        left = catalog.copies_made - (issued_copies(db, issue.catalog_id) - int(issue.copies))
+        raise HTTPException(400, f"Only {left} copies of {catalog.name} are left")
+    issue.copies = copies
+    if issued_on:
+        issue.issued_on = issued_on
+    db.flush()
+    return issue
+
+
+def delete_issue(db: Session, issue_id: int) -> int:
+    issue = _manual_issue(db, issue_id)
+    catalog_id = issue.catalog_id
+    db.delete(issue)
+    db.flush()
+    return catalog_id
+
+
 def record_issue(
     db: Session,
     *,

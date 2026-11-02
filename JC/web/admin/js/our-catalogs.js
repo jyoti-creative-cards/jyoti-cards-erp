@@ -59,10 +59,22 @@ const OurCatalogs = (() => {
     const assigned = (d.assignments || []).map(a => `<tr>
       <td>${esc(a.business_name)}${a.party_number ? " · #" + a.party_number : ""}</td>
       <td>${a.received ? a.received : "Not yet"}</td>
+      <td><button type="button" class="btn btn-secondary btn-sm" onclick="OurCatalogs.unassign(${a.customer_id})">Remove</button></td>
     </tr>`).join("");
-    const issues = (d.issues || []).map(i => `<tr>
-      <td>${esc(i.issued_on)}</td><td>${esc(i.business_name)}</td><td>${i.copies}</td><td>${money(i.price)}</td><td>${i.bill_id ? "Bill" : esc(i.note || "Recorded")}</td>
-    </tr>`).join("");
+    const issues = (d.issues || []).map(i => {
+      const locked = !!i.bill_id;
+      const copies = locked
+        ? String(i.copies)
+        : `<input class="input" style="width:72px;" inputmode="numeric" value="${i.copies}" id="oc-edit-copies-${i.id}" />`;
+      const when = locked
+        ? esc(i.issued_on)
+        : `<input class="input" type="date" value="${esc(i.issued_on)}" id="oc-edit-date-${i.id}" />`;
+      const action = locked
+        ? "On a bill"
+        : `<button type="button" class="btn btn-secondary btn-sm" onclick="OurCatalogs.saveIssue(${i.id})">Save</button>
+           <button type="button" class="btn btn-secondary btn-sm" onclick="OurCatalogs.removeIssue(${i.id})">Remove</button>`;
+      return `<tr><td>${when}</td><td>${esc(i.business_name)}</td><td>${copies}</td><td>${money(i.price)}</td><td>${action}</td></tr>`;
+    }).join("");
     box.innerHTML = `
       <button type="button" class="btn btn-secondary" style="margin:12px 0;" onclick="OurCatalogs.back()">← Catalogs</button>
       <h2 style="margin:0 0 4px;">${esc(d.name)}</h2>
@@ -75,7 +87,7 @@ const OurCatalogs = (() => {
         <h3 style="margin:0 0 8px;">Should go to</h3>
         <input id="oc-party-q" class="input" placeholder="Search a party to assign" oninput="OurCatalogs.searchParties(this.value)" />
         <div id="oc-party-hits"></div>
-        <table class="data" style="margin-top:8px;"><thead><tr><th>Party</th><th>Received</th></tr></thead><tbody>${assigned || `<tr><td colspan="2">None yet</td></tr>`}</tbody></table>
+        <table class="data" style="margin-top:8px;"><thead><tr><th>Party</th><th>Received</th><th></th></tr></thead><tbody>${assigned || `<tr><td colspan="3">None yet</td></tr>`}</tbody></table>
       </div>
       <div class="card" style="padding:12px;margin-bottom:12px;">
         <h3 style="margin:0 0 8px;">Already received</h3>
@@ -103,6 +115,32 @@ const OurCatalogs = (() => {
       <button type="button" class="btn btn-secondary btn-sm" style="display:block;width:100%;text-align:left;margin-top:6px;" onclick="OurCatalogs.assign(${c.id})">
         ${esc(c.business_name || "")}${c.city_name ? " · " + esc(c.city_name) : ""}
       </button>`).join("");
+  }
+
+  async function unassign(customerId) {
+    try {
+      await App.api(`/our-catalogs/${openId}/assign/${customerId}`, { method: "DELETE" });
+      App.toast?.("Removed", "success");
+      await openDetail(openId);
+    } catch (e) { App.toast?.(e.message, "error"); }
+  }
+
+  async function saveIssue(issueId) {
+    const copies = Number(document.getElementById(`oc-edit-copies-${issueId}`)?.value || 0);
+    const issued_on = document.getElementById(`oc-edit-date-${issueId}`)?.value || null;
+    try {
+      await App.api(`/our-catalogs/issues/${issueId}`, { method: "PATCH", body: JSON.stringify({ copies, issued_on }) });
+      App.toast?.("Saved", "success");
+      await openDetail(openId);
+    } catch (e) { App.toast?.(e.message, "error"); }
+  }
+
+  async function removeIssue(issueId) {
+    try {
+      await App.api(`/our-catalogs/issues/${issueId}`, { method: "DELETE" });
+      App.toast?.("Removed", "success");
+      await openDetail(openId);
+    } catch (e) { App.toast?.(e.message, "error"); }
   }
 
   async function assign(customerId) {
@@ -199,5 +237,5 @@ const OurCatalogs = (() => {
     } catch (e) { App.toast?.(e.message, "error"); }
   }
 
-  return { load, openDetail, back, openCreate, searchParties, assign, searchGot, recordGot, searchItems, addItem, setItemQty, saveCreate };
+  return { load, openDetail, back, openCreate, searchParties, assign, unassign, searchGot, recordGot, saveIssue, removeIssue, searchItems, addItem, setItemQty, saveCreate };
 })();

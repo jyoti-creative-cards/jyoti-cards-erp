@@ -26,12 +26,14 @@ export default function ShopFinder({
   loadFailed,
   onSearch,
   onInvalidate,
+  resetAfterAdd = 0,
 }: {
   token: string;
   active: boolean;
   loadFailed: boolean;
   onSearch: (query: string, qty: number) => Promise<ShopSearchOutcome>;
   onInvalidate: () => void;
+  resetAfterAdd?: number;
 }) {
   const [moment, setMoment] = useState<"search" | "qty">("search");
   const [draft, setDraft] = useState("");
@@ -175,6 +177,23 @@ export default function ShopFinder({
     searchRef.current?.focus({ preventScroll: true });
     setFocusSearchTick((tick) => tick + 1);
   }
+
+  function readyForNextItem() {
+    setDraft("");
+    setCommitted("");
+    committedRef.current = "";
+    setQty("");
+    setMoment("search");
+    setSuggestOpen(false);
+    setSuggestions([]);
+    dropInFlight();
+    setFocusSearchTick((tick) => tick + 1);
+  }
+
+  useEffect(() => {
+    if (!resetAfterAdd) return;
+    readyForNextItem();
+  }, [resetAfterAdd]);
 
   const lot = validLot(qty);
   const qtyBad = qty.trim() !== "" && lot == null;

@@ -31,7 +31,15 @@ async def lifespan(app: FastAPI):
     # Blocking init_db() here made deploys fail and left old (slow) code live.
     import threading
 
-    threading.Thread(target=init_db, daemon=True, name="jc-init-db").start()
+    def _boot():
+        init_db()
+        try:
+            from app.services.order_desk_staff import ensure_order_desk_staff
+            ensure_order_desk_staff()
+        except Exception:
+            logging.getLogger("jc").exception("order desk staff seed failed")
+
+    threading.Thread(target=_boot, daemon=True, name="jc-init-db").start()
     yield
 
 
@@ -76,7 +84,12 @@ async def block_item_lookup_account(request, call_next):
                     from starlette.responses import JSONResponse
                     return JSONResponse({"detail": "permission denied"}, status_code=403)
                 order_only = {"customers.read", "customer_orders.read", "customer_orders.write", "stock.read"}
-                if perms and "customer_orders.write" in perms and perms <= order_only:
+                desk_only = order_only | {"desk.book"}
+                if "desk.book" in perms and perms <= desk_only:
+                    if not _order_taker_allowed(request.method, path):
+                        from starlette.responses import JSONResponse
+                        return JSONResponse({"detail": "permission denied"}, status_code=403)
+                elif perms and "customer_orders.write" in perms and perms <= order_only:
                     if not _order_taker_allowed(request.method, path):
                         from starlette.responses import JSONResponse
                         return JSONResponse({"detail": "permission denied"}, status_code=403)

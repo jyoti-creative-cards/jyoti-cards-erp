@@ -48,7 +48,8 @@ def _customer_label(db: Session, customer_id: int) -> str:
     if customer.city_id:
         city = db.get(City, customer.city_id)
         city_name = city.name if city else None
-    return f"{customer.business_name} — {city_name}" if city_name else customer.business_name
+    from app.services.party_label import format_party_label
+    return format_party_label(customer.business_name, city_name, customer.marker_1, customer.marker_2)
 
 def _reverse_item_dn_stock(db: Session, dn: DebitNote, label: str, note: str) -> None:
     """Undo create_debit_note's stock effect for an item-type note (it applied -quantity)."""

@@ -251,6 +251,7 @@ export default function CustomerPortalPage() {
   const [stockPopup, setStockPopup] = useState(false);
   const [shopResults, setShopResults] = useState<ShopProductPublic[]>([]);
   const [shopWanted, setShopWanted] = useState(0);
+  const [finderReset, setFinderReset] = useState(0);
   const [shopLoading, setShopLoading] = useState(false);
   const [shopErr, setShopErr] = useState("");
   const [shopDidSearch, setShopDidSearch] = useState(false);
@@ -413,6 +414,7 @@ export default function CustomerPortalPage() {
       ...prev,
       [p.catalog_product_id]: { p, qty: merged },
     }));
+    setFinderReset((n) => n + 1);
   }
 
   function setLineQty(catalogProductId: number, qtyStr: string) {
@@ -687,6 +689,7 @@ export default function CustomerPortalPage() {
                 loadFailed={shopErr !== ""}
                 onSearch={loadShop}
                 onInvalidate={invalidateShop}
+                resetAfterAdd={finderReset}
               />
 
               {shopLoading ? (

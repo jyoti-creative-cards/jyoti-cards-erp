@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>JC Admin — Jyoti Creative</title>
-  <link rel="stylesheet" href="styles.css?v=ui75" />
+  <link rel="stylesheet" href="styles.css?v=ui76" />
 </head>
 <body>
   <div id="toasts"></div>
@@ -746,6 +746,14 @@
       </div>
 
       <!-- People -->
+      <div id="view-desk" class="view hidden" style="max-width:640px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;">
+          <h2 style="margin:0;">Orders</h2>
+          <button type="button" class="btn btn-secondary" onclick="App.logout()">Logout</button>
+        </div>
+        <div id="desk-body"></div>
+      </div>
+
       <div id="view-people" class="view hidden">
         <div id="order-taker-desk" class="hidden">
           <div class="ot-top">
@@ -1279,7 +1287,7 @@
   <script src="js/payment-modes.js?v=ui62"></script>
   <script src="js/freight-agents.js?v=ui66"></script>
   <script src="js/calculator.js?v=ui2"></script>
-  <script src="app.js?v=ui106"></script>
+  <script src="app.js?v=ui107"></script>
   <script src="js/commission-agents.js?v=ui2"></script>
   <script src="js/whatsapp-inbox.js?v=ui2"></script>
 </body>

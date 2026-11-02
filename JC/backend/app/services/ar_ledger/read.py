@@ -8,6 +8,7 @@ from app.models.customer import Customer
 from app.models.customer_bill import CustomerBill
 from app.models.city import City
 from app.services.money import as_signed_decrease, as_signed_increase, mag
+from app.services.party_label import format_party_label
 
 from app.services.ar_ledger.labels import _doc_status
 
@@ -209,7 +210,7 @@ def list_ar_customers(db: Session) -> list[dict]:
             continue
         outstanding = t["outstanding"]
         city_name = cities.get(customer.city_id) if customer.city_id else None
-        label = f"{customer.business_name} — {city_name}" if city_name else customer.business_name
+        label = format_party_label(customer.business_name, city_name, customer.marker_1, customer.marker_2)
         opening = latest_opening.get(customer.id)
         out.append(
             {
@@ -242,12 +243,12 @@ def ar_dues_total(db: Session) -> dict:
     rows = db.execute(
         text(
             """
-            SELECT c.id, c.business_name, ci.name AS city_name, SUM(e.amount) AS outstanding
+            SELECT c.id, c.business_name, c.marker_1, c.marker_2, ci.name AS city_name, SUM(e.amount) AS outstanding
             FROM jc_ar_ledger_entries e
             JOIN jc_customers c ON c.id = e.customer_id AND c.deleted_at IS NULL
             LEFT JOIN jc_cities ci ON ci.id = c.city_id
             WHERE e.deleted_at IS NULL
-            GROUP BY c.id, c.business_name, ci.name
+            GROUP BY c.id, c.business_name, c.marker_1, c.marker_2, ci.name
             HAVING SUM(e.amount) > 0
             ORDER BY SUM(e.amount) DESC
             """
@@ -256,7 +257,7 @@ def ar_dues_total(db: Session) -> dict:
     due = [
         {
             "customer_id": int(r.id),
-            "customer_label": f"{r.business_name} — {r.city_name}" if r.city_name else r.business_name,
+            "customer_label": format_party_label(r.business_name, r.city_name, r.marker_1, r.marker_2),
             "outstanding": format(Decimal(str(r.outstanding or 0)).quantize(Decimal("0.01")), "f"),
         }
         for r in rows

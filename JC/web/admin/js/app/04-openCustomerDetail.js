@@ -3,7 +3,7 @@
     detailMode = "customer"; detailId = id;
     customerLedgerExpanded = null;
     customerLedgerOpenIds = new Set();
-    customerLedgerExpandAll = false;
+    customerLedgerExpandAll = true;
     customerAr = null;
     customerLedger = [];
     let tab = opts.tab || "activity";
@@ -330,7 +330,10 @@
     const expandBtn = opts.showExpand === false
       ? ""
       : `<button type="button" class="btn btn-secondary btn-sm" style="margin:0 0 10px 8px;" onclick="App.setCustomerLedgerDetails(${customerLedgerExpandAll ? "false" : "true"})">${customerLedgerExpandAll ? "Hide details" : "View details"}</button>`;
-    return `<div class="detail-section"><h4>Activity</h4>${customerRealBar()}${expandBtn}${sections.length ? sections.join("") : emptyNote}</div>`;
+    const jump = customerLedgerExpandAll
+      ? `<button type="button" class="ledger-jump" title="Scroll down" onclick="window.scrollTo({top:document.documentElement.scrollHeight,behavior:'smooth'})">↓</button>`
+      : "";
+    return `<div class="detail-section"><h4>Activity</h4>${customerRealBar()}${expandBtn}${sections.length ? sections.join("") : emptyNote}</div>${jump}`;
   }
 
   function ledgerRowOpen(entryId) {
@@ -397,7 +400,7 @@
     catch (e) { box.innerHTML = `<p style="color:var(--danger);">${esc(e.message)}</p>`; return; }
     const rows = filterPartyLedger(val);
     box.innerHTML = rows.map(c =>
-      `<button type="button" class="btn btn-secondary" style="display:block;width:100%;text-align:left;margin-top:6px;" onclick="App.pickPartyLedger(${c.id})">${esc(c.business_name || "")}${c.city_name ? " · " + esc(c.city_name) : ""}${c.party_number ? " · #" + c.party_number : ""}</button>`
+      `<button type="button" class="btn btn-secondary" style="display:block;width:100%;text-align:left;margin-top:6px;" onclick="App.pickPartyLedger(${c.id})">${esc(c.business_name || "")}${c.city_name ? " · " + esc(c.city_name) : ""}${c.party_number ? " · #" + c.party_number : ""}${c.marker_1 ? " · " + esc(c.marker_1) : ""}${c.marker_2 ? " · " + esc(c.marker_2) : ""}</button>`
     ).join("") || (String(val || "").trim() ? `<p style="color:var(--muted);margin:8px 0 0;">No match</p>` : "");
   }
 
@@ -405,9 +408,9 @@
     const c = (partyLedgerParties || []).find(x => Number(x.id) === Number(id));
     partyLedgerCustomerId = Number(id);
     customerLedgerOpenIds = new Set();
-    customerLedgerExpandAll = false;
+    customerLedgerExpandAll = true;
     const picked = document.getElementById("party-ledger-picked");
-    if (picked) picked.textContent = c ? `${c.business_name || ""}${c.city_name ? " · " + c.city_name : ""}` : "";
+    if (picked) picked.textContent = c ? `${c.business_name || ""}${c.city_name ? " · " + c.city_name : ""}${c.marker_1 ? " · " + c.marker_1 : ""}${c.marker_2 ? " · " + c.marker_2 : ""}` : "";
     const box = document.getElementById("party-ledger-matches");
     if (box) box.innerHTML = "";
     const input = document.getElementById("party-ledger-q");
@@ -930,5 +933,167 @@
       toast("Customer updated", "success");
       openCustomerDetail(id);
     } catch (e) { toast(e.message, "error"); }
+  }
+
+  let deskCustomer = null;
+  let deskProduct = null;
+  let deskParties = null;
+  let deskItems = null;
+  let deskMode = "home";
+
+  function deskMarks(c) {
+    return [c?.marker_1, c?.marker_2].filter(Boolean).join(" · ");
+  }
+
+  function deskPartyLine(c) {
+    const marks = deskMarks(c);
+    return `${c.business_name || ""}${c.city_name ? " · " + c.city_name : ""}${c.party_number ? " #" + c.party_number : ""}${marks ? " · " + marks : ""}`;
+  }
+
+  function openOrderDesk() {
+    deskMode = "home";
+    deskCustomer = null;
+    deskProduct = null;
+    renderOrderDesk();
+    if (deskParties && deskItems) return;
+    Promise.all([
+      api("/customers/entry-parties", {}, 0),
+      api("/stock/entry-items", {}, 0),
+    ]).then(([parties, items]) => {
+      deskParties = parties || [];
+      deskItems = items || [];
+    }).catch(e => toast(e.message, "error"));
+  }
+
+  function deskShow(mode) {
+    deskMode = mode;
+    if (mode === "home") {
+      deskCustomer = null;
+      deskProduct = null;
+    }
+    renderOrderDesk();
+  }
+
+  function deskFilterParties(q) {
+    const needle = String(q || "").trim().toLowerCase();
+    if (!needle) return [];
+    return (deskParties || []).filter(c => {
+      const blob = `${c.business_name || ""} ${c.city_name || ""} ${c.party_number || ""} ${c.marker_1 || ""} ${c.marker_2 || ""}`.toLowerCase();
+      return blob.includes(needle);
+    }).slice(0, 12);
+  }
+
+  function deskFilterItems(q) {
+    const needle = String(q || "").trim().toLowerCase();
+    if (!needle) return [];
+    return (deskItems || []).filter(p => String(p.our_product_id || "").toLowerCase().includes(needle)).slice(0, 12);
+  }
+
+  function deskPickCustomer(id) {
+    deskCustomer = (deskParties || []).find(c => Number(c.id) === Number(id)) || null;
+    deskProduct = null;
+    renderOrderDesk();
+  }
+
+  function deskPickProduct(id) {
+    deskProduct = (deskItems || []).find(p => Number(p.catalog_product_id) === Number(id)) || null;
+    renderOrderDesk();
+  }
+
+  function onDeskCustomer(val) {
+    const box = document.getElementById("desk-customer-hits");
+    if (!box) return;
+    box.innerHTML = deskFilterParties(val).map(c =>
+      `<button type="button" class="btn btn-secondary" style="display:block;width:100%;text-align:left;margin-top:6px;" onclick="App.deskPickCustomer(${c.id})">${esc(deskPartyLine(c))}</button>`
+    ).join("") || (String(val || "").trim() ? `<p style="color:var(--muted);">No match</p>` : "");
+  }
+
+  function onDeskItem(val) {
+    const box = document.getElementById("desk-item-hits");
+    if (!box) return;
+    box.innerHTML = deskFilterItems(val).map(p =>
+      `<button type="button" class="btn btn-secondary" style="display:block;width:100%;text-align:left;margin-top:6px;" onclick="App.deskPickProduct(${p.catalog_product_id})">${esc(p.our_product_id || "")}</button>`
+    ).join("") || (String(val || "").trim() ? `<p style="color:var(--muted);">No match</p>` : "");
+  }
+
+  async function deskPlace() {
+    if (!deskCustomer || !deskProduct) return toast("Pick a customer and an item", "error");
+    const qty = Math.floor(Number(document.getElementById("desk-qty")?.value || "0"));
+    if (!qty || qty < 1) return toast("Enter a quantity", "error");
+    showLoading?.();
+    try {
+      await api(`/customer-orders/customer/${deskCustomer.id}/offline`, {
+        method: "POST",
+        body: JSON.stringify({ lines: [{ catalog_product_id: deskProduct.catalog_product_id, quantity: qty }] }),
+      });
+      toast("Order placed", "success");
+      deskProduct = null;
+      renderOrderDesk();
+    } catch (e) { toast(e.message, "error"); }
+    finally { hideLoading?.(); }
+  }
+
+  async function loadDeskOrders(id) {
+    const box = document.getElementById("desk-orders");
+    if (box) box.innerHTML = `<p style="color:var(--muted);">Loading…</p>`;
+    try {
+      const buckets = await Promise.all(["received", "open", "billed"].map(b =>
+        api(`/customer-orders/customer/${id}?bucket=${b}`, {}, 0).catch(() => null)
+      ));
+      const bits = [];
+      buckets.forEach(detail => {
+        if (!detail) return;
+        const rows = detail.placements || detail.open_lines || [];
+        rows.forEach(row => {
+          const lines = (row.lines || []).map(ln => `${ln.our_product_id} × ${ln.quantity ?? ln.quantity_open ?? ""}`).join(", ");
+          const title = row.display_name || row.bill_number || detail.bucket || "Order";
+          bits.push(`<div style="padding:10px 0;border-bottom:1px solid var(--border);"><strong>${esc(title)}</strong><div style="color:var(--muted);font-size:13px;">${esc(lines || "No lines")}</div></div>`);
+        });
+      });
+      if (box) box.innerHTML = bits.join("") || `<p style="color:var(--muted);">No orders yet.</p>`;
+    } catch (e) {
+      if (box) box.innerHTML = `<p style="color:var(--danger);">${esc(e.message)}</p>`;
+    }
+  }
+
+  function renderOrderDesk() {
+    const el = document.getElementById("desk-body");
+    if (!el) return;
+    if (deskMode === "home") {
+      el.innerHTML = `<div style="display:flex;flex-direction:column;gap:12px;margin-top:24px;">
+        <button type="button" class="btn btn-primary btn-lg" onclick="App.deskShow('create')">Create order</button>
+        <button type="button" class="btn btn-secondary btn-lg" onclick="App.deskShow('view')">View order</button>
+      </div>`;
+      return;
+    }
+    const back = `<button type="button" class="btn btn-secondary btn-sm" style="margin-bottom:16px;" onclick="App.deskShow('home')">← Back</button>`;
+    if (!deskCustomer) {
+      el.innerHTML = `${back}
+        <label class="label">Customer</label>
+        <input class="input" placeholder="Name, city, or number" oninput="App.onDeskCustomer(this.value)" />
+        <div id="desk-customer-hits"></div>`;
+      return;
+    }
+    const who = esc(deskPartyLine(deskCustomer));
+    if (deskMode === "view") {
+      el.innerHTML = `${back}<p><strong>${who}</strong></p><div id="desk-orders"><p style="color:var(--muted);">Loading…</p></div>`;
+      loadDeskOrders(deskCustomer.id);
+      return;
+    }
+    el.innerHTML = `${back}
+      <p><strong>${who}</strong> <button type="button" class="btn btn-ghost btn-sm" onclick="App.deskClearCustomer()">Change</button></p>
+      <label class="label">Item</label>
+      <input class="input" placeholder="Item number" oninput="App.onDeskItem(this.value)" />
+      <div id="desk-item-hits"></div>
+      ${deskProduct ? `<p style="margin-top:12px;"><strong>${esc(deskProduct.our_product_id || "")}</strong></p>
+        <label class="label">Quantity</label>
+        <input id="desk-qty" class="input" type="number" min="1" placeholder="How many" />
+        <button type="button" class="btn btn-primary" style="margin-top:12px;" onclick="App.deskPlace()">Place order</button>` : ""}`;
+  }
+
+  function deskClearCustomer() {
+    deskCustomer = null;
+    deskProduct = null;
+    renderOrderDesk();
   }
 

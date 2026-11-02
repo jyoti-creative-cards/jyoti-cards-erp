@@ -8,6 +8,9 @@
   function lookupDesk() {
     return authMode === "staff" && permissions.size === 1 && permissions.has("items.lookup");
   }
+  function orderDesk() {
+    return authMode === "staff" && permissions.has("desk.book");
+  }
   function orderTaker() {
     if (authMode !== "staff" || !permissions.has("customer_orders.write")) return false;
     const allowed = new Set(["customers.read", "customer_orders.read", "customer_orders.write", "stock.read"]);
@@ -18,7 +21,7 @@
     return authMode === "staff" && permissions.size === 1 && permissions.has("stickers.print");
   }
   function isAdmin() {
-    if (lookupDesk() || orderTaker() || stickerDesk()) return false;
+    if (lookupDesk() || orderTaker() || orderDesk() || stickerDesk()) return false;
     return authMode === "admin" || authMode === "staff";
   }
   function isOwnerAdmin() {
@@ -37,14 +40,16 @@
     const desk = stickerDesk();
     const lookup = lookupDesk();
     const taker = orderTaker();
+    const bookDesk = orderDesk();
     document.getElementById("app")?.classList.toggle("lookup-only", lookup);
     document.getElementById("app")?.classList.toggle("order-taker", taker);
+    document.getElementById("app")?.classList.toggle("order-desk", bookDesk);
     document.getElementById("app")?.classList.toggle("sticker-only", desk);
     const moreTitle = document.querySelector("#more-hub .ui-hub-title");
     const moreSub = document.querySelector("#more-hub .ui-hub-sub");
     if (moreTitle) moreTitle.textContent = desk ? "Print sticker" : "More";
     if (moreSub) moreSub.textContent = desk ? "Search a party number and print." : "History, reports, setup, and safety — when you need them.";
-    document.getElementById("nav-today")?.classList.toggle("hidden", desk || lookup || taker);
+    document.getElementById("nav-today")?.classList.toggle("hidden", desk || lookup || taker || bookDesk);
     document.getElementById("nav-people")?.classList.toggle("hidden", desk || lookup || taker || !showPeople);
     document.getElementById("nav-products")?.classList.toggle("hidden", desk || lookup || taker || !showProducts);
     document.getElementById("nav-money")?.classList.toggle("hidden", desk || lookup || taker || !(isAdmin() || can("finance.write") || canRead("ar") || canRead("ap")));
@@ -405,6 +410,11 @@
       if (stickerDesk()) {
         showView("more");
         try { Sticker.open(); } catch (e) { /* sticker script */ }
+        return;
+      }
+      if (orderDesk()) {
+        showView("desk");
+        try { openOrderDesk(); } catch (e) { toast(e?.message || "Order desk failed", "error"); }
         return;
       }
       if (orderTaker()) {

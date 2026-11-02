@@ -15,6 +15,7 @@ from app.models.catalog_product import CatalogProduct
 from app.models.vendor import Vendor
 from app.models.city import City
 from app.services.biz_date import ist_day_bounds_utc, ist_range_bounds_utc
+from app.services.party_label import format_party_label
 
 def _day_bounds(d: date) -> tuple[datetime, datetime]:
     """IST calendar day → UTC bounds (aligns with plain-Date columns like expense_date)."""
@@ -96,5 +97,5 @@ def _customer_labels(db: Session, customer_ids: set[int]) -> dict[int, str]:
             out[cid] = f"Customer #{cid}"
             continue
         city_name = cities.get(c.city_id) if c.city_id else None
-        out[cid] = f"{c.business_name} — {city_name}" if city_name else c.business_name
+        out[cid] = format_party_label(c.business_name, city_name, c.marker_1, c.marker_2)
     return out

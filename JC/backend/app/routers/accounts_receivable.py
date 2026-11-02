@@ -64,7 +64,8 @@ def _customer_label(db: Session, customer_id: int) -> str:
     if c.city_id:
         city = db.get(City, c.city_id)
         city_name = city.name if city else None
-    return f"{c.business_name} — {city_name}" if city_name else c.business_name
+    from app.services.party_label import format_party_label
+    return format_party_label(c.business_name, city_name, c.marker_1, c.marker_2)
 
 
 @router.get("", response_model=List[ArCustomerSummary])

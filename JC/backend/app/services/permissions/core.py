@@ -16,6 +16,7 @@ PERMISSION_GROUPS = [
     ("Recycle Bin", [("recycle.read", "View recycle bin"), ("recycle.write", "Restore routes/cities/customers/vendors/catalog & add-ons only — money-relevant restores (bills, receipts, debit notes, staff) and permanent delete are always admin-only")]),
     ("Vendor Orders", [("vendor_orders.read", "View vendor orders"), ("vendor_orders.write", "Place & edit vendor orders")]),
     ("Customer Orders", [("customer_orders.read", "View customer orders"), ("customer_orders.write", "Place & bill customer orders")]),
+    ("Order desk", [("desk.book", "Simple create-order and view-order screen only")]),
     ("Returns", [("returns.read", "View customer returns"), ("returns.write", "Create customer returns")]),
     ("Stock", [("stock.read", "View stock"), ("stock.write", "Receive, edit & bill stock (stock adjustment and selling-price edits are always owner/admin-only)")]),
     ("Item lookup", [("items.lookup", "Search an item number and see only its photo and stock")]),

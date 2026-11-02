@@ -13,7 +13,7 @@ from app.models.catalog_product import CatalogProduct
 from app.models.customer import Customer
 from app.models.customer_bill import CustomerBill, CustomerBillLine
 from app.models.customer_order import CustomerOpenLine, CustomerOrder, CustomerOrderLine, CustomerOrderPlacement
-from app.models.stock import StockBalance
+from app.models.stock import StockBalance, StockLedger
 from app.models.freight_agent import FreightAgent
 from app.services.ar_ledger import post_bill_entry, update_bill_ledger_amount
 from app.services.bill_series_alloc import allocate_bill_number, resolve_bill_number
@@ -132,6 +132,120 @@ def _grow_received_for_bill_delta(
     received.updated_at = datetime.now(timezone.utc)
     close_received_order_if_fully_billed(db, customer_id)
 
+def _shift_stock(db: Session, catalog_product_id: int, from_id: int, delta_change: int, *, include_from: bool) -> None:
+    """Move on-hand and every later balance_after by delta_change. The edited row is included when its own delta changed."""
+    if not delta_change:
+        return
+    query = db.query(StockLedger).filter(StockLedger.catalog_product_id == catalog_product_id)
+    query = query.filter(StockLedger.id >= from_id) if include_from else query.filter(StockLedger.id > from_id)
+    for row in query.all():
+        row.balance_after = int(row.balance_after or 0) + int(delta_change)
+    balance = (
+        db.query(StockBalance)
+        .filter(StockBalance.catalog_product_id == catalog_product_id)
+        .with_for_update()
+        .first()
+    )
+    if balance is None:
+        balance = StockBalance(catalog_product_id=catalog_product_id, quantity_on_hand=int(delta_change))
+        db.add(balance)
+    else:
+        balance.quantity_on_hand = int(balance.quantity_on_hand or 0) + int(delta_change)
+    db.flush()
+
+
+def _retarget_bill_stock(
+    db: Session,
+    *,
+    bill_id: Optional[int],
+    bill_number: str,
+    placement_id: Optional[int],
+    catalog_product_id: int,
+    party: str,
+    delta: int,
+    grow: int,
+    take: int,
+) -> Optional[int]:
+    """Rewrite the stock row this bill already posted.
+
+    None: there is no row to rewrite, so the caller posts a new one.
+    0: the existing row now matches the edit.
+    A positive number: that many units still have to be put back through the old restore.
+    """
+    if not bill_id or delta == 0:
+        return None
+    if delta > 0 and grow <= 0:
+        return None
+    sold = (
+        db.query(StockLedger)
+        .filter(
+            StockLedger.catalog_product_id == catalog_product_id,
+            StockLedger.reference_type == "customer_bill",
+            StockLedger.reference_id == bill_id,
+            StockLedger.entry_type == "sold",
+        )
+        .order_by(StockLedger.id.asc())
+        .all()
+    )
+    if sold:
+        keep = sold[0]
+        for extra in sold[1:]:
+            _shift_stock(db, catalog_product_id, extra.id, -int(extra.quantity_delta or 0), include_from=False)
+            db.delete(extra)
+        old_keep = int(keep.quantity_delta or 0)
+        if delta > 0:
+            keep.quantity_delta = old_keep - int(grow)
+            keep.party = party
+            keep.notes = f"Direct bill {bill_number}"
+            _shift_stock(db, catalog_product_id, keep.id, int(keep.quantity_delta) - old_keep, include_from=True)
+            return 0
+        give_back = min(int(take), max(0, -old_keep))
+        keep.quantity_delta = old_keep + give_back
+        keep.party = party
+        keep.notes = f"Direct bill {bill_number}"
+        if keep.quantity_delta == 0:
+            _shift_stock(db, catalog_product_id, keep.id, -old_keep, include_from=False)
+            db.delete(keep)
+        else:
+            _shift_stock(db, catalog_product_id, keep.id, int(keep.quantity_delta) - old_keep, include_from=True)
+        db.flush()
+        return int(take) - give_back
+
+    if not placement_id:
+        return None
+    rows = (
+        db.query(StockLedger)
+        .filter(
+            StockLedger.catalog_product_id == catalog_product_id,
+            StockLedger.reference_type == "customer_placement",
+            StockLedger.reference_id == placement_id,
+            StockLedger.entry_type.in_(("reserved", "unreserved")),
+        )
+        .order_by(StockLedger.id.asc())
+        .all()
+    )
+    if not rows:
+        return None
+    change = int(grow) if delta > 0 else -int(take)
+    total = sum(int(row.quantity_delta or 0) for row in rows)
+    keep = rows[0]
+    old_keep = int(keep.quantity_delta or 0)
+    for extra in rows[1:]:
+        _shift_stock(db, catalog_product_id, extra.id, -int(extra.quantity_delta or 0), include_from=False)
+        db.delete(extra)
+    target = total - change
+    if target == 0:
+        _shift_stock(db, catalog_product_id, keep.id, -old_keep, include_from=False)
+        db.delete(keep)
+    else:
+        keep.entry_type = "reserved" if target < 0 else "unreserved"
+        keep.quantity_delta = target
+        keep.party = party
+        _shift_stock(db, catalog_product_id, keep.id, target - old_keep, include_from=True)
+    db.flush()
+    return 0
+
+
 def _apply_bill_qty_delta_to_order(
     db: Session,
     *,
@@ -141,6 +255,8 @@ def _apply_bill_qty_delta_to_order(
     unit_price: Decimal,
     customer_name: str,
     bill_placement_id: Optional[int],
+    bill_id: Optional[int] = None,
+    bill_number: str = "",
 ) -> None:
     """Keep customer order in sync when a bill line qty changes."""
     if delta == 0:
@@ -194,14 +310,47 @@ def _apply_bill_qty_delta_to_order(
         # Prefer billing existing open qty first; only grow the order for the rest.
         take_from_open = min(delta, int(open_row.quantity_open) if open_row else 0)
         grow = delta - take_from_open
+    else:
+        take_from_open = 0
+        grow = 0
+    take = -delta if delta < 0 else 0
+    from app.services.catalog_addons import kept_addon_ids_for_customer_product
+    from app.services.addon_stock import deduct_addons_for_product
+
+    retargeted = _retarget_bill_stock(
+        db,
+        bill_id=bill_id,
+        bill_number=bill_number,
+        placement_id=bill_placement_id,
+        catalog_product_id=catalog_product_id,
+        party=customer_name,
+        delta=delta,
+        grow=grow,
+        take=take,
+    )
+    addon_ids = kept_addon_ids_for_customer_product(db, customer_id, catalog_product_id)
+    if retargeted is not None and (grow or take):
+        leftover = int(retargeted)
+        addon_units = grow if grow else -(take - leftover)
+        if addon_units:
+            deduct_addons_for_product(
+                db,
+                catalog_product_id=catalog_product_id,
+                units=addon_units,
+                reference_type="customer_bill",
+                reference_id=bill_id or catalog_product_id,
+                party=customer_name,
+                note=f"Bill {bill_number} edit",
+                only_addon_ids=addon_ids,
+            )
+
+    if delta > 0:
         if take_from_open and open_row:
             open_row.quantity_open = max(0, int(open_row.quantity_open) - take_from_open)
             open_row.quantity_billed = int(open_row.quantity_billed or 0) + take_from_open
             open_row.status = "open"
             _apply_billed_to_received_lines(db, customer_id, catalog_product_id, take_from_open)
-        if grow > 0:
-            from app.services.catalog_addons import kept_addon_ids_for_customer_product
-
+        if grow > 0 and retargeted is None:
             reserve_stock(
                 db,
                 catalog_product_id=catalog_product_id,
@@ -210,8 +359,9 @@ def _apply_bill_qty_delta_to_order(
                 reference_id=bill_placement_id or catalog_product_id,
                 party=customer_name,
                 allow_negative=True,
-                only_addon_ids=kept_addon_ids_for_customer_product(db, customer_id, catalog_product_id),
+                only_addon_ids=addon_ids,
             )
+        if grow > 0:
             _grow_received_for_bill_delta(
                 db, customer_id, catalog_product_id, grow, unit_price, customer_name
             )
@@ -221,19 +371,18 @@ def _apply_bill_qty_delta_to_order(
             open_row.quantity_billed = int(open_row.quantity_billed or 0) + grow
             open_row.status = "open"
     else:
-        take = -delta
-        from app.services.catalog_addons import kept_addon_ids_for_customer_product
-
-        restore_stock(
-            db,
-            catalog_product_id=catalog_product_id,
-            our_product_id=our_id,
-            quantity=take,
-            reference_id=bill_placement_id or catalog_product_id,
-            party=customer_name,
-            notes=f"Bill edit reduce {take}",
-            only_addon_ids=kept_addon_ids_for_customer_product(db, customer_id, catalog_product_id),
-        )
+        restore_qty = take if retargeted is None else int(retargeted)
+        if restore_qty:
+            restore_stock(
+                db,
+                catalog_product_id=catalog_product_id,
+                our_product_id=our_id,
+                quantity=restore_qty,
+                reference_id=bill_placement_id or catalog_product_id,
+                party=customer_name,
+                notes=f"Bill edit reduce {restore_qty}",
+                only_addon_ids=addon_ids,
+            )
         _shrink_received_for_bill_delta(db, customer_id, catalog_product_id, take)
         if open_row:
             open_row.quantity_billed = max(0, int(open_row.quantity_billed or 0) - take)

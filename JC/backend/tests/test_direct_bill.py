@@ -25,7 +25,7 @@ from app.models.customer_bill import CustomerBillLine
 from app.models.customer_order import CustomerOpenLine, CustomerOrderLine
 from app.models.stock import StockBalance, StockLedger
 from app.models.vendor import Vendor
-from app.services.customer_bill_process import process_customer_bill
+from app.services.customer_bill_process import edit_customer_bill, process_customer_bill
 from app.services.customer_order_flow import confirm_received_order, create_received_placement
 
 _ = (AddonProduct, AddonStockLedger, CatalogAddonLink, ArLedgerEntry)
@@ -241,6 +241,62 @@ def test_same_day_bill_warns_before_a_second_bill(db):
         )
     assert caught.value.status_code == 409
     assert caught.value.detail["matches"][0]["same_items"] == ["P-DIRECT"]
+
+
+def _edit_qty(db, bill, lines):
+    edit_customer_bill(
+        db,
+        bill_id=bill.id,
+        lines_in=lines,
+        overall_discount_percent=None,
+        gst_enabled=False,
+        gst_rate_percent=Decimal("0"),
+        freight_agent_id=None,
+        freight_charges=None,
+        packaging_charges=None,
+        additional_charges=None,
+        narration=None,
+        actor_type="admin",
+        actor_id=1,
+        actor_name="Test",
+        transport_mode="self_pickup",
+    )
+
+
+def test_editing_direct_qty_changes_the_same_stock_row(db):
+    customer = _customer(db)
+    prod = _product(db, "9417", 10)
+    bill = _bill(db, customer, [{"catalog_product_id": prod.id, "quantity_to_ship": 3, "direct": True}])
+    db.flush()
+    _edit_qty(db, bill, [{"catalog_product_id": prod.id, "quantity": 4}])
+    db.flush()
+
+    rows = db.query(StockLedger).filter(StockLedger.catalog_product_id == prod.id).all()
+    sold = [row for row in rows if row.entry_type == "sold"]
+    assert len(sold) == 1
+    assert sold[0].quantity_delta == -4
+    assert sold[0].reference_id == bill.id
+    assert not any(row.entry_type in ("reserved", "unreserved") for row in rows)
+    assert db.query(StockBalance).filter(StockBalance.catalog_product_id == prod.id).one().quantity_on_hand == 6
+
+
+def test_removing_a_direct_line_removes_its_stock_row(db):
+    customer = _customer(db)
+    gone = _product(db, "9417", 10)
+    kept = _product(db, "9412", 10)
+    bill = _bill(db, customer, [
+        {"catalog_product_id": gone.id, "quantity_to_ship": 4, "direct": True},
+        {"catalog_product_id": kept.id, "quantity_to_ship": 2, "direct": True},
+    ])
+    db.flush()
+    _edit_qty(db, bill, [{"catalog_product_id": kept.id, "quantity": 2}])
+    db.flush()
+
+    gone_rows = db.query(StockLedger).filter(StockLedger.catalog_product_id == gone.id).all()
+    assert gone_rows == []
+    assert db.query(StockBalance).filter(StockBalance.catalog_product_id == gone.id).one().quantity_on_hand == 10
+    kept_sold = db.query(StockLedger).filter(StockLedger.catalog_product_id == kept.id, StockLedger.entry_type == "sold").one()
+    assert kept_sold.quantity_delta == -2
 
 
 def test_direct_bill_can_take_stock_below_zero(db):

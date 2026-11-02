@@ -7,6 +7,32 @@
     ctx.toast("Order form is not open", "error");
   }
 
+  function markingEditor(id, section, marking) {
+    const canEdit = ctx.canWrite?.("catalog") || ctx.isAdmin?.();
+    if (!canEdit) {
+      return marking
+        ? `<p style="margin:0 0 12px;"><span class="marking-flag">${ctx.esc(marking)}</span></p>`
+        : "";
+    }
+    return `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 12px;">
+      <label class="label" style="margin:0;">Marking</label>
+      <input id="prod-marking" class="input" maxlength="200" placeholder="Monday, Thursday tak aayega" value="${ctx.esc(marking || "")}" style="max-width:320px;" />
+      <button type="button" class="btn btn-secondary btn-sm" onclick="Products.saveMarking(${id}, '${section}')">Save</button>
+    </div>`;
+  }
+
+  async function saveMarking(id, section) {
+    const marking = document.getElementById("prod-marking")?.value.trim() || "";
+    try {
+      await ctx.api(`/catalog/products/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ marking: marking || null }),
+      });
+      ctx.toast(marking ? "Marking saved" : "Marking cleared", "success");
+      await openProductDetail(id, section || "stock");
+    } catch (e) { ctx.toast(e.message, "error"); }
+  }
+
   async function openProductDetail(id, section = "stock") {
     const sec = ["stock", "catalog", "addons", "alts"].includes(section) ? section : "stock";
     ctx.showLoading?.();
@@ -172,16 +198,15 @@
             ${cat?.category ? `<span class="badge badge-gray">${ctx.esc(cat.category)}</span>` : ""}
             ${cat?.second_category ? `<span class="badge badge-gray">${ctx.esc(cat.second_category)}</span>` : ""}
             ${cat?.category_3 ? `<span class="badge badge-gray">${ctx.esc(cat.category_3)}</span>` : ""}
-            ${(cat?.marking || stock?.marking) ? `<span class="marking-flag">${ctx.esc(cat?.marking || stock?.marking)}</span>` : ""}
           </div>
           ${images}
         </div>
+        ${markingEditor(id, sec, cat?.marking || stock?.marking || "")}
         <div class="prod-detail-tabs" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           ${tabBtn("stock", "Stock / Ledger")}
           ${tabBtn("catalog", "Catalog")}
           ${tabBtn("addons", "Add-ons")}
           ${tabBtn("alts", "Alternatives")}
-          ${(cat?.marking || stock?.marking) ? `<span class="marking-flag">${ctx.esc(cat?.marking || stock?.marking)}</span>` : ""}
         </div>
         <div class="prod-detail-pane" data-pane="stock" style="${sec === "stock" ? "" : "display:none;"}">${stockPane}</div>
         <div class="prod-detail-pane" data-pane="catalog" style="${sec === "catalog" ? "" : "display:none;"}">${catalogPane}</div>

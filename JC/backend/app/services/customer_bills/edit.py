@@ -294,6 +294,8 @@ def edit_customer_bill(
             unit_price=unit_price,
             customer_name=customer_name,
             bill_placement_id=bill.placement_id,
+            bill_id=bill.id,
+            bill_number=bill.bill_number or "",
         )
 
     # Rewrite bill lines

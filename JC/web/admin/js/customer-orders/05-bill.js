@@ -690,7 +690,7 @@
       ${addProd}
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;">
         <div>
-          <label class="label">Transport</label>
+          <label class="label">Send by</label>
           <select class="input" onchange="CustomerOrders.setTransportMode(this.value)">
             <option value="" ${transportMode ? "" : "selected"}>—</option>
             <option value="bus" ${transportMode === "bus" ? "selected" : ""}>Bus</option>

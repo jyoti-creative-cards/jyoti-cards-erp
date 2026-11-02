@@ -109,6 +109,18 @@ def _price_entries(bill: CustomerBill) -> dict[int, str]:
     return out
 
 
+def _stock_on_hand(db: Session, product_ids: list[int]) -> dict[int, int]:
+    from app.models.stock import StockBalance
+
+    ids = [int(pid) for pid in product_ids if pid]
+    if not ids:
+        return {}
+    return {
+        int(row.catalog_product_id): int(row.quantity_on_hand or 0)
+        for row in db.query(StockBalance).filter(StockBalance.catalog_product_id.in_(ids)).all()
+    }
+
+
 def _hide_discount_column(bill: CustomerBill, entries: dict[int, str]) -> bool:
     if bill.discount_percent is not None and bill.discount_percent > 0:
         return False
@@ -142,6 +154,7 @@ def serialize_customer_bill(
         }
     names = {int(pid): prod.our_product_id for pid, prod in products_by_id.items()}
     marking_by_cid = {int(pid): prod.marking for pid, prod in products_by_id.items()}
+    on_hand = _stock_on_hand(db, bline_cids)
     if bill.deleted_at:
         bill_status = "voided"
     elif bill.cancelled_at:
@@ -200,6 +213,7 @@ def serialize_customer_bill(
                 close_reason=ln.close_reason,
                 addons=addon_by_cid.get(int(ln.catalog_product_id), []),
                 marking=marking_by_cid.get(int(ln.catalog_product_id)),
+                stock=on_hand.get(int(ln.catalog_product_id), 0),
             )
             for ln in blines
         ],
@@ -247,6 +261,7 @@ def get_customer_order_detail(
                 if product_ids else []
             )
         }
+        open_stock = _stock_on_hand(db, product_ids)
         lines_out: list[CustomerOpenLineOut] = []
         for row in open_lines:
             prod = products.get(row.catalog_product_id)
@@ -265,6 +280,7 @@ def get_customer_order_detail(
                     image_urls=presigned_urls(first_key) if first_key else [],
                     addons=addon_map.get(int(row.catalog_product_id), []),
                     marking=prod.marking if prod else None,
+                    stock=open_stock.get(int(row.catalog_product_id), 0),
                 )
             )
         received = db.query(CustomerOrder).filter(
@@ -291,6 +307,7 @@ def get_customer_order_detail(
                             quantity_billed=0,
                             unit_price=ln["unit_price"],
                             status="active",
+                            stock=int(ln.get("quantity_on_hand") or 0),
                         )
                         for ln in order.get("lines") or []
                     ],
@@ -344,6 +361,7 @@ def get_customer_order_detail(
     from app.services.document_present import live_product_names
 
     names = live_product_names(db, all_line_cids)
+    line_stock = _stock_on_hand(db, all_line_cids)
     marking_by_cid = {
         p.id: p.marking
         for p in (db.query(CatalogProduct).filter(CatalogProduct.id.in_(all_line_cids)).all() if all_line_cids else [])
@@ -374,6 +392,7 @@ def get_customer_order_detail(
                         cancel_reason=ln.cancel_reason,
                         addons=list(ln.addons_json) if isinstance(ln.addons_json, list) else list(live_addons.get(int(ln.catalog_product_id), [])),
                         marking=marking_by_cid.get(int(ln.catalog_product_id)),
+                        stock=line_stock.get(int(ln.catalog_product_id), 0),
                     )
                     for ln in lines
                 ],

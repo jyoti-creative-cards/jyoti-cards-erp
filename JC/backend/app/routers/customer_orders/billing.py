@@ -47,6 +47,7 @@ from app.services.biz_date import ist_day_bounds_utc, today_ist
 from app.services.customer_bill_math import assert_discount_xor, compute_bill_totals
 from app.services.transport_mode import normalize_transport, stamp_transport_on_totals
 from app.services.customer_bill_process import (
+    cancel_billed_line,
     cancel_customer_bill,
     cancel_open_line,
     close_bill_line,
@@ -280,6 +281,48 @@ def submit_process_bill(
         "freight_agent_id": bill.freight_agent_id,
         "freight_charges": format(bill.freight_charges, "f") if bill.freight_charges is not None else None,
     }
+
+@router.post("/bill-lines/{line_id}/cancel", dependencies=[Depends(require_cancel_key)])
+def cancel_bill_line_endpoint(
+    line_id: int,
+    body: CancelRequest,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("customer_orders.write")),
+):
+    line = db.get(CustomerBillLine, line_id)
+    if not line:
+        raise HTTPException(404, "bill line not found")
+    bill = db.get(CustomerBill, line.bill_id)
+    if bill:
+        _staff_may_edit_bill(auth, bill)
+    customer = db.get(Customer, bill.customer_id) if bill else None
+    try:
+        result = cancel_billed_line(
+            db,
+            line_id=line_id,
+            reason=body.reason,
+            actor_type=auth.actor_type,
+            actor_id=auth.actor_id,
+            actor_name=auth.actor_name,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    log_from_auth(
+        db, auth, action="cancel_line", entity_type="customer_order",
+        entity_id=bill.id if bill else line_id,
+        entity_label=customer.business_name if customer else "",
+        detail=f"{line.our_product_id} — {body.reason[:200]}",
+    )
+    db.commit()
+    if bill and not result.get("bill_cancelled"):
+        from app.services.doc_jobs import enqueue_bill_pdf
+        enqueue_bill_pdf(bill.id)
+    response_cache.invalidate("stock:")
+    response_cache.invalidate("shop:")
+    response_cache.invalidate("catalog:")
+    response_cache.invalidate("ledger")
+    return result
+
 
 @router.post("/bill-lines/{line_id}/close")
 def close_bill_line_endpoint(

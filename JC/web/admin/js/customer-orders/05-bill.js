@@ -328,8 +328,9 @@
         our_product_id: l.our_product_id,
         unit_price: l.unit_price,
         quantity_open: 999999,
+        bill_line_id: l.id,
         quantity_booked: l.quantity_shipped,
-        quantity_on_hand: "—",
+        quantity_on_hand: l.stock ?? "—",
         quantity_to_ship: l.quantity_shipped,
         discount_percent: l.discount_percent || "",
         net_rate: l.net_rate || (l.discount_percent
@@ -499,6 +500,41 @@
     });
   }
 
+  async function cancelProcessLine(idx) {
+    const ln = processLines[idx];
+    if (!ln) return;
+    promptReason("Cancel this item", async (reason) => {
+      ctx.showLoading?.();
+      try {
+        const headers = { "X-Cancel-Key": window.__jcCancelKey || "" };
+        if (ln.bill_line_id) {
+          const result = await ctx.api(`/customer-orders/bill-lines/${ln.bill_line_id}/cancel`, {
+            method: "POST", headers, body: JSON.stringify({ reason }),
+          });
+          ctx.toast(result.bill_cancelled ? "Bill cancelled. Stock is back." : "Item cancelled. Stock is back.", "success");
+          ctx.invalidateCache?.("/customer-orders");
+          ctx.invalidateCache?.("/stock");
+          if (result.bill_cancelled) {
+            closeProcessWizard({ done: true });
+            if (detailCustomerId) await openDetail(detailCustomerId, "billed");
+          } else {
+            await openEditBill(editBillId);
+          }
+        } else if (ln.open_line_id) {
+          await ctx.api(`/customer-orders/open-lines/${ln.open_line_id}/cancel`, {
+            method: "POST", headers, body: JSON.stringify({ reason }),
+          });
+          ctx.toast("Item cancelled. Stock is back.", "success");
+          ctx.invalidateCache?.("/customer-orders");
+          ctx.invalidateCache?.("/stock");
+          await processOrder({ quiet: true });
+        }
+        loadList();
+      } catch (e) { ctx.toast(e.message, "error"); }
+      finally { ctx.hideLoading?.(); }
+    });
+  }
+
   function removeProcessLine(idx) {
     const ln = processLines[idx];
     if (!ln) return;
@@ -650,7 +686,7 @@
       ${billableOrders.map(order => {
         const on = selectedPlacementIds.includes(Number(order.placement_id));
         const when = ctx.fmtDay ? ctx.fmtDay(order.placed_at) : "Order";
-        const bits = (order.lines || []).map(ln => `${ctx.esc(ln.our_product_id)} × ${ln.quantity}`).join(", ");
+        const bits = (order.lines || []).map(ln => `${ctx.esc(ln.our_product_id)} × ${ln.quantity} · stock ${ln.quantity_on_hand ?? 0}`).join(", ");
         return `<div style="margin:0 0 8px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;">
           <label style="display:block;font-size:14px;">
             <input type="checkbox" ${on ? "checked" : ""} onchange="CustomerOrders.toggleBillOrder(${order.placement_id}, this.checked)" />
@@ -671,7 +707,10 @@
         <td><input data-ship-for="${i}" type="number" class="input" style="width:72px;" min="0" value="${ln.quantity_to_ship ?? ""}" oninput="CustomerOrders.setShipQty(${i}, this.value)" /></td>
         <td><input data-disc-for="${i}" type="number" class="input" style="width:72px;" min="0" max="100" step="0.1" ${ro} value="${ctx.esc(shownDisc)}" oninput="CustomerOrders.setLineDisc(${i}, this.value)" /></td>
         <td><input data-net-for="${i}" type="number" class="input" style="width:88px;" min="0" step="0.01" ${ro} value="${ctx.esc(shownNet || "")}" oninput="CustomerOrders.setLineNetRate(${i}, this.value)" /></td>
-        ${(editBillId || ln.direct) ? `<td><button type="button" class="btn btn-ghost btn-sm" onclick="CustomerOrders.removeProcessLine(${i})">Remove</button></td>` : "<td></td>"}
+        <td style="white-space:nowrap;">
+          ${(ln.open_line_id || ln.bill_line_id) ? `<button type="button" class="btn btn-danger btn-sm" onclick="CustomerOrders.cancelProcessLine(${i})">Cancel</button>` : ""}
+          ${(editBillId || ln.direct) ? `<button type="button" class="btn btn-ghost btn-sm" onclick="CustomerOrders.removeProcessLine(${i})">Remove</button>` : ""}
+        </td>
       </tr>`;
     }).join("");
     const addProd = `

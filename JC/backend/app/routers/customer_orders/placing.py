@@ -160,6 +160,52 @@ def edit_placement_line_endpoint(
         enqueue_order_pdf(placement.id)
     return {"ok": True, "quantity": body.quantity}
 
+@router.post("/lines/{line_id}/cancel", dependencies=[Depends(require_cancel_key)])
+def cancel_placement_line_endpoint(
+    line_id: int,
+    body: CancelRequest,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("customer_orders.write")),
+):
+    """Cancel the unbilled quantity on one order row and put that stock back."""
+    line = db.get(CustomerOrderLine, line_id)
+    if not line or line.status != "active":
+        raise HTTPException(404, "line not found")
+    placement = db.get(CustomerOrderPlacement, line.placement_id)
+    order = db.get(CustomerOrder, placement.customer_order_id) if placement else None
+    customer = db.get(Customer, order.customer_id) if order else None
+    billed = int(line.quantity_billed or 0)
+    reason = (body.reason or "").strip() or "cancelled"
+    try:
+        edit_customer_placement_line_qty(
+            db, line_id, billed, customer.business_name if customer else ""
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if billed <= 0:
+        line.status = "cancelled"
+        line.cancel_reason = reason
+        line.quantity = 0
+    else:
+        line.quantity = billed
+        line.cancel_reason = reason
+    if placement:
+        placement.document_key = None
+    log_from_auth(
+        db, auth, action="cancel", entity_type="customer_order",
+        entity_id=order.customer_id if order else line_id,
+        entity_label=customer.business_name if customer else "",
+        detail=f"{line.our_product_id} — {reason[:200]}",
+    )
+    db.commit()
+    response_cache.invalidate("stock:")
+    response_cache.invalidate("shop:")
+    if placement:
+        from app.services.doc_jobs import enqueue_order_pdf
+        enqueue_order_pdf(placement.id)
+    return {"ok": True}
+
+
 @router.delete("/lines/{line_id}")
 def delete_placement_line_endpoint(
     line_id: int,

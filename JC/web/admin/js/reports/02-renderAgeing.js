@@ -806,6 +806,51 @@
     URL.revokeObjectURL(url);
   }
 
+  function setConfirmedOn(value) {
+    confirmedOn = value || today();
+    loadChip();
+  }
+
+  async function downloadConfirmedPdf() {
+    const day = confirmedOn || today();
+    try {
+      await DocShare.openPdf(`/reports/confirmed-orders/pdf?on=${encodeURIComponent(day)}`, { filename: `confirmed-orders-${day}.pdf` });
+    } catch (e) { ctx.toast(e.message, "error"); }
+  }
+
+  async function renderConfirmedOrders(body) {
+    const day = confirmedOn || today();
+    const data = await ctx.api(`/reports/confirmed-orders?on=${encodeURIComponent(day)}`, {}, 0);
+    const q = hubSearch.trim().toLowerCase();
+    const rows = (data.rows || []).filter(row => {
+      if (!q) return true;
+      return [row.party, row.party_number, row.item_no, row.order_id].join(" ").toLowerCase().includes(q);
+    });
+    body.innerHTML = `
+      <h2 class="report-print-title" style="position:absolute;left:-9999px;">Confirmed orders · ${ctx.esc(day)}</h2>
+      <div style="display:flex;gap:12px;align-items:end;flex-wrap:wrap;margin:0 0 12px;">
+        <label class="label">Date
+          <input type="date" class="input" value="${ctx.esc(day)}" onchange="Reports.setConfirmedOn(this.value)" />
+        </label>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.downloadConfirmedPdf()">PDF</button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.printCurrent()">Print</button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.exportCurrentExcel()">Excel</button>
+        <span style="color:var(--muted);font-size:13px;">${rows.length} item line${rows.length === 1 ? "" : "s"}</span>
+      </div>
+      ${rows.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
+        <th>Party no.</th><th>Party</th><th>Order</th><th>Item</th><th>Qty</th><th>Rate</th>
+      </tr></thead><tbody>
+        ${rows.map(row => `<tr>
+          <td>${row.party_number ?? ""}</td>
+          <td>${ctx.esc(row.party)}</td>
+          <td>#${row.order_id}</td>
+          <td><strong>${ctx.esc(row.item_no)}</strong></td>
+          <td>${row.qty}</td>
+          <td>${ctx.esc(row.rate)}</td>
+        </tr>`).join("")}
+      </tbody></table></div>` : empty("No confirmed orders", "Pick another date.")}`;
+  }
+
   async function renderVendorOrderReport(body) {
     const year = stockYear || "2026-27";
     const params = new URLSearchParams();

@@ -357,6 +357,77 @@ def cancel_customer_bill(
     # Bill number stays consumed — cancelled bills keep their number; next bill advances.
     return bill
 
+def cancel_billed_line(
+    db: Session,
+    *,
+    line_id: int,
+    reason: str,
+    actor_type: str,
+    actor_id: Optional[int],
+    actor_name: str,
+) -> dict:
+    """Take one item off a bill. Stock goes back. The order line goes with it.
+
+    The last item on a bill cancels the whole bill.
+    """
+    from app.services.customer_bills.edit import edit_customer_bill
+
+    line = db.get(CustomerBillLine, line_id)
+    if not line or line.status != "billed":
+        raise HTTPException(404, "bill line not found")
+    bill = db.get(CustomerBill, line.bill_id)
+    if not bill or bill.cancelled_at:
+        raise HTTPException(400, "bill not found")
+    reason = (reason or "").strip() or "cancelled"
+    others = (
+        db.query(CustomerBillLine)
+        .filter(
+            CustomerBillLine.bill_id == bill.id,
+            CustomerBillLine.status == "billed",
+            CustomerBillLine.id != line.id,
+        )
+        .all()
+    )
+    if not others:
+        cancel_customer_bill(
+            db, bill_id=bill.id, reason=reason, actor_name=actor_name, keep_order=False
+        )
+        return {"ok": True, "bill_cancelled": True, "bill_id": bill.id}
+
+    overall = bill.discount_percent if bill.discount_percent and bill.discount_percent > 0 else None
+    lines_in = []
+    for other in others:
+        row: dict = {
+            "catalog_product_id": int(other.catalog_product_id),
+            "quantity": int(other.quantity_shipped or 0),
+        }
+        if overall is None and other.discount_percent is not None:
+            row["discount_percent"] = other.discount_percent
+        lines_in.append(row)
+    extra = bill.additional_charges if isinstance(bill.additional_charges, list) else None
+    edit_customer_bill(
+        db,
+        bill_id=bill.id,
+        lines_in=lines_in,
+        overall_discount_percent=overall,
+        gst_enabled=bool(bill.gst_enabled),
+        gst_rate_percent=Decimal(str(bill.gst_rate_percent or 0)),
+        freight_agent_id=bill.freight_agent_id,
+        freight_charges=bill.freight_charges,
+        packaging_charges=bill.packaging_charges,
+        additional_charges=extra,
+        narration=bill.narration,
+        actor_type=actor_type,
+        actor_id=actor_id,
+        actor_name=actor_name,
+        transport_mode=bill.transport_mode,
+        transport_receipt_number=bill.transport_receipt_number,
+        freight_charges_raw=bill.freight_charges,
+        bill_date=bill.bill_date,
+    )
+    return {"ok": True, "bill_cancelled": False, "bill_id": bill.id}
+
+
 def close_bill_line(db: Session, bill_line_id: int, reason: str) -> None:
     row = db.get(CustomerBillLine, bill_line_id)
     if not row or row.status == "closed":

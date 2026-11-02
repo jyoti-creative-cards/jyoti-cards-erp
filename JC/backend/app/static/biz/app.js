@@ -3,6 +3,7 @@ const state = {
   from: monthStart(),
   to: today(),
   screen: "home",
+  stack: [],
   metric: "sales",
   group: "party",
   rateMin: "",
@@ -80,6 +81,22 @@ function readDates() {
   state.to = document.getElementById("to")?.value || state.to;
 }
 
+function switchBar() {
+  const modes = [["party", "Party"], ["items", "Items"], ["more", "More"]];
+  return `<div class="switch">${modes.map(([id, label]) =>
+    `<button type="button" class="${state.mode === id ? "on" : ""}" data-mode="${id}">${label}</button>`
+  ).join("")}</div>`;
+}
+
+function moreView() {
+  return `<h1>More</h1>
+    ${switchBar()}
+    <div class="tiles">
+      <button type="button" class="tile" data-go="marking"><span>Markings</span><b>Dates</b></button>
+      <button type="button" class="tile" data-go="report"><span>Vendor orders</span><b>Report</b></button>
+    </div>`;
+}
+
 function homeView(data) {
   const tiles = [
     ["sales", "Sales", data.sales],
@@ -95,17 +112,12 @@ function homeView(data) {
     `<div class="bar-meta"><span>${esc(row.name)}</span><b>${inr(row.amount)}</b></div>`
   ).join("");
   return `<h1>Books</h1>
-    <div class="switch">
-      <button type="button" class="${state.mode === "party" ? "on" : ""}" data-mode="party">Party</button>
-      <button type="button" class="${state.mode === "items" ? "on" : ""}" data-mode="items">Items</button>
-    </div>
+    ${switchBar()}
     ${dates()}
     <div class="tiles">
-      ${tiles.map(([id, label, amount]) => `<button class="tile" data-metric="${id}"><span>${label}</span><b>${inr(amount)}</b></button>`).join("")}
+      ${tiles.map(([id, label, amount]) => `<button type="button" class="tile" data-metric="${id}"><span>${label}</span><b>${inr(amount)}</b></button>`).join("")}
     </div>
-    ${heads ? `<div class="card" style="margin-top:12px;"><div class="muted">Expenses by head</div>${heads}</div>` : ""}
-    <button class="tile" id="open-report" style="margin-top:12px;"><span>Report</span><b>Vendor orders</b></button>
-    <button class="tile" id="open-marking" style="margin-top:12px;"><span>Marking</span><b>Add dates</b></button>`;
+    ${heads ? `<div class="card" style="margin-top:12px;"><div class="muted">Expenses by head</div>${heads}</div>` : ""}`;
 }
 
 function bars(rows) {
@@ -148,10 +160,7 @@ function searchHits(items, query) {
 
 function searchView(items) {
   return `<h1>Items</h1>
-    <div class="switch">
-      <button type="button" data-mode="party">Party</button>
-      <button type="button" class="on" data-mode="items">Items</button>
-    </div>
+    ${switchBar()}
     <label class="search">Item number<input id="q" value="${esc(state.query)}" placeholder="9443" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" inputmode="numeric" /></label>
     <div id="item-hits" class="search-results">${searchHits(items, state.query)}</div>`;
 }
@@ -231,7 +240,21 @@ function bind() {
   }));
   document.querySelectorAll("[data-mode]").forEach((btn) => btn.addEventListener("click", () => {
     state.mode = btn.getAttribute("data-mode");
-    state.screen = state.mode === "items" ? "search" : "home";
+    state.screen = state.mode === "items" ? "search" : state.mode === "more" ? "more" : "home";
+    state.holdCaret = false;
+    render();
+  }));
+  document.querySelectorAll("[data-go]").forEach((btn) => btn.addEventListener("click", () => {
+    state.stack.push(snapshot());
+    const go = btn.getAttribute("data-go");
+    if (go === "marking") {
+      state.query = "";
+      state.picked = {};
+      state.screen = "marking";
+    } else {
+      state.reportLoaded = false;
+      state.screen = "report";
+    }
     render();
   }));
   document.querySelectorAll("[data-metric]").forEach((btn) => btn.addEventListener("click", () => {
@@ -253,18 +276,6 @@ function bind() {
     state.reportFrom = document.getElementById("rfrom")?.value || monthStart();
     state.reportTo = document.getElementById("rto")?.value || today();
     state.reportLoaded = true;
-    render();
-  });
-  document.getElementById("open-report")?.addEventListener("click", () => {
-    state.stack.push(snapshot());
-    state.screen = "report";
-    render();
-  });
-  document.getElementById("open-marking")?.addEventListener("click", () => {
-    state.stack.push(snapshot());
-    state.screen = "marking";
-    state.query = "";
-    state.picked = {};
     render();
   });
   document.querySelectorAll("[data-pick]").forEach((btn) => btn.addEventListener("click", () => {
@@ -312,7 +323,7 @@ function bind() {
       await api(`/api/v1/biz/markings/${btn.getAttribute("data-mdel")}`, { method: "DELETE" });
       render();
     } catch (e) { alert(e.message); }
-  });
+  }));
   document.getElementById("back")?.addEventListener("click", () => {
     const prev = state.stack.pop();
     if (prev) restore(prev);
@@ -435,7 +446,7 @@ function reportViewHtml(data) {
       <label>From<input type="date" id="rfrom" value="${esc(state.reportFrom || monthStart())}" /></label>
       <label>To<input type="date" id="rto" value="${esc(state.reportTo || today())}" /></label>
     </div>
-    <button type="button" id="rgo">Show</button>
+    <button type="button" class="primary" id="rgo">Show</button>
     ${rows.length ? `<div class="card" style="overflow:auto;margin-top:12px;"><table><thead><tr>
       <th>Item</th><th>Company no.</th><th>Company</th><th>Category</th><th>Invoices</th><th>In</th><th>Out</th><th>Closing</th><th>Value</th><th>%</th>
     </tr></thead><tbody>${body}</tbody></table></div>` : `<p class="muted">Pick the dates and tap Show.</p>`}`;
@@ -466,17 +477,17 @@ function markingView() {
       <button type="button" data-msave="${row.id}">Save</button>
       <button type="button" data-mdel="${row.id}">Delete</button>
     </div>`).join("");
-  const today = today();
+  const start = today();
   return `<button class="back" id="back">Back</button>
     <h1>Marking</h1>
     <label class="search">Find items<input id="mq" value="${esc(state.query)}" placeholder="5401" /></label>
     <div id="mark-hits">${hits}</div>
     <label>Marking<input id="mtext" maxlength="200" placeholder="Monday" /></label>
     <div class="dates">
-      <label>From<input type="date" id="mfrom" value="${today}" /></label>
+      <label>From<input type="date" id="mfrom" value="${start}" /></label>
       <label>Until<input type="date" id="muntil" value="2099-12-31" /></label>
     </div>
-    <button type="button" id="madd">Add to selected</button>
+    <button type="button" class="primary" id="madd">Add to selected</button>
     <h2>Already set</h2>
     ${rows || `<p class="muted">None yet.</p>`}`;
 }
@@ -493,6 +504,9 @@ async function render() {
     if (state.screen === "home") {
       const data = await api(`/api/v1/biz/home${qs()}`);
       return renderShell(homeView(data));
+    }
+    if (state.screen === "more") {
+      return renderShell(moreView());
     }
     if (state.screen === "marking") {
       await loadMarking();

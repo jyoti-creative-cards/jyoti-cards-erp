@@ -953,7 +953,7 @@ const CustomerOrders = (() => {
       const waitingHtml = waiting.length ? `<div style="margin-bottom:14px;">
         <div class="label">Orders still to bill</div>
         ${waiting.map(p => {
-          const bits = (p.lines || []).map(ln => `${ctx.esc(ln.our_product_id)} × ${ln.quantity}`).join(", ");
+          const bits = (p.lines || []).map(ln => `${ctx.esc(ln.our_product_id)} × ${ln.quantity} · stock ${ln.stock ?? 0}`).join(", ");
           return `<div style="margin:0 0 8px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;">
             <div style="font-size:13px;">${ctx.fmtDay ? ctx.fmtDay(p.placed_at) : ""} · ${bits}</div>
             ${markingBanner(p.customer_notes)}
@@ -973,10 +973,12 @@ const CustomerOrders = (() => {
         <div class="ord-hub-list">${lines.length ? lines.map(line => HubUI.partyCard({
           title: ctx.esc(line.our_product_id) + (line.marking ? ` <span class="marking-flag">${ctx.esc(line.marking)}</span>` : ""),
           titleIsHtml: true,
-          meta: `${thumb((line.image_urls || [])[0])} Recv ${line.quantity_received} · To bill <strong>${line.quantity_open}</strong> · Billed ${line.quantity_billed} · ${fmtPrice(line.unit_price)}${addonsUnderHtml(line.addons, line.quantity_open)}${orderMarkingForProduct(waiting, line.catalog_product_id)}`,
+          meta: `${thumb((line.image_urls || [])[0])} Recv ${line.quantity_received} · To bill <strong>${line.quantity_open}</strong> · Billed ${line.quantity_billed} · Stock <strong>${line.stock ?? 0}</strong> · ${fmtPrice(line.unit_price)}${addonsUnderHtml(line.addons, line.quantity_open)}${orderMarkingForProduct(waiting, line.catalog_product_id)}`,
           pillHtml: "",
           primaryLabel: canWrite ? "Edit qty" : null,
           primaryOnclick: `CustomerOrders.editOpenLine(${line.id}, ${line.quantity_open})`,
+          dangerLabel: canWrite ? "Cancel" : null,
+          dangerOnclick: `CustomerOrders.cancelOpenLine(${line.id})`,
           moreItems: canWrite
             ? [
                 { label: "Edit order (add/remove)", onclick: "CustomerOrders.openEditFromOpen()" },
@@ -1008,16 +1010,17 @@ const CustomerOrders = (() => {
         const hasFreight = b.transport_mode === "bus" || !!(b.freight_agent_id);
         const modeLbl = b.transport_mode === "bus" ? "Bus" : b.transport_mode === "transport" ? "Transport" : b.transport_mode === "self_pickup" ? "Self-pickup" : (hasFreight ? "Bus" : "");
         const hideDisc = !!b.hide_discount_column;
-        const linesHtml = `<table class="data vo-hub-table"><thead><tr><th>Product</th><th>Qty</th><th>Rate</th>${hideDisc ? "" : "<th>Disc</th>"}<th>Net</th><th>Total</th><th></th></tr></thead><tbody>
+        const linesHtml = `<table class="data vo-hub-table"><thead><tr><th>Product</th><th>Qty</th><th>Stock</th><th>Rate</th>${hideDisc ? "" : "<th>Disc</th>"}<th>Net</th><th>Total</th><th></th></tr></thead><tbody>
           ${(b.lines || []).map(ln => `<tr>
             <td>${ctx.esc(ln.our_product_id)}${ln.marking ? ` <span class="marking-flag">${ctx.esc(ln.marking)}</span>` : ""}${addonsUnderHtml(ln.addons, ln.quantity_shipped)}</td>
             <td>${ln.quantity_shipped}</td>
+            <td>${ln.stock ?? 0}</td>
             <td>${fmtPrice(ln.unit_price)}</td>
             ${hideDisc ? "" : `<td>${ln.discount_percent ? ctx.esc(String(ln.discount_percent)) + "%" : "—"}</td>`}
             <td>${fmtPrice(ln.net_rate)}</td>
             <td>${fmtPrice(ln.line_total)}</td>
-            <td>${ln.status === "billed" && canWrite
-              ? `<button class="btn btn-secondary btn-sm" onclick="CustomerOrders.closeBillLine(${ln.id})">Close line</button>`
+            <td style="white-space:nowrap;">${ln.status === "billed" && canWrite
+              ? `<button class="btn btn-danger btn-sm" onclick="CustomerOrders.cancelBilledLine(${ln.id})">Cancel</button> <button class="btn btn-secondary btn-sm" onclick="CustomerOrders.closeBillLine(${ln.id})">Close line</button>`
               : `<span class="vo-muted">${ctx.esc(ln.status === "billed" ? "Open" : "Closed")}</span>`}</td>
           </tr>`).join("")}
         </tbody></table>`;
@@ -1085,17 +1088,18 @@ const CustomerOrders = (() => {
         const cancelLabel = hasBilled ? "Cancel remaining" : "Cancel order";
         const openKey = `recv-${p.id}`;
         const expanded = coExpandedId === openKey;
-        const linesHtml = `<table class="data vo-hub-table"><thead><tr><th>Product</th><th>Qty</th><th>Billed</th><th>Rate</th><th></th></tr></thead><tbody>
+        const linesHtml = `<table class="data vo-hub-table"><thead><tr><th>Product</th><th>Qty</th><th>Billed</th><th>Stock</th><th>Rate</th><th></th></tr></thead><tbody>
           ${(p.lines || []).map(ln => `<tr>
             <td>${ctx.esc(ln.our_product_id)}${ln.marking ? ` <span class="marking-flag">${ctx.esc(ln.marking)}</span>` : ""}${addonsUnderHtml(ln.addons, ln.quantity)}</td>
             <td>${ln.quantity}</td>
             <td>${ln.quantity_billed}</td>
+            <td>${ln.stock ?? 0}</td>
             <td>${fmtPrice(ln.unit_price)}</td>
             <td style="white-space:nowrap;">
               ${ln.status === "active" && canWrite ? `
                 <button class="btn btn-secondary btn-sm" onclick="CustomerOrders.editReceivedLine(${ln.id}, ${ln.quantity})">Qty</button>
                 ${Number(ln.quantity) > Number(ln.quantity_billed || 0)
-                  ? `<button class="btn btn-secondary btn-sm" onclick="CustomerOrders.deleteReceivedLine(${ln.id})">Remove</button>`
+                  ? `<button class="btn btn-danger btn-sm" onclick="CustomerOrders.cancelReceivedLine(${ln.id})">Cancel</button>`
                   : ""}
               ` : `<span class="vo-muted">${ctx.esc(ln.status || "")}</span>`}
             </td>
@@ -1297,7 +1301,6 @@ const CustomerOrders = (() => {
   }
 
   function promptReason(title, onOk, needKey = true) {
-    if (ctx.isOwnerAdmin?.()) needKey = false;
     document.getElementById("modal-title").textContent = title;
     document.getElementById("modal-body").innerHTML = `
       ${needKey ? `<label class="label">Your cancel key</label>
@@ -1317,6 +1320,45 @@ const CustomerOrders = (() => {
       onOk(reason);
     };
     document.getElementById("modal").classList.remove("hidden");
+  }
+
+  function cancelReceivedLine(lineId) {
+    promptReason("Cancel this item", async (reason) => {
+      ctx.showLoading?.();
+      try {
+        await ctx.api(`/customer-orders/lines/${lineId}/cancel`, {
+          method: "POST",
+          headers: { "X-Cancel-Key": window.__jcCancelKey || "" },
+          body: JSON.stringify({ reason }),
+        });
+        ctx.toast("Item cancelled. Stock is back.", "success");
+        ctx.invalidateCache?.("/customer-orders");
+        ctx.invalidateCache?.("/stock");
+        await openDetail(detailCustomerId, currentBucket);
+        loadList();
+      } catch (e) { ctx.toast(e.message, "error"); }
+      finally { ctx.hideLoading?.(); }
+    });
+  }
+
+  function cancelBilledLine(lineId) {
+    promptReason("Cancel this item from the bill", async (reason) => {
+      ctx.showLoading?.();
+      try {
+        const result = await ctx.api(`/customer-orders/bill-lines/${lineId}/cancel`, {
+          method: "POST",
+          headers: { "X-Cancel-Key": window.__jcCancelKey || "" },
+          body: JSON.stringify({ reason }),
+        });
+        ctx.toast(result.bill_cancelled ? "Bill cancelled. Stock is back." : "Item cancelled. Stock is back.", "success");
+        ctx.invalidateCache?.("/customer-orders");
+        ctx.invalidateCache?.("/stock");
+        ctx.invalidateCache?.("/accounts-receivable");
+        await openDetail(detailCustomerId, currentBucket);
+        loadList();
+      } catch (e) { ctx.toast(e.message, "error"); }
+      finally { ctx.hideLoading?.(); }
+    });
   }
 
   function cancelOpenLine(lineId) {
@@ -1381,7 +1423,7 @@ const CustomerOrders = (() => {
         if (ln.status === "active") {
           const existing = allLines.find(x => x.our_product_id === ln.our_product_id);
           if (existing) existing.quantity += Number(ln.quantity || 0);
-          else allLines.push({ our_product_id: ln.our_product_id, quantity: Number(ln.quantity || 0), unit_price: ln.unit_price });
+          else allLines.push({ our_product_id: ln.our_product_id, quantity: Number(ln.quantity || 0), unit_price: ln.unit_price, stock: ln.stock });
         }
       }
     }
@@ -1391,6 +1433,7 @@ const CustomerOrders = (() => {
       `<tr>
         <td style="padding:6px 0;">${ctx.esc(ln.our_product_id)}</td>
         <td style="padding:6px 8px;text-align:right;font-weight:600;">${ln.quantity}</td>
+        <td style="padding:6px 8px;text-align:right;">${ln.stock ?? 0}</td>
         <td style="padding:6px 0;text-align:right;color:var(--muted);font-size:13px;">${fmtPrice(ln.unit_price)}</td>
       </tr>`
     ).join("");
@@ -1402,6 +1445,7 @@ const CustomerOrders = (() => {
         <thead><tr>
           <th style="text-align:left;font-size:12px;color:var(--muted);padding-bottom:6px;border-bottom:1px solid var(--border);">Item</th>
           <th style="text-align:right;font-size:12px;color:var(--muted);padding-bottom:6px;border-bottom:1px solid var(--border);">Qty</th>
+          <th style="text-align:right;font-size:12px;color:var(--muted);padding-bottom:6px;border-bottom:1px solid var(--border);">Stock</th>
           <th style="text-align:right;font-size:12px;color:var(--muted);padding-bottom:6px;border-bottom:1px solid var(--border);">Rate</th>
         </tr></thead>
         <tbody>${linesHtml}</tbody>
@@ -1943,8 +1987,9 @@ const CustomerOrders = (() => {
         our_product_id: l.our_product_id,
         unit_price: l.unit_price,
         quantity_open: 999999,
+        bill_line_id: l.id,
         quantity_booked: l.quantity_shipped,
-        quantity_on_hand: "—",
+        quantity_on_hand: l.stock ?? "—",
         quantity_to_ship: l.quantity_shipped,
         discount_percent: l.discount_percent || "",
         net_rate: l.net_rate || (l.discount_percent
@@ -2114,6 +2159,41 @@ const CustomerOrders = (() => {
     });
   }
 
+  async function cancelProcessLine(idx) {
+    const ln = processLines[idx];
+    if (!ln) return;
+    promptReason("Cancel this item", async (reason) => {
+      ctx.showLoading?.();
+      try {
+        const headers = { "X-Cancel-Key": window.__jcCancelKey || "" };
+        if (ln.bill_line_id) {
+          const result = await ctx.api(`/customer-orders/bill-lines/${ln.bill_line_id}/cancel`, {
+            method: "POST", headers, body: JSON.stringify({ reason }),
+          });
+          ctx.toast(result.bill_cancelled ? "Bill cancelled. Stock is back." : "Item cancelled. Stock is back.", "success");
+          ctx.invalidateCache?.("/customer-orders");
+          ctx.invalidateCache?.("/stock");
+          if (result.bill_cancelled) {
+            closeProcessWizard({ done: true });
+            if (detailCustomerId) await openDetail(detailCustomerId, "billed");
+          } else {
+            await openEditBill(editBillId);
+          }
+        } else if (ln.open_line_id) {
+          await ctx.api(`/customer-orders/open-lines/${ln.open_line_id}/cancel`, {
+            method: "POST", headers, body: JSON.stringify({ reason }),
+          });
+          ctx.toast("Item cancelled. Stock is back.", "success");
+          ctx.invalidateCache?.("/customer-orders");
+          ctx.invalidateCache?.("/stock");
+          await processOrder({ quiet: true });
+        }
+        loadList();
+      } catch (e) { ctx.toast(e.message, "error"); }
+      finally { ctx.hideLoading?.(); }
+    });
+  }
+
   function removeProcessLine(idx) {
     const ln = processLines[idx];
     if (!ln) return;
@@ -2265,7 +2345,7 @@ const CustomerOrders = (() => {
       ${billableOrders.map(order => {
         const on = selectedPlacementIds.includes(Number(order.placement_id));
         const when = ctx.fmtDay ? ctx.fmtDay(order.placed_at) : "Order";
-        const bits = (order.lines || []).map(ln => `${ctx.esc(ln.our_product_id)} × ${ln.quantity}`).join(", ");
+        const bits = (order.lines || []).map(ln => `${ctx.esc(ln.our_product_id)} × ${ln.quantity} · stock ${ln.quantity_on_hand ?? 0}`).join(", ");
         return `<div style="margin:0 0 8px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;">
           <label style="display:block;font-size:14px;">
             <input type="checkbox" ${on ? "checked" : ""} onchange="CustomerOrders.toggleBillOrder(${order.placement_id}, this.checked)" />
@@ -2286,7 +2366,10 @@ const CustomerOrders = (() => {
         <td><input data-ship-for="${i}" type="number" class="input" style="width:72px;" min="0" value="${ln.quantity_to_ship ?? ""}" oninput="CustomerOrders.setShipQty(${i}, this.value)" /></td>
         <td><input data-disc-for="${i}" type="number" class="input" style="width:72px;" min="0" max="100" step="0.1" ${ro} value="${ctx.esc(shownDisc)}" oninput="CustomerOrders.setLineDisc(${i}, this.value)" /></td>
         <td><input data-net-for="${i}" type="number" class="input" style="width:88px;" min="0" step="0.01" ${ro} value="${ctx.esc(shownNet || "")}" oninput="CustomerOrders.setLineNetRate(${i}, this.value)" /></td>
-        ${(editBillId || ln.direct) ? `<td><button type="button" class="btn btn-ghost btn-sm" onclick="CustomerOrders.removeProcessLine(${i})">Remove</button></td>` : "<td></td>"}
+        <td style="white-space:nowrap;">
+          ${(ln.open_line_id || ln.bill_line_id) ? `<button type="button" class="btn btn-danger btn-sm" onclick="CustomerOrders.cancelProcessLine(${i})">Cancel</button>` : ""}
+          ${(editBillId || ln.direct) ? `<button type="button" class="btn btn-ghost btn-sm" onclick="CustomerOrders.removeProcessLine(${i})">Remove</button>` : ""}
+        </td>
       </tr>`;
     }).join("");
     const addProd = `
@@ -3668,7 +3751,7 @@ const CustomerOrders = (() => {
     goToDispatch, goCollectPayment, setDispatchStatus, setDispatchAgent, pickParcel, reassignParcel, submitParcelReassign,
     showCreateMenu, showCreateMenuFromCustomer, openCloseBatch,
     processOrder, processFromHub, billNow, billBookedOrder, closeProcessWizard, renderProcessWizard,
-    openEditBill, editLatestBill, promptEditBillNumber, saveBillNumber, enableDiscount, clearDiscount, setBillEditSearch, addBillEditProduct, removeProcessLine,
+    openEditBill, editLatestBill, promptEditBillNumber, saveBillNumber, enableDiscount, clearDiscount, setBillEditSearch, addBillEditProduct, removeProcessLine, cancelProcessLine,
     openEditFromOpen,
     _detailCustomerId,
     setShipQty, setLineDisc, setLineNetRate, setDiscToggle, setOverallDisc, skipBillAddon,
@@ -3677,7 +3760,7 @@ const CustomerOrders = (() => {
     setOfflinePlacedOn,
     setForceCredit, setBillOnAgent, printDayDuplicates,
     processNext, processBack, submitProcess, backFromBillDuplicate, proceedBillDuplicate, toggleBillOrder, toggleAllBillOrders,
-    confirmOrder, _doConfirm, cancelOpenLine, cancelPlacement, cancelCustomerOpen, cancelEntireReceived, cancelAllOpen, editOpenLine, editReceivedLine, deleteReceivedLine, openEditPlacement, closeBillLine, cancelBill, voidBill, voidPlacement, openBillDoc, printStoredBill, downloadStoredBill, shareBillWhatsApp, uploadBillQr, resetBillQr,
+    confirmOrder, _doConfirm, cancelOpenLine, cancelReceivedLine, cancelBilledLine, cancelPlacement, cancelCustomerOpen, cancelEntireReceived, cancelAllOpen, editOpenLine, editReceivedLine, deleteReceivedLine, openEditPlacement, closeBillLine, cancelBill, voidBill, voidPlacement, openBillDoc, printStoredBill, downloadStoredBill, shareBillWhatsApp, uploadBillQr, resetBillQr,
     openOfflineWizard, closeOfflineWizard, renderOfflineWizard,
     pickOfflineCustomer, onOfflineCustomerSearch, setOfflineNotes, previewOrder, backFromOrderPreview,
     onOfflineSearchInput, onOfflineSearchKey, onOfflineQtyKey, toggleOfflineProduct, pickOfflineProduct, removeOfflineLine, skipOfflineAddon,

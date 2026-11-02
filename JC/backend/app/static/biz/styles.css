@@ -62,3 +62,4 @@ input, select {
 .err { color: var(--danger); font-size: 14px; }
 .primary { width: 100%; background: var(--ink); color: white; border: 0; border-radius: 12px; padding: 12px; font-weight: 700; margin-top: 12px; }
 .search { margin-bottom: 12px; }
+.search-results { display: grid; gap: 8px; max-height: 60vh; overflow: auto; }

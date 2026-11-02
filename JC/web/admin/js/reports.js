@@ -22,6 +22,7 @@ const Reports = (() => {
   let ageingSide = "ar";
   let journalReportKind = "all";
   let includeDcu = false;
+  let confirmedOn = today();
   let vendorOrderRows = [];
   let stockYear = "";
   let stockYears = null;
@@ -44,6 +45,7 @@ const Reports = (() => {
 
   const CHIPS = {
     today: [
+      { id: "confirmed-orders", label: "Confirmed orders" },
       { id: "transport", label: "Transport" },
       { id: "item-outward", label: "Daily stock" },
       { id: "daybook", label: "Daybook" },
@@ -54,6 +56,7 @@ const Reports = (() => {
       { id: "payments", label: "Payment accounts" },
     ],
     books: [
+      { id: "confirmed-orders", label: "Confirmed orders" },
       { id: "sales-book", label: "Sales book" },
       { id: "day-bills", label: "Day bills" },
       { id: "transport", label: "Transport" },
@@ -428,13 +431,14 @@ const Reports = (() => {
     if (!slot) return;
     const caret = (typeof OrdersUI !== "undefined" && OrdersUI.captureSearchCaret)
       ? OrdersUI.captureSearchCaret("reports-hub-search") : null;
-    const searchable = ["sales", "sales-book", "day-bills", "transport", "receipt-book", "daybook", "purchases", "payments", "ledgers", "ageing", "customer-sales", "vendor-purchases", "item-sales", "item-purchases", "stock-wise", "vendor-orders", "item-outward", "stock-journal", "valuation", "movers", "low", "markings", "returns", "debit-notes", "gst-sales", "gst-purchases", "cashbook", "expense-cat", "sticker-prints"].includes(chip);
+    const searchable = ["sales", "sales-book", "day-bills", "transport", "receipt-book", "daybook", "purchases", "payments", "ledgers", "ageing", "customer-sales", "vendor-purchases", "item-sales", "item-purchases", "stock-wise", "vendor-orders", "confirmed-orders", "item-outward", "stock-journal", "valuation", "movers", "low", "markings", "returns", "debit-notes", "gst-sales", "gst-purchases", "cashbook", "expense-cat", "sticker-prints"].includes(chip);
     if (!searchable) { slot.innerHTML = ""; return; }
     const ph = chip === "sticker-prints" ? "Search party name or number…"
       : chip === "day-bills" ? "Search bill, party, city…"
       : chip === "ledgers"
       ? (ledgerKind === "staff" ? "Search staff…" : ledgerKind === "products" ? "Search products…" : ledgerKind === "customers" || ledgerKind === "vendors" ? "Search name, person, city…" : "Search…")
       : chip === "markings" ? "Search marking, item, vendor item, category…"
+      : chip === "confirmed-orders" ? "Search party or item…"
       : chip.includes("item") || chip === "stock-wise" || chip === "vendor-orders" || chip === "valuation" || chip === "movers" || chip === "low" ? "Search product…"
         : chip === "ageing" ? "Search name, person, city…"
         : "Search…";
@@ -706,6 +710,7 @@ const Reports = (() => {
       else if (chip === "item-purchases") await renderItemAgg(body, "item-purchases");
       else if (chip === "stock-wise") await renderStockWise(body);
       else if (chip === "vendor-orders") await renderVendorOrderReport(body);
+      else if (chip === "confirmed-orders") await renderConfirmedOrders(body);
       else if (chip === "item-outward") await renderItemOutward(body);
       else if (chip === "stock-journal") await renderStockJournal(body);
       else if (chip === "valuation") await renderValuation(body);
@@ -1859,6 +1864,51 @@ const Reports = (() => {
     URL.revokeObjectURL(url);
   }
 
+  function setConfirmedOn(value) {
+    confirmedOn = value || today();
+    loadChip();
+  }
+
+  async function downloadConfirmedPdf() {
+    const day = confirmedOn || today();
+    try {
+      await DocShare.openPdf(`/reports/confirmed-orders/pdf?on=${encodeURIComponent(day)}`, { filename: `confirmed-orders-${day}.pdf` });
+    } catch (e) { ctx.toast(e.message, "error"); }
+  }
+
+  async function renderConfirmedOrders(body) {
+    const day = confirmedOn || today();
+    const data = await ctx.api(`/reports/confirmed-orders?on=${encodeURIComponent(day)}`, {}, 0);
+    const q = hubSearch.trim().toLowerCase();
+    const rows = (data.rows || []).filter(row => {
+      if (!q) return true;
+      return [row.party, row.party_number, row.item_no, row.order_id].join(" ").toLowerCase().includes(q);
+    });
+    body.innerHTML = `
+      <h2 class="report-print-title" style="position:absolute;left:-9999px;">Confirmed orders · ${ctx.esc(day)}</h2>
+      <div style="display:flex;gap:12px;align-items:end;flex-wrap:wrap;margin:0 0 12px;">
+        <label class="label">Date
+          <input type="date" class="input" value="${ctx.esc(day)}" onchange="Reports.setConfirmedOn(this.value)" />
+        </label>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.downloadConfirmedPdf()">PDF</button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.printCurrent()">Print</button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.exportCurrentExcel()">Excel</button>
+        <span style="color:var(--muted);font-size:13px;">${rows.length} item line${rows.length === 1 ? "" : "s"}</span>
+      </div>
+      ${rows.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
+        <th>Party no.</th><th>Party</th><th>Order</th><th>Item</th><th>Qty</th><th>Rate</th>
+      </tr></thead><tbody>
+        ${rows.map(row => `<tr>
+          <td>${row.party_number ?? ""}</td>
+          <td>${ctx.esc(row.party)}</td>
+          <td>#${row.order_id}</td>
+          <td><strong>${ctx.esc(row.item_no)}</strong></td>
+          <td>${row.qty}</td>
+          <td>${ctx.esc(row.rate)}</td>
+        </tr>`).join("")}
+      </tbody></table></div>` : empty("No confirmed orders", "Pick another date.")}`;
+  }
+
   async function renderVendorOrderReport(body) {
     const year = stockYear || "2026-27";
     const params = new URLSearchParams();
@@ -1912,7 +1962,7 @@ const Reports = (() => {
     openLedger, openStaffLedger, openExpenseLedger, addExpenseHead, addExpenseSubhead, addExpenseSource, renameExpenseSource, deleteExpenseSource, openCashLedger, backFromLedger, openDoc,
     shareDaybook, waDaybook, shareStockSummary, shareAgeing, waAgeing, exportExcel,
     printCurrent, exportCurrentExcel, downloadSalesPdf, downloadPaymentsPdf, setHideVoids, setJournalReportKind, setStockYear, setPrintCarry, togglePrintGroup, toggleStockAlbum,
-    toggleVendorDcu, downloadVendorOrderCsv,
+    toggleVendorDcu, downloadVendorOrderCsv, setConfirmedOn, downloadConfirmedPdf,
     setMarkingScope, toggleMarkingPick, saveProductMarking, applyMarkingToPicked, renameMarking,
     setPayMode, applyPayFilters,
   };

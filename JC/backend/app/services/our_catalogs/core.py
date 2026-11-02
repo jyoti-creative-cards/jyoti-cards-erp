@@ -350,80 +350,165 @@ def import_sample_journals(db: Session) -> list[str]:
     return made
 
 
-# Bill product name → catalogue we already made. These sends stay on the bill.
-_BILL_CATALOG = {
-    "2027 ALBUM NO. 01": "SAMPLING ALBUM NO. 01",
-    "2027 ALBUM NO. 02": "SAMPLING ALBUM NO.02",
-    "2027 ALBUM NO. 03": "ALBUM NO. 03",
-    "2027 ALBUM NO. 04": "SAMPLING ALBUM NO, 04",
-    "2027 ALBUM NO. 05": "ALBUM NO. 05 SAMPLING",
-    "2027 BOX NO. 07": "SAMPLING BOX NO. 07",
-    "2027 BOX NO. 09": "SAMPLING BOX NO. 09",
-    "2027 BOX NO. 10": "SAMPLING BOX NO. 10 (PADDING)",
-    "2027 ENVELOPE ALBUM": "sampling envelope album",
-    "2027 ALBUM NO. 123": "SAMPLING ALBUM NO. 123",
-    "BP ALBUM 2027": "SAMPLING BP ALBUM",
+import re
+
+# Each printed catalogue is one product category. The stock-journal names were
+# the sampling run, not the catalogue the party was given.
+_JOURNAL_TO_CATALOG = {
+    "SAMPLING ALBUM NO. 01": "2027 ALBUM NO. 01",
+    "SAMPLING ALBUM NO.02": "2027 ALBUM NO. 02",
+    "ALBUM NO. 03": "2027 ALBUM NO. 03",
+    "SAMPLING ALBUM NO, 04": "2027 ALBUM NO. 04",
+    "ALBUM NO. 05 SAMPLING": "2027 ALBUM NO. 05",
+    "SAMPLING ALBUM NO. 123": "2027 ALBUM NO. 123",
+    "SAMPLING BOX NO. 07": "2027 BOX NO. 07",
+    "SAMPLING BOX NO. 09": "2027 BOX NO. 09",
+    "SAMPLING BOX NO. 10 (PADDING)": "2027 BOX NO. 10",
+    "sampling envelope album": "2027 ENVELOPE ALBUM",
+    "SAMPLING BP ALBUM": "BP ALBUM 2027",
+    "SAMPLING BP+SC (CARDS)": "BP+SC ALBUM 2027",
+}
+
+# slot: category column, second_category, or any of the three album slots.
+_CATEGORY_SLOT = {
+    "2027 ALBUM NO. 01": ("category", "ALBUM NO. 01"),
+    "2027 ALBUM NO. 02": ("category", "ALBUM NO. 02"),
+    "2027 ALBUM NO. 03": ("category", "ALBUM NO. 03"),
+    "2027 ALBUM NO. 04": ("any", "ALBUM NO. 04"),
+    "2027 ALBUM NO. 05": ("any", "ALBUM NO. 05"),
+    "2027 ALBUM NO. 123": ("any", "ALBUM NO. 123"),
+    "2027 BOX NO. 07": ("category", "BOX NO. 07"),
+    "2027 BOX NO. 09": ("category", "BOX NO. 09"),
+    "2027 BOX NO. 10": ("category", "BOX NO. 10"),
+    "2027 ENVELOPE ALBUM": ("category", "ENVELOPE ALBUM"),
+    "BP ALBUM 2027": ("category", "BP ALBUM"),
+    "BP+SC ALBUM 2027": ("second", "BP+SC ALBUM"),
 }
 
 
-def import_bill_catalog_sends(db: Session) -> dict:
-    """Copy catalogue lines already on bills into the catalogue ledger. Bills stay as they are."""
+def catalog_name_for_bill_sku(sku: str) -> str | None:
+    """Fold spacing differences (NO.05, NO. 05) onto the 12 category catalogues."""
+    raw = re.sub(r"\s+", " ", (sku or "").strip().upper())
+    if raw in ("BP ALBUM 2027", "BP+SC ALBUM 2027", "2027 ENVELOPE ALBUM"):
+        return raw
+    match = re.fullmatch(r"2027 (ALBUM|BOX) NO\.?\s*(\d+)", raw)
+    if not match:
+        return None
+    name = f"2027 {match.group(1)} NO. {match.group(2)}"
+    return name if name in _CATEGORY_SLOT else None
+
+
+def _products_in_album(db: Session, slot: str, album: str) -> list[CatalogProduct]:
+    query = db.query(CatalogProduct).filter(CatalogProduct.deleted_at.is_(None))
+    if slot == "category":
+        query = query.filter(CatalogProduct.category == album)
+    elif slot == "second":
+        query = query.filter(CatalogProduct.second_category == album)
+    else:
+        query = query.filter(
+            (CatalogProduct.category == album)
+            | (CatalogProduct.second_category == album)
+            | (CatalogProduct.category_3 == album)
+        )
+    return query.order_by(CatalogProduct.our_product_id.asc()).all()
+
+
+def realign_category_catalogs(db: Session) -> dict:
+    """Name each catalogue after its category and copy bill sends onto that catalogue.
+
+    Bills, stock journals, and expenses stay as they are. Only the catalogue
+    ledger is rewritten.
+    """
     from app.models.customer_bill import CustomerBill, CustomerBillLine
 
+    renamed = []
+    for old, new in _JOURNAL_TO_CATALOG.items():
+        row = db.query(OurCatalog).filter(OurCatalog.name == old).one_or_none()
+        if not row:
+            continue
+        taken = db.query(OurCatalog).filter(OurCatalog.name == new, OurCatalog.id != row.id).first()
+        if taken:
+            continue
+        row.name = new
+        renamed.append(new)
+    db.flush()
+
     catalogs = {row.name: row for row in db.query(OurCatalog).all()}
+    line_counts = {}
+    for name, (slot, album) in _CATEGORY_SLOT.items():
+        catalog = catalogs.get(name)
+        if not catalog:
+            continue
+        db.query(OurCatalogLine).filter(OurCatalogLine.catalog_id == catalog.id).delete(synchronize_session=False)
+        products = _products_in_album(db, slot, album)
+        for product in products:
+            db.add(OurCatalogLine(catalog_id=catalog.id, catalog_product_id=product.id, quantity=1))
+        line_counts[name] = len(products)
+    db.flush()
+
+    db.query(OurCatalogIssue).filter(OurCatalogIssue.note.like("From bill %")).delete(synchronize_session=False)
+    db.flush()
+
     lines = (
         db.query(CustomerBillLine, CustomerBill)
         .join(CustomerBill, CustomerBill.id == CustomerBillLine.bill_id)
         .filter(
             CustomerBill.cancelled_at.is_(None),
             CustomerBillLine.status == "billed",
-            CustomerBillLine.our_product_id.in_(list(_BILL_CATALOG)),
             CustomerBillLine.quantity_shipped > 0,
         )
         .all()
     )
     grouped: dict[tuple, dict] = {}
     for line, bill in lines:
-        catalog = catalogs.get(_BILL_CATALOG.get(line.our_product_id, ""))
+        name = catalog_name_for_bill_sku(line.our_product_id)
+        catalog = catalogs.get(name or "")
         if not catalog:
             continue
         key = (catalog.id, int(bill.customer_id), int(bill.id))
-        slot = grouped.setdefault(key, {"copies": 0, "amount": Decimal("0"), "on": bill.bill_date, "number": bill.bill_number})
+        slot = grouped.setdefault(key, {"copies": 0, "amount": Decimal("0"), "on": bill.bill_date, "number": bill.bill_number, "name": catalog.name})
         qty = int(line.quantity_shipped or 0)
         slot["copies"] += qty
         amount = Decimal(str(line.line_total or 0))
         if amount == 0 and line.unit_price:
             amount = Decimal(str(line.unit_price)) * qty
         slot["amount"] += amount
-    added = 0
-    skipped = []
-    for (catalog_id, customer_id, bill_id), slot in grouped.items():
-        exists = (
-            db.query(OurCatalogIssue)
-            .filter(
-                OurCatalogIssue.catalog_id == catalog_id,
-                OurCatalogIssue.customer_id == customer_id,
-                OurCatalogIssue.bill_id == bill_id,
-            )
-            .first()
-        )
-        if exists:
+
+    by_catalog: dict[int, int] = {}
+    for (catalog_id, _customer_id, _bill_id), slot in grouped.items():
+        by_catalog[catalog_id] = by_catalog.get(catalog_id, 0) + int(slot["copies"])
+    over = []
+    for catalog in catalogs.values():
+        if catalog.name not in _CATEGORY_SLOT:
             continue
+        need = by_catalog.get(catalog.id, 0)
+        if need > int(catalog.copies_made or 0):
+            over.append(f"{catalog.name} sent {need} made {catalog.copies_made}")
+    if over:
+        raise HTTPException(400, "; ".join(over))
+
+    added = 0
+    for (catalog_id, customer_id, bill_id), slot in grouped.items():
         price = (slot["amount"] / slot["copies"]).quantize(Decimal("0.01")) if slot["copies"] else Decimal("0")
-        try:
-            record_issue(
-                db,
-                catalog_id=catalog_id,
-                customer_id=customer_id,
-                copies=slot["copies"],
-                price=price,
-                issued_on=slot["on"],
-                bill_id=bill_id,
-                note=f"From bill {slot['number']}",
-            )
-            added += 1
-        except HTTPException as exc:
-            skipped.append(str(exc.detail))
+        db.add(OurCatalogIssue(
+            catalog_id=catalog_id,
+            customer_id=customer_id,
+            copies=slot["copies"],
+            price=price,
+            bill_id=bill_id,
+            issued_on=slot["on"] or today_ist(),
+            note=f"From bill {slot['number']}",
+        ))
+        added += 1
     db.flush()
-    return {"added": added, "skipped": skipped[:20], "skipped_count": len(skipped)}
+    sent = {}
+    for catalog in catalogs.values():
+        if catalog.name in _CATEGORY_SLOT:
+            sent[catalog.name] = issued_copies(db, catalog.id)
+    return {"renamed": renamed, "lines": line_counts, "issues": added, "sent": sent}
+
+
+def import_bill_catalog_sends(db: Session) -> dict:
+    """Copy catalogue lines already on bills into the catalogue ledger. Bills stay as they are."""
+    return realign_category_catalogs(db)
 

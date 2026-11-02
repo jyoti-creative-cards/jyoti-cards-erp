@@ -112,6 +112,8 @@ const OrdersUI = (() => {
     pillHtml = "",
     primaryLabel,
     primaryOnclick,
+    dangerLabel,
+    dangerOnclick,
     moreItems = [],
     expandHtml = "",
     open = false,
@@ -122,6 +124,9 @@ const OrdersUI = (() => {
     // Primary = write action only. More menu stays for read-only (Show lines / Open / Print).
     const primary = canWrite && primaryLabel && primaryOnclick
       ? `<button type="button" class="btn btn-primary btn-sm" onclick="event.stopPropagation();${primaryOnclick}">${esc(primaryLabel)}</button>`
+      : "";
+    const danger = canWrite && dangerLabel && dangerOnclick
+      ? `<button type="button" class="btn btn-danger btn-sm" onclick="event.stopPropagation();${dangerOnclick}">${esc(dangerLabel)}</button>`
       : "";
     const more = moreMenu(moreItems);
     const titleHtml = titleIsHtml ? title : esc(title);
@@ -137,6 +142,7 @@ const OrdersUI = (() => {
         </div>
         <div class="ord-card-actions" onclick="event.stopPropagation()">
           ${primary}
+          ${danger}
           ${more}
         </div>
       </div>

@@ -217,6 +217,33 @@ def billed_items_report(
     return ext.billed_item_outward(db, from_date, to_date)
 
 
+@router.get("/confirmed-orders")
+def confirmed_orders_report(
+    on: date = Query(..., description="IST day the orders were confirmed"),
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    from app.services.reports.confirmed_orders import confirmed_order_report
+    return confirmed_order_report(db, on)
+
+
+@router.get("/confirmed-orders/pdf")
+def confirmed_orders_pdf(
+    on: date = Query(...),
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    from fastapi.responses import Response
+    from app.services.reports.confirmed_orders import render_confirmed_orders_pdf
+
+    pdf = render_confirmed_orders_pdf(db, on)
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="confirmed-orders-{on.isoformat()}.pdf"'},
+    )
+
+
 @router.get("/vendor-orders")
 def vendor_order_report(
     from_date: Optional[date] = Query(None),

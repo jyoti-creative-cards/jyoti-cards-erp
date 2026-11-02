@@ -119,6 +119,12 @@ def billable_orders(db: Session, customer_id: int) -> list[dict]:
         .order_by(CustomerOrderLine.id.asc())
         .all()
     )
+    product_ids = [int(ln.catalog_product_id) for ln in lines]
+    bal_map: dict[int, int] = {}
+    if product_ids:
+        from app.models.stock import StockBalance
+        for bal in db.query(StockBalance).filter(StockBalance.catalog_product_id.in_(product_ids)).all():
+            bal_map[int(bal.catalog_product_id)] = int(bal.quantity_on_hand or 0)
     by_placement: dict[int, list] = {}
     for ln in lines:
         left = int(ln.quantity) - int(ln.quantity_billed or 0)
@@ -130,6 +136,7 @@ def billable_orders(db: Session, customer_id: int) -> list[dict]:
                 "our_product_id": ln.our_product_id,
                 "quantity": left,
                 "unit_price": format(ln.unit_price, "f"),
+                "quantity_on_hand": bal_map.get(int(ln.catalog_product_id), 0),
             }
         )
     room = {

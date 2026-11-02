@@ -21,6 +21,7 @@ const Reports = (() => {
   let ageingSide = "ar";
   let journalReportKind = "all";
   let includeDcu = false;
+  let confirmedOn = today();
   let vendorOrderRows = [];
   let stockYear = "";
   let stockYears = null;
@@ -43,6 +44,7 @@ const Reports = (() => {
 
   const CHIPS = {
     today: [
+      { id: "confirmed-orders", label: "Confirmed orders" },
       { id: "transport", label: "Transport" },
       { id: "item-outward", label: "Daily stock" },
       { id: "daybook", label: "Daybook" },
@@ -53,6 +55,7 @@ const Reports = (() => {
       { id: "payments", label: "Payment accounts" },
     ],
     books: [
+      { id: "confirmed-orders", label: "Confirmed orders" },
       { id: "sales-book", label: "Sales book" },
       { id: "day-bills", label: "Day bills" },
       { id: "transport", label: "Transport" },

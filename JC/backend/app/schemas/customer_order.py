@@ -28,6 +28,7 @@ class CustomerOrderLineOut(BaseModel):
     cancel_reason: Optional[str] = None
     addons: List[AddonSnapOut] = []
     marking: Optional[str] = None
+    stock: int = 0
 
 
 class CustomerPlacementOut(BaseModel):
@@ -56,6 +57,7 @@ class CustomerOpenLineOut(BaseModel):
     image_urls: List[str] = []
     addons: List[AddonSnapOut] = []
     marking: Optional[str] = None
+    stock: int = 0
 
 
 class BilledBillChip(BaseModel):
@@ -115,6 +117,7 @@ class CustomerBillLineOut(BaseModel):
     close_reason: Optional[str] = None
     addons: List[AddonSnapOut] = []
     marking: Optional[str] = None
+    stock: int = 0
 
 
 class CustomerBillOut(BaseModel):

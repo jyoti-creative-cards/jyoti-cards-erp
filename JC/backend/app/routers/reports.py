@@ -217,6 +217,19 @@ def billed_items_report(
     return ext.billed_item_outward(db, from_date, to_date)
 
 
+@router.get("/vendor-orders")
+def vendor_order_report(
+    from_date: Optional[date] = Query(None),
+    to_date: Optional[date] = Query(None),
+    year_group: str = Query("2026-27"),
+    include_dcu: bool = Query(False),
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    from app.services.reports.vendor_order_report import vendor_order_report as build
+    return build(db, from_date, to_date, year_group=year_group, include_dcu=include_dcu)
+
+
 @router.get("/stock/summary")
 def stock_summary(
     from_date: Optional[date] = Query(None),

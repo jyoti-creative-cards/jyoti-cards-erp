@@ -348,3 +348,82 @@ def import_sample_journals(db: Session) -> list[str]:
         made.append(f"{name} × {copies}")
     db.flush()
     return made
+
+
+# Bill product name → catalogue we already made. These sends stay on the bill.
+_BILL_CATALOG = {
+    "2027 ALBUM NO. 01": "SAMPLING ALBUM NO. 01",
+    "2027 ALBUM NO. 02": "SAMPLING ALBUM NO.02",
+    "2027 ALBUM NO. 03": "ALBUM NO. 03",
+    "2027 ALBUM NO. 04": "SAMPLING ALBUM NO, 04",
+    "2027 ALBUM NO. 05": "ALBUM NO. 05 SAMPLING",
+    "2027 BOX NO. 07": "SAMPLING BOX NO. 07",
+    "2027 BOX NO. 09": "SAMPLING BOX NO. 09",
+    "2027 BOX NO. 10": "SAMPLING BOX NO. 10 (PADDING)",
+    "2027 ENVELOPE ALBUM": "sampling envelope album",
+    "2027 ALBUM NO. 123": "SAMPLING ALBUM NO. 123",
+    "BP ALBUM 2027": "SAMPLING BP ALBUM",
+}
+
+
+def import_bill_catalog_sends(db: Session) -> dict:
+    """Copy catalogue lines already on bills into the catalogue ledger. Bills stay as they are."""
+    from app.models.customer_bill import CustomerBill, CustomerBillLine
+
+    catalogs = {row.name: row for row in db.query(OurCatalog).all()}
+    lines = (
+        db.query(CustomerBillLine, CustomerBill)
+        .join(CustomerBill, CustomerBill.id == CustomerBillLine.bill_id)
+        .filter(
+            CustomerBill.cancelled_at.is_(None),
+            CustomerBillLine.status == "billed",
+            CustomerBillLine.our_product_id.in_(list(_BILL_CATALOG)),
+            CustomerBillLine.quantity_shipped > 0,
+        )
+        .all()
+    )
+    grouped: dict[tuple, dict] = {}
+    for line, bill in lines:
+        catalog = catalogs.get(_BILL_CATALOG.get(line.our_product_id, ""))
+        if not catalog:
+            continue
+        key = (catalog.id, int(bill.customer_id), int(bill.id))
+        slot = grouped.setdefault(key, {"copies": 0, "amount": Decimal("0"), "on": bill.bill_date, "number": bill.bill_number})
+        qty = int(line.quantity_shipped or 0)
+        slot["copies"] += qty
+        amount = Decimal(str(line.line_total or 0))
+        if amount == 0 and line.unit_price:
+            amount = Decimal(str(line.unit_price)) * qty
+        slot["amount"] += amount
+    added = 0
+    skipped = []
+    for (catalog_id, customer_id, bill_id), slot in grouped.items():
+        exists = (
+            db.query(OurCatalogIssue)
+            .filter(
+                OurCatalogIssue.catalog_id == catalog_id,
+                OurCatalogIssue.customer_id == customer_id,
+                OurCatalogIssue.bill_id == bill_id,
+            )
+            .first()
+        )
+        if exists:
+            continue
+        price = (slot["amount"] / slot["copies"]).quantize(Decimal("0.01")) if slot["copies"] else Decimal("0")
+        try:
+            record_issue(
+                db,
+                catalog_id=catalog_id,
+                customer_id=customer_id,
+                copies=slot["copies"],
+                price=price,
+                issued_on=slot["on"],
+                bill_id=bill_id,
+                note=f"From bill {slot['number']}",
+            )
+            added += 1
+        except HTTPException as exc:
+            skipped.append(str(exc.detail))
+    db.flush()
+    return {"added": added, "skipped": skipped[:20], "skipped_count": len(skipped)}
+

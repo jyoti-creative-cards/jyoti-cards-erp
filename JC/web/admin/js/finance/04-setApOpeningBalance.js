@@ -554,13 +554,13 @@
     if (saveBusy) return;
     const payload = expensePayload();
     if (!payload) return;
-    const { expense_date, description, amount, reference, subhead_id, source_id } = payload;
+    const { expense_date, description, amount, reference, subhead_id, head_id, source_id } = payload;
     saveBusy = true;
     ctx.showLoading?.();
     try {
       await ctx.api(`/expenses/${id}`, {
         method: "PATCH",
-        body: JSON.stringify({ expense_date, description, amount, reference, subhead_id, source_id }),
+        body: JSON.stringify({ expense_date, description, amount, reference, subhead_id, head_id, source_id }),
       });
       ctx.invalidateCache?.("/expenses");
       ctx.invalidateCache?.("/finance");

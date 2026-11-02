@@ -104,6 +104,7 @@ function homeView(data) {
       ${tiles.map(([id, label, amount]) => `<button class="tile" data-metric="${id}"><span>${label}</span><b>${inr(amount)}</b></button>`).join("")}
     </div>
     ${heads ? `<div class="card" style="margin-top:12px;"><div class="muted">Expenses by head</div>${heads}</div>` : ""}
+    <button class="tile" id="open-report" style="margin-top:12px;"><span>Report</span><b>Vendor orders</b></button>
     <button class="tile" id="open-marking" style="margin-top:12px;"><span>Marking</span><b>Add dates</b></button>`;
 }
 
@@ -248,6 +249,17 @@ function bind() {
     readDates();
     render();
   }));
+  document.getElementById("rgo")?.addEventListener("click", () => {
+    state.reportFrom = document.getElementById("rfrom")?.value || monthStart();
+    state.reportTo = document.getElementById("rto")?.value || today();
+    state.reportLoaded = true;
+    render();
+  });
+  document.getElementById("open-report")?.addEventListener("click", () => {
+    state.stack.push(snapshot());
+    state.screen = "report";
+    render();
+  });
   document.getElementById("open-marking")?.addEventListener("click", () => {
     state.stack.push(snapshot());
     state.screen = "marking";
@@ -409,6 +421,32 @@ async function refreshItemSearch() {
   }
 }
 
+function reportViewHtml(data) {
+  const rows = (data && data.items) || [];
+  const body = rows.map((row) => `<tr>
+    <td>${esc(row.item_no)}</td><td>${esc(row.company_no)}</td><td>${esc(row.company_name)}</td>
+    <td>${esc(row.category)}</td><td>${row.invoices}</td><td>${esc(row.inward_qty)}</td><td>${esc(row.outward_qty)}</td>
+    <td>${esc(row.closing_qty)}</td><td>${esc(row.closing_value)}</td><td>${esc(row.stock_ratio || "")}</td>
+  </tr>`).join("");
+  return `<button class="back" id="back">Back</button>
+    <h1>Vendor order report</h1>
+    <p class="muted">Year 2026-27. DCU is left out.</p>
+    <div class="dates">
+      <label>From<input type="date" id="rfrom" value="${esc(state.reportFrom || monthStart())}" /></label>
+      <label>To<input type="date" id="rto" value="${esc(state.reportTo || today())}" /></label>
+    </div>
+    <button type="button" id="rgo">Show</button>
+    ${rows.length ? `<div class="card" style="overflow:auto;margin-top:12px;"><table><thead><tr>
+      <th>Item</th><th>Company no.</th><th>Company</th><th>Category</th><th>Invoices</th><th>In</th><th>Out</th><th>Closing</th><th>Value</th><th>%</th>
+    </tr></thead><tbody>${body}</tbody></table></div>` : `<p class="muted">Pick the dates and tap Show.</p>`}`;
+}
+
+async function reportView() {
+  if (!state.reportLoaded) return reportViewHtml(null);
+  const data = await api(`/api/v1/biz/vendor-order-report?from_date=${encodeURIComponent(state.reportFrom)}&to_date=${encodeURIComponent(state.reportTo)}`);
+  return reportViewHtml(data);
+}
+
 function markingView() {
   const hits = (state.markHits || []).map((item) => {
     const on = !!state.picked[item.id];
@@ -459,6 +497,9 @@ async function render() {
     if (state.screen === "marking") {
       await loadMarking();
       return renderShell(markingView());
+    }
+    if (state.screen === "report") {
+      return renderShell(await reportView());
     }
     if (state.screen === "drill") {
       const data = await api(`/api/v1/biz/drill${qs({

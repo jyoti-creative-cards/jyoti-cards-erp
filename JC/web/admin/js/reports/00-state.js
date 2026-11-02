@@ -20,6 +20,8 @@ const Reports = (() => {
   let backLabel = "Back";
   let ageingSide = "ar";
   let journalReportKind = "all";
+  let includeDcu = false;
+  let vendorOrderRows = [];
   let stockYear = "";
   let stockYears = null;
   let printCarry = "";
@@ -64,6 +66,7 @@ const Reports = (() => {
       { id: "item-purchases", label: "Item purchase" },
     ],
     stock: [
+      { id: "vendor-orders", label: "Vendor order report" },
       { id: "item-outward", label: "Daily stock" },
       { id: "stock-wise", label: "Stock wise" },
       { id: "stock-journal", label: "Stock journal" },

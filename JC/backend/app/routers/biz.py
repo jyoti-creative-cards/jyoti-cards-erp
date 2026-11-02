@@ -107,6 +107,17 @@ def biz_receipt(
     return row
 
 
+@router.get("/vendor-order-report")
+def biz_vendor_order_report(
+    from_date: Optional[date] = Query(None),
+    to_date: Optional[date] = Query(None),
+    include_dcu: bool = Query(False),
+    db: Session = Depends(get_db),
+):
+    from app.services.reports.vendor_order_report import vendor_order_report
+    return vendor_order_report(db, from_date, to_date, include_dcu=include_dcu)
+
+
 @router.get("/markings")
 def biz_markings(q: str = Query(""), db: Session = Depends(get_db)):
     from app.services.product_markings import list_assignments

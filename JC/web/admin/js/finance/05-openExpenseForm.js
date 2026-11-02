@@ -10,10 +10,13 @@
   function expenseSubOptions(selectedId) {
     const rows = [];
     for (const head of expenseHeadCache) {
-      for (const sub of head.subheads || []) rows.push(sub);
+      rows.push({ id: `h:${head.id}`, name: head.name });
+      for (const sub of head.subheads || []) {
+        rows.push({ id: String(sub.id), name: `${head.name} / ${sub.name}` });
+      }
     }
     rows.sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
-    return `<option value="">— Select sub-head —</option>` + rows.map(s =>
+    return `<option value="">— Select head —</option>` + rows.map(s =>
       `<option value="${s.id}" ${String(selectedId) === String(s.id) ? "selected" : ""}>${ctx.esc(s.name)}</option>`
     ).join("");
   }
@@ -50,20 +53,22 @@
     let headId = "";
     let subId = "";
     heads.forEach(h => {
+      if ((h.name || "").toLowerCase() === cat) headId = `h:${h.id}`;
       (h.subheads || []).forEach(s => {
-        if ((s.category || "").toLowerCase() === cat) { headId = h.id; subId = s.id; }
+        if ((s.category || "").toLowerCase() === cat) { headId = h.id; subId = String(s.id); }
       });
     });
+    const picked = subId || headId;
     const day = existing ? (docDateIso(existing.display_date || existing.expense_date) || localToday()) : localToday();
-    const note = existing && !subId
+    const note = existing && !picked
       ? `<p style="margin:0 0 12px;font-size:12px;color:var(--muted);">Filed under ${ctx.esc(existing.category || "—")}. Pick a sub-head to move it. Heads are set under Reports → Ledgers → Expense.</p>`
       : "";
     document.getElementById("expense-body").innerHTML = `
       ${note}
       <label class="label">Date</label>
       <input type="date" class="input" id="exp-date" value="${ctx.esc(day)}" style="margin-bottom:12px;" />
-      <label class="label">Sub-head</label>
-      <select class="input" id="exp-sub" style="margin-bottom:12px;">${expenseSubOptions(subId)}</select>
+      <label class="label">Head</label>
+      <select class="input" id="exp-sub" style="margin-bottom:12px;">${expenseSubOptions(picked)}</select>
       <p style="margin:-6px 0 12px;font-size:12px;color:var(--muted);">New heads: More → Reports → Ledgers → Expense → New head.</p>
       <label class="label">Paid from</label>
       <select class="input" id="exp-source" style="margin-bottom:8px;">${sourceOptions(existing?.source_id || "")}</select>
@@ -193,15 +198,18 @@
 
   function expensePayload() {
     const expense_date = document.getElementById("exp-date")?.value;
-    const subhead_id = Number(document.getElementById("exp-sub")?.value || 0);
+    const raw = document.getElementById("exp-sub")?.value || "";
     const description = (document.getElementById("exp-desc")?.value || "").trim() || null;
     const amount = parseFloat(document.getElementById("exp-amount")?.value || "0");
     const reference = (document.getElementById("exp-ref")?.value || "").trim() || null;
     const source_id = Number(document.getElementById("exp-source")?.value || 0);
     if (!expense_date || !amount || amount <= 0) { ctx.toast("Enter date and amount", "error"); return null; }
-    if (!subhead_id) { ctx.toast("Pick a sub-head", "error"); return null; }
+    if (!raw) { ctx.toast("Pick a head", "error"); return null; }
     if (!source_id) { ctx.toast("Pick where the money came from", "error"); return null; }
-    return { expense_date, subhead_id, description, amount, reference, source_id };
+    const payload = { expense_date, description, amount, reference, source_id };
+    if (String(raw).startsWith("h:")) payload.head_id = Number(String(raw).slice(2));
+    else payload.subhead_id = Number(raw);
+    return payload;
   }
 
   function closeExpenseForm() { document.getElementById("expense-modal")?.classList.add("hidden"); }
@@ -210,13 +218,13 @@
     if (saveBusy) return;
     const payload = expensePayload();
     if (!payload) return;
-    const { expense_date, description, amount, reference, subhead_id, source_id } = payload;
+    const { expense_date, description, amount, reference, subhead_id, head_id, source_id } = payload;
     saveBusy = true;
     ctx.showLoading?.();
     try {
       await ctx.api("/expenses", {
         method: "POST",
-        body: JSON.stringify({ expense_date, description, amount, reference, subhead_id, source_id }),
+        body: JSON.stringify({ expense_date, description, amount, reference, subhead_id, head_id, source_id }),
       });
       ctx.invalidateCache?.("/expenses");
       ctx.invalidateCache?.("/finance");

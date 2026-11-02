@@ -323,14 +323,14 @@
     if (!slot) return;
     const caret = (typeof OrdersUI !== "undefined" && OrdersUI.captureSearchCaret)
       ? OrdersUI.captureSearchCaret("reports-hub-search") : null;
-    const searchable = ["sales", "sales-book", "day-bills", "transport", "receipt-book", "daybook", "purchases", "payments", "ledgers", "ageing", "customer-sales", "vendor-purchases", "item-sales", "item-purchases", "stock-wise", "item-outward", "stock-journal", "valuation", "movers", "low", "markings", "returns", "debit-notes", "gst-sales", "gst-purchases", "cashbook", "expense-cat", "sticker-prints"].includes(chip);
+    const searchable = ["sales", "sales-book", "day-bills", "transport", "receipt-book", "daybook", "purchases", "payments", "ledgers", "ageing", "customer-sales", "vendor-purchases", "item-sales", "item-purchases", "stock-wise", "vendor-orders", "item-outward", "stock-journal", "valuation", "movers", "low", "markings", "returns", "debit-notes", "gst-sales", "gst-purchases", "cashbook", "expense-cat", "sticker-prints"].includes(chip);
     if (!searchable) { slot.innerHTML = ""; return; }
     const ph = chip === "sticker-prints" ? "Search party name or number…"
       : chip === "day-bills" ? "Search bill, party, city…"
       : chip === "ledgers"
       ? (ledgerKind === "staff" ? "Search staff…" : ledgerKind === "products" ? "Search products…" : ledgerKind === "customers" || ledgerKind === "vendors" ? "Search name, person, city…" : "Search…")
       : chip === "markings" ? "Search marking, item, vendor item, category…"
-      : chip.includes("item") || chip === "stock-wise" || chip === "valuation" || chip === "movers" || chip === "low" ? "Search product…"
+      : chip.includes("item") || chip === "stock-wise" || chip === "vendor-orders" || chip === "valuation" || chip === "movers" || chip === "low" ? "Search product…"
         : chip === "ageing" ? "Search name, person, city…"
         : "Search…";
     slot.innerHTML = OrdersUI.searchBar({
@@ -600,6 +600,7 @@
       else if (chip === "item-sales") await renderItemAgg(body, "item-sales");
       else if (chip === "item-purchases") await renderItemAgg(body, "item-purchases");
       else if (chip === "stock-wise") await renderStockWise(body);
+      else if (chip === "vendor-orders") await renderVendorOrderReport(body);
       else if (chip === "item-outward") await renderItemOutward(body);
       else if (chip === "stock-journal") await renderStockJournal(body);
       else if (chip === "valuation") await renderValuation(body);

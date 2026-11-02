@@ -76,11 +76,26 @@ def resolve_expense_category(db: Session, body: ExpenseIn) -> str:
             raise HTTPException(400, "Pick a sub-head")
         return f"{head.name} / {sub.name}".lower()
     if body.head_id:
-        raise HTTPException(400, "Pick a sub-head")
+        head = db.get(ExpenseHead, body.head_id)
+        if not head:
+            raise HTTPException(400, "Pick a head")
+        return head.name.lower()
     text = (body.category or "").strip().lower()
     if not text:
-        raise HTTPException(400, "Pick a sub-head")
+        raise HTTPException(400, "Pick a head")
     return text
+
+
+def ensure_transport_head(db: Session) -> ExpenseHead:
+    """Bill transport is filed under this head. Keep it on the expense list."""
+    row = db.query(ExpenseHead).filter(func.lower(ExpenseHead.name) == "transport").first()
+    if row:
+        return row
+    row = ExpenseHead(name="Transport")
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
 
 
 def expense_head_tree(db: Session) -> list[dict]:
@@ -236,6 +251,7 @@ def list_expense_heads(
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("finance.write")),
 ):
+    ensure_transport_head(db)
     return expense_head_tree(db)
 
 

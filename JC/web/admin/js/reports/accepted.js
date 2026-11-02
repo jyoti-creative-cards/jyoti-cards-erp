@@ -20,6 +20,8 @@ const Reports = (() => {
   let backLabel = "Back";
   let ageingSide = "ar";
   let journalReportKind = "all";
+  let includeDcu = false;
+  let vendorOrderRows = [];
   let stockYear = "";
   let stockYears = null;
   let printCarry = "";
@@ -64,6 +66,7 @@ const Reports = (() => {
       { id: "item-purchases", label: "Item purchase" },
     ],
     stock: [
+      { id: "vendor-orders", label: "Vendor order report" },
       { id: "item-outward", label: "Daily stock" },
       { id: "stock-wise", label: "Stock wise" },
       { id: "stock-journal", label: "Stock journal" },
@@ -423,14 +426,14 @@ const Reports = (() => {
     if (!slot) return;
     const caret = (typeof OrdersUI !== "undefined" && OrdersUI.captureSearchCaret)
       ? OrdersUI.captureSearchCaret("reports-hub-search") : null;
-    const searchable = ["sales", "sales-book", "day-bills", "transport", "receipt-book", "daybook", "purchases", "payments", "ledgers", "ageing", "customer-sales", "vendor-purchases", "item-sales", "item-purchases", "stock-wise", "item-outward", "stock-journal", "valuation", "movers", "low", "markings", "returns", "debit-notes", "gst-sales", "gst-purchases", "cashbook", "expense-cat", "sticker-prints"].includes(chip);
+    const searchable = ["sales", "sales-book", "day-bills", "transport", "receipt-book", "daybook", "purchases", "payments", "ledgers", "ageing", "customer-sales", "vendor-purchases", "item-sales", "item-purchases", "stock-wise", "vendor-orders", "item-outward", "stock-journal", "valuation", "movers", "low", "markings", "returns", "debit-notes", "gst-sales", "gst-purchases", "cashbook", "expense-cat", "sticker-prints"].includes(chip);
     if (!searchable) { slot.innerHTML = ""; return; }
     const ph = chip === "sticker-prints" ? "Search party name or number…"
       : chip === "day-bills" ? "Search bill, party, city…"
       : chip === "ledgers"
       ? (ledgerKind === "staff" ? "Search staff…" : ledgerKind === "products" ? "Search products…" : ledgerKind === "customers" || ledgerKind === "vendors" ? "Search name, person, city…" : "Search…")
       : chip === "markings" ? "Search marking, item, vendor item, category…"
-      : chip.includes("item") || chip === "stock-wise" || chip === "valuation" || chip === "movers" || chip === "low" ? "Search product…"
+      : chip.includes("item") || chip === "stock-wise" || chip === "vendor-orders" || chip === "valuation" || chip === "movers" || chip === "low" ? "Search product…"
         : chip === "ageing" ? "Search name, person, city…"
         : "Search…";
     slot.innerHTML = OrdersUI.searchBar({
@@ -700,6 +703,7 @@ const Reports = (() => {
       else if (chip === "item-sales") await renderItemAgg(body, "item-sales");
       else if (chip === "item-purchases") await renderItemAgg(body, "item-purchases");
       else if (chip === "stock-wise") await renderStockWise(body);
+      else if (chip === "vendor-orders") await renderVendorOrderReport(body);
       else if (chip === "item-outward") await renderItemOutward(body);
       else if (chip === "stock-journal") await renderStockJournal(body);
       else if (chip === "valuation") await renderValuation(body);
@@ -1825,13 +1829,77 @@ const Reports = (() => {
     ctx.showLoading?.();
     try {
       const res = await DocShare.whatsapp({ kind: "ageing", side, phone, caption: `Ageing ${side.toUpperCase()}` });
-      if (res.ok) ctx.toast("Sent on WhatsApp", "success");
-      else {
-        ctx.toast(res.hint || "WA failed", "error");
-        if (res.wa_me) window.open(res.wa_me, "_blank");
-      }
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
+  }
+
+  function toggleVendorDcu(on) {
+    includeDcu = !!on;
+    loadChip();
+  }
+
+  function downloadVendorOrderCsv() {
+    const rows = vendorOrderRows || [];
+    if (!rows.length) return ctx.toast?.("Nothing to download", "error");
+    const header = ["Item no.", "Company no.", "Company name", "Category", "No. of invoices", "Inward qty", "Outward qty", "Closing qty", "Purchase rate", "Closing value", "Last inward date", "Closing / inward %"];
+    const lines = [header.join(",")];
+    for (const row of rows) {
+      const cells = [row.item_no, row.company_no, row.company_name, row.category, row.invoices, row.inward_qty, row.outward_qty, row.closing_qty, row.purchase_rate, row.closing_value, row.last_inward_date || "", row.stock_ratio || ""];
+      lines.push(cells.map(value => `"${String(value ?? "").replace(/"/g, '""')}"`).join(","));
+    }
+    const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `vendor-order-report-${fromDate || "all"}-${toDate || "all"}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function renderVendorOrderReport(body) {
+    const year = stockYear || "2026-27";
+    const params = new URLSearchParams();
+    if (fromDate) params.set("from_date", fromDate);
+    if (toDate) params.set("to_date", toDate);
+    params.set("year_group", year);
+    if (includeDcu) params.set("include_dcu", "true");
+    const data = await ctx.api(`/reports/vendor-orders?${params.toString()}`, {}, 0);
+    const q = hubSearch.trim().toLowerCase();
+    const items = (data.items || []).filter(it => {
+      if (!q) return true;
+      return [it.item_no, it.company_no, it.company_name, it.category].join(" ").toLowerCase().includes(q);
+    });
+    vendorOrderRows = items;
+    const period = data.period || "";
+    body.innerHTML = `
+      <h2 class="report-print-title" style="position:absolute;left:-9999px;">Vendor order report · ${ctx.esc(year)} · ${ctx.esc(period)}</h2>
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:0 0 12px;">
+        <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;">
+          <input type="checkbox" ${includeDcu ? "checked" : ""} onchange="Reports.toggleVendorDcu(this.checked)" />
+          Include DCU
+        </label>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.downloadVendorOrderCsv()">Download CSV</button>
+        <span style="color:var(--muted);font-size:13px;">${ctx.esc(year)} · ${ctx.esc(period)} · DCU is left out unless you tick it</span>
+      </div>
+      ${items.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
+        <th>Item no.</th><th>Company no.</th><th>Company name</th><th>Category</th><th>Invoices</th>
+        <th>Inward</th><th>Outward</th><th>Closing</th><th>Purchase rate</th><th>Closing value</th><th>Last inward</th><th>Closing / inward %</th>
+      </tr></thead><tbody>
+        ${items.map(it => `<tr>
+          <td><strong>${ctx.esc(it.item_no)}</strong></td>
+          <td>${ctx.esc(it.company_no)}</td>
+          <td>${ctx.esc(it.company_name)}</td>
+          <td>${ctx.esc(it.category)}</td>
+          <td>${it.invoices}</td>
+          <td>${ctx.esc(it.inward_qty)}</td>
+          <td>${ctx.esc(it.outward_qty)}</td>
+          <td>${ctx.esc(it.closing_qty)}</td>
+          <td>${ctx.esc(it.purchase_rate)}</td>
+          <td>${ctx.esc(it.closing_value)}</td>
+          <td>${ctx.esc(it.last_inward_date || "")}</td>
+          <td>${ctx.esc(it.stock_ratio || "")}</td>
+        </tr>`).join("")}
+      </tbody></table></div>` : empty("No items", "Change the dates or include DCU.")}`;
   }
 
   return {
@@ -1840,6 +1908,7 @@ const Reports = (() => {
     openLedger, openStaffLedger, openExpenseLedger, addExpenseHead, addExpenseSubhead, addExpenseSource, renameExpenseSource, deleteExpenseSource, openCashLedger, backFromLedger, openDoc,
     shareDaybook, waDaybook, shareStockSummary, shareAgeing, waAgeing, exportExcel,
     printCurrent, exportCurrentExcel, downloadSalesPdf, downloadPaymentsPdf, setHideVoids, setJournalReportKind, setStockYear, setPrintCarry, togglePrintGroup, toggleStockAlbum,
+    toggleVendorDcu, downloadVendorOrderCsv,
     setMarkingScope, toggleMarkingPick, saveProductMarking, applyMarkingToPicked, renameMarking,
     setPayMode, applyPayFilters,
   };

@@ -39,6 +39,8 @@ const CommissionAgents = (() => {
     const box = desk();
     if (!box) return;
     let rows = [];
+  let ledgerDetails = true;
+  let currentId = null;
     try { rows = await api("/commission-agents", {}, 0); }
     catch (e) { box.innerHTML = `<p class="err">${esc(e.message)}</p>`; return; }
     box.innerHTML = `
@@ -71,7 +73,13 @@ const CommissionAgents = (() => {
     } catch (e) { App.toast?.(e.message, "error"); }
   }
 
+  function toggleLedger() {
+    ledgerDetails = !ledgerDetails;
+    if (currentId) openAgent(currentId);
+  }
+
   async function openAgent(id) {
+    currentId = id;
     const box = desk();
     let data;
     try { data = await api(`/commission-agents/${id}`, {}, 0); }
@@ -121,15 +129,17 @@ const CommissionAgents = (() => {
         </tbody></table>` : `<p style="color:var(--muted);">No bills yet.</p>`}
       </div>
       <div class="card" style="padding:12px;">
-        <h3 style="margin:0 0 8px;">Ledger</h3>
-        ${(data.ledger || []).length ? `<table class="data"><thead><tr><th>Date</th><th>Entry</th><th>Amount</th><th>Balance</th></tr></thead><tbody>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+          <h3 style="margin:0 0 8px;">Ledger</h3>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="CommissionAgents.toggleLedger()">${ledgerDetails ? "Hide details" : "View details"}</button>
+        </div>
+        ${(data.ledger || []).length ? `<table class="data"><thead><tr><th>Date</th><th>Bill</th><th>Party</th><th>Amount</th><th>Balance</th></tr></thead><tbody>
           ${data.ledger.map((row) => {
-            const party = row.party_name ? `<strong>${esc(row.party_name)}</strong>` : "";
-            const text = row.description || "";
-            const entry = party && text.toLowerCase().indexOf(String(row.party_name).toLowerCase()) === -1
-              ? `${party} · ${esc(text)}`
-              : (party && !text ? party : esc(text));
-            return `<tr><td>${esc(row.date)}</td><td>${entry}</td><td>${money(row.amount)}</td><td>${money(row.balance)}</td></tr>`;
+            const items = ledgerDetails && row.bill_number
+              ? (data.goods || []).filter((g) => g.bill_number === row.bill_number)
+              : [];
+            const detail = items.length ? `<tr><td colspan="5" style="background:#f8fafc;font-size:12px;">${items.map((g) => `${esc(g.item)} × ${g.qty}`).join(" · ")}</td></tr>` : "";
+            return `<tr><td>${esc(row.date)}</td><td>${esc(row.bill_number || "—")}</td><td>${esc(row.party_name || "—")}</td><td>${money(row.amount)}</td><td>${money(row.balance)}</td></tr>${detail}`;
           }).join("")}
         </tbody></table>` : `<p style="color:var(--muted);">No entries yet.</p>`}
       </div>`;
@@ -194,5 +204,5 @@ const CommissionAgents = (() => {
 
   function close() { hideDesk(); }
 
-  return { open, close, create, openAgent, save, removeAgent, searchParties, addParty, removeParty, collect };
+  return { open, close, create, openAgent, toggleLedger, save, removeAgent, searchParties, addParty, removeParty, collect };
 })();

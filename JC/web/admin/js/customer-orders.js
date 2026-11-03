@@ -2424,28 +2424,17 @@ const CustomerOrders = (() => {
           <input class="input" placeholder="Name" value="${ctx.esc(c.name)}" oninput="CustomerOrders.setAddCharge(${i}, 'name', this.value)" />
           <input class="input" placeholder="₹" style="width:110px;" value="${ctx.esc(c.amount)}" oninput="CustomerOrders.setAddCharge(${i}, 'amount', this.value)" />
         </div>`).join("")}
-      ${dueCatalogs.length && !editBillId ? `<label class="label">Add a catalogue</label>
-        <p style="margin:0 0 8px;font-size:13px;color:var(--muted);">These are the catalogues for this party. Price stays 0 unless you charge.</p>
-        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
-          <select id="co-cat-pick" class="input">
-            <option value="">Choose a catalogue</option>
-            ${dueCatalogs.map(c => {
-              const again = Number(c.received) > 0;
-              return `<option value="${c.id}">${ctx.esc(c.name)} · ${c.copies_left} left${again ? ` · already ${c.received}` : ""}</option>`;
-            }).join("")}
-          </select>
-          <button type="button" class="btn btn-secondary btn-sm" onclick="CustomerOrders.addPickedCatalog()">Add</button>
-        </div>
+      ${!editBillId ? `<div style="margin:12px 0;">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="CustomerOrders.openCatalogPicker()">Add a catalogue</button>
         ${Object.keys(pickedCatalogs).map(id => {
-          const c = dueCatalogs.find(row => String(row.id) === String(id));
-          if (!c) return "";
-          const again = Number(c.received) > 0;
-          return `<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
-            <span style="flex:1;"><strong>${ctx.esc(c.name)}</strong>${again ? ` · already received ${c.received}` : ""}</span>
-            <input class="input" style="width:90px;" inputmode="decimal" value="${ctx.esc(pickedCatalogs[id] ?? "0")}" oninput="CustomerOrders.setBillCatalogPrice(${c.id}, this.value)" />
-            <button type="button" class="btn btn-ghost btn-sm" onclick="CustomerOrders.toggleBillCatalog(${c.id}, false)">Remove</button>
+          const c = (dueCatalogs || []).find(row => String(row.id) === String(id));
+          const name = c ? c.name : "Catalogue";
+          return `<div style="display:flex;gap:8px;align-items:center;margin-top:6px;">
+            <span style="flex:1;">${ctx.esc(name)} · ₹${ctx.esc(pickedCatalogs[id] || "0")}</span>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="CustomerOrders.toggleBillCatalog(${id}, false)">Remove</button>
           </div>`;
-        }).join("")}` : ""}
+        }).join("")}
+      </div>` : ""}
       <button type="button" class="btn btn-secondary btn-sm" onclick="CustomerOrders.addChargeRow()">+ Charge</button>
       <label style="display:flex;gap:8px;align-items:center;margin:12px 0;">
         <input type="checkbox" ${gstEnabled ? "checked" : ""} onchange="CustomerOrders.setGst(this.checked)" /> GST
@@ -2621,6 +2610,27 @@ const CustomerOrders = (() => {
     renderProcessWizard();
   }
 
+  function openCatalogPicker() {
+    if (!(dueCatalogs || []).length) return ctx.toast("No catalogue is assigned to this party", "error");
+    document.getElementById("modal-title").textContent = "Add a catalogue";
+    document.getElementById("modal-body").innerHTML = `
+      <label class="label">Catalogue</label>
+      <select id="co-cat-pick" class="input" style="margin-bottom:12px;">
+        <option value="">Choose</option>
+        ${(dueCatalogs || []).map(c => {
+          const again = Number(c.received) > 0;
+          return `<option value="${c.id}">${ctx.esc(c.name)} · ${c.copies_left} left${again ? ` · already ${c.received}` : ""}</option>`;
+        }).join("")}
+      </select>
+      <label class="label">Price (₹) — leave 0 if free</label>
+      <input id="co-cat-price" class="input" inputmode="decimal" value="0" />`;
+    document.getElementById("modal-footer").innerHTML = `
+      <button class="btn btn-secondary" onclick="App.closeModal()">Close</button>
+      <button class="btn btn-primary" id="co-cat-add">Add</button>`;
+    document.getElementById("co-cat-add").onclick = () => addPickedCatalog();
+    document.getElementById("modal").classList.remove("hidden");
+  }
+
   function addPickedCatalog() {
     const id = Number(document.getElementById("co-cat-pick")?.value || 0);
     if (!id) return ctx.toast("Choose a catalogue", "error");
@@ -2631,7 +2641,8 @@ const CustomerOrders = (() => {
       const ok = confirm(`${cat.name} was already sent to this party (${cat.received}). Send another copy?`);
       if (!ok) return;
     }
-    pickedCatalogs[id] = "0";
+    pickedCatalogs[id] = document.getElementById("co-cat-price")?.value || "0";
+    App.closeModal?.();
     renderProcessWizard();
   }
 
@@ -3779,7 +3790,7 @@ const CustomerOrders = (() => {
     _detailCustomerId,
     setShipQty, setLineDisc, setLineNetRate, setDiscToggle, setOverallDisc, skipBillAddon,
     setFreightAgent, setFreightCharges, setTransportMode, setTransportReceipt, setPackagingCharges,
-    setGst, setGstRate, setBillSeries, setNarration, setEditBillNumber, setBillDate, setAddCharge, addChargeRow, addPickedCatalog, toggleBillCatalog, setBillCatalogPrice,
+    setGst, setGstRate, setBillSeries, setNarration, setEditBillNumber, setBillDate, setAddCharge, addChargeRow, openCatalogPicker, addPickedCatalog, toggleBillCatalog, setBillCatalogPrice,
     setOfflinePlacedOn,
     setForceCredit, setBillOnAgent, printDayDuplicates,
     processNext, processBack, submitProcess, backFromBillDuplicate, proceedBillDuplicate, toggleBillOrder, toggleAllBillOrders,

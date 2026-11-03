@@ -195,15 +195,16 @@ def agent_detail(agent_id: int, db: Session = Depends(get_db), auth: AuthContext
         .all()
     )
     entries = (
-        db.query(CommissionLedgerEntry, Customer.business_name)
+        db.query(CommissionLedgerEntry, Customer.business_name, CustomerBill.bill_number)
         .outerjoin(Customer, Customer.id == CommissionLedgerEntry.customer_id)
+        .outerjoin(CustomerBill, CustomerBill.id == CommissionLedgerEntry.customer_bill_id)
         .filter(CommissionLedgerEntry.commission_agent_id == agent.id)
         .order_by(CommissionLedgerEntry.value_date.asc(), CommissionLedgerEntry.id.asc())
         .all()
     )
     balance = Decimal("0")
     ledger = []
-    for entry, party_name in entries:
+    for entry, party_name, bill_number in entries:
         balance += Decimal(str(entry.amount or 0))
         ledger.append({
             "id": entry.id,
@@ -211,6 +212,8 @@ def agent_detail(agent_id: int, db: Session = Depends(get_db), auth: AuthContext
             "entry_type": entry.entry_type,
             "description": entry.description or "",
             "party_name": party_name or "",
+            "bill_number": bill_number or "",
+            "bill_id": entry.customer_bill_id,
             "amount": _money(Decimal(str(entry.amount or 0))),
             "balance": _money(balance),
         })

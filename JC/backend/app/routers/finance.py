@@ -65,6 +65,45 @@ def get_finance_reconcile(
     return result
 
 
+@router.get("/transport-bills")
+def list_transport_bills(db: Session = Depends(get_db), auth: AuthContext = Depends(require_admin)):
+    """Bills sent by a transport company. Bus freight stays on the freight agents."""
+    from app.models.customer_bill import CustomerBill
+    from app.routers.expenses import ensure_transport_head
+
+    ensure_transport_head(db)
+    rows = (
+        db.query(CustomerBill, Customer.business_name, Customer.party_number, City.name)
+        .join(Customer, Customer.id == CustomerBill.customer_id)
+        .outerjoin(City, City.id == Customer.city_id)
+        .filter(
+            CustomerBill.deleted_at.is_(None),
+            CustomerBill.cancelled_at.is_(None),
+            CustomerBill.transport_mode == "transport",
+            CustomerBill.freight_charges > 0,
+        )
+        .order_by(CustomerBill.bill_date.desc(), CustomerBill.id.desc())
+        .limit(500)
+        .all()
+    )
+    items = []
+    total = Decimal("0")
+    for bill, party, party_number, city in rows:
+        amt = Decimal(str(bill.freight_charges or 0))
+        total += amt
+        items.append({
+            "bill_id": bill.id,
+            "bill_number": bill.bill_number,
+            "bill_date": bill.bill_date.isoformat() if bill.bill_date else "",
+            "party": party,
+            "party_number": party_number,
+            "city": city or "",
+            "amount": format(amt, "f"),
+            "receipt": bill.transport_receipt_number or "",
+        })
+    return {"total": format(total, "f"), "count": len(items), "items": items}
+
+
 @router.get("/overview")
 def get_finance_overview(db: Session = Depends(get_db), auth: AuthContext = Depends(require_admin)):
     from app.services import response_cache

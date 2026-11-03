@@ -108,9 +108,15 @@
       renderArDetail();
       return;
     }
-    const gen = ++arDetailGen;
     arExpandAll = true;
+    arDetailGen += 1;
     renderArDetail();
+    await ensureArExpandedLines();
+  }
+
+  async function ensureArExpandedLines() {
+    if (!arDetail || !arExpandAll) return;
+    const gen = arDetailGen;
     const entries = arDetail.entries || [];
     const billIds = [...new Set(entries.map(e => e.bill_id).filter(Boolean))].filter(id => !arLineCache.bills[id]);
     const returnIds = [...new Set(entries.map(e => e.return_id).filter(Boolean))].filter(id => !arLineCache.returns[id]);
@@ -156,9 +162,7 @@
       </tr>`).join("") || `<tr><td colspan="6">No lines</td></tr>`;
       const charges = (doc.additional_charges || []).filter(c => Number(c.amount) > 0)
         .map(c => `${ctx.esc(c.name)} ${fmtPrice(c.amount)}`).join(" · ");
-      const freight = Number(doc.freight_charges) > 0
-        ? `Transport ${fmtPrice(doc.freight_charges)}${doc.transport_receipt_number ? " · " + ctx.esc(doc.transport_receipt_number) : ""}`
-        : "";
+      const freight = moneyChargeLabel(doc);
       const extra = [freight, charges, doc.narration ? ctx.esc(doc.narration) : ""].filter(Boolean).join(" · ");
       table = `${extra ? `<div style="font-size:12px;margin-bottom:6px;">${extra}</div>` : ""}
         <table class="data fin-mini"><thead><tr>
@@ -199,6 +203,17 @@
     </tbody></table></div>`;
   }
 
+  function moneyChargeLabel(doc) {
+    if (!doc || !(Number(doc.freight_charges) > 0)) return "";
+    const mode = doc.transport_mode || (doc.freight_agent_id || doc.freight_agent_name ? "bus" : "transport");
+    if (mode === "bus") {
+      const agent = doc.freight_agent_name ? ` · ${ctx.esc(doc.freight_agent_name)}` : "";
+      return `Freight ${fmtPrice(doc.freight_charges)}${agent}`;
+    }
+    const receipt = doc.transport_receipt_number ? ` · ${ctx.esc(doc.transport_receipt_number)}` : "";
+    return `Transport ${fmtPrice(doc.freight_charges)}${receipt}`;
+  }
+
   function moneyDocButton(e) {
     if (e.return_id) return ` <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();Returns.openReturn(${e.return_id})">View</button>`;
     if (e.bill_id) return ` <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();Finance.viewCustomerBill(${e.bill_id})">View detail</button> <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();App.rememberLedgerReturn('money', ${currentCustomer});CustomerOrders.openEditBill(${e.bill_id})">Edit</button> <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();CustomerOrders.cancelBill(${e.bill_id}, true)">Cancel</button> <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();CustomerOrders.openBillDoc(${e.bill_id}, false)">Download</button> <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();CustomerOrders.printStoredBill(${e.bill_id})">Print</button>`;
@@ -226,7 +241,7 @@
           </div>
           <div style="text-align:right;"><div style="font-size:12px;color:var(--muted);">Total</div><strong>${fmtPrice(bill.grand_total)}</strong></div>
         </div>
-        ${Number(bill.freight_charges) > 0 ? `<div style="margin-top:8px;font-size:13px;">Transport ${fmtPrice(bill.freight_charges)}${bill.transport_receipt_number ? " · " + ctx.esc(bill.transport_receipt_number) : ""}</div>` : ""}
+        ${moneyChargeLabel(bill) ? `<div style="margin-top:8px;font-size:13px;">${moneyChargeLabel(bill)}</div>` : ""}
         ${charges ? `<div style="margin-top:4px;font-size:13px;">${charges}</div>` : ""}
       </div>
       <div class="card table-wrap"><table class="data"><thead><tr>

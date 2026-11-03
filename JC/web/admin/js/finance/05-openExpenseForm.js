@@ -396,6 +396,50 @@
   }
 
   /* —— Freight —— */
+  async function loadTransportBills() {
+    const box = document.getElementById("finance-transport-body");
+    if (box) box.innerHTML = `<p style="color:var(--muted);">Loading…</p>`;
+    try {
+      const data = await ctx.api("/finance/transport-bills", {}, 0);
+      transportRows = data.items || [];
+      transportTotal = data.total || "0";
+    } catch (e) {
+      if (box) box.innerHTML = `<p style="color:var(--danger);">${ctx.esc(e.message)}</p>`;
+      return;
+    }
+    renderTransportBills();
+  }
+
+  function renderTransportBills() {
+    const box = document.getElementById("finance-transport-body");
+    if (!box) return;
+    const q = hubSearch.trim().toLowerCase();
+    const rows = (transportRows || []).filter(row => {
+      if (!q) return true;
+      return [row.party, row.city, row.bill_number, row.receipt, row.party_number].join(" ").toLowerCase().includes(q);
+    });
+    box.innerHTML = `
+      <div class="ui-hero setup-page-hero fin-panel-head">
+        <div>
+          <h3 class="setup-page-title fin-panel-title">Transport</h3>
+          <p class="setup-page-sub fin-panel-sub">Charges on bills sent by transport. Bus freight stays under Freight.</p>
+        </div>
+      </div>
+      <p style="margin:0 0 12px;">${rows.length} bills · ${fmtPrice(transportTotal || 0)}</p>
+      ${rows.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
+        <th>Date</th><th>Bill</th><th>Party</th><th>City</th><th>Receipt</th><th>Amount</th>
+      </tr></thead><tbody>
+        ${rows.map(row => `<tr>
+          <td>${ctx.esc(row.bill_date || "")}</td>
+          <td><strong>${ctx.esc(row.bill_number || "")}</strong></td>
+          <td>${row.party_number ? "#" + row.party_number + " " : ""}${ctx.esc(row.party || "")}</td>
+          <td>${ctx.esc(row.city || "")}</td>
+          <td>${ctx.esc(row.receipt || "")}</td>
+          <td>${fmtPrice(row.amount)}</td>
+        </tr>`).join("")}
+      </tbody></table></div>` : `<p style="color:var(--muted);">No transport charges.</p>`}`;
+  }
+
   async function loadFreightList() {
     freightAgentId = null;
     document.getElementById("finance-freight-detail")?.classList.add("hidden");
@@ -571,8 +615,8 @@
     if (footerBtn) footerBtn.textContent = "Settle";
     document.getElementById("freight-settle-body").innerHTML = `
       <p style="margin:0 0 12px;color:var(--muted);">Pay ${ctx.esc(agent.name)} against due ${fmtPrice(due)}. Party names print on the voucher.</p>
-      <label class="label">Date *</label>
-      <input type="date" class="input" id="freight-settle-date" value="${new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" })}" style="margin-bottom:12px;" />
+      <label class="label">Payment date *</label>
+      <input type="date" class="input" id="freight-settle-date" value="" style="margin-bottom:12px;" />
       <label class="label">Transaction ID *</label>
       <input class="input" id="freight-settle-ref" style="margin-bottom:12px;" placeholder="UTR, cheque #, etc." />
       <label class="label">Amount (₹) *</label>
@@ -596,8 +640,8 @@
     if (footerBtn) footerBtn.textContent = "Pay advance";
     document.getElementById("freight-settle-body").innerHTML = `
       <p style="margin:0 0 12px;color:var(--muted);">Prepaid to ${ctx.esc(agent.name)}. Future freight charges adjust against this${adv > 0 ? ` (now ${fmtPrice(adv)} left)` : ""}.</p>
-      <label class="label">Date *</label>
-      <input type="date" class="input" id="freight-settle-date" value="${new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" })}" style="margin-bottom:12px;" />
+      <label class="label">Payment date *</label>
+      <input type="date" class="input" id="freight-settle-date" value="" style="margin-bottom:12px;" />
       <label class="label">Transaction ID *</label>
       <input class="input" id="freight-settle-ref" style="margin-bottom:12px;" placeholder="UTR, cheque #, etc." />
       <label class="label">Advance amount (₹) *</label>
@@ -703,6 +747,8 @@
     const ref = (document.getElementById("freight-settle-ref")?.value || "").trim();
     const amount = parseFloat(document.getElementById("freight-settle-amount")?.value || "0");
     const notes = (document.getElementById("freight-settle-notes")?.value || "").trim() || null;
+    const pay_date = document.getElementById("freight-settle-date")?.value || "";
+    if (!pay_date) return ctx.toast("Enter the payment date", "error");
     if (!ref) return ctx.toast("Transaction ID required", "error");
     if (!(amount > 0)) return ctx.toast("Enter amount", "error");
     const agent = freightAgents.find(a => a.id === freightAgentId);
@@ -736,7 +782,7 @@
           transaction_ref: ref,
           notes,
           payment_receipt_key: key,
-          pay_date: document.getElementById("freight-settle-date")?.value || null,
+          pay_date,
         }),
       });
       ctx.toast(asAdvance ? "Advance paid" : "Settled", "success");
@@ -773,7 +819,8 @@
     const amount = parseFloat(document.getElementById("freight-settle-amount")?.value || "0");
     const direction = document.getElementById("freight-adjust-dir")?.value || "owe_more";
     const notes = (document.getElementById("freight-settle-notes")?.value || "").trim() || null;
-    const pay_date = document.getElementById("freight-settle-date")?.value || null;
+    const pay_date = document.getElementById("freight-settle-date")?.value || "";
+    if (!pay_date) return ctx.toast("Enter the payment date", "error");
     if (!head) return ctx.toast("Enter the head", "error");
     if (!(amount > 0)) return ctx.toast("Enter amount", "error");
     const fid = freightAgentId;
@@ -794,8 +841,9 @@
 
   async function submitFreightEdit() {
     const amount = parseFloat(document.getElementById("freight-settle-amount")?.value || "0");
-    const pay_date = document.getElementById("freight-settle-date")?.value || null;
+    const pay_date = document.getElementById("freight-settle-date")?.value || "";
     const notes = document.getElementById("freight-settle-notes") ? ((document.getElementById("freight-settle-notes").value || "").trim() || null) : undefined;
+    if (!pay_date) return ctx.toast("Enter the payment date", "error");
     const head = document.getElementById("freight-adjust-head")?.value?.trim() || null;
     const direction = document.getElementById("freight-adjust-dir")?.value || null;
     if (!(amount > 0)) return ctx.toast("Enter amount", "error");

@@ -12,11 +12,13 @@ const Finance = (() => {
   let arDetail = null;
   let apTab = "statement";
   let arTab = "statement";
-  let arExpandAll = false;
+  let arExpandAll = true;
   let arDetailGen = 0;
   let arLineCache = { bills: {}, returns: {} };
   let expandedBillId = null;
   let freightAgents = [];
+  let transportRows = [];
+  let transportTotal = "0";
   let freightAgentId = null;
   let freightLedger = [];
   let routeCollections = [];
@@ -56,6 +58,7 @@ const Finance = (() => {
     ar: "Money to collect from customers",
     ap: "Money to pay vendors",
     freight: "Freight agent dues",
+    transport: "Transport company charges",
     expenses: "Rent, salary, misc",
     journal: "Move stock or record sample catalogues",
     routes: "Collect by route",
@@ -203,7 +206,7 @@ const Finance = (() => {
   }
 
   function hideAllPanels() {
-    ["ap", "ar", "expenses", "journal", "freight", "routes", "reports"].forEach(k => {
+    ["ap", "ar", "expenses", "journal", "freight", "transport", "routes", "reports"].forEach(k => {
       document.getElementById(`finance-panel-${k}`)?.classList.add("hidden");
     });
     document.getElementById("finance-freight-detail")?.classList.add("hidden");
@@ -232,6 +235,7 @@ const Finance = (() => {
       { id: "ar", label: "To collect", count: chipCounts.ar || undefined },
       { id: "ap", label: "To pay", count: chipCounts.ap || undefined },
       { id: "freight", label: "Freight", count: chipCounts.freight || undefined },
+      { id: "transport", label: "Transport" },
       { id: "expenses", label: "Other spend" },
       { id: "journal", label: "Journal" },
       { id: "routes", label: "Routes" },
@@ -257,9 +261,10 @@ const Finance = (() => {
         : activeChip === "ap" ? "Search vendors…"
           : activeChip === "ar" ? "Search customers…"
             : activeChip === "freight" ? "Search agents…"
+              : activeChip === "transport" ? "Search party or bill…"
               : activeChip === "routes" ? "Search routes…"
                 : "Search…";
-      const showSearch = ["due", "ap", "ar", "freight", "routes"].includes(activeChip);
+      const showSearch = ["due", "ap", "ar", "freight", "transport", "routes"].includes(activeChip);
       slot.innerHTML = showSearch
         ? OrdersUI.searchBar({
           id: "finance-hub-search",
@@ -577,6 +582,9 @@ const Finance = (() => {
     } else if (chip === "freight") {
       document.getElementById("finance-panel-freight")?.classList.remove("hidden");
       loadFreightList();
+    } else if (chip === "transport") {
+      document.getElementById("finance-panel-transport")?.classList.remove("hidden");
+      loadTransportBills();
     } else if (chip === "expenses") {
       document.getElementById("finance-panel-expenses")?.classList.remove("hidden");
       loadExpenses();
@@ -604,6 +612,7 @@ const Finance = (() => {
     else if (activeChip === "ap") renderApList();
     else if (activeChip === "ar") renderArList();
     else if (activeChip === "freight") renderFreightList();
+    else if (activeChip === "transport") renderTransportBills();
     else if (activeChip === "routes") renderRouteListFiltered();
   }
 
@@ -1496,12 +1505,13 @@ const Finance = (() => {
       arDetail = await ctx.api(`/accounts-receivable/customer/${customerId}`, {}, 0);
       currentCustomer = customerId;
       arTab = opts?.tab === "statement" || opts?.tab === "payments" ? opts.tab : "ledger";
-      arExpandAll = false;
+      arExpandAll = true;
       arDetailGen += 1;
       arLineCache = { bills: {}, returns: {} };
       document.getElementById("finance-hub")?.classList.add("hidden");
       document.getElementById("finance-ar-detail")?.classList.remove("hidden");
       renderArDetail();
+      ensureArExpandedLines();
       if (opts?.settle) openArSettle();
       App.updateGlobalBack?.();
     } catch (e) { ctx.toast(e.message, "error"); }
@@ -1781,9 +1791,15 @@ const Finance = (() => {
       renderArDetail();
       return;
     }
-    const gen = ++arDetailGen;
     arExpandAll = true;
+    arDetailGen += 1;
     renderArDetail();
+    await ensureArExpandedLines();
+  }
+
+  async function ensureArExpandedLines() {
+    if (!arDetail || !arExpandAll) return;
+    const gen = arDetailGen;
     const entries = arDetail.entries || [];
     const billIds = [...new Set(entries.map(e => e.bill_id).filter(Boolean))].filter(id => !arLineCache.bills[id]);
     const returnIds = [...new Set(entries.map(e => e.return_id).filter(Boolean))].filter(id => !arLineCache.returns[id]);
@@ -1829,9 +1845,7 @@ const Finance = (() => {
       </tr>`).join("") || `<tr><td colspan="6">No lines</td></tr>`;
       const charges = (doc.additional_charges || []).filter(c => Number(c.amount) > 0)
         .map(c => `${ctx.esc(c.name)} ${fmtPrice(c.amount)}`).join(" · ");
-      const freight = Number(doc.freight_charges) > 0
-        ? `Transport ${fmtPrice(doc.freight_charges)}${doc.transport_receipt_number ? " · " + ctx.esc(doc.transport_receipt_number) : ""}`
-        : "";
+      const freight = moneyChargeLabel(doc);
       const extra = [freight, charges, doc.narration ? ctx.esc(doc.narration) : ""].filter(Boolean).join(" · ");
       table = `${extra ? `<div style="font-size:12px;margin-bottom:6px;">${extra}</div>` : ""}
         <table class="data fin-mini"><thead><tr>
@@ -1872,6 +1886,17 @@ const Finance = (() => {
     </tbody></table></div>`;
   }
 
+  function moneyChargeLabel(doc) {
+    if (!doc || !(Number(doc.freight_charges) > 0)) return "";
+    const mode = doc.transport_mode || (doc.freight_agent_id || doc.freight_agent_name ? "bus" : "transport");
+    if (mode === "bus") {
+      const agent = doc.freight_agent_name ? ` · ${ctx.esc(doc.freight_agent_name)}` : "";
+      return `Freight ${fmtPrice(doc.freight_charges)}${agent}`;
+    }
+    const receipt = doc.transport_receipt_number ? ` · ${ctx.esc(doc.transport_receipt_number)}` : "";
+    return `Transport ${fmtPrice(doc.freight_charges)}${receipt}`;
+  }
+
   function moneyDocButton(e) {
     if (e.return_id) return ` <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();Returns.openReturn(${e.return_id})">View</button>`;
     if (e.bill_id) return ` <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();Finance.viewCustomerBill(${e.bill_id})">View detail</button> <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();App.rememberLedgerReturn('money', ${currentCustomer});CustomerOrders.openEditBill(${e.bill_id})">Edit</button> <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();CustomerOrders.cancelBill(${e.bill_id}, true)">Cancel</button> <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();CustomerOrders.openBillDoc(${e.bill_id}, false)">Download</button> <button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();CustomerOrders.printStoredBill(${e.bill_id})">Print</button>`;
@@ -1899,7 +1924,7 @@ const Finance = (() => {
           </div>
           <div style="text-align:right;"><div style="font-size:12px;color:var(--muted);">Total</div><strong>${fmtPrice(bill.grand_total)}</strong></div>
         </div>
-        ${Number(bill.freight_charges) > 0 ? `<div style="margin-top:8px;font-size:13px;">Transport ${fmtPrice(bill.freight_charges)}${bill.transport_receipt_number ? " · " + ctx.esc(bill.transport_receipt_number) : ""}</div>` : ""}
+        ${moneyChargeLabel(bill) ? `<div style="margin-top:8px;font-size:13px;">${moneyChargeLabel(bill)}</div>` : ""}
         ${charges ? `<div style="margin-top:4px;font-size:13px;">${charges}</div>` : ""}
       </div>
       <div class="card table-wrap"><table class="data"><thead><tr>
@@ -2734,6 +2759,50 @@ const Finance = (() => {
   }
 
   /* —— Freight —— */
+  async function loadTransportBills() {
+    const box = document.getElementById("finance-transport-body");
+    if (box) box.innerHTML = `<p style="color:var(--muted);">Loading…</p>`;
+    try {
+      const data = await ctx.api("/finance/transport-bills", {}, 0);
+      transportRows = data.items || [];
+      transportTotal = data.total || "0";
+    } catch (e) {
+      if (box) box.innerHTML = `<p style="color:var(--danger);">${ctx.esc(e.message)}</p>`;
+      return;
+    }
+    renderTransportBills();
+  }
+
+  function renderTransportBills() {
+    const box = document.getElementById("finance-transport-body");
+    if (!box) return;
+    const q = hubSearch.trim().toLowerCase();
+    const rows = (transportRows || []).filter(row => {
+      if (!q) return true;
+      return [row.party, row.city, row.bill_number, row.receipt, row.party_number].join(" ").toLowerCase().includes(q);
+    });
+    box.innerHTML = `
+      <div class="ui-hero setup-page-hero fin-panel-head">
+        <div>
+          <h3 class="setup-page-title fin-panel-title">Transport</h3>
+          <p class="setup-page-sub fin-panel-sub">Charges on bills sent by transport. Bus freight stays under Freight.</p>
+        </div>
+      </div>
+      <p style="margin:0 0 12px;">${rows.length} bills · ${fmtPrice(transportTotal || 0)}</p>
+      ${rows.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
+        <th>Date</th><th>Bill</th><th>Party</th><th>City</th><th>Receipt</th><th>Amount</th>
+      </tr></thead><tbody>
+        ${rows.map(row => `<tr>
+          <td>${ctx.esc(row.bill_date || "")}</td>
+          <td><strong>${ctx.esc(row.bill_number || "")}</strong></td>
+          <td>${row.party_number ? "#" + row.party_number + " " : ""}${ctx.esc(row.party || "")}</td>
+          <td>${ctx.esc(row.city || "")}</td>
+          <td>${ctx.esc(row.receipt || "")}</td>
+          <td>${fmtPrice(row.amount)}</td>
+        </tr>`).join("")}
+      </tbody></table></div>` : `<p style="color:var(--muted);">No transport charges.</p>`}`;
+  }
+
   async function loadFreightList() {
     freightAgentId = null;
     document.getElementById("finance-freight-detail")?.classList.add("hidden");
@@ -2909,8 +2978,8 @@ const Finance = (() => {
     if (footerBtn) footerBtn.textContent = "Settle";
     document.getElementById("freight-settle-body").innerHTML = `
       <p style="margin:0 0 12px;color:var(--muted);">Pay ${ctx.esc(agent.name)} against due ${fmtPrice(due)}. Party names print on the voucher.</p>
-      <label class="label">Date *</label>
-      <input type="date" class="input" id="freight-settle-date" value="${new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" })}" style="margin-bottom:12px;" />
+      <label class="label">Payment date *</label>
+      <input type="date" class="input" id="freight-settle-date" value="" style="margin-bottom:12px;" />
       <label class="label">Transaction ID *</label>
       <input class="input" id="freight-settle-ref" style="margin-bottom:12px;" placeholder="UTR, cheque #, etc." />
       <label class="label">Amount (₹) *</label>
@@ -2934,8 +3003,8 @@ const Finance = (() => {
     if (footerBtn) footerBtn.textContent = "Pay advance";
     document.getElementById("freight-settle-body").innerHTML = `
       <p style="margin:0 0 12px;color:var(--muted);">Prepaid to ${ctx.esc(agent.name)}. Future freight charges adjust against this${adv > 0 ? ` (now ${fmtPrice(adv)} left)` : ""}.</p>
-      <label class="label">Date *</label>
-      <input type="date" class="input" id="freight-settle-date" value="${new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" })}" style="margin-bottom:12px;" />
+      <label class="label">Payment date *</label>
+      <input type="date" class="input" id="freight-settle-date" value="" style="margin-bottom:12px;" />
       <label class="label">Transaction ID *</label>
       <input class="input" id="freight-settle-ref" style="margin-bottom:12px;" placeholder="UTR, cheque #, etc." />
       <label class="label">Advance amount (₹) *</label>
@@ -3041,6 +3110,8 @@ const Finance = (() => {
     const ref = (document.getElementById("freight-settle-ref")?.value || "").trim();
     const amount = parseFloat(document.getElementById("freight-settle-amount")?.value || "0");
     const notes = (document.getElementById("freight-settle-notes")?.value || "").trim() || null;
+    const pay_date = document.getElementById("freight-settle-date")?.value || "";
+    if (!pay_date) return ctx.toast("Enter the payment date", "error");
     if (!ref) return ctx.toast("Transaction ID required", "error");
     if (!(amount > 0)) return ctx.toast("Enter amount", "error");
     const agent = freightAgents.find(a => a.id === freightAgentId);
@@ -3074,7 +3145,7 @@ const Finance = (() => {
           transaction_ref: ref,
           notes,
           payment_receipt_key: key,
-          pay_date: document.getElementById("freight-settle-date")?.value || null,
+          pay_date,
         }),
       });
       ctx.toast(asAdvance ? "Advance paid" : "Settled", "success");
@@ -3111,7 +3182,8 @@ const Finance = (() => {
     const amount = parseFloat(document.getElementById("freight-settle-amount")?.value || "0");
     const direction = document.getElementById("freight-adjust-dir")?.value || "owe_more";
     const notes = (document.getElementById("freight-settle-notes")?.value || "").trim() || null;
-    const pay_date = document.getElementById("freight-settle-date")?.value || null;
+    const pay_date = document.getElementById("freight-settle-date")?.value || "";
+    if (!pay_date) return ctx.toast("Enter the payment date", "error");
     if (!head) return ctx.toast("Enter the head", "error");
     if (!(amount > 0)) return ctx.toast("Enter amount", "error");
     const fid = freightAgentId;
@@ -3132,8 +3204,9 @@ const Finance = (() => {
 
   async function submitFreightEdit() {
     const amount = parseFloat(document.getElementById("freight-settle-amount")?.value || "0");
-    const pay_date = document.getElementById("freight-settle-date")?.value || null;
+    const pay_date = document.getElementById("freight-settle-date")?.value || "";
     const notes = document.getElementById("freight-settle-notes") ? ((document.getElementById("freight-settle-notes").value || "").trim() || null) : undefined;
+    if (!pay_date) return ctx.toast("Enter the payment date", "error");
     const head = document.getElementById("freight-adjust-head")?.value?.trim() || null;
     const direction = document.getElementById("freight-adjust-dir")?.value || null;
     if (!(amount > 0)) return ctx.toast("Enter amount", "error");

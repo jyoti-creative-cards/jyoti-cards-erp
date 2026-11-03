@@ -398,12 +398,13 @@
       arDetail = await ctx.api(`/accounts-receivable/customer/${customerId}`, {}, 0);
       currentCustomer = customerId;
       arTab = opts?.tab === "statement" || opts?.tab === "payments" ? opts.tab : "ledger";
-      arExpandAll = false;
+      arExpandAll = true;
       arDetailGen += 1;
       arLineCache = { bills: {}, returns: {} };
       document.getElementById("finance-hub")?.classList.add("hidden");
       document.getElementById("finance-ar-detail")?.classList.remove("hidden");
       renderArDetail();
+      ensureArExpandedLines();
       if (opts?.settle) openArSettle();
       App.updateGlobalBack?.();
     } catch (e) { ctx.toast(e.message, "error"); }

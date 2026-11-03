@@ -139,7 +139,7 @@
   }
 
   function hideAllPanels() {
-    ["ap", "ar", "expenses", "journal", "freight", "routes", "reports"].forEach(k => {
+    ["ap", "ar", "expenses", "journal", "freight", "transport", "routes", "reports"].forEach(k => {
       document.getElementById(`finance-panel-${k}`)?.classList.add("hidden");
     });
     document.getElementById("finance-freight-detail")?.classList.add("hidden");
@@ -168,6 +168,7 @@
       { id: "ar", label: "To collect", count: chipCounts.ar || undefined },
       { id: "ap", label: "To pay", count: chipCounts.ap || undefined },
       { id: "freight", label: "Freight", count: chipCounts.freight || undefined },
+      { id: "transport", label: "Transport" },
       { id: "expenses", label: "Other spend" },
       { id: "journal", label: "Journal" },
       { id: "routes", label: "Routes" },
@@ -193,9 +194,10 @@
         : activeChip === "ap" ? "Search vendors…"
           : activeChip === "ar" ? "Search customers…"
             : activeChip === "freight" ? "Search agents…"
+              : activeChip === "transport" ? "Search party or bill…"
               : activeChip === "routes" ? "Search routes…"
                 : "Search…";
-      const showSearch = ["due", "ap", "ar", "freight", "routes"].includes(activeChip);
+      const showSearch = ["due", "ap", "ar", "freight", "transport", "routes"].includes(activeChip);
       slot.innerHTML = showSearch
         ? OrdersUI.searchBar({
           id: "finance-hub-search",
@@ -513,6 +515,9 @@
     } else if (chip === "freight") {
       document.getElementById("finance-panel-freight")?.classList.remove("hidden");
       loadFreightList();
+    } else if (chip === "transport") {
+      document.getElementById("finance-panel-transport")?.classList.remove("hidden");
+      loadTransportBills();
     } else if (chip === "expenses") {
       document.getElementById("finance-panel-expenses")?.classList.remove("hidden");
       loadExpenses();
@@ -540,6 +545,7 @@
     else if (activeChip === "ap") renderApList();
     else if (activeChip === "ar") renderArList();
     else if (activeChip === "freight") renderFreightList();
+    else if (activeChip === "transport") renderTransportBills();
     else if (activeChip === "routes") renderRouteListFiltered();
   }
 

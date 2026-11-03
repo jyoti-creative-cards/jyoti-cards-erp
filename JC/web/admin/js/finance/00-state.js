@@ -12,11 +12,13 @@ const Finance = (() => {
   let arDetail = null;
   let apTab = "statement";
   let arTab = "statement";
-  let arExpandAll = false;
+  let arExpandAll = true;
   let arDetailGen = 0;
   let arLineCache = { bills: {}, returns: {} };
   let expandedBillId = null;
   let freightAgents = [];
+  let transportRows = [];
+  let transportTotal = "0";
   let freightAgentId = null;
   let freightLedger = [];
   let routeCollections = [];
@@ -56,6 +58,7 @@ const Finance = (() => {
     ar: "Money to collect from customers",
     ap: "Money to pay vendors",
     freight: "Freight agent dues",
+    transport: "Transport company charges",
     expenses: "Rent, salary, misc",
     journal: "Move stock or record sample catalogues",
     routes: "Collect by route",

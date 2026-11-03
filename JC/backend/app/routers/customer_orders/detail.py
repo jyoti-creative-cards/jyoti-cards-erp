@@ -153,7 +153,12 @@ def serialize_customer_bill(
             for p in (db.query(CatalogProduct).filter(CatalogProduct.id.in_(bline_cids)).all() if bline_cids else [])
         }
     names = {int(pid): prod.our_product_id for pid, prod in products_by_id.items()}
-    marking_by_cid = {int(pid): prod.marking for pid, prod in products_by_id.items()}
+    from app.services.product_markings import marking_labels
+    dated = marking_labels(db, bline_cids)
+    marking_by_cid = {
+        int(pid): dated[int(pid)] if int(pid) in dated else prod.marking
+        for pid, prod in products_by_id.items()
+    }
     on_hand = _stock_on_hand(db, bline_cids)
     if bill.deleted_at:
         bill_status = "voided"
@@ -262,6 +267,8 @@ def get_customer_order_detail(
             )
         }
         open_stock = _stock_on_hand(db, product_ids)
+        from app.services.product_markings import marking_labels
+        open_marks = marking_labels(db, product_ids)
         lines_out: list[CustomerOpenLineOut] = []
         for row in open_lines:
             prod = products.get(row.catalog_product_id)
@@ -279,7 +286,7 @@ def get_customer_order_detail(
                     cancel_reason=row.cancel_reason,
                     image_urls=presigned_urls(first_key) if first_key else [],
                     addons=addon_map.get(int(row.catalog_product_id), []),
-                    marking=prod.marking if prod else None,
+                    marking=(open_marks[int(row.catalog_product_id)] if int(row.catalog_product_id) in open_marks else (prod.marking if prod else None)),
                     stock=open_stock.get(int(row.catalog_product_id), 0),
                 )
             )
@@ -362,8 +369,10 @@ def get_customer_order_detail(
 
     names = live_product_names(db, all_line_cids)
     line_stock = _stock_on_hand(db, all_line_cids)
+    from app.services.product_markings import marking_labels
+    dated_marks = marking_labels(db, all_line_cids)
     marking_by_cid = {
-        p.id: p.marking
+        p.id: dated_marks[p.id] if p.id in dated_marks else p.marking
         for p in (db.query(CatalogProduct).filter(CatalogProduct.id.in_(all_line_cids)).all() if all_line_cids else [])
     }
     pl_out: list[CustomerPlacementOut] = []

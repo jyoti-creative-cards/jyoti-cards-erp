@@ -4,6 +4,7 @@ const OurCatalogs = (() => {
   let openId = null;
   let detail = null;
   let partyHits = [];
+  let showIssueDetails = false;
 
   function esc(s) {
     return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -61,24 +62,50 @@ const OurCatalogs = (() => {
       <td>${a.received ? a.received : "Not yet"}</td>
       <td><button type="button" class="btn btn-secondary btn-sm" onclick="OurCatalogs.unassign(${a.customer_id})">Remove</button></td>
     </tr>`).join("");
-    const issues = (d.issues || []).map(i => {
-      const locked = !!i.bill_id;
-      const copies = locked
-        ? String(i.copies)
-        : `<input class="input" style="width:72px;" inputmode="numeric" value="${i.copies}" id="oc-edit-copies-${i.id}" />`;
-      const when = locked
-        ? esc(i.issued_on)
-        : `<input class="input" type="date" value="${esc(i.issued_on)}" id="oc-edit-date-${i.id}" />`;
-      const action = locked
-        ? "On a bill"
-        : `<button type="button" class="btn btn-secondary btn-sm" onclick="OurCatalogs.saveIssue(${i.id})">Save</button>
-           <button type="button" class="btn btn-secondary btn-sm" onclick="OurCatalogs.removeIssue(${i.id})">Remove</button>`;
-      return `<tr><td>${when}</td><td>${esc(i.business_name)}</td><td>${copies}</td><td>${money(i.price)}</td><td>${action}</td></tr>`;
+    const groups = new Map();
+    for (const issue of d.issues || []) {
+      const key = issue.customer_id;
+      const group = groups.get(key) || {
+        name: issue.business_name,
+        city: issue.city_name || "",
+        party: issue.party_number,
+        copies: 0,
+        rows: [],
+      };
+      group.copies += Number(issue.copies) || 0;
+      group.rows.push(issue);
+      groups.set(key, group);
+    }
+    const issues = [...groups.values()].map(group => {
+      const who = `${esc(group.name)}${group.city ? " · " + esc(group.city) : ""}${group.party ? " · #" + group.party : ""}`;
+      const head = `<tr><td colspan="5"><strong>${who}</strong> · ${group.copies} cop${group.copies === 1 ? "y" : "ies"}</td></tr>`;
+      if (!showIssueDetails) return head;
+      const rows = group.rows.map(i => {
+        const locked = !!i.bill_id;
+        const copies = locked
+          ? String(i.copies)
+          : `<input class="input" style="width:72px;" inputmode="numeric" value="${i.copies}" id="oc-edit-copies-${i.id}" />`;
+        const when = locked
+          ? esc(i.issued_on)
+          : `<input class="input" type="date" value="${esc(i.issued_on)}" id="oc-edit-date-${i.id}" />`;
+        const bill = i.bill_number ? esc(i.bill_number) : "—";
+        const action = locked
+          ? "On a bill"
+          : `<button type="button" class="btn btn-secondary btn-sm" onclick="OurCatalogs.saveIssue(${i.id})">Save</button>
+             <button type="button" class="btn btn-secondary btn-sm" onclick="OurCatalogs.removeIssue(${i.id})">Remove</button>`;
+        return `<tr><td>${when}</td><td>${bill}</td><td>${copies}</td><td>${money(i.price)}</td><td>${action}</td></tr>`;
+      }).join("");
+      return head + rows;
     }).join("");
     box.innerHTML = `
       <button type="button" class="btn btn-secondary" style="margin:12px 0;" onclick="OurCatalogs.back()">← Catalogs</button>
       <h2 style="margin:0 0 4px;">${esc(d.name)}</h2>
-      <p style="margin:0 0 12px;">Made <strong>${d.copies_made}</strong> · Sent <strong>${d.copies_sent}</strong> · Left <strong>${d.copies_left}</strong></p>
+      <p style="margin:0 0 8px;">Made <strong>${d.copies_made}</strong> · Sent <strong>${d.copies_sent}</strong> · Left <strong>${d.copies_left}</strong></p>
+      <div style="display:flex;gap:8px;align-items:center;margin:0 0 12px;">
+        <input id="oc-delta" class="input" style="width:80px;" inputmode="numeric" value="1" />
+        <button type="button" class="btn btn-secondary btn-sm" onclick="OurCatalogs.adjust(1)">Add copies</button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="OurCatalogs.adjust(-1)">Remove copies</button>
+      </div>
       <div class="card" style="padding:12px;margin-bottom:12px;">
         <h3 style="margin:0 0 8px;">Items in one copy</h3>
         <table class="data"><thead><tr><th>Item</th><th>Qty</th></tr></thead><tbody>${lines}</tbody></table>
@@ -90,7 +117,10 @@ const OurCatalogs = (() => {
         <table class="data" style="margin-top:8px;"><thead><tr><th>Party</th><th>Received</th><th></th></tr></thead><tbody>${assigned || `<tr><td colspan="3">None yet</td></tr>`}</tbody></table>
       </div>
       <div class="card" style="padding:12px;margin-bottom:12px;">
-        <h3 style="margin:0 0 8px;">Already received</h3>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+          <h3 style="margin:0 0 8px;">Already received</h3>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="OurCatalogs.toggleDetails()">${showIssueDetails ? "Hide details" : "View details"}</button>
+        </div>
         <div style="display:grid;grid-template-columns:1fr 90px 140px auto;gap:8px;align-items:end;margin-bottom:8px;">
           <input id="oc-got-q" class="input" placeholder="Party who already has it" oninput="OurCatalogs.searchGot(this.value)" />
           <input id="oc-got-copies" class="input" inputmode="numeric" value="1" />
@@ -98,11 +128,25 @@ const OurCatalogs = (() => {
           <span></span>
         </div>
         <div id="oc-got-hits"></div>
-        <table class="data" style="margin-top:8px;"><thead><tr><th>Date</th><th>Party</th><th>Copies</th><th>Charged</th><th></th></tr></thead><tbody>${issues || `<tr><td colspan="5">None recorded yet</td></tr>`}</tbody></table>
+        <table class="data" style="margin-top:8px;"><thead><tr><th>${showIssueDetails ? "Date" : "Party"}</th><th>${showIssueDetails ? "Bill" : ""}</th><th>Copies</th><th>Charged</th><th></th></tr></thead><tbody>${issues || `<tr><td colspan="5">None recorded yet</td></tr>`}</tbody></table>
       </div>`;
   }
 
-  function back() { openId = null; detail = null; renderList(); }
+  function back() { openId = null; detail = null; showIssueDetails = false; renderList(); }
+
+  function toggleDetails() {
+    showIssueDetails = !showIssueDetails;
+    renderDetail();
+  }
+
+  async function adjust(sign) {
+    const n = Math.abs(parseInt(document.getElementById("oc-delta")?.value || "1", 10) || 1);
+    try {
+      await App.api(`/our-catalogs/${openId}/copies`, { method: "POST", body: JSON.stringify({ delta: sign * n }) });
+      App.toast?.(sign > 0 ? "Copies added" : "Copies removed", "success");
+      await openDetail(openId);
+    } catch (e) { App.toast?.(e.message, "error"); }
+  }
 
   async function searchParties(value) {
     const box = document.getElementById("oc-party-hits");
@@ -237,5 +281,5 @@ const OurCatalogs = (() => {
     } catch (e) { App.toast?.(e.message, "error"); }
   }
 
-  return { load, openDetail, back, openCreate, searchParties, assign, unassign, searchGot, recordGot, saveIssue, removeIssue, searchItems, addItem, setItemQty, saveCreate };
+  return { load, openDetail, back, toggleDetails, adjust, openCreate, searchParties, assign, unassign, searchGot, recordGot, saveIssue, removeIssue, searchItems, addItem, setItemQty, saveCreate };
 })();

@@ -278,6 +278,8 @@ def entry_items(
         )
         ids = [product.id for product, _qty in rows]
         reserved = reserved_qty_by_product(db, ids)
+        from app.services.product_markings import marking_labels
+        marks = marking_labels(db, ids)
         out = []
         for product, qty in rows:
             price = effective_selling_price(product.buying_price, product.selling_price)
@@ -285,7 +287,7 @@ def entry_items(
                 "catalog_product_id": product.id,
                 "our_product_id": product.our_product_id,
                 "vendor_product_id": product.vendor_product_id,
-                "marking": product.marking,
+                "marking": marks[product.id] if product.id in marks else product.marking,
                 "year_group": product.year_group,
                 "selling_price": format(price, "f") if price is not None else None,
                 "quantity_on_hand": int(qty or 0),
@@ -294,7 +296,7 @@ def entry_items(
                 "priced_addons": [],
             })
         return out
-    cached = response_cache.get("stock:entry-items:v1")
+    cached = response_cache.get("stock:entry-items:v2")
     if cached is not None:
         return cached
     from app.services.catalog_addons import addon_snapshots_map
@@ -308,6 +310,8 @@ def entry_items(
     )
     ids = [product.id for product, _qty in rows]
     addons = addon_snapshots_map(db, ids, with_images=False)
+    from app.services.product_markings import marking_labels
+    marks = marking_labels(db, ids)
     out = []
     for product, qty in rows:
         price = effective_selling_price(product.buying_price, product.selling_price)
@@ -316,14 +320,14 @@ def entry_items(
             "catalog_product_id": product.id,
             "our_product_id": product.our_product_id,
             "vendor_product_id": product.vendor_product_id,
-            "marking": product.marking,
+            "marking": marks[product.id] if product.id in marks else product.marking,
             "year_group": product.year_group,
             "selling_price": format(price, "f") if price is not None else None,
             "quantity_on_hand": int(qty or 0),
             "addons": extra,
             "priced_addons": [a for a in extra if float(a.get("selling_price") or 0) > 0],
         })
-    response_cache.set("stock:entry-items:v1", out, 60.0)
+    response_cache.set("stock:entry-items:v2", out, 60.0)
     return out
 
 

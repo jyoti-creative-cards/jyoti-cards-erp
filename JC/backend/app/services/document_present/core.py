@@ -505,6 +505,18 @@ def _vendor_line_cards(db: Session, lines: list[StockReceiptLine], *, use_stored
     return out
 
 
+def _live_marking(prod):
+    if prod is None:
+        return None
+    from sqlalchemy.orm import object_session
+    from app.services.product_markings import display_marking
+
+    sess = object_session(prod)
+    if sess is None:
+        return prod.marking or None
+    return display_marking(sess, prod)
+
+
 def _product_line_card(
     prod: CatalogProduct | None,
     *,
@@ -522,7 +534,7 @@ def _product_line_card(
         "category": prod.category if prod else None,
         "series": prod.series if prod else None,
         "unit": prod.unit if prod else None,
-        "marking": prod.marking if prod else None,
+        "marking": _live_marking(prod),
         "buying_price": _money_str(prod.buying_price if prod else None),
         "selling_price": _money_str(prod.selling_price if prod else None),
         "unit_price": _money_str(unit_price),

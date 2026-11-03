@@ -78,16 +78,21 @@ def catalog_detail(db: Session, catalog_id: int) -> dict:
         .order_by(Customer.business_name.asc())
         .all()
     )
+    from app.models.city import City
+    from app.models.customer_bill import CustomerBill
+
     issues = (
-        db.query(OurCatalogIssue, Customer.business_name)
+        db.query(OurCatalogIssue, Customer, City.name, CustomerBill.bill_number)
         .join(Customer, Customer.id == OurCatalogIssue.customer_id)
+        .outerjoin(City, City.id == Customer.city_id)
+        .outerjoin(CustomerBill, CustomerBill.id == OurCatalogIssue.bill_id)
         .filter(OurCatalogIssue.catalog_id == row.id)
         .order_by(OurCatalogIssue.issued_on.desc(), OurCatalogIssue.id.desc())
         .all()
     )
     sent = issued_copies(db, row.id)
     received_by = {}
-    for issue, _name in issues:
+    for issue, _customer, _city, _bill_number in issues:
         received_by[issue.customer_id] = received_by.get(issue.customer_id, 0) + int(issue.copies)
     return {
         "id": row.id,
@@ -110,14 +115,17 @@ def catalog_detail(db: Session, catalog_id: int) -> dict:
             {
                 "id": issue.id,
                 "customer_id": issue.customer_id,
-                "business_name": name,
+                "business_name": customer.business_name,
+                "party_number": customer.party_number,
+                "city_name": city_name or "",
                 "copies": issue.copies,
                 "price": _money(issue.price),
                 "bill_id": issue.bill_id,
+                "bill_number": bill_number or "",
                 "issued_on": issue.issued_on.isoformat(),
                 "note": issue.note or "",
             }
-            for issue, name in issues
+            for issue, customer, city_name, bill_number in issues
         ],
     }
 
@@ -206,6 +214,24 @@ def update_issue(db: Session, issue_id: int, *, copies: int, issued_on: date | N
         issue.issued_on = issued_on
     db.flush()
     return issue
+
+
+def adjust_copies(db: Session, catalog_id: int, delta: int) -> OurCatalog:
+    """Change how many copies of this catalogue we hold. Does not move item stock."""
+    row = db.get(OurCatalog, catalog_id)
+    if not row:
+        raise HTTPException(404, "catalog not found")
+    if delta == 0:
+        raise HTTPException(400, "Enter how many to add or remove")
+    sent = issued_copies(db, row.id)
+    new_total = int(row.copies_made) + int(delta)
+    if new_total < sent:
+        raise HTTPException(400, f"{sent} copies are already sent. Left cannot go below zero.")
+    if new_total < 1:
+        raise HTTPException(400, "Keep at least one copy")
+    row.copies_made = new_total
+    db.flush()
+    return row
 
 
 def delete_issue(db: Session, issue_id: int) -> int:

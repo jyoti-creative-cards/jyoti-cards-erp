@@ -312,6 +312,7 @@ def close_open_line_endpoint(
     return _open_vendor_detail(db, row.vendor_id, auth=auth)
 
 def _open_line_out(db: Session, row: VendorOpenLine, *, auth: AuthContext) -> OpenLineOut:
+    from app.services.product_markings import display_marking
     prod = db.get(CatalogProduct, row.catalog_product_id)
     return OpenLineOut(
         id=row.id,
@@ -322,7 +323,7 @@ def _open_line_out(db: Session, row: VendorOpenLine, *, auth: AuthContext) -> Op
         buying_price=hide_cost(str(row.buying_price), auth),
         unit=prod.unit if prod else None,
         image_urls=presigned_urls(prod.image_keys or []) if prod else [],
-        marking=prod.marking if prod else None,
+        marking=display_marking(db, prod) if prod else None,
         status=row.status,
     )
 

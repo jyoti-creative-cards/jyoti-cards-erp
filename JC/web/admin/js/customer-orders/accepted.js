@@ -2418,17 +2418,26 @@ const CustomerOrders = (() => {
           <input class="input" placeholder="Name" value="${ctx.esc(c.name)}" oninput="CustomerOrders.setAddCharge(${i}, 'name', this.value)" />
           <input class="input" placeholder="₹" style="width:110px;" value="${ctx.esc(c.amount)}" oninput="CustomerOrders.setAddCharge(${i}, 'amount', this.value)" />
         </div>`).join("")}
-      ${dueCatalogs.length && !editBillId ? `<label class="label">Catalogues for this party</label>
-        <p style="margin:0 0 8px;font-size:13px;color:var(--muted);">Ones that should go to them are listed first. Price stays 0 unless you charge.</p>
-        ${dueCatalogs.map(c => {
-          const on = Object.prototype.hasOwnProperty.call(pickedCatalogs, c.id);
+      ${dueCatalogs.length && !editBillId ? `<label class="label">Add a catalogue</label>
+        <p style="margin:0 0 8px;font-size:13px;color:var(--muted);">These are the catalogues for this party. Price stays 0 unless you charge.</p>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+          <select id="co-cat-pick" class="input">
+            <option value="">Choose a catalogue</option>
+            ${dueCatalogs.map(c => {
+              const again = Number(c.received) > 0;
+              return `<option value="${c.id}">${ctx.esc(c.name)} · ${c.copies_left} left${again ? ` · already ${c.received}` : ""}</option>`;
+            }).join("")}
+          </select>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="CustomerOrders.addPickedCatalog()">Add</button>
+        </div>
+        ${Object.keys(pickedCatalogs).map(id => {
+          const c = dueCatalogs.find(row => String(row.id) === String(id));
+          if (!c) return "";
           const again = Number(c.received) > 0;
-          return `<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap;">
-            <label style="display:flex;gap:8px;align-items:center;flex:1;">
-              <input type="checkbox" ${on ? "checked" : ""} onchange="CustomerOrders.toggleBillCatalog(${c.id}, this.checked)" />
-              <span><strong>${ctx.esc(c.name)}</strong> · ${c.copies_left} left${again ? ` · already received ${c.received}` : (c.needs_send ? " · to send" : "")}</span>
-            </label>
-            ${on ? `<input class="input" style="width:90px;" inputmode="decimal" value="${ctx.esc(pickedCatalogs[c.id] ?? "0")}" oninput="CustomerOrders.setBillCatalogPrice(${c.id}, this.value)" />` : ""}
+          return `<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
+            <span style="flex:1;"><strong>${ctx.esc(c.name)}</strong>${again ? ` · already received ${c.received}` : ""}</span>
+            <input class="input" style="width:90px;" inputmode="decimal" value="${ctx.esc(pickedCatalogs[id] ?? "0")}" oninput="CustomerOrders.setBillCatalogPrice(${c.id}, this.value)" />
+            <button type="button" class="btn btn-ghost btn-sm" onclick="CustomerOrders.toggleBillCatalog(${c.id}, false)">Remove</button>
           </div>`;
         }).join("")}` : ""}
       <button type="button" class="btn btn-secondary btn-sm" onclick="CustomerOrders.addChargeRow()">+ Charge</button>
@@ -2603,6 +2612,20 @@ const CustomerOrders = (() => {
     if (skipped.has(id)) skipped.delete(id);
     else skipped.add(id);
     ln.skip_addon_ids = [...skipped];
+    renderProcessWizard();
+  }
+
+  function addPickedCatalog() {
+    const id = Number(document.getElementById("co-cat-pick")?.value || 0);
+    if (!id) return ctx.toast("Choose a catalogue", "error");
+    const cat = (dueCatalogs || []).find(row => Number(row.id) === id);
+    if (!cat) return;
+    if (Object.prototype.hasOwnProperty.call(pickedCatalogs, id)) return ctx.toast("Already on this bill", "error");
+    if (Number(cat.received) > 0) {
+      const ok = confirm(`${cat.name} was already sent to this party (${cat.received}). Send another copy?`);
+      if (!ok) return;
+    }
+    pickedCatalogs[id] = "0";
     renderProcessWizard();
   }
 
@@ -3747,7 +3770,7 @@ const CustomerOrders = (() => {
     _detailCustomerId,
     setShipQty, setLineDisc, setLineNetRate, setDiscToggle, setOverallDisc, skipBillAddon,
     setFreightAgent, setFreightCharges, setTransportMode, setTransportReceipt, setPackagingCharges,
-    setGst, setGstRate, setBillSeries, setNarration, setEditBillNumber, setBillDate, setAddCharge, addChargeRow, toggleBillCatalog, setBillCatalogPrice,
+    setGst, setGstRate, setBillSeries, setNarration, setEditBillNumber, setBillDate, setAddCharge, addChargeRow, addPickedCatalog, toggleBillCatalog, setBillCatalogPrice,
     setOfflinePlacedOn,
     setForceCredit, setBillOnAgent, printDayDuplicates,
     processNext, processBack, submitProcess, backFromBillDuplicate, proceedBillDuplicate, toggleBillOrder, toggleAllBillOrders,

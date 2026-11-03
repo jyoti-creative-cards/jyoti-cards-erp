@@ -228,8 +228,17 @@ def list_product_markings(db: Session, *, q: str | None, marked: str) -> dict:
         .all()
     )
     markings = sorted({(name or "").strip() for (name,) in names if (name or "").strip()}, key=str.casefold)
+    labels = marking_labels(db, [product.id for product, _vendor in rows])
     items = []
     for product, vendor in rows:
+        if product.id in labels:
+            text = labels[product.id] or ""
+        else:
+            text = product.marking or ""
+        if scope == "marked" and not text:
+            continue
+        if scope == "unmarked" and text:
+            continue
         items.append({
             "id": product.id,
             "our_product_id": product.our_product_id,
@@ -240,7 +249,7 @@ def list_product_markings(db: Session, *, q: str | None, marked: str) -> dict:
             "second_category": product.second_category or "",
             "category_3": product.category_3 or "",
             "year_group": product.year_group or "",
-            "marking": product.marking or "",
+            "marking": text,
         })
     return {"items": items, "markings": markings, "shown": len(items)}
 

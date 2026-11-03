@@ -13,6 +13,7 @@ from app.deps import AuthContext, require_permission
 from app.schemas.stock_journal import JournalIn, JournalLineIn
 from app.services.biz_date import today_ist
 from app.services.our_catalogs import (
+    adjust_copies,
     assign_parties,
     catalog_detail,
     delete_issue,
@@ -56,6 +57,10 @@ class IssueIn(BaseModel):
 class IssueUpdate(BaseModel):
     copies: int = Field(..., gt=0)
     issued_on: Optional[date] = None
+
+
+class CopiesAdjust(BaseModel):
+    delta: int
 
 
 @router.get("")
@@ -113,6 +118,13 @@ def create_catalog(body: CatalogCreate, db: Session = Depends(get_db), auth: Aut
         db.add(OurCatalogLine(catalog_id=catalog.id, catalog_product_id=ln.catalog_product_id, quantity=ln.quantity))
     db.commit()
     return catalog_detail(db, catalog.id)
+
+
+@router.post("/{catalog_id}/copies")
+def change_copies(catalog_id: int, body: CopiesAdjust, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("catalog.write"))):
+    adjust_copies(db, catalog_id, body.delta)
+    db.commit()
+    return catalog_detail(db, catalog_id)
 
 
 @router.post("/{catalog_id}/assign")

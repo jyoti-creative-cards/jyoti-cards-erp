@@ -132,6 +132,8 @@ def _build_detail(db: Session, order: VendorOrder, *, auth: AuthContext, open_on
     if product_ids:
         for row in db.query(CatalogProduct).filter(CatalogProduct.id.in_(product_ids)).all():
             products[row.id] = row
+    from app.services.product_markings import marking_labels
+    vendor_marks = marking_labels(db, list(product_ids))
 
     received_map = received_qty_by_product(db, order.vendor_id) if order.bucket == "placed" else {}
     placed_map = placed_qty_by_product(db, order.vendor_id) if order.bucket == "placed" else {}
@@ -154,7 +156,7 @@ def _build_detail(db: Session, order: VendorOrder, *, auth: AuthContext, open_on
                     "buying_price": hide_cost(str(ln.buying_price), auth),
                     "unit": prod.unit if prod else None,
                     "image_urls": presigned_urls(prod.image_keys or []) if prod else [],
-                    "marking": prod.marking if prod else None,
+                    "marking": vendor_marks.get(int(ln.catalog_product_id), prod.marking if prod else None),
                     "breakdown": [],
                 },
             )

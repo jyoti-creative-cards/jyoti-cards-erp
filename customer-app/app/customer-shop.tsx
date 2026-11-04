@@ -52,6 +52,46 @@ function statusBadge(status: string): string {
   return m[status] ?? status;
 }
 
+const TOKEN_KEY = "token";
+
+function readSavedToken(): string | null {
+  try {
+    const saved = localStorage.getItem(TOKEN_KEY);
+    if (saved) return saved;
+    const older = sessionStorage.getItem(TOKEN_KEY);
+    if (older) {
+      localStorage.setItem(TOKEN_KEY, older);
+      sessionStorage.removeItem(TOKEN_KEY);
+      return older;
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+function saveToken(token: string) {
+  localStorage.setItem(TOKEN_KEY, token);
+  try {
+    sessionStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+function clearSavedToken() {
+  try {
+    localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* ignore */
+  }
+  try {
+    sessionStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
 function fmtTs(iso: string): string {
   try {
     const d = new Date(iso);
@@ -324,7 +364,7 @@ export default function CustomerPortalPage() {
 
   useEffect(() => {
     try {
-      const t = sessionStorage.getItem("token");
+      const t = readSavedToken();
       if (t) {
         setToken(t);
         void loadMe(t);
@@ -501,7 +541,7 @@ export default function CustomerPortalPage() {
       return;
     }
     const t = data.access_token as string;
-    sessionStorage.setItem("token", t);
+    saveToken(t);
     setToken(t);
     setOk("Welcome — you're signed in.");
     await loadMe(t);
@@ -509,7 +549,7 @@ export default function CustomerPortalPage() {
 
   function logout() {
     try {
-      sessionStorage.removeItem("token");
+      clearSavedToken();
     } catch {
       /* ignore */
     }

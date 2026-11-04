@@ -31,7 +31,15 @@ def append_or_create_portal_placement(
     """Add line to the dealer’s open order, or create one. Returns (placement, merged)."""
     from app.services.catalog_addons import addon_snapshots_for_product
 
+    from app.services.biz_date import today_ist, to_ist
+
     placement = get_open_unbilled_placement(db, customer_id)
+    # A new visit is a new order. Adding onto yesterday's open order kept
+    # today's items on that old date.
+    if placement is not None and (
+        placement.placed_at is None or to_ist(placement.placed_at).date() != today_ist()
+    ):
+        placement = None
     if not placement:
         p = create_received_placement(
             db,

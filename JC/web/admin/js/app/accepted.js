@@ -1,11 +1,18 @@
 const App = (() => {
   const API = (() => {
-    const saved = localStorage.getItem("jc_api");
-    if (saved) return saved;
     const host = location.hostname;
-    if (host === "127.0.0.1" || host === "localhost") return "http://127.0.0.1:8003/api/v1";
-    return `${location.origin}/api/v1`;
+    const local = host === "127.0.0.1" || host === "localhost";
+    const here = local ? "http://127.0.0.1:8003/api/v1" : `${location.origin}/api/v1`;
+    const saved = localStorage.getItem("jc_api");
+    if (!saved) return here;
+    if (local) return saved;
+    try {
+      if (new URL(saved, location.origin).origin === location.origin) return saved.replace(/\/$/, "");
+    } catch (_) {}
+    localStorage.removeItem("jc_api");
+    return here;
   })();
+  let authEpoch = 1;
   let authMode = sessionStorage.getItem("jc_auth_mode") || "";
   let adminKey = sessionStorage.getItem("jc_admin_key") || "";
   let staffToken = sessionStorage.getItem("jc_staff_token") || "";
@@ -220,6 +227,7 @@ const App = (() => {
       window.__jcCancelKey = "";
     }
     const doFetch = async () => {
+      const epoch = authEpoch;
       const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
       const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
       try {
@@ -229,7 +237,17 @@ const App = (() => {
           headers: { ...headers(), ...(fetchOpts.headers || {}) },
         });
         if (res.status === 401) {
-          logout("Session expired — please sign in again");
+          const hadSession = (authMode === "admin" && adminKey) || (authMode === "staff" && staffToken);
+          let rejected = hadSession && epoch === authEpoch;
+          if (rejected) {
+            try {
+              const check = await fetch(`${API}/routes`, { headers: headers() });
+              rejected = check.status === 401 && epoch === authEpoch;
+            } catch (_) {
+              rejected = false;
+            }
+          }
+          if (rejected) logout("Session expired — please sign in again");
           throw new Error("Session expired — please sign in again");
         }
         if (!res.ok) {
@@ -522,6 +540,7 @@ const App = (() => {
   }
 
   async function login() {
+    authEpoch += 1;
     const key = document.getElementById("admin-key-input").value.trim();
     if (!key) return;
     adminKey = key;
@@ -561,6 +580,7 @@ const App = (() => {
   }
 
   async function staffLogin() {
+    authEpoch += 1;
     const phone = (document.getElementById("staff-phone-input").value || "").trim();
     const password = document.getElementById("staff-password-input").value.trim();
     if (!phone) return toast("Enter mobile or name", "error");
@@ -622,16 +642,25 @@ const App = (() => {
   }
 
   function logout(msg) {
+    authEpoch += 1;
+    const wasIn = !!(sessionStorage.getItem("jc_auth_mode"));
     sessionStorage.removeItem("jc_admin_key");
     sessionStorage.removeItem("jc_staff_token");
     sessionStorage.removeItem("jc_staff_user");
     sessionStorage.removeItem("jc_auth_mode");
+    adminKey = "";
+    staffToken = "";
+    authMode = "";
     // location.reload() only schedules a navigation — it doesn't halt this script,
     // so a plain thrown Error after logout() used to get destroyed by the reload
     // before any toast could paint. Stash the reason so init() can show it on the
     // fresh login screen instead of silently dropping the user with no explanation.
     if (msg) sessionStorage.setItem("jc_logout_msg", msg);
     else sessionStorage.removeItem("jc_logout_msg");
+    if (!wasIn) {
+      showLoginShell(msg || "");
+      return;
+    }
     location.reload();
   }
 

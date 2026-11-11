@@ -3161,11 +3161,17 @@ const CustomerOrders = (() => {
   }
 
   function billApiBase() {
-    const saved = localStorage.getItem("jc_api");
-    if (saved) return saved;
     const host = location.hostname;
-    if (host === "127.0.0.1" || host === "localhost") return "http://127.0.0.1:8003/api/v1";
-    return `${location.origin}/api/v1`;
+    const local = host === "127.0.0.1" || host === "localhost";
+    const here = local ? "http://127.0.0.1:8003/api/v1" : `${location.origin}/api/v1`;
+    const saved = localStorage.getItem("jc_api");
+    if (!saved) return here;
+    if (local) return saved;
+    try {
+      if (new URL(saved, location.origin).origin === location.origin) return saved.replace(/\/$/, "");
+    } catch (_) {}
+    localStorage.removeItem("jc_api");
+    return here;
   }
 
   function billAuthHeaders() {

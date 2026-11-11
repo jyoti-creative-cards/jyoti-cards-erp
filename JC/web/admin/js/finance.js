@@ -3395,7 +3395,13 @@ const Finance = (() => {
     try {
       const key = sessionStorage.getItem("jc_admin_key") || "";
       const saved = localStorage.getItem("jc_api");
-      const base = saved || `${location.origin}/api/v1`;
+      let base = `${location.origin}/api/v1`;
+      if (saved) {
+        try {
+          if (new URL(saved, location.origin).origin === location.origin) base = saved.replace(/\/$/, "");
+          else localStorage.removeItem("jc_api");
+        } catch (_) { localStorage.removeItem("jc_api"); }
+      }
       const res = await fetch(`${base}/finance/route-collections/${routeDetail.route_id}/pdf`, {
         headers: { "X-Admin-Key": key },
       });

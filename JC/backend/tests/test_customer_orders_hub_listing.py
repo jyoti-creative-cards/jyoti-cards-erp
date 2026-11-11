@@ -22,6 +22,7 @@ from app.deps import AuthContext
 from app.models.catalog_product import CatalogProduct
 from app.models.customer import Customer
 from app.models.customer_bill import CustomerBill
+from app.models.product_marking import ProductMarking
 from app.models.vendor import Vendor
 from app.routers.customer_orders import list_customer_orders
 from app.services.customer_order_flow import confirm_received_order, create_received_placement
@@ -178,3 +179,84 @@ def test_billed_bucket_empty_returns_empty_list(db):
 
 def test_open_bucket_empty_returns_empty_list(db):
     assert list_customer_orders(bucket="open", day="all", db=db, auth=AUTH) == []
+
+
+def test_open_tile_includes_order_marking(db):
+    cust = _customer(db, "Party 223", "9000000223")
+    prod = _product(db, "MK1", "9100000223")
+    create_received_placement(
+        db,
+        customer_id=cust.id,
+        customer_name=cust.business_name,
+        lines=[{"catalog_product_id": prod.id, "quantity": 2}],
+        customer_notes="Hold. Bill after 5 days.",
+    )
+    confirm_received_order(db, cust.id)
+    db.commit()
+    rows = list_customer_orders(bucket="open", day="all", db=db, auth=AUTH)
+    assert rows[0].markings == ["Hold. Bill after 5 days."]
+    assert "Hold. Bill after 5 days." in (rows[0].narration or "")
+
+
+def test_billed_tile_includes_order_and_bill_marking(db):
+    cust = _customer(db, "Party 223", "9000000224")
+    prod = _product(db, "MK2", "9100000224")
+    create_received_placement(
+        db,
+        customer_id=cust.id,
+        customer_name=cust.business_name,
+        lines=[{"catalog_product_id": prod.id, "quantity": 2}],
+        customer_notes="Do not mix.",
+    )
+    confirm_received_order(db, cust.id)
+    db.add(CustomerBill(
+        customer_id=cust.id, bill_number="B-223",
+        subtotal_inclusive=Decimal("100"), grand_total=Decimal("100"),
+        created_by_type="admin", created_by_name="Test Admin",
+        bill_date=date.today(),
+        narration="Bill after Holi",
+    ))
+    db.commit()
+    rows = list_customer_orders(bucket="billed", day="all", db=db, auth=AUTH)
+    assert rows[0].marking == "Bill after Holi"
+    assert rows[0].customer_marking in (None, "")
+    assert rows[0].markings == ["Bill after Holi"]
+
+
+def test_portal_words_are_the_customer_marking(db):
+    cust = _customer(db, "Portal Party", "9000000225")
+    prod = _product(db, "MK3", "9100000225")
+    create_received_placement(
+        db,
+        customer_id=cust.id,
+        customer_name=cust.business_name,
+        lines=[{"catalog_product_id": prod.id, "quantity": 1}],
+        customer_notes="Dispatch after 2 days",
+        order_source="app",
+        placed_by_name="Shop",
+    )
+    db.commit()
+    rows = list_customer_orders(bucket="received", day="all", db=db, auth=AUTH)
+    assert rows[0].customer_marking == "Dispatch after 2 days"
+    assert not rows[0].marking
+    assert rows[0].markings == ["Dispatch after 2 days"]
+
+
+def test_product_mark_stays_off_the_order_tile(db):
+    from app.services.product_markings import assign_marking
+
+    cust = _customer(db, "Stock Promise", "9000000226")
+    prod = _product(db, "MK4", "9100000226")
+    assign_marking(db, [prod.id], "Goods in 2 days", date(2020, 1, 1), date(2099, 1, 1))
+    create_received_placement(
+        db,
+        customer_id=cust.id,
+        customer_name=cust.business_name,
+        lines=[{"catalog_product_id": prod.id, "quantity": 1}],
+        customer_notes="Hold the bill",
+    )
+    confirm_received_order(db, cust.id)
+    db.commit()
+    rows = list_customer_orders(bucket="open", day="all", db=db, auth=AUTH)
+    assert rows[0].marking == "Hold the bill"
+    assert rows[0].markings == ["Hold the bill"]

@@ -43,6 +43,7 @@ const CustomerOrders = (() => {
   let billSeriesId = "";
   let customerNotes = "";
   let narration = "";
+  let markEdit = null;
   let previewTotals = null;
   let processBusy = false;
   let forceCreditOverride = false;

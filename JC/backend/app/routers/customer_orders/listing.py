@@ -16,6 +16,7 @@ from app.models.city import City
 from app.models.customer import Customer
 from app.models.customer_bill import CustomerBill, CustomerBillLine
 from app.models.customer_order import CustomerOpenLine, CustomerOrder, CustomerOrderLine, CustomerOrderPlacement
+from app.services.customer_selling.marking import bill_tile_mark, mark_list as _mark_list
 from app.schemas.customer_order import (
     CancelRequest,
     EditBillIn,
@@ -318,6 +319,50 @@ def _placement_marks_by_customer(db: Session, customer_ids: list[int]) -> dict[i
             bucket.append(text)
     return found
 
+def _order_pairs(db: Session, orders: list[CustomerOrder]) -> dict[int, tuple[str | None, str | None]]:
+    """One staff marking and one customer marking for each order."""
+    from app.services.customer_selling.marking import resolve_pair
+
+    if not orders:
+        return {}
+    ids = [order.id for order in orders]
+    rows = (
+        db.query(
+            CustomerOrderPlacement.customer_order_id,
+            CustomerOrderPlacement.order_source,
+            CustomerOrderPlacement.customer_notes,
+        )
+        .filter(
+            CustomerOrderPlacement.customer_order_id.in_(ids),
+            CustomerOrderPlacement.deleted_at.is_(None),
+        )
+        .all()
+    )
+    grouped: dict[int, list[tuple[str | None, str | None]]] = defaultdict(list)
+    for order_id, source, notes in rows:
+        grouped[int(order_id)].append((source, notes))
+    return {order.id: resolve_pair(order, grouped.get(order.id, [])) for order in orders}
+
+
+def _best_customer_pairs(db: Session, customer_ids: list[int]) -> dict[int, tuple[str | None, str | None]]:
+    if not customer_ids:
+        return {}
+    orders = (
+        db.query(CustomerOrder)
+        .filter(CustomerOrder.customer_id.in_(customer_ids))
+        .all()
+    )
+    pairs = _order_pairs(db, orders)
+    rank = {"open": 3, "received": 2}
+    best: dict[int, tuple[int, tuple[str | None, str | None]]] = {}
+    for order in orders:
+        score = rank.get(order.bucket, 0) + (1 if order.is_open else 0)
+        prev = best.get(int(order.customer_id))
+        if prev is None or score >= prev[0]:
+            best[int(order.customer_id)] = (score, pairs.get(order.id, (None, None)))
+    return {cid: pair for cid, (_score, pair) in best.items()}
+
+
 def _narration_by_order(db: Session, order_ids: list[int]) -> dict[int, str]:
     if not order_ids:
         return {}
@@ -374,8 +419,7 @@ def _summaries_batch(db: Session, orders: list[CustomerOrder]) -> list[CustomerO
     city_ids = [c.city_id for c in customers.values() if c.city_id]
     cities = {c.id: c for c in db.query(City).filter(City.id.in_(city_ids)).all()} if city_ids else {}
     sources = _sources_for_received_many(db, ids)
-    narrations = _narration_by_order(db, ids)
-    placement_marks = _placement_marks_by_customer(db, cids)
+    pairs = _order_pairs(db, orders)
     search_by_order: dict[int, dict] = defaultdict(lambda: {"text": set(), "prices": []})
     open_bits = (
         db.query(
@@ -425,8 +469,10 @@ def _summaries_batch(db: Session, orders: list[CustomerOrder]) -> list[CustomerO
                 marker_2=getattr(cust, "marker_2", None) if cust else None,
                 payment_type=getattr(cust, "payment_type", None) if cust else None,
                 city_name=city.name if city else None,
-                narration=narrations.get(order.id) or None,
-                markings=_unique_marks(placement_marks.get(order.customer_id, []), [narrations.get(order.id) or ""]),
+                narration=pairs.get(order.id, (None, None))[0],
+                marking=pairs.get(order.id, (None, None))[0],
+                customer_marking=pairs.get(order.id, (None, None))[1],
+                markings=_mark_list(*pairs.get(order.id, (None, None))),
                 search_text=" ".join(sorted(search_by_order[order.id]["text"])),
                 prices=search_by_order[order.id]["prices"],
             )
@@ -456,6 +502,7 @@ def _summary(db: Session, order: CustomerOrder) -> CustomerOrderSummary:
     cust = db.get(Customer, order.customer_id)
     city = db.get(City, cust.city_id) if cust and cust.city_id else None
     display_date = order.updated_at
+    staff_mark, cust_mark = _order_pairs(db, [order]).get(order.id, (None, None))
     return CustomerOrderSummary(
         id=order.id,
         customer_id=order.customer_id,
@@ -474,7 +521,10 @@ def _summary(db: Session, order: CustomerOrder) -> CustomerOrderSummary:
         marker_2=getattr(cust, "marker_2", None) if cust else None,
         payment_type=getattr(cust, "payment_type", None) if cust else None,
         city_name=city.name if city else None,
-        markings=_placement_marks_by_customer(db, [order.customer_id]).get(order.customer_id, []),
+        narration=staff_mark,
+        marking=staff_mark,
+        customer_marking=cust_mark,
+        markings=_mark_list(staff_mark, cust_mark),
     )
 
 @router.get("", response_model=List[CustomerOrderSummary])
@@ -571,16 +621,7 @@ def list_customer_orders(
                 "price": format(price, "f") if price is not None else "",
             })
         touched_by_cid = {int(r[0]): r[3] for r in rows}
-        placement_marks = _placement_marks_by_customer(db, cids)
-        product_marks_by_cid: dict[int, list[str]] = defaultdict(list)
-        open_product_ids = [int(pid) for _, pid, *_ in search_rows if pid]
-        if open_product_ids:
-            from app.services.product_markings import marking_labels
-            labels = marking_labels(db, open_product_ids)
-            for cid, pid, *_rest in search_rows:
-                label = labels.get(int(pid))
-                if label and label not in product_marks_by_cid[int(cid)]:
-                    product_marks_by_cid[int(cid)].append(label)
+        marks_by_cid = _best_customer_pairs(db, cids)
         placed_by_cid: dict[int, object] = {}
         if received_ids:
             order_cid = {o.id: o.customer_id for o in received_rows}
@@ -623,8 +664,10 @@ def list_customer_orders(
                     marker_2=getattr(cust_obj, "marker_2", None) if cust_obj else None,
                     payment_type=getattr(cust_obj, "payment_type", None) if cust_obj else None,
                     city_name=cities.get(cust_obj.city_id) if cust_obj and cust_obj.city_id else None,
-                    markings=_unique_marks(placement_marks.get(cid, []), product_marks_by_cid.get(cid, [])),
-                    narration=" · ".join(_unique_marks(placement_marks.get(cid, []), product_marks_by_cid.get(cid, []))) or None,
+                    narration=marks_by_cid.get(cid, (None, None))[0],
+                    marking=marks_by_cid.get(cid, (None, None))[0],
+                    customer_marking=marks_by_cid.get(cid, (None, None))[1],
+                    markings=_mark_list(*marks_by_cid.get(cid, (None, None))),
                     search_lines=lines_by_cid.get(cid, []),
                     search_text=" ".join(ln["text"] for ln in lines_by_cid.get(cid, [])),
                     prices=[ln["price"] for ln in lines_by_cid.get(cid, []) if ln["price"]],
@@ -723,7 +766,7 @@ def list_customer_orders(
         } if bill_cids else {}
         city_ids = {c.city_id for c in customers_by_id.values() if c.city_id}
         cities = {c.id: c.name for c in (db.query(City).filter(City.id.in_(city_ids)).all() if city_ids else [])}
-        placement_marks = _placement_marks_by_customer(db, bill_cids)
+        marks_by_cid = _best_customer_pairs(db, bill_cids)
         bill_place_ids = [int(b.placement_id) for _, bills, _, _ in bill_rows for b in bills if b.placement_id]
         creators_by_placement: dict[int, str] = {}
         if bill_place_ids:
@@ -738,33 +781,18 @@ def list_customer_orders(
                 .all()
             ):
                 creators_by_placement[int(pid)] = _who_made(source, name, notes)
-        bill_ids = [int(b.id) for _, bills, _, _ in bill_rows for b in bills if b.id]
-        product_marks_by_cid: dict[int, list[str]] = defaultdict(list)
-        if bill_ids:
-            from app.services.product_markings import marking_labels
-            line_rows = (
-                db.query(CustomerBill.customer_id, CustomerBillLine.catalog_product_id)
-                .join(CustomerBillLine, CustomerBillLine.bill_id == CustomerBill.id)
-                .filter(CustomerBill.id.in_(bill_ids))
-                .all()
-            )
-            labels = marking_labels(db, [int(pid) for _, pid in line_rows if pid])
-            for cid, pid in line_rows:
-                label = labels.get(int(pid))
-                if label and label not in product_marks_by_cid[int(cid)]:
-                    product_marks_by_cid[int(cid)].append(label)
         out = []
         for cid, bills, display_date, newest in bill_rows:
             cust_obj = customers_by_id.get(int(cid))
+            ordered_bills = sorted(bills, key=lambda b: int(b.id or 0))
             chips = [
-                {"bill_number": b.bill_number, "grand_total": format(b.grand_total or 0, "f"), "created_at": b.created_at, "narration": (b.narration or "").strip() or None}
-                for b in sorted(bills, key=lambda b: int(b.id or 0))
+                {"bill_id": b.id, "bill_number": b.bill_number, "grand_total": format(b.grand_total or 0, "f"), "created_at": b.created_at, "narration": (b.narration or "").strip() or None}
+                for b in ordered_bills
             ]
             total = sum((b.grand_total or Decimal("0") for b in bills), Decimal("0"))
-            marks = _unique_marks(
-                placement_marks.get(int(cid), []),
-                [b.narration for b in bills],
-                product_marks_by_cid.get(int(cid), []),
+            staff, cust_mark = bill_tile_mark(
+                [b.narration for b in ordered_bills],
+                *marks_by_cid.get(int(cid), (None, None)),
             )
             out.append(
                 CustomerOrderSummary(
@@ -793,8 +821,10 @@ def list_customer_orders(
                     marker_2=getattr(cust_obj, "marker_2", None) if cust_obj else None,
                     payment_type=getattr(cust_obj, "payment_type", None) if cust_obj else None,
                     city_name=cities.get(cust_obj.city_id) if cust_obj and cust_obj.city_id else None,
-                    markings=marks,
-                    narration=" · ".join(marks) or None,
+                    narration=staff,
+                    marking=staff,
+                    customer_marking=cust_mark,
+                    markings=_mark_list(staff, cust_mark),
                 )
             )
         return _filter_by_product(out)

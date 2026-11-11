@@ -75,6 +75,7 @@
           <div style="min-width:0;flex:1;">
             <strong class="ord-card-title" style="font-size:16px;">${ctx.esc(p.customer_label || "Customer")}</strong>
             ${p.created_by ? `<div style="display:block;margin-top:8px;padding:8px 10px;border-radius:10px;background:#dcfce7;color:#166534;font-weight:800;font-size:16px;">Created by ${ctx.esc(p.created_by)}</div>` : ""}
+            ${parcelMarkHtml(p)}
             <div data-tile-note="dispatch:${p.bill_id}" onclick="event.stopPropagation()">
               <button type="button" class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="event.stopPropagation();App.editTileNote('dispatch:${p.bill_id}')">Add note</button>
             </div>

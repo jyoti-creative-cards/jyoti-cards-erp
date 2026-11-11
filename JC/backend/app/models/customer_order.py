@@ -21,6 +21,8 @@ class CustomerOrder(Base):
     bucket: Mapped[str] = mapped_column(String(20), nullable=False, default="received", server_default="received", index=True)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="received", server_default="received")
     is_open: Mapped[bool] = mapped_column(nullable=False, default=True, server_default="true")
+    marking: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    customer_marking: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False

@@ -126,7 +126,7 @@
     ctx.showLoading?.();
     try {
       try {
-        await ctx.api(`/customer-orders/customer/${customerId}/confirm`, { method: "POST" }, 0);
+        await ctx.api(`/customer-orders/customer/${customerId}/confirm`, { method: "POST", body: "{}" }, 0);
         ctx.invalidateCache?.("/customer-orders");
       } catch (e) {
         const msg = String(e.message || "").toLowerCase();
@@ -203,8 +203,8 @@
       packagingCharges = "";
       additionalCharges = [{ name: "", amount: "" }];
       billSeriesId = defaultBillSeriesId(billSeries);
-      customerNotes = pctx.default_narration || "";
-      narration = "";
+      customerNotes = pctx.customer_marking || "";
+      narration = pctx.default_narration || "";
       dueCatalogs = [];
       pickedCatalogs = {};
       try { dueCatalogs = await ctx.api(`/our-catalogs/for-customer/${detailCustomerId}`, {}, 0) || []; } catch (_) { dueCatalogs = []; }
@@ -702,7 +702,7 @@
         : (ln.net_rate || calcNetFromDisc(ln.unit_price, ln.discount_percent || 0));
       const shownDisc = useOverallDiscount ? (overallDiscount || "") : (ln.discount_percent || "");
       return `<tr>
-        <td><strong>${ctx.esc(ln.our_product_id)}</strong>${ln.direct ? ` <span style="font-size:12px;color:var(--muted);">direct</span>` : ""}${billAddonHtml(ln)}${orderMarkingForProduct(billableOrders, ln.catalog_product_id)}</td>
+        <td><strong>${ctx.esc(ln.our_product_id)}</strong>${ln.direct ? ` <span style="font-size:12px;color:var(--muted);">direct</span>` : ""}${billAddonHtml(ln)}</td>
         <td>${ln.quantity_on_hand ?? "—"}</td>
         <td>${fmtPrice(ln.unit_price)}</td>
         <td><input data-ship-for="${i}" type="number" class="input" style="width:72px;" min="0" value="${ln.quantity_to_ship ?? ""}" oninput="CustomerOrders.setShipQty(${i}, this.value)" /></td>
@@ -782,8 +782,9 @@
         <input type="checkbox" ${gstEnabled ? "checked" : ""} onchange="CustomerOrders.setGst(this.checked)" /> GST
         ${gstEnabled ? `<input class="input" style="width:80px;" value="${ctx.esc(gstRate)}" oninput="CustomerOrders.setGstRate(this.value)" />` : ""}
       </label>
-      <label class="label">Narration</label>
-      <textarea class="input" rows="2" oninput="CustomerOrders.setNarration(this.value)">${ctx.esc(narration)}</textarea>
+      ${customerNotes ? `<div style="margin-top:12px;padding:8px 10px;background:#fee2e2;border:1px solid #dc2626;border-radius:8px;font-weight:800;color:#b91c1c;">Customer marking: ${ctx.esc(customerNotes)}</div>` : ""}
+      <label class="label">Marking</label>
+      <textarea class="input" rows="3" style="background:#fee2e2;border:1px solid #dc2626;font-weight:800;color:#b91c1c;" oninput="CustomerOrders.setNarration(this.value)">${ctx.esc(narration)}</textarea>
     `;
     footerEl.innerHTML = `
       <button class="btn btn-secondary" onclick="CustomerOrders.closeProcessWizard()">Cancel</button>

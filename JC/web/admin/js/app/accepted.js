@@ -2652,6 +2652,7 @@ const App = (() => {
   let deskItemHits = [];
   let deskStockTimer = null;
   let deskAsAnshul = false;
+  let deskMarking = "";
 
   function deskMarks(c) {
     return [c?.marker_1, c?.marker_2].filter(Boolean).join(" · ");
@@ -2843,8 +2844,10 @@ const App = (() => {
     if (!lines.length) return toast("Pick an item", "error");
     showLoading?.();
     try {
-      const payload = { lines };
-      if (deskAsAnshul) payload.placed_by_name = "Anshul";
+    deskMarking = document.getElementById("desk-mark")?.value ?? deskMarking;
+    const payload = { lines };
+    if (deskAsAnshul) payload.placed_by_name = "Anshul";
+    if ((deskMarking || "").trim()) payload.narration = deskMarking.trim();
       await api(`/customer-orders/customer/${deskCustomer.id}/new`, {
         method: "POST",
         body: JSON.stringify(payload),
@@ -2853,6 +2856,7 @@ const App = (() => {
       deskCustomer = null;
       deskProduct = null;
       deskLines = [];
+      deskMarking = "";
       if (deskAsAnshul) {
         deskAsAnshul = false;
         deskMode = "home";
@@ -2903,12 +2907,16 @@ const App = (() => {
         <button type="button" class="btn btn-secondary" style="min-height:52px;font-size:18px;" onclick="App.deskClearProduct()">Change item</button>
         <label class="label" style="font-size:20px;margin-top:16px;">Quantity</label>
         <input id="desk-qty" class="input desk-field" type="number" min="1" inputmode="numeric" placeholder="How many" />
+        <label class="label" style="font-size:20px;margin-top:16px;">Marking</label>
+        <input id="desk-mark" class="input desk-field" placeholder="Optional" value="${esc(deskMarking)}" oninput="App.deskSetMark(this.value)" />
         <button type="button" class="btn btn-secondary desk-big" style="margin-top:16px;" onclick="App.deskAddMore()">Add more</button>
         <button type="button" class="btn btn-primary desk-big" style="margin-top:12px;" onclick="App.deskPlace()">Place order</button>`
       : `<label class="label" style="font-size:20px;">Item number</label>
         <input id="desk-item" class="input desk-field" placeholder="Type item number" oninput="App.onDeskItem(this.value)" />
         <div id="desk-item-hits"></div>
-        ${deskLines.length ? `<button type="button" class="btn btn-primary desk-big" style="margin-top:16px;" onclick="App.deskPlace()">Place order</button>` : ""}`}`;
+        ${deskLines.length ? `<label class="label" style="font-size:20px;margin-top:16px;">Marking</label>
+        <input id="desk-mark" class="input desk-field" placeholder="Optional" value="${esc(deskMarking)}" oninput="App.deskSetMark(this.value)" />
+        <button type="button" class="btn btn-primary desk-big" style="margin-top:16px;" onclick="App.deskPlace()">Place order</button>` : ""}`}`;
     setTimeout(() => {
       document.getElementById("desk-qty")?.focus();
       document.getElementById("desk-item")?.focus();
@@ -2916,10 +2924,15 @@ const App = (() => {
     }, 50);
   }
 
+  function deskSetMark(value) {
+    deskMarking = value || "";
+  }
+
   function deskClearCustomer() {
     deskCustomer = null;
     deskProduct = null;
     deskLines = [];
+    deskMarking = "";
     renderOrderDesk();
   }
 
@@ -3929,7 +3942,7 @@ const App = (() => {
     loadRecycleBin, setRecycleTab, openRecycleDetail, restoreItem, purgeItem,
     addLookup, submitLookup, submitCatalogCategory, editLookup, deleteLookup, openCustomerLedgerEntry, createCustomerOrder,
     setOrderTakerMode, onOrderTakerStock, onOrderTakerCustomer, pickOrderTakerCustomer, clearOrderTakerCustomer, onOrderTakerItem, addOrderTakerItem, removeOrderTakerLine, saveOrderTakerOrder,
-    deskShow, onDeskCustomer, onDeskItem, onDeskStock, deskPickCustomer, deskPickProduct, deskAddMore, deskRemoveLine, deskPlace, deskClearCustomer, deskClearProduct, openFromMore, deskBack,
+    deskShow, onDeskCustomer, onDeskItem, onDeskStock, deskPickCustomer, deskPickProduct, deskAddMore, deskRemoveLine, deskPlace, deskSetMark, deskClearCustomer, deskClearProduct, openFromMore, deskBack,
     editTileNote, toggleSticky, minimizeSticky, addSticky, deleteSticky,
     closeModal, init, searchItemLookup, setWhatsappSends,
     downloadExportKind, downloadBackupZip,

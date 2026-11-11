@@ -19,6 +19,8 @@ from app.models.customer_bill import CustomerBill, CustomerBillLine
 from app.models.customer_order import CustomerOpenLine, CustomerOrder, CustomerOrderLine, CustomerOrderPlacement
 from app.schemas.customer_order import (
     CancelRequest,
+    ConfirmIn,
+    TileMarkIn,
     EditBillIn,
     PatchBillNumberIn,
     EditQtyIn,
@@ -390,12 +392,17 @@ def void_placement_endpoint(
 @router.post("/customer/{customer_id}/confirm", dependencies=[Depends(require_permission("customer_orders.write"))])
 def confirm_customer_order(
     customer_id: int,
+    body: Optional[ConfirmIn] = None,
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("customer_orders.write")),
 ):
     """Move a customer's received (New) order to the confirmed (open) bucket."""
     from app.services.customer_order_flow import confirm_received_order
+    from app.services.customer_selling.buckets import get_open_customer_order
+    from app.services.customer_selling.marking import set_order_marking
 
+    if body is not None and "marking" in body.model_fields_set:
+        set_order_marking(get_open_customer_order(db, customer_id, "received"), body.marking)
     customer = db.get(Customer, customer_id)
     if not customer or customer.deleted_at:
         raise HTTPException(404, "customer not found")
@@ -430,6 +437,42 @@ def confirm_customer_order(
     for placement_id in received_ids:
         schedule_whatsapp("order_confirmed", placement_id)
     return {"ok": True, "customer_id": customer_id}
+
+
+@router.patch("/customer/{customer_id}/marking", dependencies=[Depends(require_permission("customer_orders.write"))])
+def update_customer_marking(
+    customer_id: int,
+    body: TileMarkIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("customer_orders.write")),
+):
+    """Save the one marking on this customer's order tile. Empty text deletes it."""
+    if body.kind not in {"marking", "customer"}:
+        raise HTTPException(400, "bad marking")
+    customer = db.get(Customer, customer_id)
+    if not customer or customer.deleted_at:
+        raise HTTPException(404, "customer not found")
+    from app.services.customer_selling.marking import clean_mark, set_live_marking
+
+    if body.kind == "marking" and body.bill_ids:
+        bills = (
+            db.query(CustomerBill)
+            .filter(CustomerBill.id.in_(body.bill_ids), CustomerBill.customer_id == customer_id)
+            .all()
+        )
+        if len(bills) != len(set(body.bill_ids)):
+            raise HTTPException(404, "bill not found")
+        value = clean_mark(body.text)
+        for bill in bills:
+            bill.narration = value
+    set_live_marking(db, customer_id, kind=body.kind, text=body.text)
+    log_from_auth(
+        db, auth, action="marking", entity_type="customer_order",
+        entity_id=customer_id, entity_label=customer.business_name,
+        detail=(body.kind + ": " + (clean_mark(body.text) or "cleared"))[:180],
+    )
+    db.commit()
+    return {"ok": True}
 
 @router.post("/customer/{customer_id}/offline/preview")
 def preview_offline_order(
@@ -532,6 +575,10 @@ def create_offline_customer_order(
             order_source="offline",
             placed_by_name="Admin" if auth.actor_type == "admin" else (auth.actor_name or "Staff"),
         )
+        if (body.narration or "").strip():
+            from app.services.customer_selling.marking import set_order_marking
+
+            set_order_marking(db.get(CustomerOrder, placement.customer_order_id), body.narration)
         promote_placement_to_confirmed(db, placement)
     except ValueError as e:
         db.rollback()
@@ -588,6 +635,10 @@ def create_new_customer_order(
             order_source="staff",
             placed_by_name=who,
         )
+        if (body.narration or "").strip():
+            from app.services.customer_selling.marking import set_order_marking
+
+            set_order_marking(db.get(CustomerOrder, placement.customer_order_id), body.narration)
     except ValueError as e:
         db.rollback()
         raise HTTPException(400, str(e)) from e

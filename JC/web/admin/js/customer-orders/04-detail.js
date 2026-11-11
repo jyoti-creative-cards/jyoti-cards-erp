@@ -540,6 +540,8 @@
       }
     }
     if (!allLines.length) return ctx.toast("No items in this order", "error");
+    const row = (orders || []).find(o => Number(o.customer_id) === Number(cid));
+    const currentMark = row && row.marking ? row.marking : "";
 
     const linesHtml = allLines.map(ln =>
       `<tr>
@@ -562,6 +564,8 @@
         </tr></thead>
         <tbody>${linesHtml}</tbody>
       </table>
+      <label class="label" style="margin-top:16px;">Marking</label>
+      <textarea id="co-confirm-mark" class="input" rows="3" style="background:#fee2e2;border:1px solid #dc2626;font-weight:800;color:#b91c1c;">${ctx.esc(currentMark)}</textarea>
       <div style="margin-top:16px;display:flex;flex-direction:column;gap:8px;">
         <button class="btn btn-primary" onclick="CustomerOrders._doConfirm(${cid});App.closeDetail?.()">✓ Confirm order</button>
         <button class="btn btn-secondary" onclick="App.closeDetail?.()">Close</button>
@@ -572,9 +576,11 @@
   }
 
   async function _doConfirm(cid) {
+    const markBox = document.getElementById("co-confirm-mark");
+    const body = markBox ? { marking: markBox.value || "" } : {};
     ctx.showLoading?.();
     try {
-      await ctx.api(`/customer-orders/customer/${cid}/confirm`, { method: "POST" }, 0);
+      await ctx.api(`/customer-orders/customer/${cid}/confirm`, { method: "POST", body: JSON.stringify(body) }, 0);
       ctx.toast("Order confirmed", "success");
       currentBucket = "open";
       syncHubChrome();

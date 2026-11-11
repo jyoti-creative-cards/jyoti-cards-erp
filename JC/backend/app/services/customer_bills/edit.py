@@ -322,6 +322,9 @@ def edit_customer_bill(
         )
 
     bill.narration = narration
+    from app.services.customer_selling.marking import set_live_marking
+
+    set_live_marking(db, bill.customer_id, kind="marking", text=narration)
     if bill_number:
         new_num = str(bill_number).strip()
         if new_num:

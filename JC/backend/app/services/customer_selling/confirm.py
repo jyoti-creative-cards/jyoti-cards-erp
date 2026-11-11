@@ -69,6 +69,9 @@ def confirm_received_order(db: Session, customer_id: int) -> bool:
         for p in placements:
             p.status = "open"
     else:
+        from app.services.customer_selling.marking import carry_marks
+
+        carry_marks(received, open_order)
         # Re-parent placements to the existing open order
         for p in placements:
             p.customer_order_id = open_order.id
@@ -122,6 +125,9 @@ def promote_placement_to_confirmed(db: Session, placement: CustomerOrderPlacemen
         return
     if open_order is None:
         open_order = get_or_create_customer_order(db, order.customer_id, "open", "open")
+    from app.services.customer_selling.marking import carry_marks
+
+    carry_marks(order, open_order)
     placement.customer_order_id = open_order.id
     placement.status = "open"
     open_order.updated_at = datetime.now(timezone.utc)

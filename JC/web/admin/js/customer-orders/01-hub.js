@@ -373,6 +373,95 @@
     return all.map(text => markingBanner(text)).join("");
   }
 
+  function paintMarkEditor() {
+    if (currentBucket === "dispatch") renderDispatchList();
+    else renderList();
+    setTimeout(() => document.getElementById("co-mark-box")?.focus(), 30);
+  }
+
+  function openTileMark(kind, customerId, billIds) {
+    const cid = Number(customerId);
+    const bills = String(billIds || "");
+    let text = "";
+    if (currentBucket === "dispatch") {
+      const parcel = dispatchParcels.find(p => String(p.bill_id) === bills);
+      text = kind === "customer" ? parcel && parcel.customer_marking : parcel && parcel.marking;
+    } else {
+      const row = (orders || []).find(o => Number(o.customer_id) === cid);
+      text = kind === "customer" ? row && row.customer_marking : row && row.marking;
+    }
+    markEdit = {
+      kind,
+      customerId: cid,
+      billIds: bills.split(",").filter(Boolean).map(Number),
+      text: text || "",
+      key: kind + ":" + cid + ":" + bills,
+    };
+    paintMarkEditor();
+  }
+
+  function cancelTileMark() {
+    markEdit = null;
+    paintMarkEditor();
+  }
+
+  async function saveTileMark(remove) {
+    if (!markEdit) return;
+    const text = remove ? "" : (document.getElementById("co-mark-box")?.value || "");
+    const target = markEdit;
+    ctx.showLoading?.();
+    try {
+      await ctx.api(`/customer-orders/customer/${target.customerId}/marking`, {
+        method: "PATCH",
+        body: JSON.stringify({ kind: target.kind, text, bill_ids: target.billIds || [] }),
+      }, 0);
+      markEdit = null;
+      ctx.invalidateCache?.("/customer-orders");
+      ctx.invalidateCache?.("/freight-agents");
+      ctx.toast(remove ? "Marking deleted" : "Marking saved", "success");
+      if (currentBucket === "dispatch") await loadDispatch();
+      else await loadList(true);
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  function markStrip(label, text, kind, customerId, billIds, allowEmpty) {
+    const bills = billIds || "";
+    const key = kind + ":" + customerId + ":" + bills;
+    const editing = markEdit && markEdit.key === key;
+    const box = "display:block;width:calc(100% - 28px);margin:8px 14px;padding:8px 10px;background:#fee2e2;border:1px solid #dc2626;border-radius:8px;font-weight:800;font-size:16px;color:#b91c1c;text-align:left;";
+    if (editing) {
+      return `<div onclick="event.stopPropagation()" style="${box}">
+        <div style="margin-bottom:6px;">${label}</div>
+        <textarea id="co-mark-box" class="input" rows="3" style="width:100%;font-weight:700;color:#7f1d1d;">${ctx.esc(markEdit.text || "")}</textarea>
+        <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
+          <button type="button" class="btn btn-primary btn-sm" onclick="event.stopPropagation();CustomerOrders.saveTileMark(false)">Save</button>
+          <button type="button" class="btn btn-danger btn-sm" onclick="event.stopPropagation();CustomerOrders.saveTileMark(true)">Delete</button>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="event.stopPropagation();CustomerOrders.cancelTileMark()">Cancel</button>
+        </div>
+      </div>`;
+    }
+    if (!text) {
+      if (!allowEmpty) return "";
+      return `<button type="button" class="btn btn-secondary btn-sm" style="margin:8px 14px;" onclick="event.stopPropagation();CustomerOrders.openTileMark('${kind}',${customerId},'${bills}')">Add marking</button>`;
+    }
+    return `<button type="button" style="${box}cursor:pointer;" onclick="event.stopPropagation();CustomerOrders.openTileMark('${kind}',${customerId},'${bills}')">${label}: ${ctx.esc(text)}</button>`;
+  }
+
+  function tileMarkHtml(o) {
+    const bills = (Array.isArray(o && o.bills) ? o.bills : []).map(b => b.bill_id).filter(Boolean).join(",");
+    const cid = o.customer_id;
+    return markStrip("Marking", (o && o.marking) || "", "marking", cid, bills, true)
+      + markStrip("Customer marking", (o && o.customer_marking) || "", "customer", cid, bills, false);
+  }
+
+  function parcelMarkHtml(p) {
+    const cid = p.customer_id;
+    const bills = String(p.bill_id || "");
+    return markStrip("Marking", (p && p.marking) || "", "marking", cid, bills, true)
+      + markStrip("Customer marking", (p && p.customer_marking) || "", "customer", cid, bills, false);
+  }
+
   function markingBanner(note) {
     const text = String(note || "").trim();
     if (!text) return "";

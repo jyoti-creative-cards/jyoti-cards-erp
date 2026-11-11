@@ -61,6 +61,7 @@ class CustomerOpenLineOut(BaseModel):
 
 
 class BilledBillChip(BaseModel):
+    bill_id: Optional[int] = None
     bill_number: str
     grand_total: str
     created_at: Optional[datetime] = None
@@ -97,6 +98,8 @@ class CustomerOrderSummary(BaseModel):
     payment_type: Optional[str] = None
     city_name: Optional[str] = None
     narration: Optional[str] = None
+    marking: Optional[str] = None
+    customer_marking: Optional[str] = None
     markings: List[str] = []
     search_text: str = ""
     prices: List[str] = []
@@ -169,6 +172,16 @@ class CustomerOrderDetail(BaseModel):
     marker_2: Optional[str] = None
     payment_type: Optional[str] = None
     city_name: Optional[str] = None
+
+
+class TileMarkIn(BaseModel):
+    kind: str = "marking"
+    text: str = ""
+    bill_ids: List[int] = []
+
+
+class ConfirmIn(BaseModel):
+    marking: Optional[str] = None
 
 
 class CancelRequest(BaseModel):
@@ -283,6 +296,7 @@ class ProcessContextOut(BaseModel):
     customer_name: str
     lines: List[ProcessLineOut]
     default_narration: str = ""
+    customer_marking: Optional[str] = None
     credit: Optional[dict] = None
     party_number: Optional[int] = None
     marker_1: Optional[str] = None

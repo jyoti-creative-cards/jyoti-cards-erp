@@ -65,16 +65,35 @@ def get_process_lines(db: Session, customer_id: int) -> dict:
             }
         )
     orders = billable_orders(db, customer_id)
-    skip_notes = {"order placed by admin (phone)", "offline order"}
-    notes_parts: list[str] = []
-    for order in orders:
-        note = (order.get("customer_notes") or "").strip()
-        if note and note.lower() not in skip_notes and note not in notes_parts:
-            notes_parts.append(note)
+    from app.models.customer_order import CustomerOrder, CustomerOrderPlacement
+    from app.services.customer_selling.marking import resolve_pair
+
+    live = (
+        db.query(CustomerOrder)
+        .filter(
+            CustomerOrder.customer_id == customer_id,
+            CustomerOrder.is_open.is_(True),
+            CustomerOrder.bucket.in_(["open", "received"]),
+        )
+        .all()
+    )
+    chosen = next((row for row in live if row.bucket == "open"), live[0] if live else None)
+    staff, cust = (None, None)
+    if chosen is not None:
+        notes = (
+            db.query(CustomerOrderPlacement.order_source, CustomerOrderPlacement.customer_notes)
+            .filter(
+                CustomerOrderPlacement.customer_order_id == chosen.id,
+                CustomerOrderPlacement.deleted_at.is_(None),
+            )
+            .all()
+        )
+        staff, cust = resolve_pair(chosen, [(source, note) for source, note in notes])
     return {
         "lines": out,
         "orders": orders,
-        "default_narration": " · ".join(notes_parts),
+        "default_narration": staff or "",
+        "customer_marking": cust or "",
         "credit": credit_status(db, customer_id),
     }
 

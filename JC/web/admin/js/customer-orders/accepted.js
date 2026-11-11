@@ -43,6 +43,7 @@ const CustomerOrders = (() => {
   let billSeriesId = "";
   let customerNotes = "";
   let narration = "";
+  let markEdit = null;
   let previewTotals = null;
   let processBusy = false;
   let forceCreditOverride = false;
@@ -456,6 +457,95 @@ const CustomerOrders = (() => {
     return all.map(text => markingBanner(text)).join("");
   }
 
+  function paintMarkEditor() {
+    if (currentBucket === "dispatch") renderDispatchList();
+    else renderList();
+    setTimeout(() => document.getElementById("co-mark-box")?.focus(), 30);
+  }
+
+  function openTileMark(kind, customerId, billIds) {
+    const cid = Number(customerId);
+    const bills = String(billIds || "");
+    let text = "";
+    if (currentBucket === "dispatch") {
+      const parcel = dispatchParcels.find(p => String(p.bill_id) === bills);
+      text = kind === "customer" ? parcel && parcel.customer_marking : parcel && parcel.marking;
+    } else {
+      const row = (orders || []).find(o => Number(o.customer_id) === cid);
+      text = kind === "customer" ? row && row.customer_marking : row && row.marking;
+    }
+    markEdit = {
+      kind,
+      customerId: cid,
+      billIds: bills.split(",").filter(Boolean).map(Number),
+      text: text || "",
+      key: kind + ":" + cid + ":" + bills,
+    };
+    paintMarkEditor();
+  }
+
+  function cancelTileMark() {
+    markEdit = null;
+    paintMarkEditor();
+  }
+
+  async function saveTileMark(remove) {
+    if (!markEdit) return;
+    const text = remove ? "" : (document.getElementById("co-mark-box")?.value || "");
+    const target = markEdit;
+    ctx.showLoading?.();
+    try {
+      await ctx.api(`/customer-orders/customer/${target.customerId}/marking`, {
+        method: "PATCH",
+        body: JSON.stringify({ kind: target.kind, text, bill_ids: target.billIds || [] }),
+      }, 0);
+      markEdit = null;
+      ctx.invalidateCache?.("/customer-orders");
+      ctx.invalidateCache?.("/freight-agents");
+      ctx.toast(remove ? "Marking deleted" : "Marking saved", "success");
+      if (currentBucket === "dispatch") await loadDispatch();
+      else await loadList(true);
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
+  function markStrip(label, text, kind, customerId, billIds, allowEmpty) {
+    const bills = billIds || "";
+    const key = kind + ":" + customerId + ":" + bills;
+    const editing = markEdit && markEdit.key === key;
+    const box = "display:block;width:calc(100% - 28px);margin:8px 14px;padding:8px 10px;background:#fee2e2;border:1px solid #dc2626;border-radius:8px;font-weight:800;font-size:16px;color:#b91c1c;text-align:left;";
+    if (editing) {
+      return `<div onclick="event.stopPropagation()" style="${box}">
+        <div style="margin-bottom:6px;">${label}</div>
+        <textarea id="co-mark-box" class="input" rows="3" style="width:100%;font-weight:700;color:#7f1d1d;">${ctx.esc(markEdit.text || "")}</textarea>
+        <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
+          <button type="button" class="btn btn-primary btn-sm" onclick="event.stopPropagation();CustomerOrders.saveTileMark(false)">Save</button>
+          <button type="button" class="btn btn-danger btn-sm" onclick="event.stopPropagation();CustomerOrders.saveTileMark(true)">Delete</button>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="event.stopPropagation();CustomerOrders.cancelTileMark()">Cancel</button>
+        </div>
+      </div>`;
+    }
+    if (!text) {
+      if (!allowEmpty) return "";
+      return `<button type="button" class="btn btn-secondary btn-sm" style="margin:8px 14px;" onclick="event.stopPropagation();CustomerOrders.openTileMark('${kind}',${customerId},'${bills}')">Add marking</button>`;
+    }
+    return `<button type="button" style="${box}cursor:pointer;" onclick="event.stopPropagation();CustomerOrders.openTileMark('${kind}',${customerId},'${bills}')">${label}: ${ctx.esc(text)}</button>`;
+  }
+
+  function tileMarkHtml(o) {
+    const bills = (Array.isArray(o && o.bills) ? o.bills : []).map(b => b.bill_id).filter(Boolean).join(",");
+    const cid = o.customer_id;
+    return markStrip("Marking", (o && o.marking) || "", "marking", cid, bills, true)
+      + markStrip("Customer marking", (o && o.customer_marking) || "", "customer", cid, bills, false);
+  }
+
+  function parcelMarkHtml(p) {
+    const cid = p.customer_id;
+    const bills = String(p.bill_id || "");
+    return markStrip("Marking", (p && p.marking) || "", "marking", cid, bills, true)
+      + markStrip("Customer marking", (p && p.customer_marking) || "", "customer", cid, bills, false);
+  }
+
   function markingBanner(note) {
     const text = String(note || "").trim();
     if (!text) return "";
@@ -594,6 +684,7 @@ const CustomerOrders = (() => {
           <div style="min-width:0;flex:1;">
             <strong class="ord-card-title" style="font-size:16px;">${ctx.esc(p.customer_label || "Customer")}</strong>
             ${p.created_by ? `<div style="display:block;margin-top:8px;padding:8px 10px;border-radius:10px;background:#dcfce7;color:#166534;font-weight:800;font-size:16px;">Created by ${ctx.esc(p.created_by)}</div>` : ""}
+            ${parcelMarkHtml(p)}
             <div data-tile-note="dispatch:${p.bill_id}" onclick="event.stopPropagation()">
               <button type="button" class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="event.stopPropagation();App.editTileNote('dispatch:${p.bill_id}')">Add note</button>
             </div>
@@ -770,8 +861,7 @@ const CustomerOrders = (() => {
       const billBits = chips.map(b => {
         const num = b.bill_number ? `Bill ${ctx.esc(b.bill_number)}` : "";
         const amt = b.grand_total != null && b.grand_total !== "" ? fmtPrice(b.grand_total) : "";
-        const note = b.narration ? ctx.esc(b.narration) : "";
-        return [num, amt, note].filter(Boolean).join(" · ");
+        return [num, amt].filter(Boolean).join(" · ");
       }).filter(Boolean);
       statText = billBits.length
         ? billBits.join("<br>")
@@ -781,7 +871,7 @@ const CustomerOrders = (() => {
     }
     if (src) statText += (statText ? " · " : "") + src;
 
-    const markHtml = tileMarkings(o);
+    const markHtml = tileMarkHtml(o);
 
     // More menu
     const more = [];
@@ -1462,6 +1552,8 @@ const CustomerOrders = (() => {
       }
     }
     if (!allLines.length) return ctx.toast("No items in this order", "error");
+    const row = (orders || []).find(o => Number(o.customer_id) === Number(cid));
+    const currentMark = row && row.marking ? row.marking : "";
 
     const linesHtml = allLines.map(ln =>
       `<tr>
@@ -1484,6 +1576,8 @@ const CustomerOrders = (() => {
         </tr></thead>
         <tbody>${linesHtml}</tbody>
       </table>
+      <label class="label" style="margin-top:16px;">Marking</label>
+      <textarea id="co-confirm-mark" class="input" rows="3" style="background:#fee2e2;border:1px solid #dc2626;font-weight:800;color:#b91c1c;">${ctx.esc(currentMark)}</textarea>
       <div style="margin-top:16px;display:flex;flex-direction:column;gap:8px;">
         <button class="btn btn-primary" onclick="CustomerOrders._doConfirm(${cid});App.closeDetail?.()">✓ Confirm order</button>
         <button class="btn btn-secondary" onclick="App.closeDetail?.()">Close</button>
@@ -1494,9 +1588,11 @@ const CustomerOrders = (() => {
   }
 
   async function _doConfirm(cid) {
+    const markBox = document.getElementById("co-confirm-mark");
+    const body = markBox ? { marking: markBox.value || "" } : {};
     ctx.showLoading?.();
     try {
-      await ctx.api(`/customer-orders/customer/${cid}/confirm`, { method: "POST" }, 0);
+      await ctx.api(`/customer-orders/customer/${cid}/confirm`, { method: "POST", body: JSON.stringify(body) }, 0);
       ctx.toast("Order confirmed", "success");
       currentBucket = "open";
       syncHubChrome();
@@ -1818,7 +1914,7 @@ const CustomerOrders = (() => {
     ctx.showLoading?.();
     try {
       try {
-        await ctx.api(`/customer-orders/customer/${customerId}/confirm`, { method: "POST" }, 0);
+        await ctx.api(`/customer-orders/customer/${customerId}/confirm`, { method: "POST", body: "{}" }, 0);
         ctx.invalidateCache?.("/customer-orders");
       } catch (e) {
         const msg = String(e.message || "").toLowerCase();
@@ -1895,8 +1991,8 @@ const CustomerOrders = (() => {
       packagingCharges = "";
       additionalCharges = [{ name: "", amount: "" }];
       billSeriesId = defaultBillSeriesId(billSeries);
-      customerNotes = pctx.default_narration || "";
-      narration = "";
+      customerNotes = pctx.customer_marking || "";
+      narration = pctx.default_narration || "";
       dueCatalogs = [];
       pickedCatalogs = {};
       try { dueCatalogs = await ctx.api(`/our-catalogs/for-customer/${detailCustomerId}`, {}, 0) || []; } catch (_) { dueCatalogs = []; }
@@ -2394,7 +2490,7 @@ const CustomerOrders = (() => {
         : (ln.net_rate || calcNetFromDisc(ln.unit_price, ln.discount_percent || 0));
       const shownDisc = useOverallDiscount ? (overallDiscount || "") : (ln.discount_percent || "");
       return `<tr>
-        <td><strong>${ctx.esc(ln.our_product_id)}</strong>${ln.direct ? ` <span style="font-size:12px;color:var(--muted);">direct</span>` : ""}${billAddonHtml(ln)}${orderMarkingForProduct(billableOrders, ln.catalog_product_id)}</td>
+        <td><strong>${ctx.esc(ln.our_product_id)}</strong>${ln.direct ? ` <span style="font-size:12px;color:var(--muted);">direct</span>` : ""}${billAddonHtml(ln)}</td>
         <td>${ln.quantity_on_hand ?? "—"}</td>
         <td>${fmtPrice(ln.unit_price)}</td>
         <td><input data-ship-for="${i}" type="number" class="input" style="width:72px;" min="0" value="${ln.quantity_to_ship ?? ""}" oninput="CustomerOrders.setShipQty(${i}, this.value)" /></td>
@@ -2474,8 +2570,9 @@ const CustomerOrders = (() => {
         <input type="checkbox" ${gstEnabled ? "checked" : ""} onchange="CustomerOrders.setGst(this.checked)" /> GST
         ${gstEnabled ? `<input class="input" style="width:80px;" value="${ctx.esc(gstRate)}" oninput="CustomerOrders.setGstRate(this.value)" />` : ""}
       </label>
-      <label class="label">Narration</label>
-      <textarea class="input" rows="2" oninput="CustomerOrders.setNarration(this.value)">${ctx.esc(narration)}</textarea>
+      ${customerNotes ? `<div style="margin-top:12px;padding:8px 10px;background:#fee2e2;border:1px solid #dc2626;border-radius:8px;font-weight:800;color:#b91c1c;">Customer marking: ${ctx.esc(customerNotes)}</div>` : ""}
+      <label class="label">Marking</label>
+      <textarea class="input" rows="3" style="background:#fee2e2;border:1px solid #dc2626;font-weight:800;color:#b91c1c;" oninput="CustomerOrders.setNarration(this.value)">${ctx.esc(narration)}</textarea>
     `;
     footerEl.innerHTML = `
       <button class="btn btn-secondary" onclick="CustomerOrders.closeProcessWizard()">Cancel</button>
@@ -3828,7 +3925,7 @@ const CustomerOrders = (() => {
     setOfflinePlacedOn,
     setForceCredit, setBillOnAgent, printDayDuplicates,
     processNext, processBack, submitProcess, backFromBillDuplicate, proceedBillDuplicate, toggleBillOrder, toggleAllBillOrders,
-    confirmOrder, _doConfirm, cancelOpenLine, cancelReceivedLine, cancelBilledLine, cancelPlacement, cancelCustomerOpen, cancelEntireReceived, cancelAllOpen, editOpenLine, editReceivedLine, deleteReceivedLine, openEditPlacement, closeBillLine, cancelBill, voidBill, voidPlacement, openBillDoc, printStoredBill, downloadStoredBill, shareBillWhatsApp, uploadBillQr, resetBillQr,
+    confirmOrder, _doConfirm, openTileMark, cancelTileMark, saveTileMark, cancelOpenLine, cancelReceivedLine, cancelBilledLine, cancelPlacement, cancelCustomerOpen, cancelEntireReceived, cancelAllOpen, editOpenLine, editReceivedLine, deleteReceivedLine, openEditPlacement, closeBillLine, cancelBill, voidBill, voidPlacement, openBillDoc, printStoredBill, downloadStoredBill, shareBillWhatsApp, uploadBillQr, resetBillQr,
     openOfflineWizard, closeOfflineWizard, renderOfflineWizard,
     pickOfflineCustomer, onOfflineCustomerSearch, setOfflineNotes, previewOrder, backFromOrderPreview,
     onOfflineSearchInput, onOfflineSearchKey, onOfflineQtyKey, toggleOfflineProduct, pickOfflineProduct, removeOfflineLine, skipOfflineAddon,

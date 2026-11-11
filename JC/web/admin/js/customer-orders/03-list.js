@@ -108,8 +108,7 @@
       const billBits = chips.map(b => {
         const num = b.bill_number ? `Bill ${ctx.esc(b.bill_number)}` : "";
         const amt = b.grand_total != null && b.grand_total !== "" ? fmtPrice(b.grand_total) : "";
-        const note = b.narration ? ctx.esc(b.narration) : "";
-        return [num, amt, note].filter(Boolean).join(" · ");
+        return [num, amt].filter(Boolean).join(" · ");
       }).filter(Boolean);
       statText = billBits.length
         ? billBits.join("<br>")
@@ -119,7 +118,7 @@
     }
     if (src) statText += (statText ? " · " : "") + src;
 
-    const markHtml = tileMarkings(o);
+    const markHtml = tileMarkHtml(o);
 
     // More menu
     const more = [];

@@ -271,5 +271,8 @@ def create_received_placement(
     # placement.placed_at for reporting. A backdated admin entry should land in "Past",
     # not silently masquerade as "Today".
     received.updated_at = datetime.now(timezone.utc)
+    from app.services.customer_selling.marking import note_onto_order
+
+    note_onto_order(received, source=order_source, notes=customer_notes)
     return placement
 

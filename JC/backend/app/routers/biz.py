@@ -142,6 +142,12 @@ def biz_place_order(body: dict, db: Session = Depends(get_db)):
             order_source="staff",
             placed_by_name="Anshul",
         )
+        typed = (body.get("marking") or "").strip()
+        if typed:
+            from app.models.customer_order import CustomerOrder
+            from app.services.customer_selling.marking import set_order_marking
+
+            set_order_marking(db.get(CustomerOrder, placement.customer_order_id), typed)
     except ValueError as exc:
         db.rollback()
         raise HTTPException(400, str(exc)) from exc

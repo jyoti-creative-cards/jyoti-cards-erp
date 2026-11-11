@@ -359,14 +359,16 @@ function bindOrder() {
       else lines.push({ catalog_product_id: order.product.id, quantity: qty });
     }
     if (!order.customer || !lines.length) return;
+    order.marking = document.getElementById("order-mark")?.value ?? order.marking;
     try {
       await api("/api/v1/biz/orders", {
         method: "POST",
-        body: JSON.stringify({ customer_id: order.customer.id, lines }),
+        body: JSON.stringify({ customer_id: order.customer.id, lines, marking: order.marking || "" }),
       });
       order.customer = null;
       order.lines = [];
       order.product = null;
+      order.marking = "";
       state.screen = "more";
       render();
     } catch (e) {
@@ -512,7 +514,7 @@ async function refreshItemSearch() {
   }
 }
 
-const order = { customer: null, lines: [], product: null, partyQ: "", itemQ: "" };
+const order = { customer: null, lines: [], product: null, partyQ: "", itemQ: "", marking: "" };
 let stockQ = "";
 
 function moreView() {
@@ -544,7 +546,8 @@ function orderView() {
       ${lines}
       <label class="search">Item number<input id="order-item" value="${esc(order.itemQ)}" placeholder="Item number" inputmode="numeric" /></label>
       <div id="order-hits" class="search-results"></div>
-      ${order.lines.length ? `<button type="button" class="big" id="place-order">Place order</button>` : ""}`;
+      ${order.lines.length ? `<label class="search">Marking<input id="order-mark" value="${esc(order.marking || "")}" placeholder="Optional" /></label>
+      <button type="button" class="big" id="place-order">Place order</button>` : ""}`;
   }
   return `${back}<h2>${esc(order.customer.label)}</h2>
     ${lines}
@@ -552,6 +555,7 @@ function orderView() {
     <button type="button" class="back" id="change-item">Change item</button>
     <label class="search">Quantity<input id="order-qty" inputmode="numeric" placeholder="How many" /></label>
     <button type="button" class="big alt" id="add-more">Add more</button>
+    <label class="search">Marking<input id="order-mark" value="${esc(order.marking || "")}" placeholder="Optional" /></label>
     <button type="button" class="big" id="place-order">Place order</button>`;
 }
 

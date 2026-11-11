@@ -2648,6 +2648,7 @@ const App = (() => {
 
   let deskCustomer = null;
   let deskProduct = null;
+  let deskLines = [];
   let deskParties = null;
   let deskMode = "home";
   let deskNote = "";
@@ -2666,6 +2667,7 @@ const App = (() => {
     deskMode = "home";
     deskCustomer = null;
     deskProduct = null;
+    deskLines = [];
     renderOrderDesk();
     if (deskParties) return;
     api("/customers/entry-parties", {}, 0).then(parties => {
@@ -2678,6 +2680,7 @@ const App = (() => {
     if (mode === "home") {
       deskCustomer = null;
       deskProduct = null;
+      deskLines = [];
     }
     renderOrderDesk();
   }
@@ -2694,6 +2697,7 @@ const App = (() => {
   function deskPickCustomer(id) {
     deskCustomer = (deskParties || []).find(c => Number(c.id) === Number(id)) || null;
     deskProduct = null;
+    deskLines = [];
     renderOrderDesk();
   }
 
@@ -2751,19 +2755,74 @@ const App = (() => {
     }, 250);
   }
 
+  function deskReadQty() {
+    return Math.floor(Number(document.getElementById("desk-qty")?.value || "0"));
+  }
+
+  function deskTakeCurrentLine() {
+    if (!deskProduct) return null;
+    const qty = deskReadQty();
+    if (!qty || qty < 1) return null;
+    return {
+      catalog_product_id: deskProduct.catalog_product_id,
+      our_product_id: deskProduct.our_product_id || "",
+      quantity: qty,
+    };
+  }
+
+  function deskPushLine(line) {
+    const hit = deskLines.find(ln => Number(ln.catalog_product_id) === Number(line.catalog_product_id));
+    if (hit) hit.quantity += line.quantity;
+    else deskLines.push(line);
+  }
+
+  function deskAddMore() {
+    const line = deskTakeCurrentLine();
+    if (!line) return toast("Enter quantity", "error");
+    deskPushLine(line);
+    deskProduct = null;
+    renderOrderDesk();
+  }
+
+  function deskRemoveLine(index) {
+    deskLines.splice(index, 1);
+    renderOrderDesk();
+  }
+
+  function deskLinesHtml() {
+    if (!deskLines.length) return "";
+    return `<div style="margin:8px 0 16px;">${deskLines.map((ln, i) =>
+      `<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid #e2e8f0;">
+        <div>
+          <div style="font-size:24px;font-weight:800;">${esc(ln.our_product_id || "")}</div>
+          <div style="font-size:20px;">Qty ${ln.quantity}</div>
+        </div>
+        <button type="button" class="btn btn-secondary" style="min-height:52px;font-size:18px;" onclick="App.deskRemoveLine(${i})">Remove</button>
+      </div>`
+    ).join("")}</div>`;
+  }
+
   async function deskPlace() {
-    if (!deskCustomer || !deskProduct) return toast("Pick a party and an item", "error");
-    const qty = Math.floor(Number(document.getElementById("desk-qty")?.value || "0"));
-    if (!qty || qty < 1) return toast("Enter quantity", "error");
+    if (!deskCustomer) return toast("Pick a party", "error");
+    const lines = deskLines.map(ln => ({ catalog_product_id: ln.catalog_product_id, quantity: ln.quantity }));
+    const current = deskTakeCurrentLine();
+    if (deskProduct && !current) return toast("Enter quantity", "error");
+    if (current) {
+      const hit = lines.find(ln => Number(ln.catalog_product_id) === Number(current.catalog_product_id));
+      if (hit) hit.quantity += current.quantity;
+      else lines.push({ catalog_product_id: current.catalog_product_id, quantity: current.quantity });
+    }
+    if (!lines.length) return toast("Pick an item", "error");
     showLoading?.();
     try {
       await api(`/customer-orders/customer/${deskCustomer.id}/new`, {
         method: "POST",
-        body: JSON.stringify({ lines: [{ catalog_product_id: deskProduct.catalog_product_id, quantity: qty }] }),
+        body: JSON.stringify({ lines }),
       });
       deskNote = "Order placed";
       deskCustomer = null;
       deskProduct = null;
+      deskLines = [];
       deskMode = "home";
       renderOrderDesk();
     } catch (e) { toast(e.message, "error"); }
@@ -2802,14 +2861,17 @@ const App = (() => {
     el.innerHTML = `${back}
       <p style="font-size:22px;font-weight:800;margin:0 0 12px;">${who}</p>
       <button type="button" class="btn btn-secondary" style="min-height:52px;font-size:18px;margin-bottom:16px;" onclick="App.deskClearCustomer()">Change party</button>
+      ${deskLinesHtml()}
       ${deskProduct ? `<p style="font-size:26px;font-weight:800;margin:0 0 8px;">${esc(deskProduct.our_product_id || "")}</p>
         <button type="button" class="btn btn-secondary" style="min-height:52px;font-size:18px;" onclick="App.deskClearProduct()">Change item</button>
         <label class="label" style="font-size:20px;margin-top:16px;">Quantity</label>
         <input id="desk-qty" class="input desk-field" type="number" min="1" inputmode="numeric" placeholder="How many" />
-        <button type="button" class="btn btn-primary desk-big" style="margin-top:16px;" onclick="App.deskPlace()">Place order</button>`
+        <button type="button" class="btn btn-secondary desk-big" style="margin-top:16px;" onclick="App.deskAddMore()">Add more</button>
+        <button type="button" class="btn btn-primary desk-big" style="margin-top:12px;" onclick="App.deskPlace()">Place order</button>`
       : `<label class="label" style="font-size:20px;">Item number</label>
         <input id="desk-item" class="input desk-field" placeholder="Type item number" oninput="App.onDeskItem(this.value)" />
-        <div id="desk-item-hits"></div>`}`;
+        <div id="desk-item-hits"></div>
+        ${deskLines.length ? `<button type="button" class="btn btn-primary desk-big" style="margin-top:16px;" onclick="App.deskPlace()">Place order</button>` : ""}`}`;
     setTimeout(() => {
       document.getElementById("desk-qty")?.focus();
       document.getElementById("desk-item")?.focus();
@@ -2820,6 +2882,7 @@ const App = (() => {
   function deskClearCustomer() {
     deskCustomer = null;
     deskProduct = null;
+    deskLines = [];
     renderOrderDesk();
   }
 
@@ -3674,7 +3737,7 @@ const App = (() => {
     loadRecycleBin, setRecycleTab, openRecycleDetail, restoreItem, purgeItem,
     addLookup, submitLookup, submitCatalogCategory, editLookup, deleteLookup, openCustomerLedgerEntry, createCustomerOrder,
     setOrderTakerMode, onOrderTakerStock, onOrderTakerCustomer, pickOrderTakerCustomer, clearOrderTakerCustomer, onOrderTakerItem, addOrderTakerItem, removeOrderTakerLine, saveOrderTakerOrder,
-    deskShow, onDeskCustomer, onDeskItem, onDeskStock, deskPickCustomer, deskPickProduct, deskPlace, deskClearCustomer, deskClearProduct,
+    deskShow, onDeskCustomer, onDeskItem, onDeskStock, deskPickCustomer, deskPickProduct, deskAddMore, deskRemoveLine, deskPlace, deskClearCustomer, deskClearProduct,
     closeModal, init, searchItemLookup, setWhatsappSends,
     downloadExportKind, downloadBackupZip,
     debouncedLoadCustomers, debouncedVendorSearch, debouncedCatalogSearch, debouncedAddonSearch, debouncedStockSearch,

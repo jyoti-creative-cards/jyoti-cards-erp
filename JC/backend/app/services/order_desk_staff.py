@@ -19,7 +19,7 @@ DESK_PERMISSIONS = [
 ]
 
 DESK_ACCOUNTS = (
-    {"name": "jeevan", "password": "jeevanbhai@JCC", "phone": "6191000001"},
+    {"name": "jeevan", "password": "jeevanbhaiya", "phone": "6191000001"},
     {"name": "sudhir", "password": "sud_jcc", "phone": "6191000002"},
 )
 

@@ -2774,6 +2774,57 @@ table.data tr.filter-row th { padding: 6px 8px; background: #fff; border-bottom:
   box-shadow: 0 8px 20px rgba(15, 23, 42, 0.25);
   cursor: pointer;
 }
+.ord-created-by {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: #dcfce7;
+  color: #166534;
+  font-weight: 800;
+  font-size: 15px;
+}
+.desk-home {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 28px;
+}
+.desk-big {
+  min-height: 96px;
+  font-size: 26px;
+  font-weight: 800;
+  border-radius: 18px;
+}
+.desk-field {
+  font-size: 22px;
+  min-height: 64px;
+  margin-top: 8px;
+}
+.desk-hit {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin-top: 10px;
+  min-height: 64px;
+  font-size: 20px;
+  font-weight: 700;
+}
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 40;
+  width: 52px;
+  height: 52px;
+  border: 0;
+  border-radius: 999px;
+  background: #1e3a8a;
+  color: #fff;
+  font-size: 22px;
+  font-weight: 700;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.25);
+  cursor: pointer;
+}
 
 /* Product quick filters */
 .prod-filter-chip {

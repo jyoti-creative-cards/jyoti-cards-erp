@@ -439,6 +439,25 @@ const CustomerOrders = (() => {
     }).join("")}</div>`;
   }
 
+  function tileMarkings(o) {
+    const fromApi = Array.isArray(o && o.markings) ? o.markings : [];
+    const fromBills = (Array.isArray(o && o.bills) ? o.bills : []).map(b => b && b.narration).filter(Boolean);
+    const extra = o && o.narration ? [o.narration] : [];
+    const all = [];
+    const seen = new Set();
+    for (const raw of [...fromApi, ...fromBills, ...extra]) {
+      String(raw || "").split(" · ").forEach(part => {
+        const text = part.trim();
+        if (!text) return;
+        const key = text.toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        all.push(text);
+      });
+    }
+    return all.map(text => markingBanner(text)).join("");
+  }
+
   function markingBanner(note) {
     const text = String(note || "").trim();
     if (!text) return "";
@@ -577,6 +596,7 @@ const CustomerOrders = (() => {
         <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;">
           <div style="min-width:0;flex:1;">
             <strong class="ord-card-title" style="font-size:16px;">${ctx.esc(p.customer_label || "Customer")}</strong>
+            ${p.created_by ? `<div class="ord-created-by">Created by ${ctx.esc(p.created_by)}</div>` : ""}
             <div class="ord-card-meta" style="margin-top:4px;">${ctx.esc(meta)}</div>
             <div style="font-size:13px;margin-top:8px;">${lines || "—"}${more}</div>
           </div>
@@ -685,6 +705,12 @@ const CustomerOrders = (() => {
     return list;
   }
 
+  function createdByHtml(o) {
+    const names = Array.isArray(o.created_by) ? o.created_by.map(x => String(x || "").trim()).filter(Boolean) : [];
+    if (!names.length) return "";
+    return `<div class="ord-created-by">Created by ${ctx.esc(names.join(" · "))}</div>`;
+  }
+
   function sourceMeta(sources) {
     const list = Array.isArray(sources) ? sources : [];
     if (!list.length) return "";
@@ -753,9 +779,8 @@ const CustomerOrders = (() => {
       statText = `${o.placement_count || 0} placement${(o.placement_count || 0) !== 1 ? "s" : ""}`;
     }
     if (src) statText += (statText ? " · " : "") + src;
-    if (o.narration && currentBucket !== "billed") {
-      statText += (statText ? "<br>" : "") + ctx.esc(o.narration);
-    }
+
+    const markHtml = tileMarkings(o);
 
     // More menu
     const more = [];
@@ -810,8 +835,10 @@ const CustomerOrders = (() => {
           <div class="ord-order-card-city">${o.city_name ? ctx.esc(o.city_name) : ""}${o.city_name && timeStr ? " · " : ""}${timeStr ? `<span class="ord-order-card-time">${ctx.esc(timeStr)}</span>` : ""}</div>
         </div>
       </div>
-      <div class="ord-order-card-body">
+          <div class="ord-order-card-body">
         ${statText ? `<div class="ord-order-card-stat">${statText}</div>` : ""}
+        ${createdByHtml(o)}
+        ${markHtml}
       </div>
       <div class="ord-order-card-foot" onclick="event.stopPropagation()">
         ${primaryBtn}

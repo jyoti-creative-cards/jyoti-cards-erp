@@ -381,6 +381,7 @@
             ${placementBadge(p.color_index)}
             <div>
               <div class="vo-hub-title" style="font-size:14px;">${ctx.esc(p.display_name || `Placement #${p.id}`)} · ${ctx.fmtDay(p.display_date)}</div>
+              ${p.placed_by_name ? `<div class="ord-created-by">Created by ${ctx.esc(p.placed_by_name)}</div>` : ""}
               <div class="vo-hub-meta">${p.line_count} lines · ${p.total_quantity || "—"} qty${cancelled ? " · cancelled" : ""}</div>
               ${cancelled ? noteChip(p.cancel_reason, "cancel") : ""}
             </div>
@@ -452,6 +453,7 @@
             ${hubChevron(pOpen)}
             <div>
               <div class="vo-hub-title" style="font-size:14px;">${ctx.esc(p.display_name || p.bill_number || `Bill #${p.id}`)}${closed ? ` <span class="vo-pill-muted">Closed</span>` : ""}</div>
+              ${p.placed_by_name ? `<div class="ord-created-by">Created by ${ctx.esc(p.placed_by_name)}</div>` : ""}
               <div class="vo-hub-meta">${p.line_count} lines · ${ctx.fmtDay(p.display_date)}
                 ${p.net_payable != null ? ` · Net ${fmtPrice(p.net_payable)}` : ""}</div>
               ${closed && p.close_reason ? noteChip(p.close_reason, "close") : ""}

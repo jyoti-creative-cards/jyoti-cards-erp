@@ -556,3 +556,48 @@ def create_offline_customer_order(
         "message": "Order placed in Confirmed — bill when ready",
     }
 
+
+@router.post("/customer/{customer_id}/new", status_code=201)
+def create_new_customer_order(
+    customer_id: int,
+    body: OfflineCustomerOrderIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("customer_orders.write")),
+):
+    """Same as a customer placing from the portal: lands in New orders."""
+    customer = db.get(Customer, customer_id)
+    if not customer:
+        raise HTTPException(404, "customer not found")
+    who = (auth.actor_name or "").strip() or "Staff"
+    try:
+        placement = create_received_placement(
+            db,
+            customer_id=customer_id,
+            customer_name=customer.business_name,
+            lines=[
+                {
+                    "catalog_product_id": ln.catalog_product_id,
+                    "quantity": ln.quantity,
+                    "skip_addon_ids": list(ln.skip_addon_ids or []),
+                }
+                for ln in body.lines
+            ],
+            customer_notes=None,
+            allow_negative_stock=False,
+            order_source="staff",
+            placed_by_name=who,
+        )
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(400, str(e)) from e
+    log_from_auth(
+        db, auth, action="desk_order", entity_type="customer_order",
+        entity_id=placement.id, entity_label=customer.business_name,
+        detail=f"New order #{placement.id} by {who}",
+    )
+    db.commit()
+    response_cache.invalidate("stock:")
+    from app.services.doc_jobs import enqueue_order_pdf
+    enqueue_order_pdf(placement.id)
+    return {"ok": True, "placement_id": placement.id, "bucket": "received", "message": "Order placed"}
+

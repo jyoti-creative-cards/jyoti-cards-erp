@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.models.customer import Customer
 from app.models.customer_bill import CustomerBill, CustomerBillLine
+from app.models.customer_order import CustomerOrderPlacement
 from app.models.freight_agent import FreightAgent, FreightLedgerEntry
 from app.services.freight_ledger import post_freight_charge, recompute_balance_due
 from app.services.money import as_signed_increase, mag
@@ -210,6 +211,14 @@ def _parcel_dict(
     ]
     pcs = sum(int(ln.quantity_shipped or 0) for ln in lines)
     picked = bill.freight_picked_at is not None
+    who = "Staff"
+    if bill.placement_id:
+        placed = db.get(CustomerOrderPlacement, bill.placement_id)
+        if placed is not None:
+            from app.routers.customer_orders.listing import _who_made
+            who = _who_made(placed.order_source, placed.placed_by_name, placed.customer_notes)
+    if who == "Staff":
+        who = (bill.created_by_name or "").strip() or "Staff"
     return {
         "bill_id": bill.id,
         "bill_number": bill.bill_number,
@@ -232,6 +241,7 @@ def _parcel_dict(
         "lines": line_rows,
         "bill_total": format(bill.grand_total or 0, "f"),
         "created_at": bill.created_at.isoformat() if bill.created_at else None,
+        "created_by": who,
     }
 
 

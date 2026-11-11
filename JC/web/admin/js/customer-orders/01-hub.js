@@ -354,6 +354,25 @@
     }).join("")}</div>`;
   }
 
+  function tileMarkings(o) {
+    const fromApi = Array.isArray(o && o.markings) ? o.markings : [];
+    const fromBills = (Array.isArray(o && o.bills) ? o.bills : []).map(b => b && b.narration).filter(Boolean);
+    const extra = o && o.narration ? [o.narration] : [];
+    const all = [];
+    const seen = new Set();
+    for (const raw of [...fromApi, ...fromBills, ...extra]) {
+      String(raw || "").split(" · ").forEach(part => {
+        const text = part.trim();
+        if (!text) return;
+        const key = text.toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        all.push(text);
+      });
+    }
+    return all.map(text => markingBanner(text)).join("");
+  }
+
   function markingBanner(note) {
     const text = String(note || "").trim();
     if (!text) return "";

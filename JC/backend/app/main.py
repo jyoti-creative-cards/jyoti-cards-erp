@@ -122,7 +122,7 @@ def _order_taker_allowed(method: str, path: str) -> bool:
     if method == "GET" and path.startswith("/api/v1/customer-orders/customer/"):
         return "/bills/" not in path and "/process" not in path
     if method == "POST" and path.startswith("/api/v1/customer-orders/customer/"):
-        return path.endswith("/offline") or path.endswith("/offline/preview")
+        return path.endswith("/offline") or path.endswith("/offline/preview") or path.endswith("/new")
     return False
 
 app.include_router(auth.router, prefix="/api/v1")

@@ -74,6 +74,7 @@
         <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;">
           <div style="min-width:0;flex:1;">
             <strong class="ord-card-title" style="font-size:16px;">${ctx.esc(p.customer_label || "Customer")}</strong>
+            ${p.created_by ? `<div class="ord-created-by">Created by ${ctx.esc(p.created_by)}</div>` : ""}
             <div class="ord-card-meta" style="margin-top:4px;">${ctx.esc(meta)}</div>
             <div style="font-size:13px;margin-top:8px;">${lines || "—"}${more}</div>
           </div>

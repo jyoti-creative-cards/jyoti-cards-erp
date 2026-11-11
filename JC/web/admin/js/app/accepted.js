@@ -2131,10 +2131,12 @@ const App = (() => {
     }
   }
 
-  function partyLedgerRows() {
+  function partyLedgerRows(day) {
     const lines = [];
     lines.push(["When", "Type", "Title", "Detail", "Product", "Qty", "Rate", "Amount"]);
+    const wanted = String(day || "").slice(0, 10);
     const visible = customerLedger.filter(e => {
+      if (wanted && String(e.occurred_at || e.value_date || "").slice(0, 10) !== wanted) return false;
       if (!customerRealOnly) return true;
       if (e.event_type === "order_cancelled") return false;
       if (e.event_type === "customer_bill" && String(e.title || "").toLowerCase().startsWith("cancelled")) return false;
@@ -2169,7 +2171,8 @@ const App = (() => {
 
   function printPartyLedger() {
     if (!partyLedgerCustomerId) return toast("Select a party first", "error");
-    const body = partyLedgerRows().map((cols, i) => `<tr>${cols.map(col => `<${i ? "td" : "th"}>${esc(col)}</${i ? "td" : "th"}>`).join("")}</tr>`).join("");
+    const day = document.getElementById("party-ledger-day")?.value || "";
+    const body = partyLedgerRows(day).map((cols, i) => `<tr>${cols.map(col => `<${i ? "td" : "th"}>${esc(col)}</${i ? "td" : "th"}>`).join("")}</tr>`).join("");
     const title = document.getElementById("party-ledger-picked")?.textContent || "Party ledger";
     const w = window.open("", "_blank");
     if (!w) return toast("Allow pop-ups to print", "error");
@@ -2641,8 +2644,9 @@ const App = (() => {
   let deskCustomer = null;
   let deskProduct = null;
   let deskParties = null;
-  let deskItems = null;
   let deskMode = "home";
+  let deskNote = "";
+  let deskItemHits = [];
 
   function deskMarks(c) {
     return [c?.marker_1, c?.marker_2].filter(Boolean).join(" · ");
@@ -2658,13 +2662,9 @@ const App = (() => {
     deskCustomer = null;
     deskProduct = null;
     renderOrderDesk();
-    if (deskParties && deskItems) return;
-    Promise.all([
-      api("/customers/entry-parties", {}, 0),
-      api("/stock/entry-items", {}, 0),
-    ]).then(([parties, items]) => {
+    if (deskParties) return;
+    api("/customers/entry-parties", {}, 0).then(parties => {
       deskParties = parties || [];
-      deskItems = items || [];
     }).catch(e => toast(e.message, "error"));
   }
 
@@ -2683,13 +2683,7 @@ const App = (() => {
     return (deskParties || []).filter(c => {
       const blob = `${c.business_name || ""} ${c.city_name || ""} ${c.party_number || ""} ${c.marker_1 || ""} ${c.marker_2 || ""}`.toLowerCase();
       return blob.includes(needle);
-    }).slice(0, 12);
-  }
-
-  function deskFilterItems(q) {
-    const needle = String(q || "").trim().toLowerCase();
-    if (!needle) return [];
-    return (deskItems || []).filter(p => String(p.our_product_id || "").toLowerCase().includes(needle)).slice(0, 12);
+    }).slice(0, 8);
   }
 
   function deskPickCustomer(id) {
@@ -2698,100 +2692,124 @@ const App = (() => {
     renderOrderDesk();
   }
 
-  function deskPickProduct(id) {
-    deskProduct = (deskItems || []).find(p => Number(p.catalog_product_id) === Number(id)) || null;
-    renderOrderDesk();
-  }
-
   function onDeskCustomer(val) {
     const box = document.getElementById("desk-customer-hits");
     if (!box) return;
     box.innerHTML = deskFilterParties(val).map(c =>
-      `<button type="button" class="btn btn-secondary" style="display:block;width:100%;text-align:left;margin-top:6px;" onclick="App.deskPickCustomer(${c.id})">${esc(deskPartyLine(c))}</button>`
-    ).join("") || (String(val || "").trim() ? `<p style="color:var(--muted);">No match</p>` : "");
+      `<button type="button" class="btn btn-secondary desk-hit" onclick="App.deskPickCustomer(${c.id})">${esc(deskPartyLine(c))}</button>`
+    ).join("") || (String(val || "").trim() ? `<p style="font-size:18px;color:var(--muted);">No party</p>` : "");
   }
 
   function onDeskItem(val) {
     const box = document.getElementById("desk-item-hits");
     if (!box) return;
-    box.innerHTML = deskFilterItems(val).map(p =>
-      `<button type="button" class="btn btn-secondary" style="display:block;width:100%;text-align:left;margin-top:6px;" onclick="App.deskPickProduct(${p.catalog_product_id})">${esc(p.our_product_id || "")}</button>`
-    ).join("") || (String(val || "").trim() ? `<p style="color:var(--muted);">No match</p>` : "");
+    const q = String(val || "").trim();
+    clearTimeout(deskStockTimer);
+    if (!q) { box.innerHTML = ""; return; }
+    deskStockTimer = setTimeout(async () => {
+      try {
+        const rows = await api(`/stock/entry-items?q=${encodeURIComponent(q)}`, {}, 0) || [];
+        if ((document.getElementById("desk-item")?.value || "").trim() !== q) return;
+        deskItemHits = rows.slice(0, 8);
+        box.innerHTML = deskItemHits.map(p =>
+          `<button type="button" class="btn btn-secondary desk-hit" onclick="App.deskPickProduct(${p.catalog_product_id})">${esc(p.our_product_id || "")}</button>`
+        ).join("") || `<p style="font-size:18px;color:var(--muted);">No item</p>`;
+      } catch (e) { box.innerHTML = `<p style="color:var(--danger);">${esc(e.message)}</p>`; }
+    }, 250);
+  }
+
+  function deskPickProduct(id) {
+    const hit = deskItemHits.find(p => Number(p.catalog_product_id) === Number(id));
+    deskProduct = hit || { catalog_product_id: id, our_product_id: "" };
+    renderOrderDesk();
+  }
+
+  function onDeskStock(val) {
+    const box = document.getElementById("desk-stock-hits");
+    if (!box) return;
+    const q = String(val || "").trim();
+    clearTimeout(deskStockTimer);
+    if (!q) { box.innerHTML = ""; return; }
+    deskStockTimer = setTimeout(async () => {
+      try {
+        const rows = await api(`/stock/entry-items?q=${encodeURIComponent(q)}`, {}, 0) || [];
+        if ((document.getElementById("desk-stock")?.value || "").trim() !== q) return;
+        box.innerHTML = rows.slice(0, 8).map(p => {
+          const free = Math.max(0, Number(p.quantity_on_hand || 0) - Number(p.reserved_qty || 0));
+          return `<div style="padding:18px 4px;border-bottom:1px solid #e2e8f0;">
+            <div style="font-size:22px;font-weight:800;">${esc(p.our_product_id || "")}</div>
+            <div style="font-size:18px;color:#64748b;">Stock</div>
+            <div style="font-size:48px;font-weight:800;line-height:1.1;">${free}</div>
+          </div>`;
+        }).join("") || `<p style="font-size:20px;color:var(--muted);">No item</p>`;
+      } catch (e) { box.innerHTML = `<p style="color:var(--danger);font-size:18px;">${esc(e.message)}</p>`; }
+    }, 250);
   }
 
   async function deskPlace() {
-    if (!deskCustomer || !deskProduct) return toast("Pick a customer and an item", "error");
+    if (!deskCustomer || !deskProduct) return toast("Pick a party and an item", "error");
     const qty = Math.floor(Number(document.getElementById("desk-qty")?.value || "0"));
-    if (!qty || qty < 1) return toast("Enter a quantity", "error");
+    if (!qty || qty < 1) return toast("Enter quantity", "error");
     showLoading?.();
     try {
-      await api(`/customer-orders/customer/${deskCustomer.id}/offline`, {
+      await api(`/customer-orders/customer/${deskCustomer.id}/new`, {
         method: "POST",
         body: JSON.stringify({ lines: [{ catalog_product_id: deskProduct.catalog_product_id, quantity: qty }] }),
       });
-      toast("Order placed", "success");
+      deskNote = "Order placed";
+      deskCustomer = null;
       deskProduct = null;
+      deskMode = "home";
       renderOrderDesk();
     } catch (e) { toast(e.message, "error"); }
     finally { hideLoading?.(); }
   }
 
-  async function loadDeskOrders(id) {
-    const box = document.getElementById("desk-orders");
-    if (box) box.innerHTML = `<p style="color:var(--muted);">Loading…</p>`;
-    try {
-      const buckets = await Promise.all(["received", "open", "billed"].map(b =>
-        api(`/customer-orders/customer/${id}?bucket=${b}`, {}, 0).catch(() => null)
-      ));
-      const bits = [];
-      buckets.forEach(detail => {
-        if (!detail) return;
-        const rows = detail.placements || detail.open_lines || [];
-        rows.forEach(row => {
-          const lines = (row.lines || []).map(ln => `${ln.our_product_id} × ${ln.quantity ?? ln.quantity_open ?? ""}`).join(", ");
-          const title = row.display_name || row.bill_number || detail.bucket || "Order";
-          bits.push(`<div style="padding:10px 0;border-bottom:1px solid var(--border);"><strong>${esc(title)}</strong><div style="color:var(--muted);font-size:13px;">${esc(lines || "No lines")}</div></div>`);
-        });
-      });
-      if (box) box.innerHTML = bits.join("") || `<p style="color:var(--muted);">No orders yet.</p>`;
-    } catch (e) {
-      if (box) box.innerHTML = `<p style="color:var(--danger);">${esc(e.message)}</p>`;
-    }
-  }
-
   function renderOrderDesk() {
     const el = document.getElementById("desk-body");
     if (!el) return;
+    const back = `<button type="button" class="btn btn-secondary desk-big" style="margin-bottom:18px;" onclick="App.deskShow('home')">← Back</button>`;
     if (deskMode === "home") {
-      el.innerHTML = `<div style="display:flex;flex-direction:column;gap:12px;margin-top:24px;">
-        <button type="button" class="btn btn-primary btn-lg" onclick="App.deskShow('create')">Create order</button>
-        <button type="button" class="btn btn-secondary btn-lg" onclick="App.deskShow('view')">View order</button>
-      </div>`;
+      el.innerHTML = `${deskNote ? `<p class="ord-created-by" style="font-size:22px;">${esc(deskNote)}</p>` : ""}
+        <div class="desk-home">
+          <button type="button" class="btn btn-primary desk-big" onclick="App.deskShow('create')">Create order</button>
+          <button type="button" class="btn btn-secondary desk-big" onclick="App.deskShow('stock')">View stock</button>
+        </div>`;
       return;
     }
-    const back = `<button type="button" class="btn btn-secondary btn-sm" style="margin-bottom:16px;" onclick="App.deskShow('home')">← Back</button>`;
+    if (deskMode === "stock") {
+      el.innerHTML = `${back}
+        <label class="label" style="font-size:20px;">Item number</label>
+        <input id="desk-stock" class="input desk-field" placeholder="Type item number" oninput="App.onDeskStock(this.value)" />
+        <div id="desk-stock-hits"></div>`;
+      setTimeout(() => document.getElementById("desk-stock")?.focus(), 50);
+      return;
+    }
     if (!deskCustomer) {
       el.innerHTML = `${back}
-        <label class="label">Customer</label>
-        <input class="input" placeholder="Name, city, or number" oninput="App.onDeskCustomer(this.value)" />
+        <label class="label" style="font-size:20px;">Party</label>
+        <input id="desk-party" class="input desk-field" placeholder="Name or number" oninput="App.onDeskCustomer(this.value)" />
         <div id="desk-customer-hits"></div>`;
+      setTimeout(() => document.getElementById("desk-party")?.focus(), 50);
       return;
     }
     const who = esc(deskPartyLine(deskCustomer));
-    if (deskMode === "view") {
-      el.innerHTML = `${back}<p><strong>${who}</strong></p><div id="desk-orders"><p style="color:var(--muted);">Loading…</p></div>`;
-      loadDeskOrders(deskCustomer.id);
-      return;
-    }
     el.innerHTML = `${back}
-      <p><strong>${who}</strong> <button type="button" class="btn btn-ghost btn-sm" onclick="App.deskClearCustomer()">Change</button></p>
-      <label class="label">Item</label>
-      <input class="input" placeholder="Item number" oninput="App.onDeskItem(this.value)" />
-      <div id="desk-item-hits"></div>
-      ${deskProduct ? `<p style="margin-top:12px;"><strong>${esc(deskProduct.our_product_id || "")}</strong></p>
-        <label class="label">Quantity</label>
-        <input id="desk-qty" class="input" type="number" min="1" placeholder="How many" />
-        <button type="button" class="btn btn-primary" style="margin-top:12px;" onclick="App.deskPlace()">Place order</button>` : ""}`;
+      <p style="font-size:22px;font-weight:800;margin:0 0 12px;">${who}</p>
+      <button type="button" class="btn btn-secondary" style="min-height:52px;font-size:18px;margin-bottom:16px;" onclick="App.deskClearCustomer()">Change party</button>
+      ${deskProduct ? `<p style="font-size:26px;font-weight:800;margin:0 0 8px;">${esc(deskProduct.our_product_id || "")}</p>
+        <button type="button" class="btn btn-secondary" style="min-height:52px;font-size:18px;" onclick="App.deskClearProduct()">Change item</button>
+        <label class="label" style="font-size:20px;margin-top:16px;">Quantity</label>
+        <input id="desk-qty" class="input desk-field" type="number" min="1" inputmode="numeric" placeholder="How many" />
+        <button type="button" class="btn btn-primary desk-big" style="margin-top:16px;" onclick="App.deskPlace()">Place order</button>`
+      : `<label class="label" style="font-size:20px;">Item number</label>
+        <input id="desk-item" class="input desk-field" placeholder="Type item number" oninput="App.onDeskItem(this.value)" />
+        <div id="desk-item-hits"></div>`}`;
+    setTimeout(() => {
+      document.getElementById("desk-qty")?.focus();
+      document.getElementById("desk-item")?.focus();
+      document.getElementById("desk-stock")?.focus();
+    }, 50);
   }
 
   function deskClearCustomer() {
@@ -2800,6 +2818,10 @@ const App = (() => {
     renderOrderDesk();
   }
 
+  function deskClearProduct() {
+    deskProduct = null;
+    renderOrderDesk();
+  }
   async function toggleCustomerActive(id, makeActive) {
     const label = makeActive ? "restore to active" : "mark as inactive";
     if (!confirm(`${makeActive ? "Restore" : "Mark inactive"} this customer?`)) return;
@@ -3644,7 +3666,7 @@ const App = (() => {
     loadRecycleBin, setRecycleTab, openRecycleDetail, restoreItem, purgeItem,
     addLookup, submitLookup, submitCatalogCategory, editLookup, deleteLookup, openCustomerLedgerEntry, createCustomerOrder,
     setOrderTakerMode, onOrderTakerStock, onOrderTakerCustomer, pickOrderTakerCustomer, clearOrderTakerCustomer, onOrderTakerItem, addOrderTakerItem, removeOrderTakerLine, saveOrderTakerOrder,
-    deskShow, onDeskCustomer, onDeskItem, deskPickCustomer, deskPickProduct, deskPlace, deskClearCustomer,
+    deskShow, onDeskCustomer, onDeskItem, onDeskStock, deskPickCustomer, deskPickProduct, deskPlace, deskClearCustomer, deskClearProduct,
     closeModal, init, searchItemLookup, setWhatsappSends,
     downloadExportKind, downloadBackupZip,
     debouncedLoadCustomers, debouncedVendorSearch, debouncedCatalogSearch, debouncedAddonSearch, debouncedStockSearch,

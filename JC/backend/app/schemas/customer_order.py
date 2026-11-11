@@ -90,12 +90,14 @@ class CustomerOrderSummary(BaseModel):
     display_date: Optional[Union[date, datetime]] = None
     sort_at: Optional[datetime] = None
     sources: List[str] = []  # portal | phone — intake channels on open received placements
+    created_by: List[str] = []
     party_number: Optional[int] = None
     marker_1: Optional[str] = None
     marker_2: Optional[str] = None
     payment_type: Optional[str] = None
     city_name: Optional[str] = None
     narration: Optional[str] = None
+    markings: List[str] = []
     search_text: str = ""
     prices: List[str] = []
     search_lines: List[HubSearchLine] = []

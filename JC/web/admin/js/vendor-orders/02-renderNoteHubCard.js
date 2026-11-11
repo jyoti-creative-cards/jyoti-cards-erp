@@ -31,6 +31,7 @@
             ${hubChevron(pOpen)}
             <div>
               <div class="vo-hub-title" style="font-size:14px;">${ctx.esc(p.display_name || `Placement #${p.id}`)} · ${ctx.fmtDay(p.display_date)}</div>
+              ${p.placed_by_name ? `<div class="ord-created-by">Created by ${ctx.esc(p.placed_by_name)}</div>` : ""}
               <div class="vo-hub-meta">${p.line_count} lines · ${p.total_quantity || "—"} qty</div>
               ${noteChip(p.cancel_reason, "cancel")}
             </div>
@@ -265,7 +266,6 @@
     const el = document.getElementById("orders-detail-body");
     if (!el) return;
     const canWrite = ctx.canWrite?.("vendor_orders");
-    const showWho = ctx.isAdmin?.();
 
     if (currentBucket === "summary" && orderSummary) {
       setDetailHeader(orderSummary.vendor_label, "Live picture across placed, billed, pending, cancelled", "Summary");
@@ -364,7 +364,7 @@
           const lines = linesForPlacement(p.id);
           return HubUI.partyCard({
             title: p.display_name || (p.order_receipt_number ? `Receipt ${p.order_receipt_number}` : `Receive #${p.id}`),
-            meta: `${lines.length} products · ${p.total_quantity || 0} qty · ${ctx.fmtDay(p.display_date)}${p.notes ? ` · ${ctx.esc(p.notes)}` : ""}`,
+            meta: `${lines.length} products · ${p.total_quantity || 0} qty · ${ctx.fmtDay(p.display_date)}${p.notes ? ` · ${ctx.esc(p.notes)}` : ""}${p.placed_by_name ? `<div class="ord-created-by">Created by ${ctx.esc(p.placed_by_name)}</div>` : ""}`,
             primaryLabel: canWrite && p.receipt_id ? "Edit" : null,
             primaryOnclick: `Stock.openEditReceipt(${p.receipt_id})`,
             moreItems: canWrite && p.receipt_id
@@ -399,7 +399,7 @@
           const closed = !!p.closed_at;
           return HubUI.partyCard({
             title: p.display_name || p.bill_number || `Bill #${p.id}`,
-            meta: `${placementBadge(p.color_index)} ${lines.length} products · ${totalRecv} received · ${ctx.fmtDay(p.display_date)}${p.net_payable != null ? ` · Net ${fmtPrice(p.net_payable)}` : ""}${closed && p.close_reason ? noteChip(p.close_reason, "close") : ""}`,
+            meta: `${placementBadge(p.color_index)} ${lines.length} products · ${totalRecv} received · ${ctx.fmtDay(p.display_date)}${p.net_payable != null ? ` · Net ${fmtPrice(p.net_payable)}` : ""}${closed && p.close_reason ? noteChip(p.close_reason, "close") : ""}${p.placed_by_name ? `<div class="ord-created-by">Created by ${ctx.esc(p.placed_by_name)}</div>` : ""}`,
             pillHtml: closed ? HubUI.pill("Closed", "muted") : HubUI.pill("Open", "info"),
             primaryLabel: canWrite && !closed ? "Close" : null,
             primaryOnclick: `VendorOrders.closeBilledPlacement(${p.id})`,
@@ -437,7 +437,7 @@
         const cancelled = !!p.cancel_reason || p.status === "cancelled" || isCancelled;
         return HubUI.partyCard({
           title: `${isCancelled ? "Cancelled" : "Placement"} · ${ctx.fmtDay(p.display_date)}`,
-          meta: `${placementBadge(p.color_index)} ${p.line_count} lines · ${p.total_quantity || "—"} qty${showWho ? ` · ${ctx.esc(p.placed_by_name)}` : ""}${p.cancel_reason ? noteChip(p.cancel_reason, "cancel") : ""}`,
+          meta: `${placementBadge(p.color_index)} ${p.line_count} lines · ${p.total_quantity || "—"} qty${p.placed_by_name ? `<div class="ord-created-by">Created by ${ctx.esc(p.placed_by_name)}</div>` : ""}${p.cancel_reason ? noteChip(p.cancel_reason, "cancel") : ""}`,
           pillHtml: cancelled ? HubUI.pill("Cancelled", "danger") : HubUI.pill("Placed", "muted"),
           primaryLabel: canWrite && isPlaced && !cancelled ? "Receive" : null,
           primaryOnclick: `VendorOrders.receiveOrder()`,

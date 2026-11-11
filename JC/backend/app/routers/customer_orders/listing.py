@@ -162,6 +162,74 @@ def _customer_name(db: Session, customer_id: int) -> str:
     c = db.get(Customer, customer_id)
     return c.business_name if c else f"Customer #{customer_id}"
 
+def _who_made(source: str | None, name: str | None, notes: str | None) -> str:
+    who = (name or "").strip()
+    if who and who.lower() not in {"admin", "staff"}:
+        return who
+    src = (source or "").strip().lower()
+    note = (notes or "").strip().lower()
+    if src in {"app", "portal", "shop"}:
+        return "Customer"
+    if who:
+        return "Admin" if who.lower() == "admin" else who
+    if "placed by admin" in note or note.startswith("[phone]") or src in {"offline", "phone"}:
+        return "Admin"
+    return "Customer"
+
+
+def _creators_by_order(db: Session, order_ids: list[int]) -> dict[int, list[str]]:
+    if not order_ids:
+        return {}
+    rows = (
+        db.query(
+            CustomerOrderPlacement.customer_order_id,
+            CustomerOrderPlacement.order_source,
+            CustomerOrderPlacement.placed_by_name,
+            CustomerOrderPlacement.customer_notes,
+        )
+        .filter(
+            CustomerOrderPlacement.customer_order_id.in_(order_ids),
+            CustomerOrderPlacement.deleted_at.is_(None),
+        )
+        .all()
+    )
+    found: dict[int, list[str]] = {}
+    for order_id, source, name, notes in rows:
+        label = _who_made(source, name, notes)
+        bucket = found.setdefault(int(order_id), [])
+        if label not in bucket:
+            bucket.append(label)
+    return found
+
+
+def _creators_by_customer(db: Session, customer_ids: list[int]) -> dict[int, list[str]]:
+    if not customer_ids:
+        return {}
+    rows = (
+        db.query(
+            CustomerOrder.customer_id,
+            CustomerOrderPlacement.order_source,
+            CustomerOrderPlacement.placed_by_name,
+            CustomerOrderPlacement.customer_notes,
+        )
+        .join(CustomerOrder, CustomerOrder.id == CustomerOrderPlacement.customer_order_id)
+        .filter(
+            CustomerOrder.customer_id.in_(customer_ids),
+            CustomerOrder.bucket == "open",
+            CustomerOrder.is_open.is_(True),
+            CustomerOrderPlacement.deleted_at.is_(None),
+        )
+        .all()
+    )
+    found: dict[int, list[str]] = {}
+    for customer_id, source, name, notes in rows:
+        label = _who_made(source, name, notes)
+        bucket = found.setdefault(int(customer_id), [])
+        if label not in bucket:
+            bucket.append(label)
+    return found
+
+
 def _placement_source(notes: str | None) -> str:
     n = (notes or "").lower()
     if "placed by admin" in n or n.startswith("[phone]"):
@@ -204,6 +272,52 @@ def _sources_for_received_many(db: Session, received_order_ids: list[int]) -> di
 
 _SKIP_NOTES = {"order placed by admin (phone)", "offline order", "order placed by admin"}
 
+
+def _clean_mark(text: str | None) -> str | None:
+    value = (text or "").strip()
+    if not value or value.lower() in _SKIP_NOTES:
+        return None
+    return value
+
+
+def _unique_marks(*groups: list[str] | None) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for group in groups:
+        for raw in group or []:
+            text = _clean_mark(raw)
+            if not text:
+                continue
+            key = text.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(text)
+    return out
+
+
+def _placement_marks_by_customer(db: Session, customer_ids: list[int]) -> dict[int, list[str]]:
+    if not customer_ids:
+        return {}
+    rows = (
+        db.query(CustomerOrder.customer_id, CustomerOrderPlacement.customer_notes)
+        .join(CustomerOrder, CustomerOrder.id == CustomerOrderPlacement.customer_order_id)
+        .filter(
+            CustomerOrder.customer_id.in_(customer_ids),
+            CustomerOrderPlacement.deleted_at.is_(None),
+        )
+        .all()
+    )
+    found: dict[int, list[str]] = {}
+    for cid, note in rows:
+        text = _clean_mark(note)
+        if not text:
+            continue
+        bucket = found.setdefault(int(cid), [])
+        if text not in bucket:
+            bucket.append(text)
+    return found
+
 def _narration_by_order(db: Session, order_ids: list[int]) -> dict[int, str]:
     if not order_ids:
         return {}
@@ -231,6 +345,7 @@ def _summaries_batch(db: Session, orders: list[CustomerOrder]) -> list[CustomerO
         return []
     ids = [o.id for o in orders]
     cids = list({o.customer_id for o in orders})
+    creators = _creators_by_order(db, ids)
     placement_counts = dict(
         db.query(CustomerOrderPlacement.customer_order_id, func.count(CustomerOrderPlacement.id))
         .filter(
@@ -260,6 +375,7 @@ def _summaries_batch(db: Session, orders: list[CustomerOrder]) -> list[CustomerO
     cities = {c.id: c for c in db.query(City).filter(City.id.in_(city_ids)).all()} if city_ids else {}
     sources = _sources_for_received_many(db, ids)
     narrations = _narration_by_order(db, ids)
+    placement_marks = _placement_marks_by_customer(db, cids)
     search_by_order: dict[int, dict] = defaultdict(lambda: {"text": set(), "prices": []})
     open_bits = (
         db.query(
@@ -303,12 +419,14 @@ def _summaries_batch(db: Session, orders: list[CustomerOrder]) -> list[CustomerO
                 display_date=display_date,
                 sort_at=order.updated_at,
                 sources=sources.get(order.id, []) if order.bucket == "received" else [],
+                created_by=creators.get(order.id, []),
                 party_number=getattr(cust, "party_number", None) if cust else None,
                 marker_1=getattr(cust, "marker_1", None) if cust else None,
                 marker_2=getattr(cust, "marker_2", None) if cust else None,
                 payment_type=getattr(cust, "payment_type", None) if cust else None,
                 city_name=city.name if city else None,
                 narration=narrations.get(order.id) or None,
+                markings=_unique_marks(placement_marks.get(order.customer_id, []), [narrations.get(order.id) or ""]),
                 search_text=" ".join(sorted(search_by_order[order.id]["text"])),
                 prices=search_by_order[order.id]["prices"],
             )
@@ -334,6 +452,7 @@ def _summary(db: Session, order: CustomerOrder) -> CustomerOrderSummary:
     else:
         total = sum(ln.quantity for ln in lines)
     sources = _sources_for_received(db, order.id) if order.bucket == "received" else []
+    creators = _creators_by_order(db, [order.id]).get(order.id, [])
     cust = db.get(Customer, order.customer_id)
     city = db.get(City, cust.city_id) if cust and cust.city_id else None
     display_date = order.updated_at
@@ -349,11 +468,13 @@ def _summary(db: Session, order: CustomerOrder) -> CustomerOrderSummary:
         display_date=display_date,
         sort_at=order.updated_at,
         sources=sources,
+        created_by=creators,
         party_number=getattr(cust, "party_number", None) if cust else None,
         marker_1=getattr(cust, "marker_1", None) if cust else None,
         marker_2=getattr(cust, "marker_2", None) if cust else None,
         payment_type=getattr(cust, "payment_type", None) if cust else None,
         city_name=city.name if city else None,
+        markings=_placement_marks_by_customer(db, [order.customer_id]).get(order.customer_id, []),
     )
 
 @router.get("", response_model=List[CustomerOrderSummary])
@@ -450,6 +571,16 @@ def list_customer_orders(
                 "price": format(price, "f") if price is not None else "",
             })
         touched_by_cid = {int(r[0]): r[3] for r in rows}
+        placement_marks = _placement_marks_by_customer(db, cids)
+        product_marks_by_cid: dict[int, list[str]] = defaultdict(list)
+        open_product_ids = [int(pid) for _, pid, *_ in search_rows if pid]
+        if open_product_ids:
+            from app.services.product_markings import marking_labels
+            labels = marking_labels(db, open_product_ids)
+            for cid, pid, *_rest in search_rows:
+                label = labels.get(int(pid))
+                if label and label not in product_marks_by_cid[int(cid)]:
+                    product_marks_by_cid[int(cid)].append(label)
         placed_by_cid: dict[int, object] = {}
         if received_ids:
             order_cid = {o.id: o.customer_id for o in received_rows}
@@ -466,6 +597,7 @@ def list_customer_orders(
                 if cid_for_order is not None:
                     placed_by_cid[cid_for_order] = placed
 
+        creators_by_cid = _creators_by_customer(db, cids)
         out: list[CustomerOrderSummary] = []
         for customer_id, total_qty, line_count, _touched in rows:
             cid = int(customer_id)
@@ -485,11 +617,14 @@ def list_customer_orders(
                     display_date=placed_by_cid.get(cid) or touched,
                     sort_at=touched if isinstance(touched, datetime) else None,
                     sources=sources_by_order_id.get(received.id, []) if received else [],
+                    created_by=creators_by_cid.get(cid, []),
                     party_number=getattr(cust_obj, "party_number", None) if cust_obj else None,
                     marker_1=getattr(cust_obj, "marker_1", None) if cust_obj else None,
                     marker_2=getattr(cust_obj, "marker_2", None) if cust_obj else None,
                     payment_type=getattr(cust_obj, "payment_type", None) if cust_obj else None,
                     city_name=cities.get(cust_obj.city_id) if cust_obj and cust_obj.city_id else None,
+                    markings=_unique_marks(placement_marks.get(cid, []), product_marks_by_cid.get(cid, [])),
+                    narration=" · ".join(_unique_marks(placement_marks.get(cid, []), product_marks_by_cid.get(cid, []))) or None,
                     search_lines=lines_by_cid.get(cid, []),
                     search_text=" ".join(ln["text"] for ln in lines_by_cid.get(cid, [])),
                     prices=[ln["price"] for ln in lines_by_cid.get(cid, []) if ln["price"]],
@@ -588,6 +723,36 @@ def list_customer_orders(
         } if bill_cids else {}
         city_ids = {c.city_id for c in customers_by_id.values() if c.city_id}
         cities = {c.id: c.name for c in (db.query(City).filter(City.id.in_(city_ids)).all() if city_ids else [])}
+        placement_marks = _placement_marks_by_customer(db, bill_cids)
+        bill_place_ids = [int(b.placement_id) for _, bills, _, _ in bill_rows for b in bills if b.placement_id]
+        creators_by_placement: dict[int, str] = {}
+        if bill_place_ids:
+            for pid, source, name, notes in (
+                db.query(
+                    CustomerOrderPlacement.id,
+                    CustomerOrderPlacement.order_source,
+                    CustomerOrderPlacement.placed_by_name,
+                    CustomerOrderPlacement.customer_notes,
+                )
+                .filter(CustomerOrderPlacement.id.in_(bill_place_ids))
+                .all()
+            ):
+                creators_by_placement[int(pid)] = _who_made(source, name, notes)
+        bill_ids = [int(b.id) for _, bills, _, _ in bill_rows for b in bills if b.id]
+        product_marks_by_cid: dict[int, list[str]] = defaultdict(list)
+        if bill_ids:
+            from app.services.product_markings import marking_labels
+            line_rows = (
+                db.query(CustomerBill.customer_id, CustomerBillLine.catalog_product_id)
+                .join(CustomerBillLine, CustomerBillLine.bill_id == CustomerBill.id)
+                .filter(CustomerBill.id.in_(bill_ids))
+                .all()
+            )
+            labels = marking_labels(db, [int(pid) for _, pid in line_rows if pid])
+            for cid, pid in line_rows:
+                label = labels.get(int(pid))
+                if label and label not in product_marks_by_cid[int(cid)]:
+                    product_marks_by_cid[int(cid)].append(label)
         out = []
         for cid, bills, display_date, newest in bill_rows:
             cust_obj = customers_by_id.get(int(cid))
@@ -596,6 +761,11 @@ def list_customer_orders(
                 for b in sorted(bills, key=lambda b: int(b.id or 0))
             ]
             total = sum((b.grand_total or Decimal("0") for b in bills), Decimal("0"))
+            marks = _unique_marks(
+                placement_marks.get(int(cid), []),
+                [b.narration for b in bills],
+                product_marks_by_cid.get(int(cid), []),
+            )
             out.append(
                 CustomerOrderSummary(
                     id=0,
@@ -612,11 +782,19 @@ def list_customer_orders(
                     display_date=display_date or today_ist(),
                     sort_at=newest if isinstance(newest, datetime) else None,
                     sources=[],
+                    created_by=list(dict.fromkeys(
+                        creators_by_placement.get(int(b.placement_id))
+                        if b.placement_id and int(b.placement_id) in creators_by_placement
+                        else ((b.created_by_name or "").strip() or "Staff")
+                        for b in bills
+                    )),
                     party_number=getattr(cust_obj, "party_number", None) if cust_obj else None,
                     marker_1=getattr(cust_obj, "marker_1", None) if cust_obj else None,
                     marker_2=getattr(cust_obj, "marker_2", None) if cust_obj else None,
                     payment_type=getattr(cust_obj, "payment_type", None) if cust_obj else None,
                     city_name=cities.get(cust_obj.city_id) if cust_obj and cust_obj.city_id else None,
+                    markings=marks,
+                    narration=" · ".join(marks) or None,
                 )
             )
         return _filter_by_product(out)

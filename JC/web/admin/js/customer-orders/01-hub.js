@@ -373,47 +373,53 @@
     return all.map(text => markingBanner(text)).join("");
   }
 
-  function paintMarkEditor() {
-    if (currentBucket === "dispatch") renderDispatchList();
-    else renderList();
-    setTimeout(() => document.getElementById("co-mark-box")?.focus(), 30);
-  }
-
-  function openTileMark(kind, customerId, billIds) {
+  function openTileMark(_kind, customerId, billIds) {
     const cid = Number(customerId);
     const bills = String(billIds || "");
     let text = "";
     if (currentBucket === "dispatch") {
       const parcel = dispatchParcels.find(p => String(p.bill_id) === bills);
-      text = kind === "customer" ? parcel && parcel.customer_marking : parcel && parcel.marking;
+      text = (parcel && parcel.marking) || "";
     } else {
       const row = (orders || []).find(o => Number(o.customer_id) === cid);
-      text = kind === "customer" ? row && row.customer_marking : row && row.marking;
+      text = (row && row.marking) || "";
     }
     markEdit = {
-      kind,
+      kind: "marking",
       customerId: cid,
       billIds: bills.split(",").filter(Boolean).map(Number),
       text: text || "",
-      key: kind + ":" + cid + ":" + bills,
+      key: "marking:" + cid + ":" + bills,
     };
-    paintMarkEditor();
+    ctx.openDetail?.(
+      "Marking",
+      `<textarea id="co-mark-box" class="input" rows="5" style="width:100%;background:#fee2e2;border:1px solid #dc2626;font-weight:800;color:#b91c1c;">${ctx.esc(text || "")}</textarea>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
+        <button type="button" class="btn btn-primary" onclick="CustomerOrders.saveTileMark(false)">Save</button>
+        <button type="button" class="btn btn-danger" onclick="CustomerOrders.saveTileMark(true)">Delete</button>
+        <button type="button" class="btn btn-secondary" onclick="App.closeDetail?.()">Cancel</button>
+      </div>`,
+      "",
+      "sm"
+    );
+    setTimeout(() => document.getElementById("co-mark-box")?.focus(), 30);
   }
 
   function cancelTileMark() {
     markEdit = null;
-    paintMarkEditor();
+    App.closeDetail?.();
   }
 
   async function saveTileMark(remove) {
     if (!markEdit) return;
     const text = remove ? "" : (document.getElementById("co-mark-box")?.value || "");
     const target = markEdit;
+    App.closeDetail?.();
     ctx.showLoading?.();
     try {
       await ctx.api(`/customer-orders/customer/${target.customerId}/marking`, {
         method: "PATCH",
-        body: JSON.stringify({ kind: target.kind, text, bill_ids: target.billIds || [] }),
+        body: JSON.stringify({ kind: "marking", text, bill_ids: target.billIds || [] }),
       }, 0);
       markEdit = null;
       ctx.invalidateCache?.("/customer-orders");
@@ -425,41 +431,22 @@
     finally { ctx.hideLoading?.(); }
   }
 
-  function markStrip(label, text, kind, customerId, billIds, allowEmpty) {
+  function markStrip(text, customerId, billIds) {
     const bills = billIds || "";
-    const key = kind + ":" + customerId + ":" + bills;
-    const editing = markEdit && markEdit.key === key;
-    const box = "display:block;width:calc(100% - 28px);margin:8px 14px;padding:8px 10px;background:#fee2e2;border:1px solid #dc2626;border-radius:8px;font-weight:800;font-size:16px;color:#b91c1c;text-align:left;";
-    if (editing) {
-      return `<div onclick="event.stopPropagation()" style="${box}">
-        <div style="margin-bottom:6px;">${label}</div>
-        <textarea id="co-mark-box" class="input" rows="3" style="width:100%;font-weight:700;color:#7f1d1d;">${ctx.esc(markEdit.text || "")}</textarea>
-        <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
-          <button type="button" class="btn btn-primary btn-sm" onclick="event.stopPropagation();CustomerOrders.saveTileMark(false)">Save</button>
-          <button type="button" class="btn btn-danger btn-sm" onclick="event.stopPropagation();CustomerOrders.saveTileMark(true)">Delete</button>
-          <button type="button" class="btn btn-secondary btn-sm" onclick="event.stopPropagation();CustomerOrders.cancelTileMark()">Cancel</button>
-        </div>
-      </div>`;
-    }
+    const box = "display:block;width:calc(100% - 28px);margin:8px 14px;padding:10px 12px;background:#fee2e2;border:1px solid #dc2626;border-radius:8px;font-weight:800;font-size:16px;color:#b91c1c;text-align:left;cursor:pointer;";
     if (!text) {
-      if (!allowEmpty) return "";
-      return `<button type="button" class="btn btn-secondary btn-sm" style="margin:8px 14px;" onclick="event.stopPropagation();CustomerOrders.openTileMark('${kind}',${customerId},'${bills}')">Add marking</button>`;
+      return `<button type="button" class="btn btn-secondary btn-sm" style="margin:8px 14px;" onclick="event.stopPropagation();CustomerOrders.openTileMark('marking',${customerId},'${bills}')">Add marking</button>`;
     }
-    return `<button type="button" style="${box}cursor:pointer;" onclick="event.stopPropagation();CustomerOrders.openTileMark('${kind}',${customerId},'${bills}')">${label}: ${ctx.esc(text)}</button>`;
+    return `<button type="button" style="${box}" onclick="event.stopPropagation();CustomerOrders.openTileMark('marking',${customerId},'${bills}')">Marking: ${ctx.esc(text)}</button>`;
   }
 
   function tileMarkHtml(o) {
     const bills = (Array.isArray(o && o.bills) ? o.bills : []).map(b => b.bill_id).filter(Boolean).join(",");
-    const cid = o.customer_id;
-    return markStrip("Marking", (o && o.marking) || "", "marking", cid, bills, true)
-      + markStrip("Customer marking", (o && o.customer_marking) || "", "customer", cid, bills, false);
+    return markStrip((o && o.marking) || "", o.customer_id, bills);
   }
 
   function parcelMarkHtml(p) {
-    const cid = p.customer_id;
-    const bills = String(p.bill_id || "");
-    return markStrip("Marking", (p && p.marking) || "", "marking", cid, bills, true)
-      + markStrip("Customer marking", (p && p.customer_marking) || "", "customer", cid, bills, false);
+    return markStrip((p && p.marking) || "", p.customer_id, String(p.bill_id || ""));
   }
 
   function markingBanner(note) {

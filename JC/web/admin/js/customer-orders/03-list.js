@@ -155,9 +155,9 @@
 
     // More menu HTML (inline, no OrdersUI.moreMenu — build simple dropdown)
     const moreHtml = more.length ? `<div class="ord-more-wrap" style="position:relative;">
-      <button type="button" class="btn btn-ghost btn-sm" style="padding:0 8px;" onclick="event.stopPropagation();CustomerOrders.toggleCardMore(event,${o.customer_id})">⋮</button>
-      <div id="co-card-more-${o.customer_id}" class="ord-more-menu" style="display:none;position:absolute;right:0;top:calc(100% + 4px);z-index:40;background:#fff;border:1px solid #e2e8f0;border-radius:10px;box-shadow:0 8px 24px rgba(15,23,42,.12);min-width:180px;">
-        ${more.map(m => `<button type="button" class="ord-more-item${m.danger ? " ord-more-danger" : ""}" onclick="event.stopPropagation();CustomerOrders.closeAllCardMore();${m.onclick}">${ctx.esc(m.label)}</button>`).join("")}
+      <button type="button" class="btn btn-ghost btn-sm" style="min-width:44px;min-height:44px;padding:0 10px;font-size:22px;line-height:1;" onclick="event.preventDefault();event.stopPropagation();CustomerOrders.toggleCardMore(event,${o.customer_id})">⋮</button>
+      <div id="co-card-more-${o.customer_id}" class="ord-more-menu" style="display:none;position:fixed;z-index:80;background:#fff;border:1px solid #e2e8f0;border-radius:10px;box-shadow:0 8px 24px rgba(15,23,42,.18);min-width:200px;">
+        ${more.map(m => `<button type="button" class="ord-more-item${m.danger ? " ord-more-danger" : ""}" onclick="event.preventDefault();event.stopPropagation();CustomerOrders.closeAllCardMore();${m.onclick}">${ctx.esc(m.label)}</button>`).join("")}
       </div>
     </div>` : "";
 
@@ -189,18 +189,27 @@
   }
 
   function toggleCardMore(e, customerId) {
+    if (e) { e.preventDefault(); e.stopPropagation(); }
     const id = `co-card-more-${customerId}`;
     const el = document.getElementById(id);
     if (!el) return;
-    const isOpen = el.style.display !== "none";
+    const wasOpen = el.style.display !== "none";
     closeAllCardMore();
-    if (!isOpen) {
-      el.style.display = "block";
-      el.closest(".ord-order-card")?.classList.add("is-menu-open");
+    if (wasOpen) return;
+    const btn = e && (e.currentTarget || e.target);
+    const rect = btn && btn.getBoundingClientRect ? btn.getBoundingClientRect() : null;
+    if (rect) {
+      const menuHeight = 180;
+      const top = rect.bottom + 6 + menuHeight > window.innerHeight ? Math.max(8, rect.top - menuHeight) : rect.bottom + 6;
+      el.style.top = top + "px";
+      el.style.left = Math.max(8, rect.right - 200) + "px";
     }
+    el.style.display = "block";
+    el.closest(".ord-order-card")?.classList.add("is-menu-open");
   }
 
-  function closeAllCardMore() {
+  function closeAllCardMore(e) {
+    if (e && e.target && e.target.closest && e.target.closest(".ord-more-wrap, .ord-more-menu")) return;
     document.querySelectorAll('[id^="co-card-more-"]').forEach(el => { el.style.display = "none"; });
     document.querySelectorAll(".ord-order-card.is-menu-open").forEach(el => el.classList.remove("is-menu-open"));
   }

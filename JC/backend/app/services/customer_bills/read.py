@@ -66,7 +66,7 @@ def get_process_lines(db: Session, customer_id: int) -> dict:
         )
     orders = billable_orders(db, customer_id)
     from app.models.customer_order import CustomerOrder, CustomerOrderPlacement
-    from app.services.customer_selling.marking import resolve_pair
+    from app.services.customer_selling.marking import one_mark, resolve_pair
 
     live = (
         db.query(CustomerOrder)
@@ -89,11 +89,12 @@ def get_process_lines(db: Session, customer_id: int) -> dict:
             .all()
         )
         staff, cust = resolve_pair(chosen, [(source, note) for source, note in notes])
+    shown = one_mark(staff, cust) or ""
     return {
         "lines": out,
         "orders": orders,
-        "default_narration": staff or "",
-        "customer_marking": cust or "",
+        "default_narration": shown,
+        "customer_marking": "",
         "credit": credit_status(db, customer_id),
     }
 

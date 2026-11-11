@@ -16,7 +16,7 @@ from app.models.city import City
 from app.models.customer import Customer
 from app.models.customer_bill import CustomerBill, CustomerBillLine
 from app.models.customer_order import CustomerOpenLine, CustomerOrder, CustomerOrderLine, CustomerOrderPlacement
-from app.services.customer_selling.marking import bill_tile_mark, mark_list as _mark_list
+from app.services.customer_selling.marking import mark_list as _mark_list, one_mark
 from app.schemas.customer_order import (
     CancelRequest,
     EditBillIn,
@@ -450,6 +450,7 @@ def _summaries_batch(db: Session, orders: list[CustomerOrder]) -> list[CustomerO
         city = cities.get(cust.city_id) if cust and cust.city_id else None
         line_count, total = line_stats.get(order.id, (0, 0))
         display_date = order.updated_at
+        shown = one_mark(*pairs.get(order.id, (None, None)))
         out.append(
             CustomerOrderSummary(
                 id=order.id,
@@ -469,10 +470,10 @@ def _summaries_batch(db: Session, orders: list[CustomerOrder]) -> list[CustomerO
                 marker_2=getattr(cust, "marker_2", None) if cust else None,
                 payment_type=getattr(cust, "payment_type", None) if cust else None,
                 city_name=city.name if city else None,
-                narration=pairs.get(order.id, (None, None))[0],
-                marking=pairs.get(order.id, (None, None))[0],
-                customer_marking=pairs.get(order.id, (None, None))[1],
-                markings=_mark_list(*pairs.get(order.id, (None, None))),
+                narration=shown,
+                marking=shown,
+                customer_marking=None,
+                markings=[shown] if shown else [],
                 search_text=" ".join(sorted(search_by_order[order.id]["text"])),
                 prices=search_by_order[order.id]["prices"],
             )
@@ -502,7 +503,7 @@ def _summary(db: Session, order: CustomerOrder) -> CustomerOrderSummary:
     cust = db.get(Customer, order.customer_id)
     city = db.get(City, cust.city_id) if cust and cust.city_id else None
     display_date = order.updated_at
-    staff_mark, cust_mark = _order_pairs(db, [order]).get(order.id, (None, None))
+    shown = one_mark(*_order_pairs(db, [order]).get(order.id, (None, None)))
     return CustomerOrderSummary(
         id=order.id,
         customer_id=order.customer_id,
@@ -521,10 +522,10 @@ def _summary(db: Session, order: CustomerOrder) -> CustomerOrderSummary:
         marker_2=getattr(cust, "marker_2", None) if cust else None,
         payment_type=getattr(cust, "payment_type", None) if cust else None,
         city_name=city.name if city else None,
-        narration=staff_mark,
-        marking=staff_mark,
-        customer_marking=cust_mark,
-        markings=_mark_list(staff_mark, cust_mark),
+        narration=shown,
+        marking=shown,
+        customer_marking=None,
+        markings=[shown] if shown else [],
     )
 
 @router.get("", response_model=List[CustomerOrderSummary])
@@ -664,10 +665,10 @@ def list_customer_orders(
                     marker_2=getattr(cust_obj, "marker_2", None) if cust_obj else None,
                     payment_type=getattr(cust_obj, "payment_type", None) if cust_obj else None,
                     city_name=cities.get(cust_obj.city_id) if cust_obj and cust_obj.city_id else None,
-                    narration=marks_by_cid.get(cid, (None, None))[0],
-                    marking=marks_by_cid.get(cid, (None, None))[0],
-                    customer_marking=marks_by_cid.get(cid, (None, None))[1],
-                    markings=_mark_list(*marks_by_cid.get(cid, (None, None))),
+                    narration=(shown_open := one_mark(*marks_by_cid.get(cid, (None, None)))),
+                    marking=shown_open,
+                    customer_marking=None,
+                    markings=[shown_open] if shown_open else [],
                     search_lines=lines_by_cid.get(cid, []),
                     search_text=" ".join(ln["text"] for ln in lines_by_cid.get(cid, [])),
                     prices=[ln["price"] for ln in lines_by_cid.get(cid, []) if ln["price"]],
@@ -790,9 +791,9 @@ def list_customer_orders(
                 for b in ordered_bills
             ]
             total = sum((b.grand_total or Decimal("0") for b in bills), Decimal("0"))
-            staff, cust_mark = bill_tile_mark(
-                [b.narration for b in ordered_bills],
+            shown = one_mark(
                 *marks_by_cid.get(int(cid), (None, None)),
+                [b.narration for b in ordered_bills],
             )
             out.append(
                 CustomerOrderSummary(
@@ -821,10 +822,10 @@ def list_customer_orders(
                     marker_2=getattr(cust_obj, "marker_2", None) if cust_obj else None,
                     payment_type=getattr(cust_obj, "payment_type", None) if cust_obj else None,
                     city_name=cities.get(cust_obj.city_id) if cust_obj and cust_obj.city_id else None,
-                    narration=staff,
-                    marking=staff,
-                    customer_marking=cust_mark,
-                    markings=_mark_list(staff, cust_mark),
+                    narration=shown,
+                    marking=shown,
+                    customer_marking=None,
+                    markings=[shown] if shown else [],
                 )
             )
         return _filter_by_product(out)

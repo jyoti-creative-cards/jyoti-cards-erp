@@ -83,27 +83,28 @@ def resolve_pair(order: CustomerOrder | None, placement_rows: list[tuple[str | N
     return staff, cust
 
 
-def mark_list(staff: str | None, cust: str | None) -> list[str]:
-    out = []
-    if staff:
-        out.append(staff)
-    if cust and cust.casefold() != (staff or "").casefold():
-        out.append(cust)
-    return out
+def one_mark(*values) -> str | None:
+    """Every old line, joined into the single marking."""
+    parts: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        items = value if isinstance(value, (list, tuple)) else [value]
+        for item in items:
+            for piece in str(item or "").split("·"):
+                text = clean_mark(piece)
+                if not text:
+                    continue
+                key = text.casefold()
+                if key in seen:
+                    continue
+                seen.add(key)
+                parts.append(text)
+    return " · ".join(parts) or None
 
 
-def bill_tile_mark(narrations: list[str | None], staff: str | None, cust: str | None) -> tuple[str | None, str | None]:
-    """The billed tile shows the bill sentence. The order sentence shows only when the bill has none."""
-    shown = None
-    for raw in narrations:
-        text = clean_mark(raw)
-        if text:
-            shown = text
-    if shown is None:
-        shown = staff
-    if shown and cust and shown.casefold() == cust.casefold():
-        cust = None
-    return shown, cust
+def mark_list(staff: str | None, cust: str | None = None) -> list[str]:
+    text = one_mark(staff, cust)
+    return [text] if text else []
 
 
 def set_live_marking(db: Session, customer_id: int, *, kind: str, text: str | None) -> None:
@@ -131,3 +132,4 @@ def set_live_marking(db: Session, customer_id: int, *, kind: str, text: str | No
             order.customer_marking = value
         else:
             order.marking = value
+            order.customer_marking = None

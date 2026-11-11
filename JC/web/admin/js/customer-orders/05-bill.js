@@ -782,7 +782,6 @@
         <input type="checkbox" ${gstEnabled ? "checked" : ""} onchange="CustomerOrders.setGst(this.checked)" /> GST
         ${gstEnabled ? `<input class="input" style="width:80px;" value="${ctx.esc(gstRate)}" oninput="CustomerOrders.setGstRate(this.value)" />` : ""}
       </label>
-      ${customerNotes ? `<div style="margin-top:12px;padding:8px 10px;background:#fee2e2;border:1px solid #dc2626;border-radius:8px;font-weight:800;color:#b91c1c;">Customer marking: ${ctx.esc(customerNotes)}</div>` : ""}
       <label class="label">Marking</label>
       <textarea class="input" rows="3" style="background:#fee2e2;border:1px solid #dc2626;font-weight:800;color:#b91c1c;" oninput="CustomerOrders.setNarration(this.value)">${ctx.esc(narration)}</textarea>
     `;

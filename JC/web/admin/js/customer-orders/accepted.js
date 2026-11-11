@@ -593,7 +593,7 @@ const CustomerOrders = (() => {
         <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;">
           <div style="min-width:0;flex:1;">
             <strong class="ord-card-title" style="font-size:16px;">${ctx.esc(p.customer_label || "Customer")}</strong>
-            ${p.created_by ? `<div class="ord-created-by">Created by ${ctx.esc(p.created_by)}</div>` : ""}
+            ${p.created_by ? `<div style="display:block;margin-top:8px;padding:8px 10px;border-radius:10px;background:#dcfce7;color:#166534;font-weight:800;font-size:16px;">Created by ${ctx.esc(p.created_by)}</div>` : ""}
             <div class="ord-card-meta" style="margin-top:4px;">${ctx.esc(meta)}</div>
             <div style="font-size:13px;margin-top:8px;">${lines || "—"}${more}</div>
           </div>
@@ -702,9 +702,11 @@ const CustomerOrders = (() => {
   }
 
   function createdByHtml(o) {
-    const names = Array.isArray(o.created_by) ? o.created_by.map(x => String(x || "").trim()).filter(Boolean) : [];
+    const raw = o && o.created_by;
+    const list = Array.isArray(raw) ? raw : (raw ? [raw] : []);
+    const names = list.map(x => String(x || "").trim()).filter(Boolean);
     if (!names.length) return "";
-    return `<div class="ord-created-by">Created by ${ctx.esc(names.join(" · "))}</div>`;
+    return `<div style="display:block;margin:0;padding:8px 14px;background:#dcfce7;color:#166534;font-weight:800;font-size:16px;line-height:1.3;">Created by ${ctx.esc(names.join(" · "))}</div>`;
   }
 
   function sourceMeta(sources) {
@@ -829,9 +831,9 @@ const CustomerOrders = (() => {
         <div class="ord-order-card-party">
           <div class="ord-order-card-name">${nameHtml}</div>
           <div class="ord-order-card-city">${o.city_name ? ctx.esc(o.city_name) : ""}${o.city_name && timeStr ? " · " : ""}${timeStr ? `<span class="ord-order-card-time">${ctx.esc(timeStr)}</span>` : ""}</div>
-          ${createdByHtml(o)}
         </div>
       </div>
+      ${createdByHtml(o)}
           <div class="ord-order-card-body">
         ${statText ? `<div class="ord-order-card-stat">${statText}</div>` : ""}
         ${markHtml}

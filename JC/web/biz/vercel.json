@@ -6,7 +6,7 @@
     },
     {
       "source": "/health",
-      "destination": "https://jyoti-jc-api.fly.dev/health"
+      "destination": "https://jc-api-production.up.railway.app/health"
     }
   ]
 }

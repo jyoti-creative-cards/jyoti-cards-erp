@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>JC Admin — Jyoti Creative</title>
-  <link rel="stylesheet" href="styles.css?v=ui77" />
+  <link rel="stylesheet" href="styles.css?v=ui78" />
 </head>
 <body>
   <div id="toasts"></div>
@@ -95,6 +95,18 @@
             <p class="ui-hub-sub">History, reports, setup, and safety — when you need them.</p>
           </div>
           <div class="ui-tile-grid setup-grid" id="more-grid">
+            <button type="button" class="big-tile ui-tile setup-tile" id="more-tile-create-order" onclick="App.openFromMore('create')">
+              <span class="setup-tile-tag">Sell</span>
+              <span class="big-tile-letter">+</span>
+              <span class="big-tile-title">Create order</span>
+              <span class="big-tile-desc">Party, item, quantity</span>
+            </button>
+            <button type="button" class="big-tile ui-tile setup-tile" id="more-tile-view-stock" onclick="App.openFromMore('stock')">
+              <span class="setup-tile-tag">Stock</span>
+              <span class="big-tile-letter">#</span>
+              <span class="big-tile-title">View stock</span>
+              <span class="big-tile-desc">Type the item number</span>
+            </button>
             <button type="button" class="big-tile ui-tile setup-tile" id="more-tile-buying" onclick="App.showView('buying')">
               <span class="setup-tile-tag">Orders</span>
               <span class="big-tile-letter">V</span>
@@ -1278,7 +1290,7 @@
   <script src="js/vendor-orders.js?v=ui88"></script>
   <script src="js/xlsx.js?v=ui1"></script>
   <script src="js/share.js?v=ui64"></script>
-  <script src="js/customer-orders.js?v=ui150"></script>
+  <script src="js/customer-orders.js?v=ui151"></script>
   <script src="js/returns.js?v=ui76"></script>
   <script src="js/debit-notes.js?v=ui76"></script>
   <script src="js/stock.js?v=ui99"></script>
@@ -1291,7 +1303,7 @@
   <script src="js/payment-modes.js?v=ui62"></script>
   <script src="js/freight-agents.js?v=ui66"></script>
   <script src="js/calculator.js?v=ui2"></script>
-  <script src="app.js?v=ui111"></script>
+  <script src="app.js?v=ui112"></script>
   <script src="js/commission-agents.js?v=ui4"></script>
   <script src="js/whatsapp-inbox.js?v=ui2"></script>
 </body>

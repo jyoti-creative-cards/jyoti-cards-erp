@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.models.customer import Customer
 from app.services import biz_analyst as biz
 
 router = APIRouter(prefix="/biz", tags=["biz"])
@@ -105,6 +106,49 @@ def biz_receipt(
     if not row:
         raise HTTPException(404, "receipt not found")
     return row
+
+
+@router.get("/parties")
+def biz_parties(q: str = Query(""), db: Session = Depends(get_db)):
+    return {"parties": biz.search_parties(db, q)}
+
+
+@router.post("/orders", status_code=201)
+def biz_place_order(body: dict, db: Session = Depends(get_db)):
+    """Order punched from the books app. It lands in New orders as Anshul."""
+    from app.services.customer_selling.place import create_received_placement
+    from app.services import response_cache
+    from app.services.doc_jobs import enqueue_order_pdf
+
+    customer = db.get(Customer, int(body.get("customer_id") or 0))
+    if not customer:
+        raise HTTPException(404, "customer not found")
+    lines = []
+    for raw in body.get("lines") or []:
+        qty = int(raw.get("quantity") or 0)
+        product_id = int(raw.get("catalog_product_id") or 0)
+        if qty > 0 and product_id:
+            lines.append({"catalog_product_id": product_id, "quantity": qty})
+    if not lines:
+        raise HTTPException(400, "Pick an item and a quantity")
+    try:
+        placement = create_received_placement(
+            db,
+            customer_id=customer.id,
+            customer_name=customer.business_name,
+            lines=lines,
+            customer_notes=None,
+            allow_negative_stock=False,
+            order_source="staff",
+            placed_by_name="Anshul",
+        )
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(400, str(exc)) from exc
+    db.commit()
+    response_cache.invalidate("stock:")
+    enqueue_order_pdf(placement.id)
+    return {"ok": True, "placement_id": placement.id}
 
 
 @router.get("/vendor-order-report")

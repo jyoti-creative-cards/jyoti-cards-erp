@@ -609,3 +609,38 @@ def supplier_receipt(db, receipt_id: int) -> dict:
         "total": _money(total),
         "lines": out_lines,
     }
+
+
+def search_parties(db: Session, query: str) -> list[dict]:
+    text = (query or "").strip()
+    if not text:
+        return []
+    like = f"%{text}%"
+    q = (
+        db.query(Customer, City.name)
+        .outerjoin(City, City.id == Customer.city_id)
+        .filter(Customer.deleted_at.is_(None), Customer.is_active.is_(True))
+    )
+    if text.isdigit():
+        q = q.filter(or_(Customer.party_number == int(text), Customer.business_name.ilike(like)))
+    else:
+        q = q.filter(or_(
+            Customer.business_name.ilike(like),
+            Customer.person_name.ilike(like),
+            City.name.ilike(like),
+            Customer.marker_1.ilike(like),
+            Customer.marker_2.ilike(like),
+        ))
+    rows = q.order_by(Customer.business_name.asc(), Customer.id.asc()).limit(8).all()
+    out = []
+    for customer, city in rows:
+        marks = " ".join(part for part in (customer.marker_1, customer.marker_2) if part)
+        label = customer.business_name or ""
+        if city:
+            label = f"{label} · {city}"
+        if customer.party_number:
+            label = f"{label} #{customer.party_number}"
+        if marks:
+            label = f"{label} · {marks}"
+        out.append({"id": customer.id, "label": label})
+    return out

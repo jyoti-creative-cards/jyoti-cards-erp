@@ -568,7 +568,11 @@ def create_new_customer_order(
     customer = db.get(Customer, customer_id)
     if not customer:
         raise HTTPException(404, "customer not found")
-    who = (auth.actor_name or "").strip() or "Staff"
+    asked = (body.placed_by_name or "").strip()
+    if auth.actor_type == "admin" and asked:
+        who = asked[:80]
+    else:
+        who = (auth.actor_name or "").strip() or "Staff"
     try:
         placement = create_received_placement(
             db,

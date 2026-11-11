@@ -61,4 +61,11 @@ input, select {
 .stat b { font-size: 16px; }
 .err { color: var(--danger); font-size: 14px; }
 .primary { width: 100%; background: var(--ink); color: white; border: 0; border-radius: 12px; padding: 12px; font-weight: 700; margin-top: 12px; }
+.big {
+  display: block; width: 100%; min-height: 84px; margin-top: 12px;
+  border: 0; border-radius: 16px; background: var(--ink); color: white;
+  font-size: 22px; font-weight: 800;
+}
+.big.alt { background: white; color: var(--ink); border: 1px solid var(--line); }
 .search { margin-bottom: 12px; }
+.search-results { display: grid; gap: 8px; max-height: 60vh; overflow: auto; }

@@ -2654,6 +2654,7 @@ const App = (() => {
   let deskNote = "";
   let deskItemHits = [];
   let deskStockTimer = null;
+  let deskAsAnshul = false;
 
   function deskMarks(c) {
     return [c?.marker_1, c?.marker_2].filter(Boolean).join(" · ");
@@ -2665,6 +2666,7 @@ const App = (() => {
   }
 
   function openOrderDesk() {
+    deskAsAnshul = false;
     deskMode = "home";
     deskCustomer = null;
     deskProduct = null;
@@ -2674,6 +2676,34 @@ const App = (() => {
     api("/customers/entry-parties", {}, 0).then(parties => {
       deskParties = parties || [];
     }).catch(e => toast(e.message, "error"));
+  }
+
+  function openFromMore(mode) {
+    deskAsAnshul = true;
+    deskCustomer = null;
+    deskProduct = null;
+    deskLines = [];
+    deskNote = "";
+    deskMode = mode === "stock" ? "stock" : "create";
+    showView("desk");
+    renderOrderDesk();
+    if (deskParties) return;
+    api("/customers/entry-parties", {}, 0).then(parties => {
+      deskParties = parties || [];
+    }).catch(e => toast(e.message, "error"));
+  }
+
+  function deskBack() {
+    deskCustomer = null;
+    deskProduct = null;
+    deskLines = [];
+    if (deskAsAnshul) {
+      deskAsAnshul = false;
+      deskMode = "home";
+      showView("more");
+      return;
+    }
+    deskShow("home");
   }
 
   function deskShow(mode) {
@@ -2816,14 +2846,23 @@ const App = (() => {
     if (!lines.length) return toast("Pick an item", "error");
     showLoading?.();
     try {
+      const payload = { lines };
+      if (deskAsAnshul) payload.placed_by_name = "Anshul";
       await api(`/customer-orders/customer/${deskCustomer.id}/new`, {
         method: "POST",
-        body: JSON.stringify({ lines }),
+        body: JSON.stringify(payload),
       });
       deskNote = "Order placed";
       deskCustomer = null;
       deskProduct = null;
       deskLines = [];
+      if (deskAsAnshul) {
+        deskAsAnshul = false;
+        deskMode = "home";
+        showView("more");
+        toast("Order placed", "success");
+        return;
+      }
       deskMode = "home";
       renderOrderDesk();
     } catch (e) { toast(e.message, "error"); }
@@ -2833,7 +2872,7 @@ const App = (() => {
   function renderOrderDesk() {
     const el = document.getElementById("desk-body");
     if (!el) return;
-    const back = `<button type="button" class="btn btn-secondary desk-big" style="margin-bottom:18px;" onclick="App.deskShow('home')">← Back</button>`;
+    const back = `<button type="button" class="btn btn-secondary desk-big" style="margin-bottom:18px;" onclick="App.deskBack()">← Back</button>`;
     if (deskMode === "home") {
       el.innerHTML = `${deskNote ? `<p class="ord-created-by" style="font-size:22px;">${esc(deskNote)}</p>` : ""}
         <div class="desk-home">
@@ -3738,7 +3777,7 @@ const App = (() => {
     loadRecycleBin, setRecycleTab, openRecycleDetail, restoreItem, purgeItem,
     addLookup, submitLookup, submitCatalogCategory, editLookup, deleteLookup, openCustomerLedgerEntry, createCustomerOrder,
     setOrderTakerMode, onOrderTakerStock, onOrderTakerCustomer, pickOrderTakerCustomer, clearOrderTakerCustomer, onOrderTakerItem, addOrderTakerItem, removeOrderTakerLine, saveOrderTakerOrder,
-    deskShow, onDeskCustomer, onDeskItem, onDeskStock, deskPickCustomer, deskPickProduct, deskAddMore, deskRemoveLine, deskPlace, deskClearCustomer, deskClearProduct,
+    deskShow, onDeskCustomer, onDeskItem, onDeskStock, deskPickCustomer, deskPickProduct, deskAddMore, deskRemoveLine, deskPlace, deskClearCustomer, deskClearProduct, openFromMore, deskBack,
     closeModal, init, searchItemLookup, setWhatsappSends,
     downloadExportKind, downloadBackupZip,
     debouncedLoadCustomers, debouncedVendorSearch, debouncedCatalogSearch, debouncedAddonSearch, debouncedStockSearch,

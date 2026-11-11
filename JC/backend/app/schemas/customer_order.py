@@ -304,6 +304,7 @@ class OfflineLineIn(BaseModel):
 class OfflineCustomerOrderIn(BaseModel):
     """Admin-placed order — same path as portal: received → process later."""
     lines: List[OfflineLineIn] = Field(..., min_length=1)
+    placed_by_name: Optional[str] = None
     narration: Optional[str] = None
     placed_on: Optional[date] = None  # backdate; default = today
     confirm_duplicate: bool = False

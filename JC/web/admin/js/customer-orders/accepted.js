@@ -829,11 +829,11 @@ const CustomerOrders = (() => {
         <div class="ord-order-card-party">
           <div class="ord-order-card-name">${nameHtml}</div>
           <div class="ord-order-card-city">${o.city_name ? ctx.esc(o.city_name) : ""}${o.city_name && timeStr ? " · " : ""}${timeStr ? `<span class="ord-order-card-time">${ctx.esc(timeStr)}</span>` : ""}</div>
+          ${createdByHtml(o)}
         </div>
       </div>
           <div class="ord-order-card-body">
         ${statText ? `<div class="ord-order-card-stat">${statText}</div>` : ""}
-        ${createdByHtml(o)}
         ${markHtml}
       </div>
       <div class="ord-order-card-foot" onclick="event.stopPropagation()">

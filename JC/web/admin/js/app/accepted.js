@@ -2648,6 +2648,7 @@ const App = (() => {
   let deskMode = "home";
   let deskNote = "";
   let deskItemHits = [];
+  let deskStockTimer = null;
 
   function deskMarks(c) {
     return [c?.marker_1, c?.marker_2].filter(Boolean).join(" · ");

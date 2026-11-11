@@ -13,6 +13,8 @@ const Finance = (() => {
   let apTab = "statement";
   let arTab = "statement";
   let arExpandAll = true;
+  let arFromDate = "";
+  let arToDate = "";
   let arDetailGen = 0;
   let arLineCache = { bills: {}, returns: {} };
   let expandedBillId = null;
@@ -1500,9 +1502,14 @@ const Finance = (() => {
 
   async function openCustomerAr(customerId, opts = {}) {
     if (!ctx.isAdmin?.() && !ctx.can?.("ar.read")) return ctx.toast?.("Not permitted", "error");
+    const sameParty = Number(currentCustomer) === Number(customerId);
     ctx.showLoading?.();
     try {
       arDetail = await ctx.api(`/accounts-receivable/customer/${customerId}`, {}, 0);
+      if (!sameParty) {
+        arFromDate = "";
+        arToDate = "";
+      }
       currentCustomer = customerId;
       arTab = opts?.tab === "statement" || opts?.tab === "payments" ? opts.tab : "ledger";
       arExpandAll = true;
@@ -1545,6 +1552,8 @@ const Finance = (() => {
         actionsHtml: `
             ${(ctx.can?.("customer_orders.write") || ctx.isAdmin?.()) ? `<button class="btn btn-primary" onclick="CustomerOrders.openOfflineWizard(${currentCustomer})">Create order</button>` : ""}
             ${(ctx.isAdmin?.() || ctx.can?.("ar.write")) ? `<button class="btn btn-primary" onclick="Finance.openArSettle()">Collect</button>` : ""}
+            <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;">From <input id="ar-ledger-from" class="input" type="date" value="${ctx.esc(arFromDate)}" onchange="Finance.setArFrom(this.value)" style="width:150px;" /></label>
+            <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;">To <input id="ar-ledger-to" class="input" type="date" value="${ctx.esc(arToDate)}" onchange="Finance.setArTo(this.value)" style="width:150px;" /></label>
             <button class="btn btn-secondary" onclick="Finance.printCustomerLedger()">Print</button>
             <button class="btn btn-secondary" onclick="Finance.downloadCustomerLedger()">PDF</button>
             <button class="btn btn-secondary" onclick="Finance.excelCustomerLedger()">Excel</button>
@@ -1586,11 +1595,38 @@ const Finance = (() => {
       ${content}`;
   }
 
+  function setArFrom(value) {
+    arFromDate = String(value || "");
+    renderArDetail();
+  }
+
+  function setArTo(value) {
+    arToDate = String(value || "");
+    renderArDetail();
+  }
+
+  function entryInArRange(entry) {
+    if (!arFromDate && !arToDate) return true;
+    const day = entryDay(entry);
+    if (!day) return false;
+    if (arFromDate && day < arFromDate) return false;
+    if (arToDate && day > arToDate) return false;
+    return true;
+  }
+
+  function ledgerPdfQuery() {
+    const parts = [];
+    if (arExpandAll) parts.push("details=1");
+    if (arFromDate) parts.push("from_date=" + encodeURIComponent(arFromDate));
+    if (arToDate) parts.push("to_date=" + encodeURIComponent(arToDate));
+    return parts.length ? `?${parts.join("&")}` : "";
+  }
+
   async function printCustomerLedger() {
     if (!currentCustomer) return;
     ctx.showLoading?.();
     try {
-      await DocShare.openPdf(`/share/statements/ar/${currentCustomer}/pdf${arExpandAll ? "?details=1" : ""}`, { print: true, filename: "ledger.pdf" });
+      await DocShare.openPdf(`/share/statements/ar/${currentCustomer}/pdf${ledgerPdfQuery()}`, { print: true, filename: "ledger.pdf" });
     } catch (e) { ctx.toast(e.message || "Could not print the ledger", "error"); }
     finally { ctx.hideLoading?.(); }
   }
@@ -1599,7 +1635,7 @@ const Finance = (() => {
     if (!currentCustomer) return;
     ctx.showLoading?.();
     try {
-      await DocShare.openPdf(`/share/statements/ar/${currentCustomer}/pdf${arExpandAll ? "?details=1" : ""}`, { print: false, filename: "ledger.pdf" });
+      await DocShare.openPdf(`/share/statements/ar/${currentCustomer}/pdf${ledgerPdfQuery()}`, { print: false, filename: "ledger.pdf" });
     } catch (e) { ctx.toast(e.message || "Could not download the ledger", "error"); }
     finally { ctx.hideLoading?.(); }
   }
@@ -1608,7 +1644,7 @@ const Finance = (() => {
     if (!currentCustomer || !arDetail) return ctx.toast("Open a party first", "error");
     const typeLabel = { bill: "Bill", credit_note: "Credit Note", opening_balance: "Opening", payment: "Payment", payment_reversal: "Reversal" };
     const rows = [["When", "Type", "Description", "Amount", "Balance"]];
-    for (const e of newestFirst(liveMoneyEntries(arDetail.entries))) {
+    for (const e of newestFirst(liveMoneyEntries(arDetail.entries).filter(entryInArRange))) {
       rows.push([
         fmtDocDate(e.display_date || e.value_date || e.created_at),
         typeLabel[e.entry_type] || e.entry_type || "",
@@ -1868,8 +1904,8 @@ const Finance = (() => {
   function renderArStatement() {
     const bills = newestFirst(stampRunningBalance(
       visibleMoneyEntries(arDetail.entries).filter(e => e.entry_type === "bill" || e.entry_type === "credit_note" || e.entry_type === "opening_balance")
-    ));
-    if (!bills.length) return OrdersUI.emptyState({ title: "No bills yet", sub: "Bills appear after you process customer orders." });
+    ).filter(entryInArRange));
+    if (!bills.length) return OrdersUI.emptyState({ title: arFromDate || arToDate ? "Nothing in these dates" : "No bills yet", sub: arFromDate || arToDate ? "Clear From or To to see the whole ledger." : "Bills appear after you process customer orders." });
     return `<div class="card table-wrap"><table class="data"><thead><tr>
       <th>When</th><th>Type</th><th>Description</th><th>Amount</th><th>Balance</th>
     </tr></thead><tbody>
@@ -1939,7 +1975,7 @@ const Finance = (() => {
       <table class="data"><thead><tr>
         <th>When</th><th>Type</th><th>Description</th><th>Amount</th><th>Balance</th>
       </tr></thead><tbody>
-        ${newestFirst(liveMoneyEntries(arDetail.entries)).map(e => {
+        ${newestFirst(liveMoneyEntries(arDetail.entries).filter(entryInArRange)).map(e => {
           const badgeCls = e.entry_type === "credit_note" ? "badge-green" : e.entry_type === "opening_balance" ? "badge-blue" : e.entry_type === "bill" ? "badge-amber" : e.entry_type === "payment_reversal" ? "badge-red" : "badge-green";
           const typeLabel = { bill: "Bill", credit_note: "Credit Note", opening_balance: "Opening", payment: "Payment", payment_reversal: "Reversal" }[e.entry_type] || e.entry_type;
           return `<tr>
@@ -1962,7 +1998,7 @@ const Finance = (() => {
   }
 
   function renderArPayments() {
-    const entries = liveMoneyEntries(arDetail.entries);
+    const entries = liveMoneyEntries(arDetail.entries).filter(entryInArRange);
     const reversed = reversedPaymentIds(arDetail.entries || []);
     const pays = newestFirst(entries.filter(e => e.entry_type === "payment" || e.entry_type === "payment_reversal"));
     if (!pays.length) return OrdersUI.emptyState({ title: "No payments yet", sub: "Collect above. NC, cash, and ICICI stay in their own account." });
@@ -3953,7 +3989,7 @@ const Finance = (() => {
     openCustomerAr, refreshOpenAr, setArTab, toggleArDetails, openArSettle, closeArSettle, submitArSettle, onArSettleAmount,
     toggleCollectDateLock, onCollectDateInput,
     undoArPayment, undoApPayment, setRealEntriesOnly, viewCustomerBill,
-    shareArStatement, printCustomerLedger, downloadCustomerLedger, excelCustomerLedger, shareApStatement,
+    shareArStatement, setArFrom, setArTo, printCustomerLedger, downloadCustomerLedger, excelCustomerLedger, shareApStatement,
     setArOpeningBalance, setApOpeningBalance, saveArOpeningBalance, saveApOpeningBalance,
     openExpenseForm, onExpenseHeadChange, addExpenseHead, addExpenseSubhead, addExpenseSource, renameExpenseSource, deleteExpenseSource, editExpense, saveExpenseEdit, closeExpenseForm, submitExpense, deleteExpense, onExpenseFilterChange, clearExpenseFilters,
     setJournalKind, setJournalLedger, setJournalMode, setJournalField, setJournalLine, removeJournalLine, searchJournalProduct,

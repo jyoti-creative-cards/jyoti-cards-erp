@@ -185,8 +185,8 @@
   function renderArStatement() {
     const bills = newestFirst(stampRunningBalance(
       visibleMoneyEntries(arDetail.entries).filter(e => e.entry_type === "bill" || e.entry_type === "credit_note" || e.entry_type === "opening_balance")
-    ));
-    if (!bills.length) return OrdersUI.emptyState({ title: "No bills yet", sub: "Bills appear after you process customer orders." });
+    ).filter(entryInArRange));
+    if (!bills.length) return OrdersUI.emptyState({ title: arFromDate || arToDate ? "Nothing in these dates" : "No bills yet", sub: arFromDate || arToDate ? "Clear From or To to see the whole ledger." : "Bills appear after you process customer orders." });
     return `<div class="card table-wrap"><table class="data"><thead><tr>
       <th>When</th><th>Type</th><th>Description</th><th>Amount</th><th>Balance</th>
     </tr></thead><tbody>
@@ -256,7 +256,7 @@
       <table class="data"><thead><tr>
         <th>When</th><th>Type</th><th>Description</th><th>Amount</th><th>Balance</th>
       </tr></thead><tbody>
-        ${newestFirst(liveMoneyEntries(arDetail.entries)).map(e => {
+        ${newestFirst(liveMoneyEntries(arDetail.entries).filter(entryInArRange)).map(e => {
           const badgeCls = e.entry_type === "credit_note" ? "badge-green" : e.entry_type === "opening_balance" ? "badge-blue" : e.entry_type === "bill" ? "badge-amber" : e.entry_type === "payment_reversal" ? "badge-red" : "badge-green";
           const typeLabel = { bill: "Bill", credit_note: "Credit Note", opening_balance: "Opening", payment: "Payment", payment_reversal: "Reversal" }[e.entry_type] || e.entry_type;
           return `<tr>
@@ -279,7 +279,7 @@
   }
 
   function renderArPayments() {
-    const entries = liveMoneyEntries(arDetail.entries);
+    const entries = liveMoneyEntries(arDetail.entries).filter(entryInArRange);
     const reversed = reversedPaymentIds(arDetail.entries || []);
     const pays = newestFirst(entries.filter(e => e.entry_type === "payment" || e.entry_type === "payment_reversal"));
     if (!pays.length) return OrdersUI.emptyState({ title: "No payments yet", sub: "Collect above. NC, cash, and ICICI stay in their own account." });

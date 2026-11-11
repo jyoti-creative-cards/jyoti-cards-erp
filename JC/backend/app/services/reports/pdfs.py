@@ -70,12 +70,42 @@ def _doc() -> tuple[SimpleDocTemplate, list, object]:
     return doc, buf, styles
 
 
-def render_ar_statement_pdf(db: Session, customer_id: int, details: bool = False) -> bytes:
+def _entry_in_span(entry, start: Optional[date], end: Optional[date]) -> bool:
+    if start is None and end is None:
+        return True
+    day = _pdf_day(entry.get("value_date") or entry.get("display_date") or entry.get("created_at"))
+    if len(day) < 10:
+        return False
+    if start is not None and day < start.isoformat():
+        return False
+    if end is not None and day > end.isoformat():
+        return False
+    return True
+
+
+def render_ar_statement_pdf(
+    db: Session,
+    customer_id: int,
+    details: bool = False,
+    day: Optional[date] = None,
+    from_date: Optional[date] = None,
+    to_date: Optional[date] = None,
+) -> bytes:
     doc, buf, styles = _doc()
     totals = customer_ar_totals(db, customer_id)
     entries = build_ar_ledger(db, customer_id)
+    start = from_date if from_date is not None else day
+    end = to_date if to_date is not None else day
+    if start is not None or end is not None:
+        entries = [e for e in entries if _entry_in_span(e, start, end)]
+    if start and end and start != end:
+        heading = f"Customer ledger · {start.isoformat()} to {end.isoformat()}"
+    elif start or end:
+        heading = f"Customer ledger · {(start or end).isoformat()}"
+    else:
+        heading = "Customer ledger"
     story = [
-        Paragraph("Customer ledger", styles["Heading1"]),
+        Paragraph(heading, styles["Heading1"]),
         Paragraph(_customer_label(db, customer_id), styles["Heading3"]),
         Spacer(1, 6),
         Paragraph(

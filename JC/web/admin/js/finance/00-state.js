@@ -13,6 +13,8 @@ const Finance = (() => {
   let apTab = "statement";
   let arTab = "statement";
   let arExpandAll = true;
+  let arFromDate = "";
+  let arToDate = "";
   let arDetailGen = 0;
   let arLineCache = { bills: {}, returns: {} };
   let expandedBillId = null;

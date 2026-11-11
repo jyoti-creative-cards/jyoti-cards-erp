@@ -652,7 +652,8 @@
         <input id="party-ledger-q" class="input" placeholder="Name, city, or number" autocomplete="off" oninput="App.onPartyLedgerSearch(this.value)" />
         <div id="party-ledger-matches"></div>
         <p id="party-ledger-picked" style="margin:12px 0 0;font-weight:700;"></p>
-        <div id="party-ledger-tools" class="hidden" style="display:flex;gap:8px;margin:12px 0;">
+        <div id="party-ledger-tools" class="hidden" style="display:flex;gap:8px;margin:12px 0;align-items:center;flex-wrap:wrap;">
+          <input id="party-ledger-day" class="input" type="date" title="Print this date only" style="width:160px;" />
           <button type="button" class="btn btn-secondary" onclick="App.printPartyLedger()">Print</button>
           <button type="button" class="btn btn-secondary" onclick="App.exportPartyLedger()">Export Excel</button>
         </div>
@@ -1277,11 +1278,11 @@
   <script src="js/vendor-orders.js?v=ui87"></script>
   <script src="js/xlsx.js?v=ui1"></script>
   <script src="js/share.js?v=ui64"></script>
-  <script src="js/customer-orders.js?v=ui148"></script>
+  <script src="js/customer-orders.js?v=ui149"></script>
   <script src="js/returns.js?v=ui76"></script>
   <script src="js/debit-notes.js?v=ui76"></script>
   <script src="js/stock.js?v=ui99"></script>
-  <script src="js/finance.js?v=ui123"></script>
+  <script src="js/finance.js?v=ui125"></script>
   <script src="js/reports.js?v=ui119"></script>
   <script src="js/sticker.js?v=ui10"></script>
   <script src="js/dashboard.js?v=ui66"></script>
@@ -1290,8 +1291,8 @@
   <script src="js/payment-modes.js?v=ui62"></script>
   <script src="js/freight-agents.js?v=ui66"></script>
   <script src="js/calculator.js?v=ui2"></script>
-  <script src="app.js?v=ui107"></script>
-  <script src="js/commission-agents.js?v=ui3"></script>
+  <script src="app.js?v=ui108"></script>
+  <script src="js/commission-agents.js?v=ui4"></script>
   <script src="js/whatsapp-inbox.js?v=ui2"></script>
 </body>
 </html>

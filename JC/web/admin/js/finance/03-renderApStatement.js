@@ -393,9 +393,14 @@
 
   async function openCustomerAr(customerId, opts = {}) {
     if (!ctx.isAdmin?.() && !ctx.can?.("ar.read")) return ctx.toast?.("Not permitted", "error");
+    const sameParty = Number(currentCustomer) === Number(customerId);
     ctx.showLoading?.();
     try {
       arDetail = await ctx.api(`/accounts-receivable/customer/${customerId}`, {}, 0);
+      if (!sameParty) {
+        arFromDate = "";
+        arToDate = "";
+      }
       currentCustomer = customerId;
       arTab = opts?.tab === "statement" || opts?.tab === "payments" ? opts.tab : "ledger";
       arExpandAll = true;
@@ -438,6 +443,8 @@
         actionsHtml: `
             ${(ctx.can?.("customer_orders.write") || ctx.isAdmin?.()) ? `<button class="btn btn-primary" onclick="CustomerOrders.openOfflineWizard(${currentCustomer})">Create order</button>` : ""}
             ${(ctx.isAdmin?.() || ctx.can?.("ar.write")) ? `<button class="btn btn-primary" onclick="Finance.openArSettle()">Collect</button>` : ""}
+            <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;">From <input id="ar-ledger-from" class="input" type="date" value="${ctx.esc(arFromDate)}" onchange="Finance.setArFrom(this.value)" style="width:150px;" /></label>
+            <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;">To <input id="ar-ledger-to" class="input" type="date" value="${ctx.esc(arToDate)}" onchange="Finance.setArTo(this.value)" style="width:150px;" /></label>
             <button class="btn btn-secondary" onclick="Finance.printCustomerLedger()">Print</button>
             <button class="btn btn-secondary" onclick="Finance.downloadCustomerLedger()">PDF</button>
             <button class="btn btn-secondary" onclick="Finance.excelCustomerLedger()">Excel</button>
@@ -479,11 +486,38 @@
       ${content}`;
   }
 
+  function setArFrom(value) {
+    arFromDate = String(value || "");
+    renderArDetail();
+  }
+
+  function setArTo(value) {
+    arToDate = String(value || "");
+    renderArDetail();
+  }
+
+  function entryInArRange(entry) {
+    if (!arFromDate && !arToDate) return true;
+    const day = entryDay(entry);
+    if (!day) return false;
+    if (arFromDate && day < arFromDate) return false;
+    if (arToDate && day > arToDate) return false;
+    return true;
+  }
+
+  function ledgerPdfQuery() {
+    const parts = [];
+    if (arExpandAll) parts.push("details=1");
+    if (arFromDate) parts.push("from_date=" + encodeURIComponent(arFromDate));
+    if (arToDate) parts.push("to_date=" + encodeURIComponent(arToDate));
+    return parts.length ? `?${parts.join("&")}` : "";
+  }
+
   async function printCustomerLedger() {
     if (!currentCustomer) return;
     ctx.showLoading?.();
     try {
-      await DocShare.openPdf(`/share/statements/ar/${currentCustomer}/pdf${arExpandAll ? "?details=1" : ""}`, { print: true, filename: "ledger.pdf" });
+      await DocShare.openPdf(`/share/statements/ar/${currentCustomer}/pdf${ledgerPdfQuery()}`, { print: true, filename: "ledger.pdf" });
     } catch (e) { ctx.toast(e.message || "Could not print the ledger", "error"); }
     finally { ctx.hideLoading?.(); }
   }
@@ -492,7 +526,7 @@
     if (!currentCustomer) return;
     ctx.showLoading?.();
     try {
-      await DocShare.openPdf(`/share/statements/ar/${currentCustomer}/pdf${arExpandAll ? "?details=1" : ""}`, { print: false, filename: "ledger.pdf" });
+      await DocShare.openPdf(`/share/statements/ar/${currentCustomer}/pdf${ledgerPdfQuery()}`, { print: false, filename: "ledger.pdf" });
     } catch (e) { ctx.toast(e.message || "Could not download the ledger", "error"); }
     finally { ctx.hideLoading?.(); }
   }
@@ -501,7 +535,7 @@
     if (!currentCustomer || !arDetail) return ctx.toast("Open a party first", "error");
     const typeLabel = { bill: "Bill", credit_note: "Credit Note", opening_balance: "Opening", payment: "Payment", payment_reversal: "Reversal" };
     const rows = [["When", "Type", "Description", "Amount", "Balance"]];
-    for (const e of newestFirst(liveMoneyEntries(arDetail.entries))) {
+    for (const e of newestFirst(liveMoneyEntries(arDetail.entries).filter(entryInArRange))) {
       rows.push([
         fmtDocDate(e.display_date || e.value_date || e.created_at),
         typeLabel[e.entry_type] || e.entry_type || "",

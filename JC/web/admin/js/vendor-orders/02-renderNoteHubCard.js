@@ -6,6 +6,7 @@
       : `${o.placement_count || 0} bills · ${o.line_count || 0} lines · ${o.total_quantity || 0} qty`;
     return OrdersUI.partyCard({
       title: o.vendor_label,
+      noteKey: `vo:${bucket}:${o.vendor_id}`,
       meta: hubCardMeta(o, meta),
       pillHtml: OrdersUI.pill(bucket === "cancelled" ? "Cancelled" : "Closed", "muted"),
       primaryLabel: "View",

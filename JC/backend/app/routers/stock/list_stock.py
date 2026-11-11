@@ -269,7 +269,13 @@ def entry_items(
                 or_(our_id.like(like), vendor_id.like(like)),
             )
             .order_by(
-                case((our_id.like(prefix), 0), (vendor_id.like(prefix), 1), else_=2),
+                case(
+                    (our_id == needle.lower(), 0),
+                    (our_id.like(prefix), 1),
+                    (vendor_id == needle.lower(), 2),
+                    (vendor_id.like(prefix), 3),
+                    else_=4,
+                ),
                 CatalogProduct.our_product_id.asc(),
                 CatalogProduct.id.asc(),
             )

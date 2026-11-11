@@ -39,9 +39,12 @@
     for (const p of entryItems || []) {
       const id = String(p.our_product_id || "").toLowerCase();
       const alias = String(p.vendor_product_id || "").toLowerCase();
+      const number = id.split(" ")[0];
       let score = 0;
-      if (id === needle || (alias && alias === needle)) score = 100;
-      else if (id.startsWith(needle) || (alias && alias.startsWith(needle))) score = 80;
+      if (id === needle || number === needle) score = 300;
+      else if (alias && alias === needle) score = 100;
+      else if (id.startsWith(needle)) score = 80;
+      else if (alias && alias.startsWith(needle)) score = 60;
       else if (id.includes(needle) || (alias && alias.includes(needle))) score = 40;
       else continue;
       scored.push({ p, score, id });

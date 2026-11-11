@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.db.session import init_db
-from app.routers import addons, activity, auth, biz, catalog, customers, recycle_bin, routes, staff, stats, stock, stock_journals, vendor_orders, vendors, debit_notes, accounts_payable, shop, customer_orders, customer_returns, bill_series, freight_agents, commission_agents, expenses, accounts_receivable, documents, finance, reports, dashboard, share, export, payment_modes, whatsapp_inbox, items_lookup, runtime_settings, our_catalogs
+from app.routers import addons, activity, auth, biz, board, catalog, customers, recycle_bin, routes, staff, stats, stock, stock_journals, vendor_orders, vendors, debit_notes, accounts_payable, shop, customer_orders, customer_returns, bill_series, freight_agents, commission_agents, expenses, accounts_receivable, documents, finance, reports, dashboard, share, export, payment_modes, whatsapp_inbox, items_lookup, runtime_settings, our_catalogs
 from app.services.observability import setup_observability
 
 # Real format (with request-id correlation) is installed by setup_observability()
@@ -115,17 +115,20 @@ def _order_taker_allowed(method: str, path: str) -> bool:
     """Book a customer order. Search the customer and the item. Nothing else."""
     if path.startswith("/api/v1/auth"):
         return True
+    if path.startswith("/api/v1/tile-notes") or path.startswith("/api/v1/sticky-notes"):
+        return True
     if method == "GET" and path.startswith("/api/v1/customers"):
         return True
-    if method == "GET" and path.startswith("/api/v1/stock/entry-items"):
+    if method == "GET" and (path.startswith("/api/v1/stock/entry-items") or path.startswith("/api/v1/stock")):
         return True
-    if method == "GET" and path.startswith("/api/v1/customer-orders/customer/"):
-        return "/bills/" not in path and "/process" not in path
+    if method == "GET" and path.startswith("/api/v1/customer-orders"):
+        return True
     if method == "POST" and path.startswith("/api/v1/customer-orders/customer/"):
-        return path.endswith("/offline") or path.endswith("/offline/preview") or path.endswith("/new")
+        return path.rstrip("/").endswith("/new") or path.rstrip("/").endswith("/offline") or path.endswith("/offline/preview")
     return False
 
 app.include_router(auth.router, prefix="/api/v1")
+app.include_router(board.router, prefix="/api/v1")
 app.include_router(customers.router, prefix="/api/v1")
 app.include_router(routes.router, prefix="/api/v1")
 app.include_router(routes.city_router, prefix="/api/v1")

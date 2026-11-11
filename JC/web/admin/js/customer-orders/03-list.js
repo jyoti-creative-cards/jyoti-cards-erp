@@ -175,9 +175,10 @@
         </div>
       </div>
       ${createdByHtml(o)}
+      ${markHtml}
+      <div data-tile-note="co:${currentBucket}:${o.customer_id}" onclick="event.stopPropagation()"></div>
           <div class="ord-order-card-body">
         ${statText ? `<div class="ord-order-card-stat">${statText}</div>` : ""}
-        ${markHtml}
       </div>
       <div class="ord-order-card-foot" onclick="event.stopPropagation()">
         ${primaryBtn}

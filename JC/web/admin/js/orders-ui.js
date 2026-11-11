@@ -120,6 +120,7 @@ const OrdersUI = (() => {
     rowOnclick = "",
     canWrite = true,
     extraClass = "",
+    noteKey = "",
   }) {
     // Primary = write action only. More menu stays for read-only (Show lines / Open / Print).
     const primary = canWrite && primaryLabel && primaryOnclick
@@ -138,6 +139,7 @@ const OrdersUI = (() => {
           <div class="ord-card-text">
             <div class="ord-card-title">${titleHtml}${pillHtml ? ` ${pillHtml}` : ""}</div>
             ${meta ? `<div class="ord-card-meta">${meta}</div>` : ""}
+            ${noteKey ? `<div data-tile-note="${esc(noteKey)}" onclick="event.stopPropagation()"></div>` : ""}
           </div>
         </div>
         <div class="ord-card-actions" onclick="event.stopPropagation()">

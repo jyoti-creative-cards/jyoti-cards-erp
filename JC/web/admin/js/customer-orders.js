@@ -597,6 +597,7 @@ const CustomerOrders = (() => {
           <div style="min-width:0;flex:1;">
             <strong class="ord-card-title" style="font-size:16px;">${ctx.esc(p.customer_label || "Customer")}</strong>
             ${p.created_by ? `<div style="display:block;margin-top:8px;padding:8px 10px;border-radius:10px;background:#dcfce7;color:#166534;font-weight:800;font-size:16px;">Created by ${ctx.esc(p.created_by)}</div>` : ""}
+            <div data-tile-note="dispatch:${p.bill_id}" onclick="event.stopPropagation()"></div>
             <div class="ord-card-meta" style="margin-top:4px;">${ctx.esc(meta)}</div>
             <div style="font-size:13px;margin-top:8px;">${lines || "—"}${more}</div>
           </div>
@@ -838,9 +839,10 @@ const CustomerOrders = (() => {
         </div>
       </div>
       ${createdByHtml(o)}
+      ${markHtml}
+      <div data-tile-note="co:${currentBucket}:${o.customer_id}" onclick="event.stopPropagation()"></div>
           <div class="ord-order-card-body">
         ${statText ? `<div class="ord-order-card-stat">${statText}</div>` : ""}
-        ${markHtml}
       </div>
       <div class="ord-order-card-foot" onclick="event.stopPropagation()">
         ${primaryBtn}
@@ -2371,6 +2373,7 @@ const CustomerOrders = (() => {
     const ordersHtml = (!editBillId && billableOrders.length) ? `
       <label class="label">Orders still to bill</label>
       <p style="margin:0 0 8px;font-size:13px;color:var(--muted);">Already billed orders are not listed. Uncheck a hold if it should not go on this bill.</p>
+      <button type="button" class="btn btn-secondary btn-sm" style="margin:0 0 10px;" onclick="CustomerOrders.toggleAllBillOrders(false)">Deselect all</button>
       ${billableOrders.map(order => {
         const on = selectedPlacementIds.includes(Number(order.placement_id));
         const when = ctx.fmtDay ? ctx.fmtDay(order.placed_at) : "Order";
@@ -3203,9 +3206,12 @@ const CustomerOrders = (() => {
     for (const p of entryItems || []) {
       const id = String(p.our_product_id || "").toLowerCase();
       const alias = String(p.vendor_product_id || "").toLowerCase();
+      const number = id.split(" ")[0];
       let score = 0;
-      if (id === needle || (alias && alias === needle)) score = 100;
-      else if (id.startsWith(needle) || (alias && alias.startsWith(needle))) score = 80;
+      if (id === needle || number === needle) score = 300;
+      else if (alias && alias === needle) score = 100;
+      else if (id.startsWith(needle)) score = 80;
+      else if (alias && alias.startsWith(needle)) score = 60;
       else if (id.includes(needle) || (alias && alias.includes(needle))) score = 40;
       else continue;
       scored.push({ p, score, id });

@@ -381,6 +381,7 @@
   async function enterApp() {
     document.getElementById("login-screen").classList.add("hidden");
     document.getElementById("app").classList.remove("hidden");
+    installBoard();
     try {
       Vendors.init(sharedCtx());
       Catalog.init(sharedCtx());

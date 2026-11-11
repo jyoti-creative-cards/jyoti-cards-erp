@@ -5,4 +5,5 @@
 04-openCustomerDetail.js
 05-toggleCustomerActive.js
 06-renderWizard.js
+06b-notes.js
 07-public.js

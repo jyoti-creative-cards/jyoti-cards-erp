@@ -573,12 +573,13 @@
     if (!e.altKey || e.ctrlKey || e.metaKey) return;
     if (document.getElementById("app")?.classList.contains("hidden")) return;
     const code = e.code;
-    if (code !== "KeyC" && code !== "KeyB" && code !== "KeyS" && code !== "KeyL") return;
+    if (code !== "KeyC" && code !== "KeyB" && code !== "KeyS" && code !== "KeyL" && code !== "KeyY") return;
     e.preventDefault();
     if (code === "KeyC") CustomerOrders.openOfflineWizard?.();
     else if (code === "KeyB") openShortcut("bill");
     else if (code === "KeyS") openShortcut("item");
     else if (code === "KeyL") openShortcut("ledger");
+    else if (code === "KeyY") toggleSticky();
   });
 
   // ── Data ──────────────────────────────────────────────────────────

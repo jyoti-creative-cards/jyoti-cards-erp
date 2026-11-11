@@ -683,6 +683,7 @@
     const ordersHtml = (!editBillId && billableOrders.length) ? `
       <label class="label">Orders still to bill</label>
       <p style="margin:0 0 8px;font-size:13px;color:var(--muted);">Already billed orders are not listed. Uncheck a hold if it should not go on this bill.</p>
+      <button type="button" class="btn btn-secondary btn-sm" style="margin:0 0 10px;" onclick="CustomerOrders.toggleAllBillOrders(false)">Deselect all</button>
       ${billableOrders.map(order => {
         const on = selectedPlacementIds.includes(Number(order.placement_id));
         const when = ctx.fmtDay ? ctx.fmtDay(order.placed_at) : "Order";

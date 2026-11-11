@@ -361,6 +361,7 @@ const VendorOrders = (() => {
     const cache = hubExpandCache[`placed-${o.vendor_id}`];
     return OrdersUI.partyCard({
       title: o.vendor_label,
+      noteKey: `vo:placed:${o.vendor_id}`,
       meta: hubCardMeta(o, `${o.placement_count} placements · ${o.line_count} lines · <strong>${o.total_quantity}</strong> placed`),
       pillHtml: OrdersUI.pill("Placed", "muted"),
       primaryLabel: "Receive",
@@ -382,6 +383,7 @@ const VendorOrders = (() => {
     const cache = hubExpandCache[`received-${o.vendor_id}`];
     return OrdersUI.partyCard({
       title: o.vendor_label,
+      noteKey: `vo:received:${o.vendor_id}`,
       meta: hubCardMeta(o, `${o.placement_count} receives · ${o.line_count} lines · <strong>${o.total_quantity}</strong> received`),
       pillHtml: OrdersUI.pill("Unbilled", "info"),
       primaryLabel: "Bill",
@@ -455,6 +457,7 @@ const VendorOrders = (() => {
     const cache = hubExpandCache[`billed-${o.vendor_id}`];
     return OrdersUI.partyCard({
       title: o.vendor_label,
+      noteKey: `vo:billed:${o.vendor_id}`,
       meta: hubCardMeta(o, `${o.placement_count} bills · ${o.line_count} products · <strong>${o.total_quantity}</strong> qty`),
       pillHtml: OrdersUI.pill("Billed", "ok"),
       primaryLabel: "Close",
@@ -540,6 +543,7 @@ const VendorOrders = (() => {
       : `${o.placement_count || 0} bills · ${o.line_count || 0} lines · ${o.total_quantity || 0} qty`;
     return OrdersUI.partyCard({
       title: o.vendor_label,
+      noteKey: `vo:${bucket}:${o.vendor_id}`,
       meta: hubCardMeta(o, meta),
       pillHtml: OrdersUI.pill(bucket === "cancelled" ? "Cancelled" : "Closed", "muted"),
       primaryLabel: "View",

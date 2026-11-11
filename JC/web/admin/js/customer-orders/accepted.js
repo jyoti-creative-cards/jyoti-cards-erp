@@ -594,7 +594,9 @@ const CustomerOrders = (() => {
           <div style="min-width:0;flex:1;">
             <strong class="ord-card-title" style="font-size:16px;">${ctx.esc(p.customer_label || "Customer")}</strong>
             ${p.created_by ? `<div style="display:block;margin-top:8px;padding:8px 10px;border-radius:10px;background:#dcfce7;color:#166534;font-weight:800;font-size:16px;">Created by ${ctx.esc(p.created_by)}</div>` : ""}
-            <div data-tile-note="dispatch:${p.bill_id}" onclick="event.stopPropagation()"></div>
+            <div data-tile-note="dispatch:${p.bill_id}" onclick="event.stopPropagation()">
+              <button type="button" class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="event.stopPropagation();App.editTileNote('dispatch:${p.bill_id}')">Add note</button>
+            </div>
             <div class="ord-card-meta" style="margin-top:4px;">${ctx.esc(meta)}</div>
             <div style="font-size:13px;margin-top:8px;">${lines || "—"}${more}</div>
           </div>
@@ -817,7 +819,7 @@ const CustomerOrders = (() => {
     // More menu HTML (inline, no OrdersUI.moreMenu — build simple dropdown)
     const moreHtml = more.length ? `<div class="ord-more-wrap" style="position:relative;">
       <button type="button" class="btn btn-ghost btn-sm" style="padding:0 8px;" onclick="event.stopPropagation();CustomerOrders.toggleCardMore(event,${o.customer_id})">⋮</button>
-      <div id="co-card-more-${o.customer_id}" class="ord-more-menu" style="display:none;position:absolute;right:0;bottom:calc(100% + 4px);z-index:20;background:#fff;border:1px solid #e2e8f0;border-radius:10px;box-shadow:0 8px 24px rgba(15,23,42,.12);min-width:160px;overflow:hidden;">
+      <div id="co-card-more-${o.customer_id}" class="ord-more-menu" style="display:none;position:absolute;right:0;top:calc(100% + 4px);z-index:40;background:#fff;border:1px solid #e2e8f0;border-radius:10px;box-shadow:0 8px 24px rgba(15,23,42,.12);min-width:180px;">
         ${more.map(m => `<button type="button" class="ord-more-item${m.danger ? " ord-more-danger" : ""}" onclick="event.stopPropagation();CustomerOrders.closeAllCardMore();${m.onclick}">${ctx.esc(m.label)}</button>`).join("")}
       </div>
     </div>` : "";
@@ -836,7 +838,9 @@ const CustomerOrders = (() => {
       </div>
       ${createdByHtml(o)}
       ${markHtml}
-      <div data-tile-note="co:${currentBucket}:${o.customer_id}" onclick="event.stopPropagation()"></div>
+      <div data-tile-note="co:${currentBucket}:${o.customer_id}" onclick="event.stopPropagation()">
+        <button type="button" class="btn btn-secondary btn-sm" style="margin:6px 14px;" onclick="event.stopPropagation();App.editTileNote('co:${currentBucket}:${o.customer_id}')">Add note</button>
+      </div>
           <div class="ord-order-card-body">
         ${statText ? `<div class="ord-order-card-stat">${statText}</div>` : ""}
       </div>
@@ -853,11 +857,15 @@ const CustomerOrders = (() => {
     if (!el) return;
     const isOpen = el.style.display !== "none";
     closeAllCardMore();
-    if (!isOpen) el.style.display = "block";
+    if (!isOpen) {
+      el.style.display = "block";
+      el.closest(".ord-order-card")?.classList.add("is-menu-open");
+    }
   }
 
   function closeAllCardMore() {
     document.querySelectorAll('[id^="co-card-more-"]').forEach(el => { el.style.display = "none"; });
+    document.querySelectorAll(".ord-order-card.is-menu-open").forEach(el => el.classList.remove("is-menu-open"));
   }
 
   function renderList() {

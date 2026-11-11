@@ -139,7 +139,7 @@ const OrdersUI = (() => {
           <div class="ord-card-text">
             <div class="ord-card-title">${titleHtml}${pillHtml ? ` ${pillHtml}` : ""}</div>
             ${meta ? `<div class="ord-card-meta">${meta}</div>` : ""}
-            ${noteKey ? `<div data-tile-note="${esc(noteKey)}" onclick="event.stopPropagation()"></div>` : ""}
+            ${noteKey ? `<div data-tile-note="${esc(noteKey)}" onclick="event.stopPropagation()"><button type="button" class="btn btn-secondary btn-sm" onclick="event.stopPropagation();App.editTileNote('${esc(noteKey)}')">Add note</button></div>` : ""}
           </div>
         </div>
         <div class="ord-card-actions" onclick="event.stopPropagation()">

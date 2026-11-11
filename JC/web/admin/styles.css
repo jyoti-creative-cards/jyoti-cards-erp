@@ -3234,11 +3234,12 @@ table.data tr.filter-row th { padding: 6px 8px; background: #fff; border-bottom:
   border: 1px solid #e2e8f0;
   border-top: 3px solid #e2e8f0;
   border-radius: 12px;
-  overflow: hidden;
+  overflow: visible;
   cursor: pointer;
   transition: box-shadow .15s, transform .12s, border-color .15s;
   box-shadow: 0 1px 4px rgba(15,23,42,.05);
 }
+.ord-order-card.is-menu-open { position: relative; z-index: 30; }
 .ord-order-card:hover {
   box-shadow: 0 4px 16px rgba(15,23,42,.10);
   transform: translateY(-1px);

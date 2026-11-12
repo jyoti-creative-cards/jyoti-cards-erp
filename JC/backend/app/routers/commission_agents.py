@@ -12,7 +12,7 @@ from sqlalchemy import String, cast, or_
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.deps import AuthContext, require_admin
+from app.deps import AuthContext, require_admin, require_any_permission
 from app.models.city import City
 from app.models.commission_agent import CommissionAgent, CommissionLedgerEntry
 from app.models.customer import Customer
@@ -72,6 +72,31 @@ def list_agents(db: Session = Depends(get_db), auth: AuthContext = Depends(requi
             "outstanding": _money(agent_outstanding(db, row.id)),
         })
     return out
+
+
+@router.get("/quick-search")
+def quick_search_agents(
+    q: str,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_any_permission("finance.write")),
+):
+    """Name lookup for Quick entry. An agent match is a payment on the agent, not a party."""
+    needle = " ".join((q or "").split()).lower()
+    if not needle:
+        return []
+    rows = (
+        db.query(CommissionAgent)
+        .filter(CommissionAgent.deleted_at.is_(None))
+        .order_by(CommissionAgent.name.asc())
+        .all()
+    )
+    hits = []
+    for row in rows:
+        name = (row.name or "").lower()
+        phone = (row.phone or "").lower()
+        if needle in name or needle in phone or all(part in name for part in needle.split()):
+            hits.append({"id": row.id, "name": row.name, "phone": row.phone or "", "kind": "agent"})
+    return hits[:8]
 
 
 @router.post("")

@@ -45,6 +45,7 @@ const App = (() => {
   let shortcutMode = "";
   let shortcutSearchSeq = 0;
   let customerRealOnly = true;
+  let includeAgentEntries = false;
   let customerAr = null;
   let viewStack = [];
   let currentViewName = null;

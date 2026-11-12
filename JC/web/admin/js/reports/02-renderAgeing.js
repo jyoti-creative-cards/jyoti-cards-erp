@@ -806,49 +806,65 @@
     URL.revokeObjectURL(url);
   }
 
-  function setConfirmedOn(value) {
-    confirmedOn = value || today();
-    loadChip();
+  function confirmedQuery() {
+    const params = new URLSearchParams();
+    if (datePreset !== "all") {
+      if (fromDate) params.set("from_date", fromDate);
+      if (toDate) params.set("to_date", toDate);
+    }
+    return params.toString();
   }
 
   async function downloadConfirmedPdf() {
-    const day = confirmedOn || today();
+    const q = confirmedQuery();
+    const label = datePreset === "all" ? "all" : (fromDate || toDate || "today");
     try {
-      await DocShare.openPdf(`/reports/confirmed-orders/pdf?on=${encodeURIComponent(day)}`, { filename: `confirmed-orders-${day}.pdf` });
+      await DocShare.openPdf(`/reports/confirmed-orders/pdf${q ? "?" + q : ""}`, { filename: `confirmed-orders-${label}.pdf` });
     } catch (e) { ctx.toast(e.message, "error"); }
   }
 
   async function renderConfirmedOrders(body) {
-    const day = confirmedOn || today();
-    const data = await ctx.api(`/reports/confirmed-orders?on=${encodeURIComponent(day)}`, {}, 0);
+    const qstr = confirmedQuery();
+    const data = await ctx.api(`/reports/confirmed-orders${qstr ? "?" + qstr : ""}`, {}, 0);
     const q = hubSearch.trim().toLowerCase();
-    const rows = (data.rows || []).filter(row => {
+    const orders = (data.orders || []).filter(order => {
       if (!q) return true;
-      return [row.party, row.party_number, row.item_no, row.order_id].join(" ").toLowerCase().includes(q);
+      const items = (order.lines || []).map(l => l.item_no).join(" ");
+      return [order.party, order.party_number, order.city, order.marking, order.placement_id, items].join(" ").toLowerCase().includes(q);
     });
+    const period = data.on || (datePreset === "all" ? "All dates" : "");
+    const bands = ["#ffffff", "#f8fafc"];
+    const html = orders.map((order, i) => {
+      const bg = bands[i % 2];
+      const city = order.city ? ` · ${ctx.esc(order.city)}` : "";
+      const head = `<tr style="background:${bg};">
+        <td style="font-weight:800;">${order.party_number ?? ""}</td>
+        <td style="font-weight:800;">${ctx.esc(order.party || "")}${city}</td>
+        <td style="color:#b91c1c;font-weight:700;">${ctx.esc(order.marking || "")}</td>
+        <td style="font-weight:800;">#${order.placement_id}</td>
+        <td></td><td></td><td></td>
+      </tr>`;
+      const lines = (order.lines || []).map(line => `<tr style="background:${bg};">
+        <td></td>
+        <td style="padding-left:28px;color:#334155;">${ctx.esc(line.item_no)}</td>
+        <td></td><td></td>
+        <td>${line.qty}</td>
+        <td>${ctx.esc(line.rate)}</td>
+        <td></td>
+      </tr>`).join("");
+      return head + lines;
+    }).join("");
     body.innerHTML = `
-      <h2 class="report-print-title" style="position:absolute;left:-9999px;">Confirmed orders · ${ctx.esc(day)}</h2>
+      <h2 class="report-print-title" style="position:absolute;left:-9999px;">Confirmed orders · ${ctx.esc(period)}</h2>
       <div style="display:flex;gap:12px;align-items:end;flex-wrap:wrap;margin:0 0 12px;">
-        <label class="label">Date
-          <input type="date" class="input" value="${ctx.esc(day)}" onchange="Reports.setConfirmedOn(this.value)" />
-        </label>
         <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.downloadConfirmedPdf()">PDF</button>
         <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.printCurrent()">Print</button>
         <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.exportCurrentExcel()">Excel</button>
-        <span style="color:var(--muted);font-size:13px;">${rows.length} item line${rows.length === 1 ? "" : "s"}</span>
+        <span style="color:var(--muted);font-size:13px;">${orders.length} order${orders.length === 1 ? "" : "s"} · ${ctx.esc(period)}</span>
       </div>
-      ${rows.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
-        <th>Party no.</th><th>Party</th><th>Order</th><th>Item</th><th>Qty</th><th>Rate</th>
-      </tr></thead><tbody>
-        ${rows.map(row => `<tr>
-          <td>${row.party_number ?? ""}</td>
-          <td>${ctx.esc(row.party)}</td>
-          <td>#${row.order_id}</td>
-          <td><strong>${ctx.esc(row.item_no)}</strong></td>
-          <td>${row.qty}</td>
-          <td>${ctx.esc(row.rate)}</td>
-        </tr>`).join("")}
-      </tbody></table></div>` : empty("No confirmed orders", "Pick another date.")}`;
+      ${orders.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
+        <th>Party no.</th><th>Party</th><th>Marking</th><th>Order</th><th>Qty</th><th>Rate</th><th></th>
+      </tr></thead><tbody>${html}</tbody></table></div>` : empty("No confirmed orders", "Choose another date, or All.")}`;
   }
 
   async function renderVendorOrderReport(body) {

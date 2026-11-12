@@ -192,24 +192,50 @@
     repaintLedgers();
   }
 
+  function setIncludeAgentEntries(on) {
+    includeAgentEntries = !!on;
+    repaintLedgers();
+  }
+
+  function isAgentLedgerEntry(e) {
+    return !!((e && e.details && e.details.commission_agent_name) || "");
+  }
+
+  function agentLedgerName() {
+    const hit = (customerLedger || []).find(isAgentLedgerEntry);
+    return (hit && hit.details.commission_agent_name) || "";
+  }
+
+  function withoutAgentEntries(items) {
+    if (includeAgentEntries) return items;
+    return items.filter(e => !isAgentLedgerEntry(e));
+  }
+
   function customerRealBar() {
+    const agent = agentLedgerName();
+    const agentBox = agent
+      ? `<label style="display:inline-flex;gap:6px;align-items:center;margin:0 0 10px 16px;font-size:13px;">
+      <input type="checkbox" ${includeAgentEntries ? "checked" : ""} onchange="App.setIncludeAgentEntries(this.checked)" />
+      Include ${esc(agent)} entries
+    </label>`
+      : "";
     return `<label style="display:inline-flex;gap:6px;align-items:center;margin:0 0 10px;font-size:13px;">
       <input type="checkbox" ${customerRealOnly ? "checked" : ""} onchange="App.setCustomerRealOnly(this.checked)" />
       Real entries only
-    </label>`;
+    </label>${agentBox}`;
   }
 
   function renderCustomerStatement(customerId, opts = {}) {
-    let orders = customerLedger.filter(e => e.event_type === "order_placed" || e.event_type === "order_cancelled");
-    let bills = customerLedger.filter(e => e.event_type === "customer_bill");
-    let payments = customerLedger.filter(e => e.event_type === "ar_payment");
+    let orders = withoutAgentEntries(customerLedger.filter(e => e.event_type === "order_placed" || e.event_type === "order_cancelled"));
+    let bills = withoutAgentEntries(customerLedger.filter(e => e.event_type === "customer_bill"));
+    let payments = withoutAgentEntries(customerLedger.filter(e => e.event_type === "ar_payment"));
     if (customerRealOnly) {
       orders = orders.filter(e => e.event_type !== "order_cancelled");
       bills = bills.filter(e => !String(e.title || "").toLowerCase().startsWith("cancelled"));
       payments = payments.filter(e => !e.details?.reversed);
     }
-    const returns = customerLedger.filter(e => e.event_type === "customer_return");
-    const openings = customerLedger.filter(e => e.event_type === "ar_opening");
+    const returns = withoutAgentEntries(customerLedger.filter(e => e.event_type === "customer_return"));
+    const openings = withoutAgentEntries(customerLedger.filter(e => e.event_type === "ar_opening"));
     const sections = [];
 
     const group = (title, items, rowFn) => {
@@ -407,6 +433,7 @@
   async function pickPartyLedger(id) {
     const c = (partyLedgerParties || []).find(x => Number(x.id) === Number(id));
     partyLedgerCustomerId = Number(id);
+    includeAgentEntries = false;
     customerLedgerOpenIds = new Set();
     customerLedgerExpandAll = true;
     const picked = document.getElementById("party-ledger-picked");
@@ -434,6 +461,7 @@
     const wanted = String(day || "").slice(0, 10);
     const visible = customerLedger.filter(e => {
       if (wanted && String(e.occurred_at || e.value_date || "").slice(0, 10) !== wanted) return false;
+      if (!includeAgentEntries && isAgentLedgerEntry(e)) return false;
       if (!customerRealOnly) return true;
       if (e.event_type === "order_cancelled") return false;
       if (e.event_type === "customer_bill" && String(e.title || "").toLowerCase().startsWith("cancelled")) return false;

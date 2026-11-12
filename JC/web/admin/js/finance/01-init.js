@@ -321,9 +321,19 @@
       // finance.write alone and returns only id/business_name/city_name.
       rows = await ctx.api(`/${resource}/quick-search?q=${encodeURIComponent(q.trim())}`, {}, 0);
     } catch (e) { ctx.toast(e.message, "error"); return null; }
+    if (resource === "customers") {
+      let agents = [];
+      try {
+        agents = await ctx.api(`/commission-agents/quick-search?q=${encodeURIComponent(q.trim())}`, {}, 0) || [];
+      } catch (_) { agents = []; }
+      const agentRows = agents.map(a => ({ id: a.id, business_name: a.name, city_name: "", kind: "agent" }));
+      const partyRows = (rows || []).map(r => ({ ...r, kind: "customer" }));
+      if (agentRows.length === 1) return agentRows[0];
+      rows = agentRows.concat(partyRows);
+    }
     if (!rows || !rows.length) { ctx.toast("No match found", "error"); return null; }
     if (rows.length === 1) return rows[0];
-    const listing = rows.slice(0, 8).map((r, i) => `${i + 1}. ${r.business_name}${r.city_name ? " — " + r.city_name : ""}`).join("\n");
+    const listing = rows.slice(0, 8).map((r, i) => `${i + 1}. ${r.business_name}${r.kind === "agent" ? " — Agent" : ""}${r.city_name ? " — " + r.city_name : ""}`).join("\n");
     const pick = prompt(`Multiple matches — enter the number:\n${listing}`);
     const idx = parseInt(String(pick || "").trim(), 10) - 1;
     if (!Number.isFinite(idx) || idx < 0 || idx >= rows.length) return null;
@@ -405,7 +415,7 @@
       paymentModesLoadFailed = true;
       ctx.toast(e.message, "error");
     }
-    const modeOpts = paymentModesLoadFailed
+    const modeOpts = customer.kind === "agent" ? "" : paymentModesLoadFailed
       ? `<p style="font-size:13px;color:var(--danger);margin:0 0 12px;">Couldn't load payment modes. You can still collect; you'll be asked for a mode if one is required.</p>`
       : quickPayModes.length
       ? `<label class="label">Payment mode</label>
@@ -416,7 +426,7 @@
       : "";
     document.getElementById("quick-pay-body").innerHTML = `
       <div class="review-block" style="margin-bottom:16px;">
-        ${ctx.reviewRow("Party", partyWithCity(customer))}
+        ${ctx.reviewRow(customer.kind === "agent" ? "Agent" : "Party", customer.kind === "agent" ? `${customer.business_name} · Agent` : partyWithCity(customer))}
       </div>
       ${collectDateHtml("quick-pay-date")}
       ${modeOpts}
@@ -444,12 +454,32 @@
     const comment = (document.getElementById("quick-pay-comment")?.value || "").trim();
     const modeRaw = document.getElementById("quick-pay-mode")?.value || "";
     const paymentModeId = modeRaw ? parseInt(modeRaw, 10) : null;
-    if (quickPayModes.length && !paymentModeId) return ctx.toast("Select payment mode", "error");
+    if (customer.kind !== "agent" && quickPayModes.length && !paymentModeId) return ctx.toast("Select payment mode", "error");
     if (!amount || amount <= 0) return ctx.toast("Enter a valid amount", "error");
     if (!valueDate) return ctx.toast("Enter collection date", "error");
     rememberCollectDate("quick-pay-date");
     ctx.showLoading?.();
     try {
+      if (customer.kind === "agent") {
+        const note = [ref, comment].filter(Boolean).join(" · ");
+        await ctx.api(`/commission-agents/${customer.id}/payments`, {
+          method: "POST",
+          body: JSON.stringify({ amount: String(amount), note: note || null, paid_on: valueDate }),
+        });
+        closeQuickPay();
+        ctx.toast("Payment recorded on the agent", "success");
+        showPaymentDone({
+          title: "Collected",
+          party: `${customer.business_name} · Agent`,
+          amount,
+          valueDate,
+          receipt: ref,
+          comment,
+          mode: "Agent",
+          againFn: "Finance.quickCustomerPayment()",
+        });
+        return;
+      }
       const res = await postPayment(`/accounts-receivable/customer/${customer.id}/record-payment`, {
         payment_ref: ref || undefined,
         payment_mode_id: paymentModeId || undefined,

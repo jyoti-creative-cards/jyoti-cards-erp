@@ -42,6 +42,8 @@ const App = (() => {
   let customerActionMeta = null;
   let partyLedgerCustomerId = null;
   let partyLedgerParties = null;
+  let partyLedgerMode = "customer";
+  let agentLedgerRows = [];
   let shortcutMode = "";
   let shortcutSearchSeq = 0;
   let customerRealOnly = true;

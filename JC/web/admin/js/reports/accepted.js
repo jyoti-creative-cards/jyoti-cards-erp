@@ -95,6 +95,7 @@ const Reports = (() => {
 
   const LEDGER_KINDS = [
     { id: "customers", label: "Customers" },
+    { id: "agents", label: "Agents" },
     { id: "vendors", label: "Vendors" },
     { id: "products", label: "Products" },
     { id: "staff", label: "Staff" },
@@ -1473,6 +1474,24 @@ const Reports = (() => {
   }
 
   async function renderLedgers(body) {
+    if (ledgerKind === "agents") {
+      let rows = [];
+      try { rows = await ctx.api("/commission-agents", {}, 0) || []; }
+      catch (e) { body.innerHTML = empty("Could not load agents", e.message); return; }
+      const q = foldReportName(hubSearch);
+      rows = rows.filter(r => !q || q.split(/\s+/).every(t => foldReportName(r.name).includes(t) || String(r.phone || "").includes(t)));
+      body.innerHTML = rows.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
+        <th>Agent</th><th>Phone</th><th>Parties</th><th>Due</th>
+      </tr></thead><tbody>
+        ${rows.map(r => `<tr class="clickable" onclick="Reports.openAgentLedger(${r.id})">
+          <td><strong>${ctx.esc(r.name)}</strong></td>
+          <td>${ctx.esc(r.phone || "—")}</td>
+          <td>${r.party_count || 0}</td>
+          <td><strong>${fmtPrice(r.outstanding)}</strong></td>
+        </tr>`).join("")}
+      </tbody></table></div>` : empty("No agent", "No commission agent matches that search.");
+      return;
+    }
     if (ledgerKind === "cash") {
       body.innerHTML = `<div class="fin-panel-head" style="margin-bottom:16px;">
         <div><h3 class="fin-panel-title">Cash book</h3>
@@ -1748,6 +1767,47 @@ const Reports = (() => {
     </label>`;
   }
 
+  function foldReportName(text) {
+    return String(text || "").toLowerCase().replace(/mohammad|mohammed|mohd/g, "mohm");
+  }
+
+  async function openAgentLedger(id) {
+    backLabel = "Back";
+    ctx.showLoading?.();
+    try {
+      const data = await ctx.api(`/commission-agents/${id}`, {}, 0);
+      const goods = data.goods || [];
+      const entries = [];
+      for (const entry of data.ledger || []) {
+        const lines = entry.bill_number
+          ? goods.filter(g => g.bill_number === entry.bill_number && g.party_name === entry.party_name)
+          : [];
+        if (!lines.length) {
+          entries.push(entry);
+          continue;
+        }
+        lines.forEach((g, i) => entries.push({
+          ...entry,
+          date: i ? "" : entry.date,
+          bill_number: i ? "" : entry.bill_number,
+          party_name: i ? "" : entry.party_name,
+          item: g.item,
+          qty: g.qty,
+          line_amount: g.amount,
+          balance: i ? "" : entry.balance,
+        }));
+      }
+      ledgerDetail = {
+        party_type: "agent",
+        party_label: data.name,
+        outstanding: data.outstanding,
+        entries,
+      };
+      showDetail();
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
   function renderLedgerDetail() {
     const hero = document.getElementById("reports-ledger-hero");
     const body = document.getElementById("reports-ledger-body");
@@ -1766,6 +1826,23 @@ const Reports = (() => {
           <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.printCurrent()">Print</button>
           <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.exportCurrentExcel()">Excel</button>`,
       });
+    }
+    if (d.party_type === "agent") {
+      const entries = d.entries || [];
+      body.innerHTML = entries.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
+        <th>Date</th><th>Bill</th><th>Party</th><th>Item</th><th>Qty</th><th>Amount</th><th>Balance</th>
+      </tr></thead><tbody>
+        ${entries.map(e => `<tr>
+          <td>${ctx.esc(e.date || "")}</td>
+          <td>${ctx.esc(e.bill_number || e.entry_type || "")}</td>
+          <td>${ctx.esc(e.party_name || "")}</td>
+          <td>${ctx.esc(e.item || e.description || "")}</td>
+          <td>${e.qty ?? ""}</td>
+          <td>${ctx.esc(e.line_amount || e.amount || "")}</td>
+          <td>${ctx.esc(e.balance || "")}</td>
+        </tr>`).join("")}
+      </tbody></table></div>` : empty("Empty ledger", "No entries yet.");
+      return;
     }
     if (d.party_type === "staff") {
       const entries = realLedgerEntries(d.entries || []);
@@ -1971,7 +2048,7 @@ const Reports = (() => {
   return {
     init, showHub, setMode, setChip, setLedgerKind, setAgeingSide, setHubSearch, pickQuestion,
     setDatePreset, onRangeChange, onDayBillChange, setDayBillToday, onThresholdChange,
-    openLedger, openStaffLedger, openExpenseLedger, addExpenseHead, addExpenseSubhead, addExpenseSource, renameExpenseSource, deleteExpenseSource, openCashLedger, backFromLedger, openDoc,
+    openLedger, openAgentLedger, openStaffLedger, openExpenseLedger, addExpenseHead, addExpenseSubhead, addExpenseSource, renameExpenseSource, deleteExpenseSource, openCashLedger, backFromLedger, openDoc,
     shareDaybook, waDaybook, shareStockSummary, shareAgeing, waAgeing, exportExcel,
     printCurrent, exportCurrentExcel, downloadSalesPdf, downloadPaymentsPdf, setHideVoids, setJournalReportKind, setStockYear, setPrintCarry, togglePrintGroup, toggleStockAlbum,
     toggleVendorDcu, downloadVendorOrderCsv, setConfirmedOn, downloadConfirmedPdf,

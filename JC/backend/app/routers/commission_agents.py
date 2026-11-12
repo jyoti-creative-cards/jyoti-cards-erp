@@ -37,6 +37,14 @@ class PaymentIn(BaseModel):
     paid_on: Optional[date] = None
 
 
+def _fold_name(text: str) -> str:
+    """mohd / mohammed / mohammad are the same spoken name as mohm."""
+    folded = " ".join((text or "").lower().split())
+    for src in ("mohammad", "mohammed", "mohd"):
+        folded = folded.replace(src, "mohm")
+    return folded
+
+
 def _money(value: Decimal) -> str:
     return format(Decimal(str(value or 0)).quantize(Decimal("0.01")), "f")
 
@@ -81,7 +89,7 @@ def quick_search_agents(
     auth: AuthContext = Depends(require_any_permission("finance.write")),
 ):
     """Name lookup for Quick entry. An agent match is a payment on the agent, not a party."""
-    needle = " ".join((q or "").split()).lower()
+    needle = _fold_name(q)
     if not needle:
         return []
     rows = (
@@ -92,7 +100,7 @@ def quick_search_agents(
     )
     hits = []
     for row in rows:
-        name = (row.name or "").lower()
+        name = _fold_name(row.name)
         phone = (row.phone or "").lower()
         if needle in name or needle in phone or all(part in name for part in needle.split()):
             hits.append({"id": row.id, "name": row.name, "phone": row.phone or "", "kind": "agent"})

@@ -1,6 +1,7 @@
 const CommissionAgents = (() => {
   let ledgerDetails = true;
   let currentId = null;
+  let lastAgent = null;
 
   function api(path, opts) {
     return App.api(path, opts || {});
@@ -86,6 +87,7 @@ const CommissionAgents = (() => {
     let data;
     try { data = await api(`/commission-agents/${id}`, {}, 0); }
     catch (e) { App.toast?.(e.message, "error"); return; }
+    lastAgent = data;
     box.innerHTML = `
       <button type="button" class="btn btn-secondary" onclick="CommissionAgents.open()">← Agents</button>
       <h2 style="margin:12px 0 4px;">${esc(data.name)}</h2>
@@ -133,7 +135,10 @@ const CommissionAgents = (() => {
       <div class="card" style="padding:12px;">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
           <h3 style="margin:0 0 8px;">Ledger</h3>
-          <button type="button" class="btn btn-secondary btn-sm" onclick="CommissionAgents.toggleLedger()">${ledgerDetails ? "Hide details" : "View details"}</button>
+          <span>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="CommissionAgents.printLedger()">Print</button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="CommissionAgents.toggleLedger()">${ledgerDetails ? "Hide details" : "View details"}</button>
+          </span>
         </div>
         ${(data.ledger || []).length ? `<table class="data"><thead><tr><th>Date</th><th>Bill</th><th>Party</th><th>Amount</th><th>Balance</th></tr></thead><tbody>
           ${data.ledger.map((row) => {
@@ -208,5 +213,27 @@ const CommissionAgents = (() => {
 
   function close() { hideDesk(); }
 
-  return { open, close, create, openAgent, toggleLedger, save, removeAgent, searchParties, addParty, removeParty, collect };
+  function printLedger() {
+    const data = lastAgent;
+    if (!data) return;
+    const goods = data.goods || [];
+    const rows = [["Date", "Bill", "Party", "Item", "Qty", "Amount", "Balance"]];
+    for (const entry of data.ledger || []) {
+      const lines = entry.bill_number ? goods.filter(g => g.bill_number === entry.bill_number && g.party_name === entry.party_name) : [];
+      if (!lines.length) {
+        rows.push([entry.date || "", entry.bill_number || entry.entry_type || "", entry.party_name || "", entry.description || "", "", entry.amount || "", entry.balance || ""]);
+        continue;
+      }
+      lines.forEach((g, i) => rows.push([i ? "" : entry.date, i ? "" : entry.bill_number, i ? "" : entry.party_name, g.item || "", g.qty ?? "", g.amount || "", i ? "" : entry.balance]));
+    }
+    const body = rows.map((cols, i) => `<tr>${cols.map(col => `<${i ? "td" : "th"}>${esc(col)}</${i ? "td" : "th"}>`).join("")}</tr>`).join("");
+    const w = window.open("", "_blank");
+    if (!w) return App.toast?.("Allow pop-ups to print", "error");
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(data.name)}</title><style>body{font-family:sans-serif;font-size:12px} table{border-collapse:collapse;width:100%} td,th{border:1px solid #ccc;padding:4px 6px;text-align:left}</style></head><body><h1>${esc(data.name)} · due ${esc(data.outstanding || "")}</h1><table>${body}</table></body></html>`);
+    w.document.close();
+    w.focus();
+    setTimeout(() => { try { w.print(); } catch (_) {} }, 200);
+  }
+
+  return { open, close, create, openAgent, toggleLedger, printLedger, save, removeAgent, searchParties, addParty, removeParty, collect };
 })();

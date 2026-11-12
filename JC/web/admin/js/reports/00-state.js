@@ -95,6 +95,7 @@ const Reports = (() => {
 
   const LEDGER_KINDS = [
     { id: "customers", label: "Customers" },
+    { id: "agents", label: "Agents" },
     { id: "vendors", label: "Vendors" },
     { id: "products", label: "Products" },
     { id: "staff", label: "Staff" },

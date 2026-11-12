@@ -43,6 +43,8 @@ const App = (() => {
   let customerActionMeta = null;
   let partyLedgerCustomerId = null;
   let partyLedgerParties = null;
+  let partyLedgerMode = "customer";
+  let agentLedgerRows = [];
   let shortcutMode = "";
   let shortcutSearchSeq = 0;
   let customerRealOnly = true;
@@ -1968,10 +1970,11 @@ const App = (() => {
 
   function customerRealBar() {
     const agent = agentLedgerName();
+    const hidden = (customerLedger || []).filter(isAgentLedgerEntry).length;
     const agentBox = agent
       ? `<label style="display:inline-flex;gap:6px;align-items:center;margin:0 0 10px 16px;font-size:13px;">
-      <input type="checkbox" ${includeAgentEntries ? "checked" : ""} onchange="App.setIncludeAgentEntries(this.checked)" />
-      Include ${esc(agent)} entries
+      <input type="checkbox" data-agent-include="1" ${includeAgentEntries ? "checked" : ""} onchange="App.setIncludeAgentEntries(this.checked)" />
+      Include ${esc(agent)} entries (${hidden})
     </label>`
       : "";
     return `<label style="display:inline-flex;gap:6px;align-items:center;margin:0 0 10px;font-size:13px;">
@@ -2155,23 +2158,35 @@ const App = (() => {
     repaintLedgers();
   }
 
+  function foldParty(text) {
+    return String(text || "").toLowerCase().replace(/mohammad|mohammed|mohd/g, "mohm");
+  }
+
   async function ensurePartyLedgerParties() {
     if (partyLedgerParties) return partyLedgerParties;
-    partyLedgerParties = await api("/customers/entry-parties", {}, 0) || [];
+    const parties = await api("/customers/entry-parties", {}, 0) || [];
+    let agents = [];
+    try { agents = await api("/commission-agents", {}, 0) || []; } catch (_) { agents = []; }
+    partyLedgerParties = [
+      ...agents.map(a => ({ id: a.id, kind: "agent", business_name: a.name, phone: a.phone || "", outstanding: a.outstanding, city_name: "" })),
+      ...parties.map(c => ({ ...c, kind: "customer" })),
+    ];
     return partyLedgerParties;
   }
 
   function filterPartyLedger(q) {
-    const needle = String(q || "").trim().toLowerCase();
-    if (!needle) return [];
-    const digits = needle.replace(/\D/g, "");
+    const raw = String(q || "").trim().toLowerCase();
+    if (!raw) return [];
+    const needle = foldParty(raw);
+    const tokens = needle.split(/\s+/).filter(Boolean);
+    const digits = raw.replace(/\D/g, "");
     return (partyLedgerParties || []).filter(c => {
-      const name = String(c.business_name || "").toLowerCase();
-      const city = String(c.city_name || "").toLowerCase();
-      const num = String(c.party_number || "");
+      const blob = foldParty(`${c.business_name || ""} ${c.city_name || ""} ${c.marker_1 || ""} ${c.marker_2 || ""} ${c.party_number || ""}`);
       const phone = String(c.phone || "");
-      return name.includes(needle) || city.includes(needle) || (num && num.includes(needle)) || (digits && phone.includes(digits));
-    }).slice(0, 12);
+      const textHit = tokens.every(t => blob.includes(t));
+      const phoneHit = digits.length >= 4 && phone.includes(digits);
+      return textHit || phoneHit;
+    }).sort((a, b) => (a.kind === "agent" ? 0 : 1) - (b.kind === "agent" ? 0 : 1)).slice(0, 12);
   }
 
   async function onPartyLedgerSearch(val) {
@@ -2181,12 +2196,45 @@ const App = (() => {
     catch (e) { box.innerHTML = `<p style="color:var(--danger);">${esc(e.message)}</p>`; return; }
     const rows = filterPartyLedger(val);
     box.innerHTML = rows.map(c =>
-      `<button type="button" class="btn btn-secondary" style="display:block;width:100%;text-align:left;margin-top:6px;" onclick="App.pickPartyLedger(${c.id})">${esc(c.business_name || "")}${c.city_name ? " · " + esc(c.city_name) : ""}${c.party_number ? " · #" + c.party_number : ""}${c.marker_1 ? " · " + esc(c.marker_1) : ""}${c.marker_2 ? " · " + esc(c.marker_2) : ""}</button>`
+      `<button type="button" class="btn btn-secondary" style="display:block;width:100%;text-align:left;margin-top:6px;" onclick="App.pickPartyLedger(${c.id}, '${c.kind || "customer"}')">${c.kind === "agent" ? "Agent · " : ""}${esc(c.business_name || "")}${c.city_name ? " · " + esc(c.city_name) : ""}${c.party_number ? " · #" + c.party_number : ""}${c.outstanding != null && c.kind === "agent" ? " · due " + esc(c.outstanding) : ""}${c.marker_1 ? " · " + esc(c.marker_1) : ""}${c.marker_2 ? " · " + esc(c.marker_2) : ""}</button>`
     ).join("") || (String(val || "").trim() ? `<p style="color:var(--muted);margin:8px 0 0;">No match</p>` : "");
   }
 
-  async function pickPartyLedger(id) {
-    const c = (partyLedgerParties || []).find(x => Number(x.id) === Number(id));
+  function agentSheetRows(data) {
+    const goods = data.goods || [];
+    const rows = [["Date", "Bill", "Party", "Item", "Qty", "Amount", "Balance"]];
+    for (const entry of data.ledger || []) {
+      const lines = entry.bill_number
+        ? goods.filter(g => g.bill_number === entry.bill_number && g.party_name === entry.party_name)
+        : [];
+      if (!lines.length) {
+        rows.push([entry.date || "", entry.bill_number || entry.entry_type || "", entry.party_name || "", entry.description || "", "", entry.amount || "", entry.balance || ""]);
+        continue;
+      }
+      lines.forEach((g, i) => {
+        rows.push([i ? "" : (entry.date || ""), i ? "" : (entry.bill_number || ""), i ? "" : (entry.party_name || ""), g.item || "", g.qty ?? "", g.amount || "", i ? "" : (entry.balance || "")]);
+      });
+    }
+    return rows;
+  }
+
+  function renderAgentLedger(data) {
+    agentLedgerRows = agentSheetRows(data);
+    const body = agentLedgerRows.slice(1).map(cols => `<tr>${cols.map(col => `<td>${esc(col)}</td>`).join("")}</tr>`).join("");
+    return `<div class="detail-section">
+      <h4>${esc(data.name || "Agent")} · due ${esc(data.outstanding || "0")}</h4>
+      <p style="color:var(--muted);font-size:13px;margin:0 0 10px;">${(data.parties || []).length} parties. Print and Excel use this ledger.</p>
+      ${body ? `<div class="card table-wrap"><table class="data"><thead><tr><th>Date</th><th>Bill</th><th>Party</th><th>Item</th><th>Qty</th><th>Amount</th><th>Balance</th></tr></thead><tbody>${body}</tbody></table></div>` : `<p style="color:var(--muted);">No entries yet.</p>`}
+    </div>`;
+  }
+
+  async function pickPartyLedger(id, kind) {
+    const wanted = kind || "customer";
+    const c = (partyLedgerParties || []).find(x => Number(x.id) === Number(id) && (x.kind || "customer") === wanted)
+      || (partyLedgerParties || []).find(x => Number(x.id) === Number(id));
+    if ((c && c.kind) === "agent" || wanted === "agent") return pickAgentLedger(id, c);
+    partyLedgerMode = "customer";
+    agentLedgerRows = [];
     partyLedgerCustomerId = Number(id);
     includeAgentEntries = false;
     customerLedgerOpenIds = new Set();
@@ -2208,6 +2256,35 @@ const App = (() => {
     } catch (e) {
       if (page) page.innerHTML = `<p style="color:var(--danger);">${esc(e.message)}</p>`;
     }
+  }
+
+  async function pickAgentLedger(id, row) {
+    partyLedgerMode = "agent";
+    partyLedgerCustomerId = Number(id);
+    includeAgentEntries = false;
+    customerLedger = [];
+    const picked = document.getElementById("party-ledger-picked");
+    if (picked) picked.textContent = row ? `Agent · ${row.business_name || ""}` : "Agent";
+    const box = document.getElementById("party-ledger-matches");
+    if (box) box.innerHTML = "";
+    const input = document.getElementById("party-ledger-q");
+    if (input) input.value = "";
+    const tools = document.getElementById("party-ledger-tools");
+    if (tools) tools.classList.remove("hidden");
+    const page = document.getElementById("party-ledger-body");
+    if (page) page.innerHTML = `<p style="color:var(--muted);">Loading ledger…</p>`;
+    try {
+      const data = await api(`/commission-agents/${id}`, {}, 0);
+      if (picked) picked.textContent = `Agent · ${data.name || ""}`;
+      if (page) page.innerHTML = renderAgentLedger(data);
+    } catch (e) {
+      if (page) page.innerHTML = `<p style="color:var(--danger);">${esc(e.message)}</p>`;
+    }
+  }
+
+  function readAgentInclude() {
+    const box = document.querySelector("[data-agent-include]");
+    if (box) includeAgentEntries = !!box.checked;
   }
 
   function partyLedgerRows(day) {
@@ -2245,14 +2322,31 @@ const App = (() => {
 
   function exportPartyLedger() {
     if (!partyLedgerCustomerId) return toast("Select a party first", "error");
+    readAgentInclude();
     const name = (document.getElementById("party-ledger-picked")?.textContent || "party-ledger").replace(/[^a-z0-9]+/gi, "-");
-    Xlsx.download(`${name || "party-ledger"}.xlsx`, partyLedgerRows());
+    const day = document.getElementById("party-ledger-day")?.value || "";
+    const rows = partyLedgerMode === "agent" ? agentRowsForDay(day) : partyLedgerRows(day);
+    Xlsx.download(`${name || "party-ledger"}.xlsx`, rows);
+  }
+
+  function agentRowsForDay(day) {
+    const wanted = String(day || "").slice(0, 10);
+    if (!wanted) return agentLedgerRows;
+    const out = [agentLedgerRows[0] || ["Date", "Bill", "Party", "Item", "Qty", "Amount", "Balance"]];
+    let keep = false;
+    for (const row of agentLedgerRows.slice(1)) {
+      if (row[0]) keep = String(row[0]).slice(0, 10) === wanted;
+      if (keep) out.push(row);
+    }
+    return out;
   }
 
   function printPartyLedger() {
     if (!partyLedgerCustomerId) return toast("Select a party first", "error");
+    readAgentInclude();
     const day = document.getElementById("party-ledger-day")?.value || "";
-    const body = partyLedgerRows(day).map((cols, i) => `<tr>${cols.map(col => `<${i ? "td" : "th"}>${esc(col)}</${i ? "td" : "th"}>`).join("")}</tr>`).join("");
+    const rows = partyLedgerMode === "agent" ? agentRowsForDay(day) : partyLedgerRows(day);
+    const body = rows.map((cols, i) => `<tr>${cols.map(col => `<${i ? "td" : "th"}>${esc(col)}</${i ? "td" : "th"}>`).join("")}</tr>`).join("");
     const title = document.getElementById("party-ledger-picked")?.textContent || "Party ledger";
     const w = window.open("", "_blank");
     if (!w) return toast("Allow pop-ups to print", "error");

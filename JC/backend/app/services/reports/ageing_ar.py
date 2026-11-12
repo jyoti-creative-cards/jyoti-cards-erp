@@ -3,9 +3,28 @@ from __future__ import annotations
 """Extended reports: item/party/ageing/stock/tax/books + extra ledgers."""
 
 
-from datetime import date
+from dataclasses import dataclass
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
+
+
+@dataclass
+class _AgeEntry:
+    entry_type: str
+    amount: object
+    value_date: Optional[date]
+    created_at: Optional[datetime]
+
+
+@dataclass
+class _Party:
+    id: int
+    business_name: str
+    person_name: Optional[str]
+    alias: Optional[str]
+    phone: Optional[str]
+    city_id: Optional[int]
 
 from sqlalchemy import and_, case, func
 from sqlalchemy.orm import Session

@@ -57,7 +57,7 @@ const CustomerOrders = (() => {
   let billEditProducts = [];
 
   // Past stages — Dispatch is an ops stage (parcels), not a Today/Past peer.
-  const PAST_BUCKETS = ["received", "open", "billed", "dispatch", "cancelled", "closed"];
+  const PAST_BUCKETS = ["received", "open", "billed", "dispatch", "picked", "cancelled", "closed"];
   const BROWSE_BUCKETS = PAST_BUCKETS; // legacy alias
   // All backlog buckets (New/Confirmed/Billed) now day-scope consistently: day=today
   // shows only entries touched today, day=all shows full history — nothing is ever
@@ -71,6 +71,7 @@ const CustomerOrders = (() => {
     open: "Confirmed",
     billed: "Billed",
     dispatch: "Dispatch",
+    picked: "Picked",
     cancelled: "Cancelled",
     closed: "Done",
   };
@@ -79,7 +80,8 @@ const CustomerOrders = (() => {
     received: "Review each order, edit if needed, then confirm →",
     open: "Goods being picked — create bill when ready. Edit if quantities change.",
     billed: "Bill sent — dispatch or collect payment first, then close.",
-    dispatch: "Track parcels and agent pickups.",
+    dispatch: "Check the send-by details, then mark as picked.",
+    picked: "Parcels already marked picked.",
     closed: "All settled.",
   };
 
@@ -114,7 +116,7 @@ const CustomerOrders = (() => {
   }
 
   function isDispatchBucket() {
-    return currentBucket === "dispatch";
+    return currentBucket === "dispatch" || currentBucket === "picked";
   }
 
   /** Jump to Dispatch stage (keeps Today/Past date scope). */
@@ -190,18 +192,7 @@ const CustomerOrders = (() => {
     chips?.classList.remove("hidden");
     OrdersUI.syncModeButtons("#co-hub-mode", today ? "queue" : "past");
     OrdersUI.syncStageChips("#co-bucket-bar", currentBucket);
-    if (dispatch) {
-      OrdersUI.actionChips({
-        hostId: "co-action-chips",
-        active: dispatchStatus,
-        onclickFn: "CustomerOrders.setDispatchStatus",
-        items: [
-          { id: "pending", label: "Pending pick", count: dispatchStatus === "pending" ? dispatchParcels.length : undefined },
-          { id: "picked", label: "Picked" },
-          { id: "all", label: "All" },
-        ],
-      });
-    } else if (actionHost) {
+    if (actionHost) {
       actionHost.innerHTML = "";
       actionHost.classList.add("hidden");
     }
@@ -212,11 +203,10 @@ const CustomerOrders = (() => {
       const picked = selectedListDay();
       const specific = picked && picked !== localToday();
       if (dispatch) {
-        const sub = dispatchStatus === "picked" ? "Picked" : dispatchStatus === "all" ? "All parcels" : "Pending pick";
         title.textContent = specific
-          ? `${ctx.fmtDay?.(picked) || picked} · ${sub}`
-          : (today ? `Today · ${sub}` : sub);
-        if (hint) hint.textContent = BUCKET_HINTS["dispatch"] || "";
+          ? `${ctx.fmtDay?.(picked) || picked} · ${stage}`
+          : (today ? `Today · ${stage}` : stage);
+        if (hint) hint.textContent = BUCKET_HINTS[currentBucket] || "";
       } else if (specific) {
         title.textContent = `${ctx.fmtDay?.(picked) || picked} · ${stage}`;
         if (hint) hint.textContent = "";
@@ -622,10 +612,72 @@ const CustomerOrders = (() => {
   }
 
 // @slice 02-dispatch
+  const dispatchDrafts = {};
+  let pickedOpenId = null;
+  const pickedStories = {};
+
+  function pullDispatchDrafts() {
+    for (const id of Object.keys(dispatchDrafts)) {
+      const root = document.querySelector(`[data-dispatch="${id}"]`);
+      if (!root) continue;
+      const d = dispatchDrafts[id];
+      const read = (field) => root.querySelector(`[data-field="${field}"]`);
+      const mode = read("mode");
+      if (mode) d.mode = mode.value;
+      const agent = read("agent");
+      if (agent) d.agent = agent.value;
+      const freight = read("freight");
+      if (freight) d.freight = freight.value;
+      const receipt = read("receipt");
+      if (receipt) d.receipt = receipt.value;
+      const packing = read("packing");
+      if (packing) d.packing = packing.value;
+      const marking = read("marking");
+      if (marking) d.marking = marking.value;
+      root.querySelectorAll("[data-field=cname]").forEach(el => {
+        const row = d.charges[Number(el.dataset.i)];
+        if (row) row.name = el.value;
+      });
+      root.querySelectorAll("[data-field=camt]").forEach(el => {
+        const row = d.charges[Number(el.dataset.i)];
+        if (row) row.amount = el.value;
+      });
+    }
+  }
+
+  function draftFor(p) {
+    const id = String(p.bill_id);
+    if (!dispatchDrafts[id]) {
+      const charges = (p.additional_charges || []).map(c => ({ name: c.name || "", amount: String(c.amount || "") }));
+      dispatchDrafts[id] = {
+        mode: p.transport_mode || (p.freight_agent_id ? "bus" : "self_pickup"),
+        agent: p.freight_agent_id || "",
+        freight: p.freight_charges && Number(p.freight_charges) ? String(p.freight_charges) : "",
+        receipt: p.transport_receipt_number || "",
+        packing: p.packaging_charges && Number(p.packaging_charges) ? String(p.packaging_charges) : "",
+        charges: charges.length ? charges : [{ name: "", amount: "" }],
+        marking: p.marking || "",
+      };
+    }
+    return dispatchDrafts[id];
+  }
+
+  function setDispatchMode(billId, value) {
+    pullDispatchDrafts();
+    if (dispatchDrafts[billId]) dispatchDrafts[billId].mode = value;
+    renderDispatchList();
+  }
+
+  function addDispatchCharge(billId) {
+    pullDispatchDrafts();
+    dispatchDrafts[billId]?.charges.push({ name: "", amount: "" });
+    renderDispatchList();
+  }
+
   async function loadDispatch() {
     ctx.showLoading?.();
     try {
-      const q = new URLSearchParams({ status: dispatchStatus, day: dayParam() });
+      const q = new URLSearchParams({ status: currentBucket === "picked" ? "picked" : "pending", day: dayParam() });
       if (dispatchAgentId) q.set("agent_id", dispatchAgentId);
       const [parcels, agents] = await Promise.all([
         ctx.api(`/freight-agents/parcels?${q}`, {}, 0),
@@ -651,69 +703,152 @@ const CustomerOrders = (() => {
     });
   }
 
+  function dispatchFormHtml(p) {
+    const d = draftFor(p);
+    const agents = (dispatchAgents || []).map(a =>
+      `<option value="${a.id}" ${String(a.id) === String(d.agent) ? "selected" : ""}>${ctx.esc(a.name)}</option>`
+    ).join("");
+    const modeBits = d.mode === "bus" ? `
+      <label class="label">Freight agent</label>
+      <select class="input" data-field="agent"><option value="">—</option>${agents}</select>
+      <label class="label">Freight (₹)</label>
+      <input class="input" data-field="freight" value="${ctx.esc(d.freight)}">`
+      : d.mode === "transport" ? `
+      <label class="label">Transport (₹)</label>
+      <input class="input" data-field="freight" value="${ctx.esc(d.freight)}">
+      <label class="label">Receipt number</label>
+      <input class="input" data-field="receipt" value="${ctx.esc(d.receipt)}">`
+      : `<p style="margin:8px 0 0;font-size:13px;color:var(--muted);">Customer picks up.</p>`;
+    const charges = d.charges.map((c, i) => `
+      <div style="display:flex;gap:8px;margin-bottom:6px;">
+        <input class="input" data-field="cname" data-i="${i}" placeholder="Name" value="${ctx.esc(c.name)}">
+        <input class="input" data-field="camt" data-i="${i}" placeholder="₹" style="width:110px;" value="${ctx.esc(c.amount)}">
+      </div>`).join("");
+    return `<div data-dispatch="${p.bill_id}" style="margin-top:12px;padding-top:12px;border-top:1px solid #e2e8f0;">
+      <label class="label">Send by</label>
+      <select class="input" data-field="mode" onchange="CustomerOrders.setDispatchMode(${p.bill_id}, this.value)">
+        <option value="bus" ${d.mode === "bus" ? "selected" : ""}>Bus / freight</option>
+        <option value="transport" ${d.mode === "transport" ? "selected" : ""}>Transport</option>
+        <option value="self_pickup" ${d.mode === "self_pickup" ? "selected" : ""}>Self-pickup</option>
+      </select>
+      ${modeBits}
+      <label class="label">Packing (₹)</label>
+      <input class="input" data-field="packing" value="${ctx.esc(d.packing)}">
+      <label class="label">Other charges</label>
+      ${charges}
+      <button type="button" class="btn btn-secondary btn-sm" onclick="CustomerOrders.addDispatchCharge(${p.bill_id})">+ Charge</button>
+      <label class="label">Marking</label>
+      <textarea class="input" data-field="marking" rows="2" style="background:#fee2e2;border:1px solid #dc2626;font-weight:800;color:#b91c1c;">${ctx.esc(d.marking)}</textarea>
+      <button type="button" class="btn btn-primary" style="margin-top:12px;" onclick="CustomerOrders.markDispatchPicked(${p.bill_id})">Mark as picked</button>
+    </div>`;
+  }
+
+  function storyLines(lines) {
+    return (lines || []).map(l => `<tr><td>${ctx.esc(l.our_product_id)}</td><td>${l.quantity}</td><td>${fmtPrice(l.rate)}</td></tr>`).join("")
+      || `<tr><td colspan="3">—</td></tr>`;
+  }
+
+  function storyBlock(title, row) {
+    if (!row) return "";
+    const when = row.at ? (ctx.fmtDate?.(row.at) || String(row.at).slice(0, 16).replace("T", " ")) : "";
+    const bits = [];
+    if (row.transport_mode) bits.push(row.transport_mode === "bus" ? "Bus / freight" : row.transport_mode === "transport" ? "Transport" : "Self-pickup");
+    if (Number(row.freight_charges) > 0) bits.push(`Charges ${fmtPrice(row.freight_charges)}`);
+    if (row.transport_receipt_number) bits.push(`Rcpt ${row.transport_receipt_number}`);
+    if (Number(row.packaging_charges) > 0) bits.push(`Packing ${fmtPrice(row.packaging_charges)}`);
+    (row.additional_charges || []).forEach(c => { if (Number(c.amount) > 0) bits.push(`${c.name} ${fmtPrice(c.amount)}`); });
+    return `<div style="margin-top:10px;padding:10px 12px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;">
+      <div style="font-weight:800;">${ctx.esc(title)}</div>
+      <div style="font-size:12px;color:var(--muted);margin:2px 0 8px;">${ctx.esc(row.by || "Staff")}${when ? " · " + ctx.esc(when) : ""}</div>
+      ${row.marking ? `<div style="color:#b91c1c;font-weight:700;margin-bottom:6px;">Marking: ${ctx.esc(row.marking)}</div>` : ""}
+      ${bits.length ? `<div style="font-size:13px;margin-bottom:6px;">${ctx.esc(bits.join(" · "))}</div>` : ""}
+      <table class="data"><thead><tr><th>Item</th><th>Qty</th><th>Rate</th></tr></thead><tbody>${storyLines(row.lines)}</tbody></table>
+    </div>`;
+  }
+
   function renderDispatchList() {
     const el = document.getElementById("customer-orders-list");
     if (!el) return;
     const canWrite = !!ctx.canWrite?.("customer_orders");
     const list = filterDispatchParcels(dispatchParcels);
+    const pickedTab = currentBucket === "picked";
     if (!list.length) {
       el.innerHTML = OrdersUI.emptyState({
-        title: dispatchStatus === "pending" ? "No pending parcels" : "No parcels",
-        sub: "After bill, parcels land here. Bus: tick Picked when agent takes goods. Transport / self-pickup: mark dispatched.",
+        title: pickedTab ? "No picked parcels" : "Nothing waiting to be picked",
+        sub: pickedTab ? "Mark a dispatch tile as picked and it lands here." : "After the bill, Dispatch brings the parcel here.",
       });
       return;
     }
     el.innerHTML = `<div class="ord-card-list">${list.map(p => {
-      const pending = p.status === "pending";
-      const mode = p.transport_mode || (p.freight_agent_id ? "bus" : "self_pickup");
-      const modeLbl = mode === "bus" ? "Bus" : mode === "transport" ? "Transport" : "Self-pickup";
-      const chargeLbl = mode === "transport" ? "transport" : mode === "bus" ? "freight" : "";
-      const lines = (p.lines || []).slice(0, 6).map(l =>
-        `${ctx.esc(l.our_product_id)} × ${l.quantity}`
-      ).join(" · ");
-      const more = (p.lines || []).length > 6 ? ` · +${p.lines.length - 6} more` : "";
+      const lines = (p.lines || []).map(l => `${ctx.esc(l.our_product_id)} × ${l.quantity}`).join(" · ");
       const meta = [
         p.bill_number ? `Bill ${p.bill_number}` : null,
-        modeLbl,
-        p.freight_agent_name || null,
-        p.transport_receipt_number ? `Rcpt ${p.transport_receipt_number}` : null,
         p.customer_city || null,
-        `${p.line_count || 0} lines · ${p.total_pcs || 0} pcs`,
-        p.customer_phone || null,
+        `${p.total_pcs || 0} pcs`,
       ].filter(Boolean).join(" · ");
-      const actions = [];
-      if (canWrite && billEditableToday(p.created_at)) {
-        actions.push(`<button type="button" class="btn btn-secondary btn-sm" onclick="CustomerOrders.openEditBill(${p.bill_id})">Edit</button>`);
-      }
-      if (pending && canWrite) {
-        actions.push(`<button type="button" class="btn btn-primary btn-sm" onclick="CustomerOrders.pickParcel(${p.bill_id}, '${mode}')">${mode === "bus" ? "✓ Picked" : "Mark dispatched"}</button>`);
-        if (mode === "bus") {
-          actions.push(`<button type="button" class="btn btn-secondary btn-sm" onclick="CustomerOrders.reassignParcel(${p.bill_id})">Change agent</button>`);
-        }
-      } else if (!pending) {
-        actions.push(`<span class="badge badge-green">${mode === "bus" ? "Picked" : "Dispatched"}</span>`);
-        if (p.picked_at) actions.push(`<span style="font-size:12px;color:var(--muted);">${ctx.fmtDate?.(p.picked_at) || p.picked_at.slice(0, 10)}</span>`);
-      }
-      return `<div class="ord-card" style="padding:14px 16px;">
-        <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;">
-          <div style="min-width:0;flex:1;">
-            <strong class="ord-card-title" style="font-size:16px;">${ctx.esc(p.customer_label || "Customer")}</strong>
-            ${p.created_by ? `<div style="display:block;margin-top:8px;padding:8px 10px;border-radius:10px;background:#dcfce7;color:#166534;font-weight:800;font-size:16px;">Created by ${ctx.esc(p.created_by)}</div>` : ""}
-            ${parcelMarkHtml(p)}
-            <div data-tile-note="dispatch:${p.bill_id}" onclick="event.stopPropagation()">
-              <button type="button" class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="event.stopPropagation();App.editTileNote('dispatch:${p.bill_id}')">Add note</button>
-            </div>
-            <div class="ord-card-meta" style="margin-top:4px;">${ctx.esc(meta)}</div>
-            <div style="font-size:13px;margin-top:8px;">${lines || "—"}${more}</div>
+      const noteKey = `dispatch:${p.bill_id}`;
+      const open = pickedTab && String(pickedOpenId) === String(p.bill_id);
+      const story = pickedStories[p.bill_id];
+      const storyHtml = open && story ? [
+        storyBlock("Order created", story.created),
+        storyBlock("Billed", story.billed),
+        storyBlock("Dispatched", story.dispatched),
+        storyBlock("Marked as picked", story.picked),
+      ].join("") : "";
+      return `<div class="ord-card" style="padding:14px 16px;" ${pickedTab ? `onclick="CustomerOrders.togglePickedStory(${p.bill_id})"` : ""}>
+        <div style="min-width:0;">
+          <strong class="ord-card-title" style="font-size:16px;">${ctx.esc(p.customer_label || "Customer")}</strong>
+          ${p.created_by ? `<div style="display:block;margin-top:8px;padding:8px 10px;border-radius:10px;background:#dcfce7;color:#166534;font-weight:800;font-size:16px;">Created by ${ctx.esc(p.created_by)}</div>` : ""}
+          ${parcelMarkHtml(p)}
+          <div data-tile-note="${noteKey}" onclick="event.stopPropagation()">
+            <button type="button" class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="event.stopPropagation();App.editTileNote('${noteKey}')">Add note</button>
           </div>
-          <div style="text-align:right;">
-            ${chargeLbl ? `<div style="font-weight:700;font-size:18px;">${fmtPrice(p.freight_charges)}</div>
-            <div style="font-size:12px;color:var(--muted);">${chargeLbl}</div>` : `<div style="font-size:12px;color:var(--muted);">No charges</div>`}
-            <div class="ord-card-actions" style="margin-top:10px;justify-content:flex-end;">${actions.join("")}</div>
-          </div>
+          <div class="ord-card-meta" style="margin-top:4px;">${ctx.esc(meta)}</div>
+          <div style="font-size:13px;margin-top:8px;">${lines || "—"}</div>
+          ${pickedTab ? storyHtml : (canWrite ? dispatchFormHtml(p) : "")}
         </div>
       </div>`;
     }).join("")}</div>`;
+  }
+
+  async function togglePickedStory(billId) {
+    if (String(pickedOpenId) === String(billId)) {
+      pickedOpenId = null;
+      renderDispatchList();
+      return;
+    }
+    pickedOpenId = billId;
+    if (!pickedStories[billId]) {
+      try { pickedStories[billId] = await ctx.api(`/freight-agents/parcels/${billId}/story`, {}, 0); }
+      catch (e) { ctx.toast(e.message, "error"); pickedOpenId = null; }
+    }
+    renderDispatchList();
+  }
+
+  async function markDispatchPicked(billId) {
+    pullDispatchDrafts();
+    const d = dispatchDrafts[String(billId)];
+    if (!d) return;
+    ctx.showLoading?.();
+    try {
+      await ctx.api(`/freight-agents/parcels/${billId}/mark-picked`, {
+        method: "POST",
+        body: JSON.stringify({
+          transport_mode: d.mode,
+          freight_agent_id: d.mode === "bus" ? Number(d.agent) || null : null,
+          freight_charges: d.freight,
+          transport_receipt_number: d.receipt,
+          packaging_charges: d.packing,
+          additional_charges: d.charges,
+          narration: d.marking,
+        }),
+      }, 0);
+      delete dispatchDrafts[String(billId)];
+      ctx.toast("Marked as picked", "success");
+      ctx.invalidateCache?.("/freight-agents");
+      await loadDispatch();
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
   }
 
   async function pickParcel(billId, mode) {
@@ -3970,7 +4105,7 @@ const CustomerOrders = (() => {
   return {
     init, loadList, setBucket, setHubMode, setPrintDay, setQueueFilter, setHubSearch, setHubPrice, setHubSort, showHub, openDetail, openCustomer, switchBucket, toggleDetailExpand,
     openSlidePanel, closeSlidePanel, toggleCardMore, closeAllCardMore,
-    goToDispatch, goCollectPayment, setDispatchStatus, setDispatchAgent, pickParcel, reassignParcel, submitParcelReassign,
+    goToDispatch, goCollectPayment, setDispatchStatus, setDispatchAgent, pickParcel, markDispatchPicked, setDispatchMode, addDispatchCharge, togglePickedStory, reassignParcel, submitParcelReassign,
     showCreateMenu, showCreateMenuFromCustomer, openCloseBatch,
     processOrder, processFromHub, billNow, billBookedOrder, closeProcessWizard, renderProcessWizard,
     openEditBill, editLatestBill, promptEditBillNumber, saveBillNumber, enableDiscount, clearDiscount, setBillEditSearch, addBillEditProduct, removeProcessLine, cancelProcessLine,

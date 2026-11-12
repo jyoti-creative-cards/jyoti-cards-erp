@@ -56,7 +56,7 @@ const CustomerOrders = (() => {
   let billEditProducts = [];
 
   // Past stages — Dispatch is an ops stage (parcels), not a Today/Past peer.
-  const PAST_BUCKETS = ["received", "open", "billed", "dispatch", "cancelled", "closed"];
+  const PAST_BUCKETS = ["received", "open", "billed", "dispatch", "picked", "cancelled", "closed"];
   const BROWSE_BUCKETS = PAST_BUCKETS; // legacy alias
   // All backlog buckets (New/Confirmed/Billed) now day-scope consistently: day=today
   // shows only entries touched today, day=all shows full history — nothing is ever
@@ -70,6 +70,7 @@ const CustomerOrders = (() => {
     open: "Confirmed",
     billed: "Billed",
     dispatch: "Dispatch",
+    picked: "Picked",
     cancelled: "Cancelled",
     closed: "Done",
   };
@@ -78,7 +79,8 @@ const CustomerOrders = (() => {
     received: "Review each order, edit if needed, then confirm →",
     open: "Goods being picked — create bill when ready. Edit if quantities change.",
     billed: "Bill sent — dispatch or collect payment first, then close.",
-    dispatch: "Track parcels and agent pickups.",
+    dispatch: "Check the send-by details, then mark as picked.",
+    picked: "Parcels already marked picked.",
     closed: "All settled.",
   };
 

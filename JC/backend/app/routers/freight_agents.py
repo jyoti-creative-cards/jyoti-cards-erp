@@ -20,7 +20,7 @@ from app.services.freight_ledger import (
     build_freight_ledger,
     post_freight_settlement,
 )
-from app.services.freight_parcels import list_parcels, pick_parcel, reassign_parcel
+from app.services.freight_parcels import list_parcels, parcel_story, pick_parcel, reassign_parcel, save_dispatch_and_pick
 from app.services.reports.pdfs import render_freight_payment_pdf
 from app.services.storage import (
     freight_payment_key,
@@ -234,6 +234,53 @@ def pick_freight_parcel(
     from app.services.whatsapp_notify import schedule_whatsapp
     schedule_whatsapp("dispatched", bill.id)
     return {"ok": True, "bill_id": bill.id, "status": "picked", "freight_agent_id": bill.freight_agent_id}
+
+
+class DispatchPickIn(BaseModel):
+    transport_mode: str
+    freight_agent_id: Optional[int] = None
+    freight_charges: Optional[str] = None
+    transport_receipt_number: Optional[str] = None
+    packaging_charges: Optional[str] = None
+    additional_charges: list = []
+    narration: Optional[str] = None
+
+
+@router.post("/parcels/{bill_id}/mark-picked")
+def mark_parcel_picked(
+    bill_id: int,
+    body: DispatchPickIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("customer_orders.write")),
+):
+    bill = save_dispatch_and_pick(
+        db,
+        bill_id=bill_id,
+        transport_mode=body.transport_mode,
+        freight_agent_id=body.freight_agent_id,
+        freight_charges=body.freight_charges,
+        transport_receipt_number=body.transport_receipt_number,
+        packaging_charges=body.packaging_charges,
+        additional_charges=body.additional_charges,
+        narration=body.narration,
+        actor_name=auth.actor_name,
+    )
+    log_from_auth(
+        db, auth, action="picked", entity_type="customer_bill",
+        entity_id=bill.id, entity_label=bill.bill_number,
+        detail=f"marked picked · {bill.transport_mode}",
+    )
+    db.commit()
+    return {"ok": True, "bill_id": bill.id, "status": "picked"}
+
+
+@router.get("/parcels/{bill_id}/story")
+def parcel_story_endpoint(
+    bill_id: int,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("customer_orders.read")),
+):
+    return parcel_story(db, bill_id)
 
 
 @router.patch("/parcels/{bill_id}")

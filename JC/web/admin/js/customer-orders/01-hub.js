@@ -28,7 +28,7 @@
   }
 
   function isDispatchBucket() {
-    return currentBucket === "dispatch";
+    return currentBucket === "dispatch" || currentBucket === "picked";
   }
 
   /** Jump to Dispatch stage (keeps Today/Past date scope). */
@@ -104,18 +104,7 @@
     chips?.classList.remove("hidden");
     OrdersUI.syncModeButtons("#co-hub-mode", today ? "queue" : "past");
     OrdersUI.syncStageChips("#co-bucket-bar", currentBucket);
-    if (dispatch) {
-      OrdersUI.actionChips({
-        hostId: "co-action-chips",
-        active: dispatchStatus,
-        onclickFn: "CustomerOrders.setDispatchStatus",
-        items: [
-          { id: "pending", label: "Pending pick", count: dispatchStatus === "pending" ? dispatchParcels.length : undefined },
-          { id: "picked", label: "Picked" },
-          { id: "all", label: "All" },
-        ],
-      });
-    } else if (actionHost) {
+    if (actionHost) {
       actionHost.innerHTML = "";
       actionHost.classList.add("hidden");
     }
@@ -126,11 +115,10 @@
       const picked = selectedListDay();
       const specific = picked && picked !== localToday();
       if (dispatch) {
-        const sub = dispatchStatus === "picked" ? "Picked" : dispatchStatus === "all" ? "All parcels" : "Pending pick";
         title.textContent = specific
-          ? `${ctx.fmtDay?.(picked) || picked} · ${sub}`
-          : (today ? `Today · ${sub}` : sub);
-        if (hint) hint.textContent = BUCKET_HINTS["dispatch"] || "";
+          ? `${ctx.fmtDay?.(picked) || picked} · ${stage}`
+          : (today ? `Today · ${stage}` : stage);
+        if (hint) hint.textContent = BUCKET_HINTS[currentBucket] || "";
       } else if (specific) {
         title.textContent = `${ctx.fmtDay?.(picked) || picked} · ${stage}`;
         if (hint) hint.textContent = "";

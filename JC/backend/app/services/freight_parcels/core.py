@@ -233,6 +233,8 @@ def _parcel_dict(
         "freight_charges": format(bill.freight_charges or 0, "f"),
         "transport_mode": bill.transport_mode or ("bus" if bill.freight_agent_id else "self_pickup"),
         "transport_receipt_number": bill.transport_receipt_number,
+        "packaging_charges": format(bill.packaging_charges or 0, "f"),
+        "additional_charges": bill.additional_charges or [],
         "status": "picked" if picked else "pending",
         "picked_at": bill.freight_picked_at.isoformat() if bill.freight_picked_at else None,
         "picked_by": bill.freight_picked_by,
@@ -333,3 +335,179 @@ def list_parcels(
             d["customer_phone"] = c.phone
         out.append(d)
     return out
+
+
+def _money(value) -> Decimal:
+    try:
+        amount = Decimal(str(value or "0"))
+    except Exception:
+        amount = Decimal("0")
+    if amount < 0:
+        amount = Decimal("0")
+    return amount.quantize(Decimal("0.01"))
+
+
+def _charge_sum(freight, packaging, additional) -> Decimal:
+    total = _money(freight) + _money(packaging)
+    for row in additional or []:
+        if isinstance(row, dict):
+            total += _money(row.get("amount"))
+    return total.quantize(Decimal("0.01"))
+
+
+def save_dispatch_and_pick(
+    db: Session,
+    *,
+    bill_id: int,
+    transport_mode: str,
+    freight_agent_id: Optional[int],
+    freight_charges: Optional[str],
+    transport_receipt_number: Optional[str],
+    packaging_charges: Optional[str],
+    additional_charges: Optional[list],
+    narration: Optional[str],
+    actor_name: str,
+) -> CustomerBill:
+    """Save the send-by form, then mark the parcel picked."""
+    from app.services.commission_ledger import sync_bill_due
+    from app.services.customer_selling.marking import clean_mark
+    from app.services.document_present import freeze_card
+    from app.services.text_events import remember
+    bill = db.get(CustomerBill, bill_id)
+    if not bill or bill.deleted_at or bill.cancelled_at:
+        raise HTTPException(404, "bill not found")
+    if bill.freight_picked_at:
+        raise HTTPException(400, "already picked")
+    mode = (transport_mode or "").strip().lower()
+    if mode not in ("bus", "transport", "self_pickup"):
+        raise HTTPException(400, "Select how this is sent")
+    freight = _money(freight_charges) if mode in ("bus", "transport") else Decimal("0")
+    packing = _money(packaging_charges)
+    extras = []
+    for row in additional_charges or []:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("name") or "").strip()
+        amount = _money(row.get("amount"))
+        if name and amount > 0:
+            extras.append({"name": name, "amount": format(amount, "f")})
+    if mode == "bus":
+        if not freight_agent_id:
+            raise HTTPException(400, "Select the freight agent")
+        if freight <= 0:
+            raise HTTPException(400, "Enter freight")
+    elif mode == "transport":
+        if freight <= 0:
+            raise HTTPException(400, "Enter transport charges")
+        freight_agent_id = None
+    else:
+        freight_agent_id = None
+        freight = Decimal("0")
+
+    old_extra = _charge_sum(bill.freight_charges, bill.packaging_charges, bill.additional_charges)
+    new_extra = _charge_sum(freight, packing, extras)
+    totals = dict(bill.totals_json or {})
+    base = totals.get("after_discount_inclusive")
+    if base is None:
+        base = Decimal(str(bill.grand_total or 0)) - old_extra
+    else:
+        base = Decimal(str(base))
+    raw = (base + new_extra).quantize(Decimal("0.01"))
+    rounded = raw.quantize(Decimal("1"))
+    bill.transport_mode = mode
+    bill.transport_receipt_number = (transport_receipt_number or "").strip() or None
+    bill.freight_agent_id = freight_agent_id if mode == "bus" else None
+    bill.freight_charges = freight if freight > 0 else None
+    bill.packaging_charges = packing if packing > 0 else None
+    bill.additional_charges = extras or None
+    bill.narration = clean_mark(narration)
+    bill.grand_total = rounded
+    totals["freight_charges"] = format(freight, "f") if freight > 0 else None
+    totals["packaging_charges"] = format(packing, "f") if packing > 0 else None
+    totals["additional_charges"] = extras or None
+    totals["grand_total"] = format(raw, "f")
+    totals["rounded_grand_total"] = format(rounded, "f")
+    bill.totals_json = totals
+    bill.document_key = None
+    remember(db, kind="bill", subject=str(bill.id), body=bill.narration or "", actor=actor_name)
+    customer = db.get(Customer, bill.customer_id)
+    customer_name = customer.business_name if customer else ""
+    sync_bill_freight_on_edit(
+        db,
+        bill=bill,
+        freight_agent_id=bill.freight_agent_id,
+        freight_charges=bill.freight_charges,
+        customer_name=customer_name,
+        actor_name=actor_name,
+    )
+    sync_bill_due(
+        db,
+        bill=bill,
+        amount=rounded,
+        description=f"Bill {bill.bill_number} (dispatch) — ₹{rounded}",
+    )
+    freeze_card(db, "customer_bill", bill)
+    return pick_parcel(db, bill_id=bill.id, actor_name=actor_name)
+
+
+def parcel_story(db: Session, bill_id: int) -> dict:
+    from app.services.customer_selling.marking import clean_mark
+
+    bill = db.get(CustomerBill, bill_id)
+    if not bill or bill.deleted_at:
+        raise HTTPException(404, "bill not found")
+    lines = [
+        {
+            "our_product_id": ln.our_product_id,
+            "quantity": int(ln.quantity_shipped or 0),
+            "rate": format(ln.unit_price or 0, "f"),
+        }
+        for ln in db.query(CustomerBillLine).filter(CustomerBillLine.bill_id == bill.id).all()
+    ]
+    order_lines = lines
+    created_at = bill.created_at
+    created_by = bill.created_by_name or "Staff"
+    order_mark = None
+    if bill.placement_id:
+        placement = db.get(CustomerOrderPlacement, bill.placement_id)
+        if placement is not None:
+            created_at = placement.placed_at or created_at
+            created_by = (placement.placed_by_name or "").strip() or created_by
+            from app.models.customer_order import CustomerOrder, CustomerOrderLine
+            order = db.get(CustomerOrder, placement.customer_order_id)
+            order_mark = clean_mark(order.marking if order else None) or clean_mark(placement.customer_notes)
+            order_lines = [
+                {
+                    "our_product_id": ln.our_product_id,
+                    "quantity": int(ln.quantity or 0),
+                    "rate": format(ln.unit_price or 0, "f"),
+                }
+                for ln in db.query(CustomerOrderLine).filter(
+                    CustomerOrderLine.placement_id == placement.id,
+                    CustomerOrderLine.status == "active",
+                ).all()
+            ] or lines
+    charges = {
+        "transport_mode": bill.transport_mode,
+        "freight_charges": format(bill.freight_charges or 0, "f"),
+        "freight_agent_id": bill.freight_agent_id,
+        "transport_receipt_number": bill.transport_receipt_number,
+        "packaging_charges": format(bill.packaging_charges or 0, "f"),
+        "additional_charges": bill.additional_charges or [],
+        "marking": clean_mark(bill.narration),
+    }
+    def row(at, who, items, extra=None):
+        out = {
+            "at": at.isoformat() if at else None,
+            "by": who or "Staff",
+            "lines": items,
+        }
+        if extra:
+            out.update(extra)
+        return out
+    return {
+        "created": row(created_at, created_by, order_lines, {"marking": order_mark}),
+        "billed": row(bill.created_at, bill.created_by_name, lines, charges),
+        "dispatched": row(bill.created_at, bill.created_by_name, lines, charges),
+        "picked": row(bill.freight_picked_at, bill.freight_picked_by, lines, charges) if bill.freight_picked_at else None,
+    }

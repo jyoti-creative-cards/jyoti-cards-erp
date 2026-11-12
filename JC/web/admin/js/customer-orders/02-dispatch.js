@@ -70,8 +70,17 @@
 
   function setParcelHandler(billId, name) {
     pullDispatchDrafts();
-    if (dispatchDrafts[billId]) dispatchDrafts[billId].handler = name;
+    const d = dispatchDrafts[billId];
+    if (!d) return;
+    d.handler = name;
     renderDispatchList();
+    ctx.api(`/freight-agents/parcels/${billId}/handler`, {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }, 0).then(() => {
+      const row = dispatchParcels.find(p => String(p.bill_id) === String(billId));
+      if (row) row.freight_handler = name;
+    }).catch(e => ctx.toast(e.message || "Could not save the person", "error"));
   }
 
   function setDispatchMode(billId, value) {
@@ -123,7 +132,7 @@
     const modeBits = d.mode === "bus" ? `
       <label class="label">Freight agent</label>
       <select class="input" data-field="agent" onchange="CustomerOrders.setParcelAgent(${p.bill_id}, this.value)"><option value="">—</option>${agents}</select>
-      ${parcelAgentIsVishnu(d.agent) ? `<label class="label">Who picked it</label>
+      ${parcelAgentIsVishnu(d.agent) ? `<label class="label">Freight person</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
         ${["Vishnu", "Rahul", "Ganesh"].map(name => `<button type="button" class="btn ${d.handler === name ? "btn-primary" : "btn-secondary"} btn-sm" data-field="handler" onclick="CustomerOrders.setParcelHandler(${p.bill_id}, '${name}')">${name}</button>`).join("")}
       </div>` : ""}
@@ -201,7 +210,7 @@
       const lines = (p.lines || []).map(l => `${ctx.esc(l.our_product_id)} × ${l.quantity}`).join(" · ");
       const meta = [
         p.bill_number ? `Bill ${p.bill_number}` : null,
-        p.freight_handler ? `Picked by ${p.freight_handler}` : null,
+        p.freight_handler ? `Person ${p.freight_handler}` : null,
         p.customer_city || null,
         `${p.total_pcs || 0} pcs`,
       ].filter(Boolean).join(" · ");
@@ -280,7 +289,7 @@
     pullDispatchDrafts();
     const d = dispatchDrafts[String(billId)];
     if (!d) return;
-    if (d.mode === "bus" && parcelAgentIsVishnu(d.agent) && !d.handler) return ctx.toast("Select who picked it", "error");
+    if (d.mode === "bus" && parcelAgentIsVishnu(d.agent) && !d.handler) return ctx.toast("Select the freight person", "error");
     if (!String(d.pickNarration || "").trim()) return ctx.toast("Enter a narration", "error");
     ctx.showLoading?.();
     try {

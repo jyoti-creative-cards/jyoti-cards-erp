@@ -127,7 +127,9 @@ def _order_taker_allowed(method: str, path: str) -> bool:
         return True
     if method == "POST" and path == "/api/v1/freight-agents/parcels/dispatch-note":
         return True
-    if method == "POST" and path.startswith("/api/v1/freight-agents/parcels/") and path.endswith("/mark-picked"):
+    if method == "POST" and path.startswith("/api/v1/freight-agents/parcels/") and (
+        path.endswith("/mark-picked") or path.endswith("/handler")
+    ):
         return True
     if method == "POST" and path.startswith("/api/v1/customer-orders/customer/"):
         return path.rstrip("/").endswith("/new") or path.rstrip("/").endswith("/offline") or path.endswith("/offline/preview")

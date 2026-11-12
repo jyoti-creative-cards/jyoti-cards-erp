@@ -358,6 +358,21 @@ def _charge_sum(freight, packaging, additional) -> Decimal:
     return total.quantize(Decimal("0.01"))
 
 
+def set_parcel_handler(db, *, bill_id: int, name: str | None):
+    """Record Vishnu's person while the parcel is still in Dispatch."""
+    from app.services.freight_handler import apply_freight_handler
+
+    bill = db.get(CustomerBill, bill_id)
+    if not bill or bill.deleted_at or bill.cancelled_at:
+        raise HTTPException(404, "bill not found")
+    if bill.freight_picked_at:
+        raise HTTPException(400, "already picked")
+    apply_freight_handler(db, bill, name)
+    bill.document_key = None
+    db.flush()
+    return bill
+
+
 def save_dispatch_and_pick(
     db: Session,
     *,

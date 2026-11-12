@@ -284,6 +284,26 @@ def save_dispatch_note(
     return {"ok": True}
 
 
+class FreightHandlerIn(BaseModel):
+    name: Optional[str] = None
+
+
+@router.post("/parcels/{bill_id}/handler")
+def set_parcel_handler_endpoint(
+    bill_id: int,
+    body: FreightHandlerIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("customer_orders.write")),
+):
+    from app.services.freight_parcels.core import set_parcel_handler
+
+    bill = set_parcel_handler(db, bill_id=bill_id, name=body.name)
+    db.commit()
+    from app.services.doc_jobs import enqueue_bill_pdf
+    enqueue_bill_pdf(bill.id)
+    return {"ok": True, "bill_id": bill.id, "freight_handler": bill.freight_handler}
+
+
 @router.post("/parcels/{bill_id}/mark-picked")
 def mark_parcel_picked(
     bill_id: int,

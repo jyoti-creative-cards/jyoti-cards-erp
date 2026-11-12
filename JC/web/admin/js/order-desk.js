@@ -19,6 +19,14 @@ const OrderDesk = (() => {
     const n = new Date();
     return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
   }
+  function listDay() {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Kolkata",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+  }
   function anyDayEdit() {
     const app = document.getElementById("app");
     if (!app) return false;
@@ -368,6 +376,9 @@ const OrderDesk = (() => {
   }
 
   function open() {
+    const day = listDay();
+    dateFrom = day;
+    dateTo = day;
     load().catch(e => toast(e.message || "Could not load orders"));
   }
   function setFilter(next) {

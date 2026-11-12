@@ -379,6 +379,8 @@ def process_customer_bill(
     settle_confirmed_after_bill(db, customer_id)
     billed_order.updated_at = entered_at
     freeze_card(db, "customer_bill", bill)
+    from app.services.our_catalogs.core import sync_album_sends
+    sync_album_sends(db, bill.id)
     response_cache.invalidate("stock:")
     response_cache.invalidate("shop:")
     response_cache.invalidate("catalog:")

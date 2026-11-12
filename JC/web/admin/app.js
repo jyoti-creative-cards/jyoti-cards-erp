@@ -1986,7 +1986,7 @@ const App = (() => {
       return `<div class="vled-card ${open ? "is-open" : ""}">
         <button type="button" class="vled-head" onclick="App.toggleCustomerLedgerRow('${e.id}')">
           <div>
-            <div class="vled-title">Bill ${esc(d.bill_number || "")}</div>
+            <div class="vled-title">Bill ${esc(d.bill_number || "")}${d.commission_agent_name ? ` · Agent ${esc(d.commission_agent_name)}` : " · This party"}</div>
             <div class="vled-meta">${fmtDate(e.occurred_at)} · ${fmtPersonMoney(d.grand_total)} · ${lines.length} lines</div>
           </div>
           <span class="vled-chevron">${open ? "Hide" : "View detail"}</span>
@@ -3882,7 +3882,7 @@ const App = (() => {
       box.style.right = "auto";
     }
     box.addEventListener("pointerdown", (e) => {
-      if (!e.target.closest(".jc-sticky-bar")) return;
+      if (!e.target.closest(".jc-sticky-bar") || e.target.closest("button")) return;
       const rect = box.getBoundingClientRect();
       stickyDrag = { dx: e.clientX - rect.left, dy: e.clientY - rect.top };
       box.setPointerCapture(e.pointerId);
@@ -3935,8 +3935,8 @@ const App = (() => {
       <div class="jc-sticky-bar">
         <strong>Sticky notes</strong>
         <span>
-          <button type="button" onclick="App.minimizeSticky()">${stickyMin ? "Open" : "Minimize"}</button>
-          <button type="button" onclick="App.toggleSticky()">Close</button>
+          <button type="button" onclick="event.stopPropagation();App.minimizeSticky()">${stickyMin ? "Open" : "Minimize"}</button>
+          <button type="button" onclick="event.stopPropagation();App.closeSticky()">Close</button>
         </span>
       </div>
       ${rows}
@@ -3944,6 +3944,12 @@ const App = (() => {
         <textarea id="jc-sticky-text" placeholder="Write a note for everyone"></textarea>
         <button type="button" class="btn btn-primary btn-sm" onclick="App.addSticky()">Add</button>
       </div>`}`;
+  }
+
+  function closeSticky() {
+    stickyOpen = false;
+    stickyMin = false;
+    renderSticky();
   }
 
   function minimizeSticky() {
@@ -3981,7 +3987,7 @@ const App = (() => {
     addLookup, submitLookup, submitCatalogCategory, editLookup, deleteLookup, openCustomerLedgerEntry, createCustomerOrder,
     setOrderTakerMode, onOrderTakerStock, onOrderTakerCustomer, pickOrderTakerCustomer, clearOrderTakerCustomer, onOrderTakerItem, addOrderTakerItem, removeOrderTakerLine, saveOrderTakerOrder,
     deskShow, onDeskCustomer, onDeskItem, onDeskStock, deskPickCustomer, deskPickProduct, deskAddMore, deskRemoveLine, deskPlace, deskSetMark, deskClearCustomer, deskClearProduct, openFromMore, deskBack,
-    editTileNote, toggleSticky, minimizeSticky, addSticky, deleteSticky,
+    editTileNote, toggleSticky, closeSticky, minimizeSticky, addSticky, deleteSticky,
     closeModal, init, searchItemLookup, setWhatsappSends,
     downloadExportKind, downloadBackupZip,
     debouncedLoadCustomers, debouncedVendorSearch, debouncedCatalogSearch, debouncedAddonSearch, debouncedStockSearch,

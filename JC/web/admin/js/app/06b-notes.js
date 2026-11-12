@@ -76,7 +76,7 @@
       box.style.right = "auto";
     }
     box.addEventListener("pointerdown", (e) => {
-      if (!e.target.closest(".jc-sticky-bar")) return;
+      if (!e.target.closest(".jc-sticky-bar") || e.target.closest("button")) return;
       const rect = box.getBoundingClientRect();
       stickyDrag = { dx: e.clientX - rect.left, dy: e.clientY - rect.top };
       box.setPointerCapture(e.pointerId);
@@ -129,8 +129,8 @@
       <div class="jc-sticky-bar">
         <strong>Sticky notes</strong>
         <span>
-          <button type="button" onclick="App.minimizeSticky()">${stickyMin ? "Open" : "Minimize"}</button>
-          <button type="button" onclick="App.toggleSticky()">Close</button>
+          <button type="button" onclick="event.stopPropagation();App.minimizeSticky()">${stickyMin ? "Open" : "Minimize"}</button>
+          <button type="button" onclick="event.stopPropagation();App.closeSticky()">Close</button>
         </span>
       </div>
       ${rows}
@@ -138,6 +138,12 @@
         <textarea id="jc-sticky-text" placeholder="Write a note for everyone"></textarea>
         <button type="button" class="btn btn-primary btn-sm" onclick="App.addSticky()">Add</button>
       </div>`}`;
+  }
+
+  function closeSticky() {
+    stickyOpen = false;
+    stickyMin = false;
+    renderSticky();
   }
 
   function minimizeSticky() {

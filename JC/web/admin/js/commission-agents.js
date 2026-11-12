@@ -1,4 +1,7 @@
 const CommissionAgents = (() => {
+  let ledgerDetails = true;
+  let currentId = null;
+
   function api(path, opts) {
     return App.api(path, opts || {});
   }
@@ -39,8 +42,6 @@ const CommissionAgents = (() => {
     const box = desk();
     if (!box) return;
     let rows = [];
-  let ledgerDetails = true;
-  let currentId = null;
     try { rows = await api("/commission-agents", {}, 0); }
     catch (e) { box.innerHTML = `<p class="err">${esc(e.message)}</p>`; return; }
     box.innerHTML = `
@@ -80,6 +81,7 @@ const CommissionAgents = (() => {
 
   async function openAgent(id) {
     currentId = id;
+    showDesk();
     const box = desk();
     let data;
     try { data = await api(`/commission-agents/${id}`, {}, 0); }
@@ -169,12 +171,14 @@ const CommissionAgents = (() => {
     const box = document.getElementById("ca-party-hits");
     if (!box) return;
     const q = String(value || "").trim();
-    if (q.length < 2) { box.innerHTML = ""; return; }
-    const rows = await api(`/commission-agents/party-search?q=${encodeURIComponent(q)}`, {}, 0);
+    if (!q || (q.length < 2 && !/^\d+$/.test(q))) { box.innerHTML = ""; return; }
+    let rows = [];
+    try { rows = await api(`/commission-agents/party-search?q=${encodeURIComponent(q)}`, {}, 0); }
+    catch (e) { box.innerHTML = `<p class="err">${esc(e.message)}</p>`; return; }
     box.innerHTML = (rows || []).map((row) => `
       <button type="button" class="btn btn-secondary btn-sm" style="display:block;width:100%;text-align:left;margin-top:6px;" onclick="CommissionAgents.addParty(${id}, ${row.id})">
-        ${esc(row.business_name)} · ${esc(row.city_name || "")}${row.agent_name ? " · now with " + esc(row.agent_name) : ""}
-      </button>`).join("");
+        ${esc(row.business_name)} · ${esc(row.city_name || "")}${row.party_number ? " · #" + row.party_number : ""}${row.agent_name ? " · now with " + esc(row.agent_name) : ""}
+      </button>`).join("") || `<p style="color:var(--muted);margin-top:6px;">No party for that.</p>`;
   }
 
   async function addParty(id, customerId) {

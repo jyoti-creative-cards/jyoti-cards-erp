@@ -108,7 +108,7 @@ def build_ar_ledger(db: Session, customer_id: int) -> list[dict]:
                 "payment_comment": None,
                 "party_name": None,
                 "display_date": bill.bill_date or bill.created_at,
-                "display_name": f"Bill {number} · {party}",
+                "display_name": f"Bill {number} · {agent_name}",
                 "status": _doc_status(bill),
                 "description": f"Billed on {agent_name}. The party ledger shows the bill. The due sits on the agent.",
                 "value_date": bill.bill_date.isoformat() if bill.bill_date else None,

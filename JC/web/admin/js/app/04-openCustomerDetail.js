@@ -247,7 +247,7 @@
       return `<div class="vled-card ${open ? "is-open" : ""}">
         <button type="button" class="vled-head" onclick="App.toggleCustomerLedgerRow('${e.id}')">
           <div>
-            <div class="vled-title">Bill ${esc(d.bill_number || "")}</div>
+            <div class="vled-title">Bill ${esc(d.bill_number || "")}${d.commission_agent_name ? ` · Agent ${esc(d.commission_agent_name)}` : " · This party"}</div>
             <div class="vled-meta">${fmtDate(e.occurred_at)} · ${fmtPersonMoney(d.grand_total)} · ${lines.length} lines</div>
           </div>
           <span class="vled-chevron">${open ? "Hide" : "View detail"}</span>

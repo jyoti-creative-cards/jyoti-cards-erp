@@ -8,7 +8,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import or_
+from sqlalchemy import String, cast, or_
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -114,9 +114,19 @@ def delete_agent(agent_id: int, db: Session = Depends(get_db), auth: AuthContext
 @router.get("/party-search")
 def search_parties(q: str = "", db: Session = Depends(get_db), auth: AuthContext = Depends(require_admin)):
     text = (q or "").strip()
-    if len(text) < 2:
+    if not text:
+        return []
+    if len(text) < 2 and not text.isdigit():
         return []
     like = f"%{text}%"
+    matches = [
+        Customer.business_name.ilike(like),
+        Customer.phone.ilike(like),
+        City.name.ilike(like),
+        cast(Customer.party_number, String).ilike(like),
+    ]
+    if text.isdigit():
+        matches.append(Customer.party_number == int(text))
     rows = (
         db.query(Customer, City.name, CommissionAgent.name)
         .outerjoin(City, City.id == Customer.city_id)
@@ -124,7 +134,7 @@ def search_parties(q: str = "", db: Session = Depends(get_db), auth: AuthContext
         .filter(
             Customer.deleted_at.is_(None),
             Customer.is_active.is_(True),
-            or_(Customer.business_name.ilike(like), Customer.phone.ilike(like), City.name.ilike(like)),
+            or_(*matches),
         )
         .order_by(Customer.business_name.asc())
         .limit(15)
@@ -136,6 +146,7 @@ def search_parties(q: str = "", db: Session = Depends(get_db), auth: AuthContext
             "business_name": customer.business_name,
             "city_name": city_name or "",
             "phone": customer.phone or "",
+            "party_number": customer.party_number,
             "agent_name": agent_name or "",
         }
         for customer, city_name, agent_name in rows
@@ -149,6 +160,12 @@ def add_party(agent_id: int, customer_id: int, db: Session = Depends(get_db), au
     if not party or party.deleted_at:
         raise HTTPException(404, "customer not found")
     party.commission_agent_id = agent.id
+    from app.services.commission_ledger import move_party_ledger_to_agent
+    try:
+        move_party_ledger_to_agent(db, customer_id=party.id, agent_id=agent.id)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(400, str(exc)) from exc
     log_from_auth(db, auth, action="assign", entity_type="commission_agent", entity_id=agent.id, entity_label=f"{party.business_name} → {agent.name}")
     db.commit()
     return {"ok": True}

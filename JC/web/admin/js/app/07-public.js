@@ -16,7 +16,7 @@
     addLookup, submitLookup, submitCatalogCategory, editLookup, deleteLookup, openCustomerLedgerEntry, createCustomerOrder,
     setOrderTakerMode, onOrderTakerStock, onOrderTakerCustomer, pickOrderTakerCustomer, clearOrderTakerCustomer, onOrderTakerItem, addOrderTakerItem, removeOrderTakerLine, saveOrderTakerOrder,
     deskShow, onDeskCustomer, onDeskItem, onDeskStock, deskPickCustomer, deskPickProduct, deskAddMore, deskRemoveLine, deskPlace, deskSetMark, deskClearCustomer, deskClearProduct, openFromMore, deskBack,
-    editTileNote, toggleSticky, minimizeSticky, addSticky, deleteSticky,
+    editTileNote, toggleSticky, closeSticky, minimizeSticky, addSticky, deleteSticky,
     closeModal, init, searchItemLookup, setWhatsappSends,
     downloadExportKind, downloadBackupZip,
     debouncedLoadCustomers, debouncedVendorSearch, debouncedCatalogSearch, debouncedAddonSearch, debouncedStockSearch,

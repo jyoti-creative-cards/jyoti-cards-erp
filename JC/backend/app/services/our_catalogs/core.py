@@ -534,7 +534,100 @@ def realign_category_catalogs(db: Session) -> dict:
     return {"renamed": renamed, "lines": line_counts, "issues": added, "sent": sent}
 
 
-def import_bill_catalog_sends(db: Session) -> dict:
-    """Copy catalogue lines already on bills into the catalogue ledger. Bills stay as they are."""
-    return realign_category_catalogs(db)
+def catalog_name_for_categories(category: str | None, second: str | None, third: str | None, sku: str = "") -> str | None:
+    """The catalogue a product belongs to, from its album category, then its own name."""
+    cats = [(category or "").strip(), (second or "").strip(), (third or "").strip()]
+    for name, (slot, album) in _CATEGORY_SLOT.items():
+        if slot == "category" and cats[0] == album:
+            return name
+        if slot == "second" and cats[1] == album:
+            return name
+        if slot == "any" and album in cats:
+            return name
+    return catalog_name_for_bill_sku(sku)
+
+
+def sync_album_sends(db: Session, bill_id: int | None = None) -> int:
+    """One catalogue entry per bill that sold an item from that album. Copies stay 1."""
+    from app.models.customer_bill import CustomerBill, CustomerBillLine
+
+    catalogs = {row.name: row for row in db.query(OurCatalog).all()}
+    albums = [album for _name, (_slot, album) in _CATEGORY_SLOT.items()]
+    products = (
+        db.query(CatalogProduct)
+        .filter(
+            CatalogProduct.deleted_at.is_(None),
+            (CatalogProduct.category.in_(albums))
+            | (CatalogProduct.second_category.in_(albums))
+            | (CatalogProduct.category_3.in_(albums)),
+        )
+        .all()
+    )
+    products_by_id = {product.id: product for product in products}
+    if not products_by_id:
+        return 0
+    query = (
+        db.query(CustomerBillLine, CustomerBill)
+        .join(CustomerBill, CustomerBill.id == CustomerBillLine.bill_id)
+        .filter(
+            CustomerBill.cancelled_at.is_(None),
+            CustomerBill.deleted_at.is_(None),
+            CustomerBillLine.status == "billed",
+            CustomerBillLine.quantity_shipped > 0,
+            CustomerBillLine.catalog_product_id.in_(list(products_by_id)),
+        )
+    )
+    if bill_id is not None:
+        query = query.filter(CustomerBill.id == bill_id)
+    rows = query.all()
+    wanted: set[tuple[int, int, int]] = set()
+    dates = {}
+    numbers = {}
+    for line, bill in rows:
+        product = products_by_id.get(line.catalog_product_id)
+        name = catalog_name_for_categories(
+            getattr(product, "category", None),
+            getattr(product, "second_category", None),
+            getattr(product, "category_3", None),
+            line.our_product_id,
+        ) if product else catalog_name_for_bill_sku(line.our_product_id)
+        catalog = catalogs.get(name or "")
+        if not catalog:
+            continue
+        key = (catalog.id, int(bill.customer_id), int(bill.id))
+        wanted.add(key)
+        dates[key] = bill.bill_date
+        numbers[key] = bill.bill_number
+    added = 0
+    catalog_ids = {catalog.id for catalog in catalogs.values() if catalog.name in _CATEGORY_SLOT}
+    existing = set()
+    if catalog_ids:
+        for catalog_id, customer_id, this_bill_id in (
+            db.query(OurCatalogIssue.catalog_id, OurCatalogIssue.customer_id, OurCatalogIssue.bill_id)
+            .filter(OurCatalogIssue.catalog_id.in_(catalog_ids), OurCatalogIssue.bill_id.isnot(None))
+            .all()
+        ):
+            existing.add((int(catalog_id), int(customer_id), int(this_bill_id)))
+    sent_by_catalog = {catalog_id: issued_copies(db, catalog_id) for catalog_id in {key[0] for key in wanted}}
+    for catalog_id, customer_id, this_bill_id in wanted:
+        if (catalog_id, customer_id, this_bill_id) in existing:
+            continue
+        catalog = db.get(OurCatalog, catalog_id)
+        sent = sent_by_catalog.get(catalog_id, 0) + 1
+        sent_by_catalog[catalog_id] = sent
+        if catalog and sent > int(catalog.copies_made or 0):
+            catalog.copies_made = sent
+        db.add(OurCatalogIssue(
+            catalog_id=catalog_id,
+            customer_id=customer_id,
+            copies=1,
+            price=Decimal("0"),
+            bill_id=this_bill_id,
+            issued_on=dates.get((catalog_id, customer_id, this_bill_id)) or today_ist(),
+            note=f"From bill {numbers.get((catalog_id, customer_id, this_bill_id)) or this_bill_id}",
+        ))
+        added += 1
+    if added:
+        db.flush()
+    return added
 

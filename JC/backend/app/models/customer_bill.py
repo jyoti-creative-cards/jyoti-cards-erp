@@ -34,6 +34,10 @@ class CustomerBill(Base):
     # Dues post to freight agent only after pick (dispatch). Null = still pending pickup.
     freight_picked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     freight_picked_by: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    dispatch_narration: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    dispatch_narration_by: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    dispatch_narration_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    pick_narration: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     packaging_charges: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 2), nullable=True)
     additional_charges: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     subtotal_inclusive: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)

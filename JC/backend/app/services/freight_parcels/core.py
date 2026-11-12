@@ -235,6 +235,8 @@ def _parcel_dict(
         "transport_receipt_number": bill.transport_receipt_number,
         "packaging_charges": format(bill.packaging_charges or 0, "f"),
         "additional_charges": bill.additional_charges or [],
+        "dispatch_narration": (bill.dispatch_narration or "").strip() or None,
+        "pick_narration": (bill.pick_narration or "").strip() or None,
         "status": "picked" if picked else "pending",
         "picked_at": bill.freight_picked_at.isoformat() if bill.freight_picked_at else None,
         "picked_by": bill.freight_picked_by,
@@ -366,6 +368,7 @@ def save_dispatch_and_pick(
     packaging_charges: Optional[str],
     additional_charges: Optional[list],
     narration: Optional[str],
+    pick_narration: Optional[str],
     actor_name: str,
 ) -> CustomerBill:
     """Save the send-by form, then mark the parcel picked."""
@@ -420,6 +423,10 @@ def save_dispatch_and_pick(
     bill.freight_charges = freight if freight > 0 else None
     bill.packaging_charges = packing if packing > 0 else None
     bill.additional_charges = extras or None
+    spoken = " ".join((pick_narration or "").split())
+    if not spoken:
+        raise HTTPException(400, "Enter a narration")
+    bill.pick_narration = spoken[:800]
     bill.narration = clean_mark(narration)
     bill.grand_total = rounded
     totals["freight_charges"] = format(freight, "f") if freight > 0 else None

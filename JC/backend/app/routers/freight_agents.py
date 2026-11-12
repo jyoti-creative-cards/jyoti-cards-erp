@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import List, Optional, Union
 
@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.deps import AuthContext, require_admin, require_any_permission, require_permission
 from app.models.expense import Expense
+from app.models.customer_bill import CustomerBill
 from app.models.freight_agent import FreightAgent, FreightLedgerEntry
 from app.services.activity import log_from_auth
 from app.services.biz_date import today_ist
@@ -244,6 +245,41 @@ class DispatchPickIn(BaseModel):
     packaging_charges: Optional[str] = None
     additional_charges: list = []
     narration: Optional[str] = None
+    pick_narration: Optional[str] = None
+
+
+class DispatchNoteIn(BaseModel):
+    bill_ids: list[int]
+    narration: str
+
+
+@router.post("/parcels/dispatch-note")
+def save_dispatch_note(
+    body: DispatchNoteIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("customer_orders.write")),
+):
+    text = " ".join((body.narration or "").split())
+    if not text:
+        raise HTTPException(400, "Enter a narration")
+    if not body.bill_ids:
+        raise HTTPException(400, "No bill to dispatch")
+    now = datetime.now(timezone.utc)
+    bills = (
+        db.query(CustomerBill)
+        .filter(CustomerBill.id.in_(body.bill_ids), CustomerBill.deleted_at.is_(None), CustomerBill.cancelled_at.is_(None))
+        .all()
+    )
+    if len(bills) != len(set(body.bill_ids)):
+        raise HTTPException(404, "bill not found")
+    for bill in bills:
+        if bill.freight_picked_at:
+            continue
+        bill.dispatch_narration = text[:800]
+        bill.dispatch_narration_by = auth.actor_name
+        bill.dispatch_narration_at = now
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/parcels/{bill_id}/mark-picked")
@@ -263,6 +299,7 @@ def mark_parcel_picked(
         packaging_charges=body.packaging_charges,
         additional_charges=body.additional_charges,
         narration=body.narration,
+        pick_narration=body.pick_narration,
         actor_name=auth.actor_name,
     )
     log_from_auth(

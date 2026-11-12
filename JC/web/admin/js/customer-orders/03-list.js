@@ -102,9 +102,10 @@
       primaryOnclick = canWrite ? `CustomerOrders.confirmOrder(${o.customer_id})` : viewFn;
       statText = `${o.placement_count || 0} placement${(o.placement_count || 0) !== 1 ? "s" : ""} · ${o.total_quantity || 0} pcs`;
     } else if (currentBucket === "billed") {
-      primaryLabel = "Dispatch";
-      primaryOnclick = "CustomerOrders.goToDispatch()";
       const chips = Array.isArray(o.bills) ? o.bills : [];
+      const billIds = chips.map(b => b.bill_id).filter(Boolean).join(",");
+      primaryLabel = "Dispatch";
+      primaryOnclick = `CustomerOrders.askDispatchNarration('${billIds}')`;
       const billBits = chips.map(b => {
         const num = b.bill_number ? `Bill ${ctx.esc(b.bill_number)}` : "";
         const amt = b.grand_total != null && b.grand_total !== "" ? fmtPrice(b.grand_total) : "";

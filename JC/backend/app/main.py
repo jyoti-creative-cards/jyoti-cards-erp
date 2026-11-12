@@ -123,6 +123,12 @@ def _order_taker_allowed(method: str, path: str) -> bool:
         return True
     if method == "GET" and path.startswith("/api/v1/customer-orders"):
         return True
+    if method == "GET" and path.startswith("/api/v1/freight-agents/parcels"):
+        return True
+    if method == "POST" and path == "/api/v1/freight-agents/parcels/dispatch-note":
+        return True
+    if method == "POST" and path.startswith("/api/v1/freight-agents/parcels/") and path.endswith("/mark-picked"):
+        return True
     if method == "POST" and path.startswith("/api/v1/customer-orders/customer/"):
         return path.rstrip("/").endswith("/new") or path.rstrip("/").endswith("/offline") or path.endswith("/offline/preview")
     return False

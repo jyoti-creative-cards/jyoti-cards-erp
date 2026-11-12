@@ -2721,6 +2721,7 @@ const App = (() => {
   let deskLines = [];
   let deskParties = null;
   let deskMode = "home";
+  let deskParcels = [];
   let deskNote = "";
   let deskItemHits = [];
   let deskStockTimer = null;
@@ -2775,6 +2776,78 @@ const App = (() => {
       return;
     }
     deskShow("home");
+  }
+
+  function deskParcelCard(p, open) {
+    const lines = (p.lines || []).map(l => `${esc(l.our_product_id)} × ${l.quantity}`).join(" · ");
+    const modeLbl = p.transport_mode === "bus" ? "Bus / freight" : p.transport_mode === "transport" ? "Transport" : "Self-pickup";
+    return `<button type="button" class="btn btn-secondary" style="display:block;width:100%;text-align:left;margin:0 0 12px;padding:16px;min-height:72px;white-space:normal;" onclick="App.openDeskParcel(${p.bill_id})">
+      <div style="font-size:20px;font-weight:800;">${esc(p.customer_label || "Customer")}</div>
+      <div style="font-size:16px;margin-top:4px;">${esc(p.bill_number || "")}${p.customer_city ? " · " + esc(p.customer_city) : ""}</div>
+      ${p.created_by ? `<div style="margin-top:6px;font-weight:800;color:#166534;">Created by ${esc(p.created_by)}</div>` : ""}
+      ${p.marking ? `<div style="margin-top:6px;color:#b91c1c;font-weight:800;">Marking: ${esc(p.marking)}</div>` : ""}
+      ${p.dispatch_narration ? `<div style="margin-top:6px;color:#0c4a6e;font-weight:700;">Dispatch: ${esc(p.dispatch_narration)}</div>` : ""}
+      <div style="margin-top:6px;font-size:16px;">${esc(modeLbl)}${lines ? " · " + lines : ""}</div>
+      ${open ? "" : ""}
+    </button>`;
+  }
+
+  async function loadDeskDispatch() {
+    const box = document.getElementById("desk-dispatch-list");
+    if (!box) return;
+    try {
+      deskParcels = await api("/freight-agents/parcels?status=pending&day=all", {}, 0) || [];
+      box.innerHTML = deskParcels.length
+        ? deskParcels.map(p => deskParcelCard(p)).join("")
+        : `<p style="font-size:18px;color:var(--muted);">Nothing waiting to be picked.</p>`;
+    } catch (e) {
+      box.innerHTML = `<p style="color:var(--danger);font-size:18px;">${esc(e.message)}</p>`;
+    }
+  }
+
+  function openDeskParcel(billId) {
+    const p = deskParcels.find(row => Number(row.bill_id) === Number(billId));
+    const el = document.getElementById("desk-body");
+    if (!p || !el) return;
+    const lines = (p.lines || []).map(l => `<div style="font-size:18px;padding:6px 0;border-bottom:1px solid #e2e8f0;">${esc(l.our_product_id)} × ${l.quantity}</div>`).join("");
+    const modeLbl = p.transport_mode === "bus" ? "Bus / freight" : p.transport_mode === "transport" ? "Transport" : "Self-pickup";
+    el.innerHTML = `<button type="button" class="btn btn-secondary desk-big" style="margin-bottom:18px;" onclick="App.deskShow('dispatch')">← Back</button>
+      <div style="font-size:24px;font-weight:800;">${esc(p.customer_label || "Customer")}</div>
+      <div style="font-size:18px;margin:6px 0;">${esc(p.bill_number || "")}${p.customer_city ? " · " + esc(p.customer_city) : ""}</div>
+      ${p.created_by ? `<div style="margin-top:8px;font-weight:800;color:#166534;font-size:18px;">Created by ${esc(p.created_by)}</div>` : ""}
+      ${p.marking ? `<div style="margin-top:8px;color:#b91c1c;font-weight:800;font-size:18px;">Marking: ${esc(p.marking)}</div>` : ""}
+      ${p.dispatch_narration ? `<div style="margin-top:8px;padding:10px;border-radius:8px;background:#e0f2fe;color:#0c4a6e;font-weight:700;font-size:18px;">Dispatch: ${esc(p.dispatch_narration)}</div>` : ""}
+      <div style="margin-top:8px;font-size:18px;">${esc(modeLbl)}${Number(p.freight_charges) > 0 ? " · " + esc(p.freight_charges) : ""}${Number(p.packaging_charges) > 0 ? " · packing " + esc(p.packaging_charges) : ""}</div>
+      <div style="margin:12px 0;">${lines || "—"}</div>
+      <label class="label" style="font-size:20px;">Narration</label>
+      <textarea id="desk-pick-say" class="input desk-field" rows="3" placeholder="Comment for picked"></textarea>
+      <button type="button" class="btn btn-primary desk-big" style="margin-top:16px;" onclick="App.saveDeskPick(${p.bill_id})">Mark as picked</button>`;
+  }
+
+  async function saveDeskPick(billId) {
+    const p = deskParcels.find(row => Number(row.bill_id) === Number(billId));
+    const text = (document.getElementById("desk-pick-say")?.value || "").trim();
+    if (!p) return;
+    if (!text) return toast("Enter a narration", "error");
+    showLoading?.();
+    try {
+      await api(`/freight-agents/parcels/${billId}/mark-picked`, {
+        method: "POST",
+        body: JSON.stringify({
+          transport_mode: p.transport_mode || "self_pickup",
+          freight_agent_id: p.freight_agent_id || null,
+          freight_charges: p.freight_charges || "",
+          transport_receipt_number: p.transport_receipt_number || "",
+          packaging_charges: p.packaging_charges || "",
+          additional_charges: p.additional_charges || [],
+          narration: p.marking || "",
+          pick_narration: text,
+        }),
+      });
+      toast("Marked as picked", "success");
+      deskShow("dispatch");
+    } catch (e) { toast(e.message, "error"); }
+    finally { hideLoading?.(); }
   }
 
   function deskShow(mode) {
@@ -2952,7 +3025,13 @@ const App = (() => {
         <div class="desk-home">
           <button type="button" class="btn btn-primary desk-big" onclick="App.deskShow('create')">Create order</button>
           <button type="button" class="btn btn-secondary desk-big" onclick="App.deskShow('stock')">View stock</button>
+          ${String(staffUser?.name || "").trim().toLowerCase() === "nc" ? `<button type="button" class="btn btn-primary desk-big" onclick="App.deskShow('dispatch')">Dispatch</button>` : ""}
         </div>`;
+      return;
+    }
+    if (deskMode === "dispatch") {
+      el.innerHTML = `${back}<p style="font-size:22px;font-weight:800;margin:0 0 12px;">Ready to pick</p><div id="desk-dispatch-list"><p style="color:var(--muted);">Loading…</p></div>`;
+      loadDeskDispatch();
       return;
     }
     if (deskMode === "stock") {
@@ -4063,7 +4142,7 @@ const App = (() => {
     loadRecycleBin, setRecycleTab, openRecycleDetail, restoreItem, purgeItem,
     addLookup, submitLookup, submitCatalogCategory, editLookup, deleteLookup, openCustomerLedgerEntry, createCustomerOrder,
     setOrderTakerMode, onOrderTakerStock, onOrderTakerCustomer, pickOrderTakerCustomer, clearOrderTakerCustomer, onOrderTakerItem, addOrderTakerItem, removeOrderTakerLine, saveOrderTakerOrder,
-    deskShow, onDeskCustomer, onDeskItem, onDeskStock, deskPickCustomer, deskPickProduct, deskAddMore, deskRemoveLine, deskPlace, deskSetMark, deskClearCustomer, deskClearProduct, openFromMore, deskBack,
+    deskShow, onDeskCustomer, onDeskItem, onDeskStock, deskPickCustomer, deskPickProduct, deskAddMore, deskRemoveLine, deskPlace, deskSetMark, deskClearCustomer, deskClearProduct, openDeskParcel, saveDeskPick, openFromMore, deskBack,
     editTileNote, saveTileNote, toggleSticky, closeSticky, minimizeSticky, addSticky, deleteSticky,
     closeModal, init, searchItemLookup, setWhatsappSends,
     downloadExportKind, downloadBackupZip,

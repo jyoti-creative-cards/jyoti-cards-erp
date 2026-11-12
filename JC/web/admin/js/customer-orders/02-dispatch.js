@@ -20,6 +20,8 @@
       if (packing) d.packing = packing.value;
       const marking = read("marking");
       if (marking) d.marking = marking.value;
+      const pickSay = read("picksay");
+      if (pickSay) d.pickNarration = pickSay.value;
       root.querySelectorAll("[data-field=cname]").forEach(el => {
         const row = d.charges[Number(el.dataset.i)];
         if (row) row.name = el.value;
@@ -43,6 +45,7 @@
         packing: p.packaging_charges && Number(p.packaging_charges) ? String(p.packaging_charges) : "",
         charges: charges.length ? charges : [{ name: "", amount: "" }],
         marking: p.marking || "",
+        pickNarration: "",
       };
     }
     return dispatchDrafts[id];
@@ -125,6 +128,8 @@
       <button type="button" class="btn btn-secondary btn-sm" onclick="CustomerOrders.addDispatchCharge(${p.bill_id})">+ Charge</button>
       <label class="label">Marking</label>
       <textarea class="input" data-field="marking" rows="2" style="background:#fee2e2;border:1px solid #dc2626;font-weight:800;color:#b91c1c;">${ctx.esc(d.marking)}</textarea>
+      <label class="label">Narration for picked</label>
+      <textarea class="input" data-field="picksay" rows="2" placeholder="What should show on the picked tile">${ctx.esc(d.pickNarration || "")}</textarea>
       <button type="button" class="btn btn-primary" style="margin-top:12px;" onclick="CustomerOrders.markDispatchPicked(${p.bill_id})">Mark as picked</button>
     </div>`;
   }
@@ -189,6 +194,8 @@
           <div data-tile-note="${noteKey}" onclick="event.stopPropagation()">
             <button type="button" class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="event.stopPropagation();App.editTileNote('${noteKey}')">Add note</button>
           </div>
+          ${p.dispatch_narration ? `<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:#e0f2fe;color:#0c4a6e;font-weight:700;">Dispatch: ${ctx.esc(p.dispatch_narration)}</div>` : ""}
+          ${pickedTab && p.pick_narration ? `<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:#fef3c7;color:#92400e;font-weight:700;">Picked: ${ctx.esc(p.pick_narration)}</div>` : ""}
           <div class="ord-card-meta" style="margin-top:4px;">${ctx.esc(meta)}</div>
           <div style="font-size:13px;margin-top:8px;">${lines || "—"}</div>
           ${pickedTab ? storyHtml : (canWrite ? dispatchFormHtml(p) : "")}
@@ -211,10 +218,41 @@
     renderDispatchList();
   }
 
+  function askDispatchNarration(billIds) {
+    const ids = String(billIds || "").split(",").filter(Boolean);
+    if (!ids.length) return ctx.toast("No bill to dispatch", "error");
+    ctx.openDetail?.(
+      "Dispatch",
+      `<label class="label">Narration</label>
+      <textarea id="co-dispatch-say" class="input" rows="3" placeholder="Comment for this dispatch"></textarea>
+      <button type="button" class="btn btn-primary" style="margin-top:12px;" onclick="CustomerOrders.saveDispatchNarration('${ids.join(",")}')">Dispatch</button>`,
+      "",
+      "sm"
+    );
+    setTimeout(() => document.getElementById("co-dispatch-say")?.focus(), 30);
+  }
+
+  async function saveDispatchNarration(ids) {
+    const text = (document.getElementById("co-dispatch-say")?.value || "").trim();
+    if (!text) return ctx.toast("Enter a narration", "error");
+    ctx.showLoading?.();
+    try {
+      await ctx.api("/freight-agents/parcels/dispatch-note", {
+        method: "POST",
+        body: JSON.stringify({ bill_ids: String(ids).split(",").map(Number), narration: text }),
+      }, 0);
+      App.closeDetail?.();
+      ctx.toast("Dispatched", "success");
+      goToDispatch();
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { ctx.hideLoading?.(); }
+  }
+
   async function markDispatchPicked(billId) {
     pullDispatchDrafts();
     const d = dispatchDrafts[String(billId)];
     if (!d) return;
+    if (!String(d.pickNarration || "").trim()) return ctx.toast("Enter a narration", "error");
     ctx.showLoading?.();
     try {
       await ctx.api(`/freight-agents/parcels/${billId}/mark-picked`, {
@@ -227,6 +265,7 @@
           packaging_charges: d.packing,
           additional_charges: d.charges,
           narration: d.marking,
+          pick_narration: d.pickNarration,
         }),
       }, 0);
       delete dispatchDrafts[String(billId)];

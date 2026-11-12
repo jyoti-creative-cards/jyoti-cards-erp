@@ -49,6 +49,7 @@
       </div>
       <nav style="flex:1;padding:8px;">
         <button class="nav-item" id="nav-today" onclick="App.showView('today')"><span class="nav-letter">T</span><span class="nav-text">Today</span></button>
+        <button class="nav-item" id="nav-order-desk" onclick="App.showView('order-desk')"><span class="nav-letter">O</span><span class="nav-text">Orders</span></button>
         <button class="nav-item" id="nav-people" onclick="App.showView('people')"><span class="nav-letter">P</span><span class="nav-text">People</span></button>
         <button class="nav-item" id="nav-products" onclick="App.showView('products')"><span class="nav-letter">R</span><span class="nav-text">Products</span></button>
         <button class="nav-item" id="nav-money" onclick="App.showView('money')"><span class="nav-letter">M</span><span class="nav-text">Money</span></button>
@@ -84,6 +85,9 @@
         <button type="button" class="btn btn-secondary btn-sm" id="global-back-btn" onclick="App.goBack()">← Back</button>
       </div>
       <!-- Today (was Home) -->
+      <div id="view-order-desk" class="view hidden">
+        <div id="order-desk-root"></div>
+      </div>
       <div id="view-today" class="view hidden">
         <div id="dashboard-body"></div>
       </div>
@@ -1290,7 +1294,9 @@
   <script src="js/vendor-orders.js?v=ui89"></script>
   <script src="js/xlsx.js?v=ui1"></script>
   <script src="js/share.js?v=ui64"></script>
-  <script src="js/customer-orders.js?v=ui157"></script>
+  <script src="js/customer-orders.js?v=ui158"></script>
+  <script src="js/order-desk-logic.js?v=ui1"></script>
+  <script src="js/order-desk.js?v=ui3"></script>
   <script src="js/returns.js?v=ui76"></script>
   <script src="js/debit-notes.js?v=ui76"></script>
   <script src="js/stock.js?v=ui99"></script>
@@ -1303,7 +1309,7 @@
   <script src="js/payment-modes.js?v=ui62"></script>
   <script src="js/freight-agents.js?v=ui66"></script>
   <script src="js/calculator.js?v=ui2"></script>
-  <script src="app.js?v=ui116"></script>
+  <script src="app.js?v=ui117"></script>
   <script src="js/commission-agents.js?v=ui5"></script>
   <script src="js/whatsapp-inbox.js?v=ui3"></script>
 </body>

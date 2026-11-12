@@ -49,6 +49,7 @@
     const moreSub = document.querySelector("#more-hub .ui-hub-sub");
     if (moreTitle) moreTitle.textContent = desk ? "Print sticker" : "More";
     if (moreSub) moreSub.textContent = desk ? "Search a party number and print." : "History, reports, setup, and safety — when you need them.";
+    document.getElementById("nav-order-desk")?.classList.toggle("hidden", lookup || desk || !showSelling);
     document.getElementById("nav-today")?.classList.toggle("hidden", desk || lookup || taker || bookDesk);
     document.getElementById("nav-people")?.classList.toggle("hidden", desk || lookup || taker || !showPeople);
     document.getElementById("nav-products")?.classList.toggle("hidden", desk || lookup || taker || !showProducts);

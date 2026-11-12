@@ -241,6 +241,7 @@ def _parcel_dict(
         "lines": line_rows,
         "bill_total": format(bill.grand_total or 0, "f"),
         "created_at": bill.created_at.isoformat() if bill.created_at else None,
+        "bill_date": bill.bill_date.isoformat() if bill.bill_date else None,
         "created_by": who,
         "marking": (bill.narration or "").strip() or None,
         "customer_marking": None,

@@ -2453,6 +2453,13 @@ const CustomerOrders = (() => {
     return "";
   }
 
+  function partyHeadingHtml(pctx) {
+    if (!pctx) return "";
+    const city = pctx.city_name ? ` · ${ctx.esc(pctx.city_name)}` : "";
+    const num = pctx.party_number ? "#" + pctx.party_number + " " : "";
+    return `<p style="margin:0 0 12px;"><strong>${num}${ctx.esc(pctx.customer_name || "")}${city}</strong>${partyMarkerBadgesHtml(pctx)}</p>`;
+  }
+
   function renderProcessWizard() {
     const stepsEl = document.getElementById("co-wizard-steps");
     const bodyEl = document.getElementById("co-wizard-body");
@@ -2503,11 +2510,12 @@ const CustomerOrders = (() => {
       <input id="co-bill-edit-search" class="input" placeholder="Item number" oninput="CustomerOrders.setBillEditSearch(this.value)" />
       <div id="co-bill-edit-matches"></div>`;
     bodyEl.innerHTML = `
+      ${partyHeadingHtml(processContext)}
       ${processContext?.commission_agent_name && !editBillId ? `<div style="margin:0 0 12px;padding:12px;background:#fef3c7;border:2px solid #d97706;border-radius:12px;">
         <span style="display:block;font-size:12px;font-weight:700;letter-spacing:.04em;">BILL THIS ON</span>
         <label style="display:block;margin-top:8px;font-size:16px;"><input type="radio" name="co-bill-on" ${billOnAgent ? "checked" : ""} onchange="CustomerOrders.setBillOnAgent(true)" /> ${ctx.esc(processContext.commission_agent_name)} <span style="font-size:13px;color:#92400e;">commission agent · due on the agent · agent name on the bill</span></label>
         <label style="display:block;margin-top:6px;font-size:16px;"><input type="radio" name="co-bill-on" ${billOnAgent ? "" : "checked"} onchange="CustomerOrders.setBillOnAgent(false)" /> ${ctx.esc(processContext.customer_name || "Party")} <span style="font-size:13px;color:#92400e;">direct order · due on the party · no agent on the bill</span></label>
-      </div>` : `<p style="margin:0 0 12px;"><strong>${processContext?.party_number ? "#" + processContext.party_number + " " : ""}${ctx.esc(processContext?.customer_name || "")}</strong>${partyMarkerBadgesHtml(processContext)}</p>`}
+      </div>` : ""}
       ${cashWarningHtml(processContext)}
       ${!editBillId ? creditBannerHtml(processContext?.credit) : ""}
       ${ordersHtml}

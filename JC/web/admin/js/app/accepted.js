@@ -100,6 +100,7 @@ const App = (() => {
     const moreSub = document.querySelector("#more-hub .ui-hub-sub");
     if (moreTitle) moreTitle.textContent = desk ? "Print sticker" : "More";
     if (moreSub) moreSub.textContent = desk ? "Search a party number and print." : "History, reports, setup, and safety — when you need them.";
+    document.getElementById("nav-order-desk")?.classList.toggle("hidden", lookup || desk || !showSelling);
     document.getElementById("nav-today")?.classList.toggle("hidden", desk || lookup || taker || bookDesk);
     document.getElementById("nav-people")?.classList.toggle("hidden", desk || lookup || taker || !showPeople);
     document.getElementById("nav-products")?.classList.toggle("hidden", desk || lookup || taker || !showProducts);
@@ -777,7 +778,7 @@ const App = (() => {
       if (currentViewName !== "lookup") showView("lookup", { replace: true });
       return;
     }
-    if (orderTaker() && resolved !== "people") {
+    if (orderTaker() && resolved !== "people" && resolved !== "order-desk") {
       if (currentViewName !== "people") showView("people", { replace: true });
       return;
     }
@@ -829,6 +830,10 @@ const App = (() => {
       document.getElementById("view-finance")?.classList.remove("hidden");
       document.getElementById("nav-money")?.classList.add("active");
       Finance.showHub();
+    } else if (name === "order-desk") {
+      document.getElementById("view-order-desk")?.classList.remove("hidden");
+      document.getElementById("nav-order-desk")?.classList.add("active");
+      try { OrderDesk.open(); } catch (e) { toast(e.message || "Could not open orders", "error"); }
     } else if (name === "more") {
       document.getElementById("view-more")?.classList.remove("hidden");
       document.getElementById("nav-more")?.classList.add("active");

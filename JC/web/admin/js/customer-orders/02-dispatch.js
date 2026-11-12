@@ -206,7 +206,7 @@
       });
       return;
     }
-    el.innerHTML = `<div class="ord-card-list">${list.map(p => {
+    el.innerHTML = list.map(p => {
       const lines = (p.lines || []).map(l => `${ctx.esc(l.our_product_id)} × ${l.quantity}`).join(" · ");
       const meta = [
         p.bill_number ? `Bill ${p.bill_number}` : null,
@@ -238,7 +238,7 @@
           ${pickedTab ? storyHtml : (canWrite ? dispatchFormHtml(p) : "")}
         </div>
       </div>`;
-    }).join("")}</div>`;
+    }).join("");
   }
 
   async function togglePickedStory(billId) {

@@ -161,7 +161,6 @@ const OrderDeskLogic = (() => {
       body.transport_receipt_number = String(s.transportReceiptNumber).trim();
     }
     if (s.transportMode === "bus" && s.freightAgentId) body.freight_agent_id = Number(s.freightAgentId);
-    if (s.transportMode === "bus" && s.freightHandler) body.freight_handler = s.freightHandler;
     if ((s.transportMode === "bus" || s.transportMode === "transport") && String(s.freightCharges ?? "").trim() !== "") {
       body.freight_charges = String(s.freightCharges);
     }
@@ -181,7 +180,6 @@ const OrderDeskLogic = (() => {
     if (!s.transportMode) return "Select how this is sent";
     if (s.transportMode === "bus") {
       if (!s.freightAgentId) return "Select the freight agent";
-      if (String(s.freightAgentName || "").toLowerCase().includes("vishnu") && !s.freightHandler) return "Select who picked it";
       if (String(s.freightCharges ?? "").trim() === "") return "Enter freight";
     }
     if (s.transportMode === "transport" && String(s.freightCharges ?? "").trim() === "") return "Enter transport charges";

@@ -759,6 +759,7 @@ def _migrate_freight_docs() -> None:
         "ALTER TABLE jc_customer_bills ADD COLUMN IF NOT EXISTS freight_picked_at TIMESTAMPTZ",
         "ALTER TABLE jc_customer_bills ADD COLUMN IF NOT EXISTS freight_picked_by VARCHAR(200)",
         "ALTER TABLE jc_customer_bills ADD COLUMN IF NOT EXISTS freight_handler VARCHAR(40)",
+        "ALTER TABLE jc_commission_ledger_entries ADD COLUMN IF NOT EXISTS payment_mode VARCHAR(80)",
         "ALTER TABLE jc_customer_bills ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ",
         "ALTER TABLE jc_customer_bills ADD COLUMN IF NOT EXISTS cancel_reason TEXT",
         # Existing charged bills were already "picked" under old flow

@@ -15,7 +15,7 @@
     _detailCustomerId,
     setShipQty, setLineDisc, setLineNetRate, setDiscToggle, setOverallDisc, skipBillAddon,
     setFreightAgent, setFreightHandler, setFreightCharges, setTransportMode, setTransportReceipt, setPackagingCharges,
-    setGst, setGstRate, setBillSeries, setNarration, setEditBillNumber, setBillDate, setAddCharge, addChargeRow, openCatalogPicker, addPickedCatalog, toggleBillCatalog, setBillCatalogPrice,
+    setGst, setGstRate, setBillSeries, setNarration, setEditBillNumber, setBillDate, setAddCharge, addChargeRow, openCatalogPicker, addPickedCatalog, toggleBillCatalog, setBillCatalogPrice, focusNextBillItem,
     setOfflinePlacedOn,
     setForceCredit, setBillOnAgent, printDayDuplicates,
     processNext, processBack, submitProcess, backFromBillDuplicate, proceedBillDuplicate, toggleBillOrder, toggleAllBillOrders,

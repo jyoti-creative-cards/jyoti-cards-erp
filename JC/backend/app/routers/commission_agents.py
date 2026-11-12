@@ -35,6 +35,7 @@ class PaymentIn(BaseModel):
     amount: Decimal = Field(..., gt=0)
     note: Optional[str] = None
     paid_on: Optional[date] = None
+    payment_mode_id: Optional[int] = None
 
 
 def _fold_name(text: str) -> str:
@@ -219,6 +220,15 @@ def remove_party(agent_id: int, customer_id: int, db: Session = Depends(get_db),
 @router.post("/{agent_id}/payments")
 def collect_payment(agent_id: int, body: PaymentIn, db: Session = Depends(get_db), auth: AuthContext = Depends(require_admin)):
     agent = _agent_or_404(db, agent_id)
+    mode_name = None
+    if body.payment_mode_id:
+        from app.models.payment_mode import PaymentMode
+        mode = db.get(PaymentMode, body.payment_mode_id)
+        if not mode or not mode.is_active:
+            raise HTTPException(400, "Select the account")
+        mode_name = mode.name
+    if not mode_name:
+        raise HTTPException(400, "Select the account")
     receive_agent_payment(
         db,
         agent_id=agent.id,
@@ -228,6 +238,7 @@ def collect_payment(agent_id: int, body: PaymentIn, db: Session = Depends(get_db
         actor_id=auth.actor_id,
         actor_name=auth.actor_name,
         value_date=body.paid_on or today_ist(),
+        payment_mode=mode_name,
     )
     log_from_auth(db, auth, action="payment", entity_type="commission_agent", entity_id=agent.id, entity_label=f"₹{body.amount}")
     db.commit()

@@ -255,9 +255,6 @@ def submit_process_bill(
         on_commission_agent=body.on_commission_agent,
         confirm_duplicate=bool(body.confirm_duplicate),
     )
-    from app.services.freight_handler import apply_freight_handler
-
-    apply_freight_handler(db, bill, body.freight_handler)
     save_bill_catalogs(
         db,
         bill_id=bill.id,
@@ -490,9 +487,6 @@ def update_bill_endpoint(
             freight_charges_raw=body.freight_charges,
             bill_date=body.bill_date,
         )
-        from app.services.freight_handler import apply_freight_handler
-
-        apply_freight_handler(db, updated, body.freight_handler)
     except HTTPException:
         raise
     except ValueError as e:

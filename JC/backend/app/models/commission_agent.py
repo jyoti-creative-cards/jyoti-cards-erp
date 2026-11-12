@@ -46,6 +46,7 @@ class CommissionLedgerEntry(Base):
     )
     customer_return_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    payment_mode: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
     value_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     created_by_type: Mapped[str] = mapped_column(String(20), nullable=False)
     created_by_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)

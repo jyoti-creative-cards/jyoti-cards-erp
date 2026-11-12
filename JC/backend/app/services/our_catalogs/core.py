@@ -131,7 +131,9 @@ def catalog_detail(db: Session, catalog_id: int) -> dict:
 
 
 def for_customer(db: Session, customer_id: int) -> list[dict]:
-    """Catalogues that should go to this party, plus any they already received."""
+    """Catalogues for this party, including copies already sold on a bill."""
+    from app.models.customer_bill import CustomerBill, CustomerBillLine
+
     assigned_ids = [
         row.catalog_id
         for row in db.query(OurCatalogAssignment).filter(OurCatalogAssignment.customer_id == customer_id).all()
@@ -140,13 +142,33 @@ def for_customer(db: Session, customer_id: int) -> list[dict]:
         row.catalog_id
         for row in db.query(OurCatalogIssue.catalog_id).filter(OurCatalogIssue.customer_id == customer_id).distinct().all()
     ]
-    ids = list(dict.fromkeys(assigned_ids + issued_ids))
+    catalogs = db.query(OurCatalog).all()
+    by_name = {row.name.strip().upper(): row for row in catalogs}
+    billed: dict[int, int] = {}
+    bill_rows = (
+        db.query(CustomerBillLine.our_product_id, func.sum(CustomerBillLine.quantity_shipped))
+        .join(CustomerBill, CustomerBill.id == CustomerBillLine.bill_id)
+        .filter(
+            CustomerBill.customer_id == customer_id,
+            CustomerBill.deleted_at.is_(None),
+            CustomerBill.cancelled_at.is_(None),
+            CustomerBillLine.quantity_shipped > 0,
+        )
+        .group_by(CustomerBillLine.our_product_id)
+        .all()
+    )
+    for sku, qty in bill_rows:
+        catalog = by_name.get((sku or "").strip().upper())
+        if not catalog:
+            continue
+        billed[catalog.id] = billed.get(catalog.id, 0) + int(qty or 0)
+    ids = list(dict.fromkeys(assigned_ids + issued_ids + list(billed)))
     out = []
     for catalog_id in ids:
         row = db.get(OurCatalog, catalog_id)
         if not row:
             continue
-        got = received_copies(db, row.id, customer_id)
+        got = max(received_copies(db, row.id, customer_id), billed.get(row.id, 0))
         sent = issued_copies(db, row.id)
         out.append({
             "id": row.id,

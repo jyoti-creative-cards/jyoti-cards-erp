@@ -4,7 +4,6 @@
     if (!transportMode) return ctx.toast("Select how this is sent", "error");
     if (transportMode === "bus") {
       if (!freightAgentId) return ctx.toast("Select the freight agent", "error");
-      if (agentIsVishnu(freightAgentId) && !freightHandler) return ctx.toast("Select who picked it", "error");
       if (String(freightCharges || "").trim() === "") return ctx.toast("Enter freight", "error");
     }
     if (transportMode === "transport" && String(freightCharges || "").trim() === "") {

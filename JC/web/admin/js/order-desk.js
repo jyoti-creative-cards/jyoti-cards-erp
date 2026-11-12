@@ -197,10 +197,6 @@ const OrderDesk = (() => {
     const transport = f.transportMode === "bus" ? `
       <label class="label">Freight agent</label>
       <select class="input" data-field="agent" onchange="OrderDesk.setTransportBit('${key}')">${agentOptions(f.freightAgentId)}</select>
-      ${deskAgentIsVishnu(f.freightAgentId) ? `<label class="label">Who picked it</label>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-        ${["Vishnu", "Rahul", "Ganesh"].map(name => `<button type="button" class="btn ${f.freightHandler === name ? "btn-primary" : "btn-secondary"} btn-sm" data-field="handler" onclick="OrderDesk.setHandler('${key}', '${name}')">${name}</button>`).join("")}
-      </div>` : ""}
       <label class="label">Freight (₹)</label>
       <input class="input" data-field="freight" value="${esc(f.freightCharges || "")}">`
       : f.transportMode === "transport" ? `

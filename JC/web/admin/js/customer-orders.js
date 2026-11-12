@@ -2075,7 +2075,6 @@ const CustomerOrders = (() => {
       body.transport_receipt_number = transportReceiptNumber.trim();
     }
     if (transportMode === "bus" && freightAgentId) body.freight_agent_id = Number(freightAgentId);
-    if (transportMode === "bus" && agentIsVishnu(freightAgentId) && freightHandler) body.freight_handler = freightHandler;
     if (transportMode === "bus" || transportMode === "transport") {
       if (freightCharges.trim() !== "") body.freight_charges = String(freightCharges);
     }
@@ -2502,9 +2501,10 @@ const CustomerOrders = (() => {
     processLines.push({
       catalog_product_id: p.catalog_product_id,
       our_product_id: p.our_product_id,
+      marking: p.marking || "",
       unit_price: p.selling_price,
-      quantity_open: direct ? Number(p.quantity_on_hand) || 0 : 999999,
-      quantity_on_hand: p.quantity_on_hand ?? 0,
+      quantity_open: direct ? signedStock(p.quantity_on_hand) : 999999,
+      quantity_on_hand: signedStock(p.quantity_on_hand),
       quantity_to_ship: "",
       discount_percent: "",
       net_rate: "",
@@ -2679,10 +2679,6 @@ const CustomerOrders = (() => {
           <option value="">—</option>
           ${freightAgents.map(a => `<option value="${a.id}" ${String(a.id) === String(freightAgentId) ? "selected" : ""}>${ctx.esc(a.name)}</option>`).join("")}
         </select>
-        ${agentIsVishnu(freightAgentId) ? `<label class="label">Who picked it</label>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-          ${["Vishnu", "Rahul", "Ganesh"].map(name => `<button type="button" class="btn ${freightHandler === name ? "btn-primary" : "btn-secondary"} btn-sm" onclick="CustomerOrders.setFreightHandler('${name}')">${name}</button>`).join("")}
-        </div>` : ""}
         <label class="label">Freight (₹)</label>
         <input id="co-freight-amount" class="input" value="${ctx.esc(freightCharges)}" oninput="CustomerOrders.setFreightCharges(this.value)" />`;
     }
@@ -2736,11 +2732,14 @@ const CustomerOrders = (() => {
         ? calcNetFromDisc(ln.unit_price, overallDiscount)
         : (ln.net_rate || calcNetFromDisc(ln.unit_price, ln.discount_percent || 0));
       const shownDisc = useOverallDiscount ? (overallDiscount || "") : (ln.discount_percent || "");
-      return `<tr>
-        <td><strong>${ctx.esc(ln.our_product_id)}</strong>${ln.direct ? ` <span style="font-size:12px;color:var(--muted);">direct</span>` : ""}${billAddonHtml(ln)}</td>
-        <td>${ln.quantity_on_hand ?? "—"}</td>
+      const stock = signedStock(ln.quantity_on_hand);
+      const ship = signedStock(ln.quantity_to_ship);
+      const short = ship > stock;
+      return `<tr style="${short ? "background:#fef2f2;" : ""}">
+        <td><strong>${ctx.esc(ln.our_product_id)}</strong>${ln.marking ? ` <span class="marking-flag">${ctx.esc(ln.marking)}</span>` : ""}${ln.direct ? ` <span style="font-size:12px;color:var(--muted);">direct</span>` : ""}${billAddonHtml(ln)}${short ? `<div style="color:#b91c1c;font-weight:800;font-size:12px;">Only ${stock} in stock</div>` : ""}</td>
+        <td style="${short ? "color:#b91c1c;font-weight:800;" : ""}">${stock}</td>
         <td>${fmtPrice(ln.unit_price)}</td>
-        <td><input data-ship-for="${i}" type="number" class="input" style="width:72px;" min="0" value="${ln.quantity_to_ship ?? ""}" oninput="CustomerOrders.setShipQty(${i}, this.value)" /></td>
+        <td><input data-ship-for="${i}" type="number" class="input" style="width:72px;${short ? "border-color:#dc2626;background:#fff1f2;" : ""}" min="0" value="${ln.quantity_to_ship ?? ""}" oninput="CustomerOrders.setShipQty(${i}, this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();CustomerOrders.focusNextBillItem();}" /></td>
         <td><input data-disc-for="${i}" type="number" class="input" style="width:72px;" min="0" max="100" step="0.1" ${ro} value="${ctx.esc(shownDisc)}" oninput="CustomerOrders.setLineDisc(${i}, this.value)" /></td>
         <td><input data-net-for="${i}" type="number" class="input" style="width:88px;" min="0" step="0.01" ${ro} value="${ctx.esc(shownNet || "")}" oninput="CustomerOrders.setLineNetRate(${i}, this.value)" /></td>
         <td style="white-space:nowrap;">
@@ -2769,6 +2768,7 @@ const CustomerOrders = (() => {
         <label><input type="radio" name="co-disc-mode" ${discountEnabled && useOverallDiscount ? "checked" : ""} onchange="CustomerOrders.setDiscToggle('overall')" /> Overall %</label>
         ${discountEnabled && useOverallDiscount ? `<input class="input" style="width:80px;" placeholder="%" value="${ctx.esc(overallDiscount)}" oninput="CustomerOrders.setOverallDisc(this.value)" />` : ""}
       </div>
+      ${catalogChecksHtml()}
       <table class="data"><thead><tr>
         <th>Item</th><th>Stock</th><th>Rate</th><th>Qty</th><th>Disc %</th><th>Net</th><th></th>
       </tr></thead><tbody>${linesHtml || `<tr><td colspan="7" style="color:var(--muted);">No items. Add a product below.</td></tr>`}</tbody></table>
@@ -2802,17 +2802,6 @@ const CustomerOrders = (() => {
           <input class="input" placeholder="Name" value="${ctx.esc(c.name)}" oninput="CustomerOrders.setAddCharge(${i}, 'name', this.value)" />
           <input class="input" placeholder="₹" style="width:110px;" value="${ctx.esc(c.amount)}" oninput="CustomerOrders.setAddCharge(${i}, 'amount', this.value)" />
         </div>`).join("")}
-      ${!editBillId ? `<div style="margin:12px 0;">
-        <button type="button" class="btn btn-secondary btn-sm" onclick="CustomerOrders.openCatalogPicker()">Add a catalogue</button>
-        ${Object.keys(pickedCatalogs).map(id => {
-          const c = (dueCatalogs || []).find(row => String(row.id) === String(id));
-          const name = c ? c.name : "Catalogue";
-          return `<div style="display:flex;gap:8px;align-items:center;margin-top:6px;">
-            <span style="flex:1;">${ctx.esc(name)} · ₹${ctx.esc(pickedCatalogs[id] || "0")}</span>
-            <button type="button" class="btn btn-ghost btn-sm" onclick="CustomerOrders.toggleBillCatalog(${id}, false)">Remove</button>
-          </div>`;
-        }).join("")}
-      </div>` : ""}
       <button type="button" class="btn btn-secondary btn-sm" onclick="CustomerOrders.addChargeRow()">+ Charge</button>
       <label style="display:flex;gap:8px;align-items:center;margin:12px 0;">
         <input type="checkbox" ${gstEnabled ? "checked" : ""} onchange="CustomerOrders.setGst(this.checked)" /> GST
@@ -2825,6 +2814,37 @@ const CustomerOrders = (() => {
     footerEl.innerHTML = `
       <button class="btn btn-secondary" onclick="CustomerOrders.closeProcessWizard()">Cancel</button>
       <button class="btn btn-primary" ${processBusy ? "disabled" : ""} onclick="CustomerOrders.submitProcess()">${processBusy ? "Saving…" : "Save bill"}</button>`;
+  }
+
+  function signedStock(v) {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  function catalogChecksHtml() {
+    if (editBillId) return "";
+    const rows = dueCatalogs || [];
+    if (!rows.length) return "";
+    return `<div style="margin:0 0 12px;">
+      <label class="label">Catalogues</label>
+      ${rows.map(c => {
+        const on = Object.prototype.hasOwnProperty.call(pickedCatalogs, c.id);
+        const again = Number(c.received) > 0;
+        return `<label style="display:flex;gap:8px;align-items:center;margin-top:6px;">
+          <input type="checkbox" ${on ? "checked" : ""} onchange="CustomerOrders.toggleBillCatalog(${c.id}, this.checked)" />
+          <span style="flex:1;">${ctx.esc(c.name)} · ${c.copies_left} left${again ? ` · already ${c.received}` : ""}</span>
+          ${on ? `<input class="input" style="width:90px;" inputmode="decimal" value="${ctx.esc(pickedCatalogs[c.id] || "0")}" oninput="CustomerOrders.setBillCatalogPrice(${c.id}, this.value)" />` : ""}
+        </label>`;
+      }).join("")}
+    </div>`;
+  }
+
+  function focusNextBillItem() {
+    const box = document.getElementById("co-bill-edit-search");
+    if (!box) return;
+    box.value = "";
+    setBillEditSearch("");
+    box.focus();
   }
 
   function setForceCredit(v) { forceCreditOverride = !!v; renderProcessWizard(); }
@@ -2864,7 +2884,7 @@ const CustomerOrders = (() => {
     if (matches.length) {
       return `<div style="display:flex;flex-direction:column;gap:4px;">${matches.map(p => `
         <button type="button" class="btn btn-secondary btn-sm" style="justify-content:flex-start;" onclick="CustomerOrders.addBillEditProduct(${p.catalog_product_id})">
-          ${ctx.esc(p.our_product_id)}${p.vendor_product_id ? " · " + ctx.esc(p.vendor_product_id) : ""} · ${fmtPrice(p.selling_price)} · stock ${p.quantity_on_hand ?? 0}
+          ${ctx.esc(p.our_product_id)}${p.marking ? " · " + ctx.esc(p.marking) : ""}${p.vendor_product_id ? " · " + ctx.esc(p.vendor_product_id) : ""} · ${fmtPrice(p.selling_price)} · stock ${signedStock(p.quantity_on_hand)}
         </button>`).join("")}</div>`;
     }
     if (q) return `<p style="font-size:12px;color:var(--muted);">${billEditSearchPending ? "Searching…" : "No matches"}</p>`;
@@ -3041,6 +3061,11 @@ const CustomerOrders = (() => {
 
   function toggleBillCatalog(id, on) {
     if (on) {
+      const cat = (dueCatalogs || []).find(row => Number(row.id) === Number(id));
+      if (cat && Number(cat.received) > 0 && !Object.prototype.hasOwnProperty.call(pickedCatalogs, id)) {
+        const ok = confirm(`${cat.name} was already sent to this party (${cat.received}). Send another copy?`);
+        if (!ok) { renderProcessWizard(); return; }
+      }
       if (!Object.prototype.hasOwnProperty.call(pickedCatalogs, id)) pickedCatalogs[id] = "0";
     } else {
       delete pickedCatalogs[id];
@@ -3134,7 +3159,6 @@ const CustomerOrders = (() => {
       if (!transportMode) return ctx.toast("Select mode of transport", "error");
       if (transportMode === "bus") {
         if (!freightAgentId) return ctx.toast("Select freight agent", "error");
-        if (agentIsVishnu(freightAgentId) && !freightHandler) return ctx.toast("Select who picked it", "error");
         if (freightCharges.trim() === "") return ctx.toast("Enter freight charges", "error");
       }
       if (transportMode === "transport" && freightCharges.trim() === "") {
@@ -3187,7 +3211,6 @@ const CustomerOrders = (() => {
     if (!transportMode) return ctx.toast("Select how this is sent", "error");
     if (transportMode === "bus") {
       if (!freightAgentId) return ctx.toast("Select the freight agent", "error");
-      if (agentIsVishnu(freightAgentId) && !freightHandler) return ctx.toast("Select who picked it", "error");
       if (String(freightCharges || "").trim() === "") return ctx.toast("Enter freight", "error");
     }
     if (transportMode === "transport" && String(freightCharges || "").trim() === "") {
@@ -4191,7 +4214,7 @@ const CustomerOrders = (() => {
     _detailCustomerId,
     setShipQty, setLineDisc, setLineNetRate, setDiscToggle, setOverallDisc, skipBillAddon,
     setFreightAgent, setFreightHandler, setFreightCharges, setTransportMode, setTransportReceipt, setPackagingCharges,
-    setGst, setGstRate, setBillSeries, setNarration, setEditBillNumber, setBillDate, setAddCharge, addChargeRow, openCatalogPicker, addPickedCatalog, toggleBillCatalog, setBillCatalogPrice,
+    setGst, setGstRate, setBillSeries, setNarration, setEditBillNumber, setBillDate, setAddCharge, addChargeRow, openCatalogPicker, addPickedCatalog, toggleBillCatalog, setBillCatalogPrice, focusNextBillItem,
     setOfflinePlacedOn,
     setForceCredit, setBillOnAgent, printDayDuplicates,
     processNext, processBack, submitProcess, backFromBillDuplicate, proceedBillDuplicate, toggleBillOrder, toggleAllBillOrders,

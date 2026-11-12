@@ -239,9 +239,13 @@ def receive_agent_payment(
     actor_id: Optional[int],
     actor_name: str,
     value_date: Optional[date] = None,
+    payment_mode: Optional[str] = None,
 ) -> CommissionLedgerEntry:
     text = (note or "").strip()
+    account = (payment_mode or "").strip()
     description = f"Received ₹{mag(amount)}"
+    if account:
+        description = f"{description} · {account}"
     if text:
         description = f"{description} — {text}"
     entry = CommissionLedgerEntry(
@@ -249,6 +253,7 @@ def receive_agent_payment(
         entry_type="payment",
         amount=as_signed_decrease(amount),
         description=description[:500],
+        payment_mode=account or None,
         value_date=value_date,
         created_by_type=actor_type,
         created_by_id=actor_id,

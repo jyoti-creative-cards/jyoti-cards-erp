@@ -484,7 +484,7 @@ const Finance = (() => {
       paymentModesLoadFailed = true;
       ctx.toast(e.message, "error");
     }
-    const modeOpts = customer.kind === "agent" ? "" : paymentModesLoadFailed
+    const modeOpts = paymentModesLoadFailed
       ? `<p style="font-size:13px;color:var(--danger);margin:0 0 12px;">Couldn't load payment modes. You can still collect; you'll be asked for a mode if one is required.</p>`
       : quickPayModes.length
       ? `<label class="label">Payment mode</label>
@@ -523,7 +523,7 @@ const Finance = (() => {
     const comment = (document.getElementById("quick-pay-comment")?.value || "").trim();
     const modeRaw = document.getElementById("quick-pay-mode")?.value || "";
     const paymentModeId = modeRaw ? parseInt(modeRaw, 10) : null;
-    if (customer.kind !== "agent" && quickPayModes.length && !paymentModeId) return ctx.toast("Select payment mode", "error");
+    if (quickPayModes.length && !paymentModeId) return ctx.toast("Select the account", "error");
     if (!amount || amount <= 0) return ctx.toast("Enter a valid amount", "error");
     if (!valueDate) return ctx.toast("Enter collection date", "error");
     rememberCollectDate("quick-pay-date");
@@ -533,7 +533,12 @@ const Finance = (() => {
         const note = [ref, comment].filter(Boolean).join(" · ");
         await ctx.api(`/commission-agents/${customer.id}/payments`, {
           method: "POST",
-          body: JSON.stringify({ amount: String(amount), note: note || null, paid_on: valueDate }),
+          body: JSON.stringify({
+            amount: String(amount),
+            note: note || null,
+            paid_on: valueDate,
+            payment_mode_id: paymentModeId,
+          }),
         });
         closeQuickPay();
         ctx.toast("Payment recorded on the agent", "success");
@@ -544,7 +549,7 @@ const Finance = (() => {
           valueDate,
           receipt: ref,
           comment,
-          mode: "Agent",
+          mode: quickPayModes.find(m => m.id === paymentModeId)?.name || "Agent",
           againFn: "Finance.quickCustomerPayment()",
         });
         return;

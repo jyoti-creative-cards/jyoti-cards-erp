@@ -142,10 +142,16 @@ const Reports = (() => {
   function showHub() {
     ledgerDetail = null;
     showQuestions = true;
+    if (!ctx.esc) ctx.esc = (v) => String(v ?? "");
     document.getElementById("reports-hub")?.classList.remove("hidden");
     document.getElementById("reports-ledger-detail")?.classList.add("hidden");
-    renderChrome();
-    renderQuestionsOrChip();
+    try { renderChrome(); }
+    catch (e) { console.error(e); }
+    try { renderQuestionsOrChip(); }
+    catch (e) {
+      const body = document.getElementById("reports-body");
+      if (body) body.innerHTML = `<p style="color:#b91c1c;">${ctx.esc(e.message || "Could not open reports")}</p>`;
+    }
   }
 
   function pickQuestion(modeId, chipId) {

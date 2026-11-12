@@ -39,6 +39,20 @@ from app.services.stock_receipt import add_stock
 
 from app.services.customer_bills.common import _line_disc_to_store, _persist_totals_addons, _resolve_bill_transport
 
+
+def _bill_item_label(db: Session, catalog_product_id: int, sku: str) -> str:
+    from app.services.product_markings import marking_labels
+
+    marks = marking_labels(db, [catalog_product_id])
+    mark = marks.get(catalog_product_id)
+    if not mark:
+        product = db.get(CatalogProduct, catalog_product_id)
+        mark = product.marking if product else None
+    text = (mark or "").strip()
+    if text:
+        return f"{sku} · {text}"
+    return sku
+
 def process_customer_bill(
     db: Session,
     *,
@@ -116,7 +130,7 @@ def process_customer_bill(
             bill_items.append({
                 "catalog_product_id": cid,
                 "our_product_id": product.our_product_id,
-                "name": product.our_product_id,
+                "name": _bill_item_label(db, cid, product.our_product_id),
                 "quantity": qty,
                 "unit_price": str(price),
             })
@@ -144,7 +158,7 @@ def process_customer_bill(
                 "catalog_product_id": cid,
                 "our_product_id": row.our_product_id,
                 # Customer-facing doc — never show the vendor's own product code here.
-                "name": row.our_product_id,
+                "name": _bill_item_label(db, cid, row.our_product_id),
                 "quantity": qty,
                 "unit_price": str(row.unit_price),
             }

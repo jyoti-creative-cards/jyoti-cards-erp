@@ -35,6 +35,7 @@ const CustomerOrders = (() => {
   let freightAgents = [];
   let billSeries = [];
   let freightAgentId = "";
+  let freightHandler = "";
   let freightCharges = "";
   let transportMode = "";
   let transportReceiptNumber = "";

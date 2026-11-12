@@ -192,6 +192,7 @@ def serialize_customer_bill(
         transport_mode=mode,
         transport_receipt_number=bill.transport_receipt_number,
         freight_agent_name=agent_name,
+        freight_handler=bill.freight_handler,
         cancelled_at=bill.cancelled_at,
         cancel_reason=bill.cancel_reason,
         deleted_at=bill.deleted_at,

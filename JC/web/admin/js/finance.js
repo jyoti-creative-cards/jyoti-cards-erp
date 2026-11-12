@@ -3027,7 +3027,7 @@ const Finance = (() => {
             return `<tr>
               <td>${fmtDocDate(r.display_date || r.value_date || r.created_at)}</td>
               <td><span class="badge ${badge}">${ctx.esc(r.entry_type)}</span></td>
-              <td><strong>${ctx.esc(party)}</strong>${r.bill_number && isCharge ? `<div style="font-size:11px;color:var(--muted);">${ctx.esc(r.bill_number)}</div>` : ""}</td>
+              <td><strong>${ctx.esc(party)}</strong>${r.bill_number && isCharge ? `<div style="font-size:11px;color:var(--muted);">${ctx.esc(r.bill_number)}</div>` : ""}${r.freight_handler ? `<div style="font-size:13px;font-weight:800;color:#166534;">Picked by ${ctx.esc(r.freight_handler)}</div>` : ""}</td>
               <td>${fmtPrice(r.amount)}</td>
               <td style="font-size:12px;color:var(--muted);">${ctx.esc(isCharge ? (r.transaction_ref || "—") : (r.notes || "—"))}</td>
               <td style="white-space:nowrap;">${links.join(" ")}</td>

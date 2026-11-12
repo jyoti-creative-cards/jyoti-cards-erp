@@ -147,6 +147,7 @@ class CustomerBillOut(BaseModel):
     transport_mode: Optional[str] = None
     transport_receipt_number: Optional[str] = None
     freight_agent_name: Optional[str] = None
+    freight_handler: Optional[str] = None
     cancelled_at: Optional[datetime] = None
     cancel_reason: Optional[str] = None
     deleted_at: Optional[datetime] = None
@@ -221,6 +222,7 @@ class ProcessBillIn(BaseModel):
     transport_mode: str
     transport_receipt_number: Optional[str] = None
     freight_agent_id: Optional[int] = None
+    freight_handler: Optional[str] = None
     freight_charges: Optional[str] = None
     packaging_charges: Optional[str] = None
     additional_charges: List[AdditionalChargeIn] = []
@@ -249,6 +251,7 @@ class EditBillIn(BaseModel):
     transport_mode: str
     transport_receipt_number: Optional[str] = None
     freight_agent_id: Optional[int] = None
+    freight_handler: Optional[str] = None
     freight_charges: Optional[str] = None
     packaging_charges: Optional[str] = None
     additional_charges: List[AdditionalChargeIn] = []

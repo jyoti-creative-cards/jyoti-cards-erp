@@ -197,6 +197,10 @@ const OrderDesk = (() => {
     const transport = f.transportMode === "bus" ? `
       <label class="label">Freight agent</label>
       <select class="input" data-field="agent" onchange="OrderDesk.setTransportBit('${key}')">${agentOptions(f.freightAgentId)}</select>
+      ${deskAgentIsVishnu(f.freightAgentId) ? `<label class="label">Who picked it</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+        ${["Vishnu", "Rahul", "Ganesh"].map(name => `<button type="button" class="btn ${f.freightHandler === name ? "btn-primary" : "btn-secondary"} btn-sm" data-field="handler" onclick="OrderDesk.setHandler('${key}', '${name}')">${name}</button>`).join("")}
+      </div>` : ""}
       <label class="label">Freight (₹)</label>
       <input class="input" data-field="freight" value="${esc(f.freightCharges || "")}">`
       : f.transportMode === "transport" ? `
@@ -279,6 +283,10 @@ const OrderDesk = (() => {
       ${f.duplicateHtml || ""}`;
   }
 
+  function deskAgentIsVishnu(id) {
+    const hit = (shared.agents || []).find(a => String(a.id) === String(id));
+    return !!(hit && String(hit.name || "").toLowerCase().includes("vishnu"));
+  }
   function agentOptions(current) {
     return `<option value="">—</option>` + (shared.agents || []).map(a =>
       `<option value="${a.id}" ${String(a.id) === String(current) ? "selected" : ""}>${esc(a.name)}</option>`
@@ -449,7 +457,14 @@ const OrderDesk = (() => {
     const mode = val("[data-field=mode]");
     if (mode) f.transportMode = mode.value;
     const agent = val("[data-field=agent]");
-    if (agent) f.freightAgentId = agent.value;
+    if (agent) {
+      f.freightAgentId = agent.value;
+      const hit = (shared.agents || []).find(a => String(a.id) === String(agent.value));
+      f.freightAgentName = hit ? hit.name : "";
+      if (!deskAgentIsVishnu(agent.value)) f.freightHandler = "";
+    }
+    const who = root.querySelector("[data-field=handler].btn-primary");
+    if (who) f.freightHandler = who.textContent.trim();
     const freight = val("[data-field=freight]");
     if (freight) f.freightCharges = freight.value;
     const receipt = val("[data-field=receipt]");
@@ -484,7 +499,8 @@ const OrderDesk = (() => {
   function setConfirmSearch(key, v) { if (forms[key]) { pull(key); forms[key].search = v; render(); } }
   function setBillSearch(key, v) { if (forms[key]) { pull(key); forms[key].search = v; render(); } }
   function setMode(key, v) { pull(key); if (forms[key]) forms[key].transportMode = v; render(); }
-  function setTransportBit(key) { pull(key); }
+  function setTransportBit(key) { pull(key); render(); }
+  function setHandler(key, name) { pull(key); if (forms[key]) forms[key].freightHandler = name; render(); }
   function setDisc(key, mode) {
     pull(key);
     const f = forms[key];
@@ -665,6 +681,7 @@ const OrderDesk = (() => {
       transportMode: "self_pickup",
       transportReceiptNumber: "",
       freightAgentId: "",
+      freightHandler: "",
       freightCharges: "",
       packagingCharges: "",
       additionalCharges: [{ name: "", amount: "" }],
@@ -753,6 +770,7 @@ const OrderDesk = (() => {
       transportMode: bill.transport_mode || (bill.freight_agent_id ? "bus" : (Number(bill.freight_charges) > 0 ? "transport" : "self_pickup")),
       transportReceiptNumber: bill.transport_receipt_number || "",
       freightAgentId: bill.freight_agent_id != null ? String(bill.freight_agent_id) : "",
+      freightHandler: bill.freight_handler || "",
       freightCharges: bill.freight_charges != null ? String(bill.freight_charges) : "",
       packagingCharges: bill.packaging_charges != null ? String(bill.packaging_charges) : "",
       additionalCharges: (bill.additional_charges || []).length
@@ -983,7 +1001,7 @@ const OrderDesk = (() => {
 
   return {
     open, setFilter, setFrom, setTo, toggle, selectAll, newOrder, act, pull,
-    setConfirmSearch, setBillSearch, setMode, setTransportBit, setDisc, setGst, setBillAgent,
+    setConfirmSearch, setBillSearch, setMode, setTransportBit, setHandler, setDisc, setGst, setBillAgent,
     addCharge, toggleCatalog, togglePlacement, toggleConfirmAddon, toggleBillAddon,
     removeConfirmLine, removeBillLine, addConfirmItem, addBillItem,
   };

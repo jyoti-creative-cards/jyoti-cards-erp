@@ -54,6 +54,7 @@
       body.transport_receipt_number = transportReceiptNumber.trim();
     }
     if (transportMode === "bus" && freightAgentId) body.freight_agent_id = Number(freightAgentId);
+    if (transportMode === "bus" && agentIsVishnu(freightAgentId) && freightHandler) body.freight_handler = freightHandler;
     if (transportMode === "bus" || transportMode === "transport") {
       if (freightCharges.trim() !== "") body.freight_charges = String(freightCharges);
     }
@@ -197,6 +198,7 @@
       gstEnabled = false;
       gstRate = "18";
       freightAgentId = "";
+      freightHandler = "";
       freightCharges = "";
       transportMode = "self_pickup";
       transportReceiptNumber = "";
@@ -354,6 +356,7 @@
       gstEnabled = !!bill.gst_enabled;
       gstRate = bill.gst_rate_percent != null ? String(bill.gst_rate_percent) : "18";
       freightAgentId = bill.freight_agent_id != null ? String(bill.freight_agent_id) : "";
+      freightHandler = bill.freight_handler || "";
       if ((bill.transport_mode || (bill.freight_agent_id ? "bus" : "")) === "bus" && !freightAgentId) {
         freightAgentId = defaultFreightAgentId();
       }
@@ -655,6 +658,10 @@
           <option value="">—</option>
           ${freightAgents.map(a => `<option value="${a.id}" ${String(a.id) === String(freightAgentId) ? "selected" : ""}>${ctx.esc(a.name)}</option>`).join("")}
         </select>
+        ${agentIsVishnu(freightAgentId) ? `<label class="label">Who picked it</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+          ${["Vishnu", "Rahul", "Ganesh"].map(name => `<button type="button" class="btn ${freightHandler === name ? "btn-primary" : "btn-secondary"} btn-sm" onclick="CustomerOrders.setFreightHandler('${name}')">${name}</button>`).join("")}
+        </div>` : ""}
         <label class="label">Freight (₹)</label>
         <input id="co-freight-amount" class="input" value="${ctx.esc(freightCharges)}" oninput="CustomerOrders.setFreightCharges(this.value)" />`;
     }
@@ -857,16 +864,30 @@
     const hit = freightAgents.find(a => String(a.name || "").trim().toLowerCase() === "vishnu parcel");
     return hit ? String(hit.id) : "";
   }
-  function setFreightAgent(v) { freightAgentId = v; }
+  function agentIsVishnu(id) {
+    const hit = freightAgents.find(a => String(a.id) === String(id));
+    return !!(hit && String(hit.name || "").toLowerCase().includes("vishnu"));
+  }
+  function setFreightAgent(v) {
+    freightAgentId = v;
+    if (!agentIsVishnu(v)) freightHandler = "";
+    renderProcessWizard();
+  }
+  function setFreightHandler(name) {
+    freightHandler = name;
+    renderProcessWizard();
+  }
   function setFreightCharges(v) { freightCharges = v; renderWizardTotalsBar(); }
   function setTransportMode(v) {
     transportMode = v;
     if (v === "self_pickup") {
       freightAgentId = "";
+      freightHandler = "";
       freightCharges = "";
       transportReceiptNumber = "";
     } else if (v === "transport") {
       freightAgentId = "";
+      freightHandler = "";
     } else if (v === "bus") {
       transportReceiptNumber = "";
       if (!freightAgentId) freightAgentId = defaultFreightAgentId();
@@ -1092,6 +1113,7 @@
       if (!transportMode) return ctx.toast("Select mode of transport", "error");
       if (transportMode === "bus") {
         if (!freightAgentId) return ctx.toast("Select freight agent", "error");
+        if (agentIsVishnu(freightAgentId) && !freightHandler) return ctx.toast("Select who picked it", "error");
         if (freightCharges.trim() === "") return ctx.toast("Enter freight charges", "error");
       }
       if (transportMode === "transport" && freightCharges.trim() === "") {

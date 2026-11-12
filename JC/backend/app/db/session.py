@@ -36,6 +36,9 @@ def _exec_sql(conn, stmt: str, *, critical: bool = False, params: dict | None = 
 
 _settings = get_settings()
 _db_url = _settings.database_url.strip()
+# Fly Postgres attach uses postgres://, which SQLAlchemy does not load.
+if _db_url.startswith("postgres://"):
+    _db_url = "postgresql://" + _db_url[len("postgres://"):]
 _is_sqlite = _db_url.lower().startswith("sqlite:")
 
 
@@ -159,6 +162,8 @@ def init_db() -> None:
             conn.execute(text("SELECT 1"))
         _DB_READY = True
         log.info("init_db complete — DB ready")
+        from app.demo_seed import maybe_seed
+        maybe_seed()
     except Exception:
         _DB_READY = False
         log.exception("init_db FAILED")
@@ -753,6 +758,7 @@ def _migrate_freight_docs() -> None:
         "ALTER TABLE jc_freight_ledger_entries ADD COLUMN IF NOT EXISTS document_key VARCHAR(500)",
         "ALTER TABLE jc_customer_bills ADD COLUMN IF NOT EXISTS freight_picked_at TIMESTAMPTZ",
         "ALTER TABLE jc_customer_bills ADD COLUMN IF NOT EXISTS freight_picked_by VARCHAR(200)",
+        "ALTER TABLE jc_customer_bills ADD COLUMN IF NOT EXISTS freight_handler VARCHAR(40)",
         "ALTER TABLE jc_customer_bills ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ",
         "ALTER TABLE jc_customer_bills ADD COLUMN IF NOT EXISTS cancel_reason TEXT",
         # Existing charged bills were already "picked" under old flow

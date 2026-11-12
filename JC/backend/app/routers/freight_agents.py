@@ -59,6 +59,7 @@ class FreightLedgerOut(BaseModel):
     customer_bill_id: Optional[int] = None
     party_label: Optional[str] = None
     bill_number: Optional[str] = None
+    freight_handler: Optional[str] = None
     expense_id: Optional[int] = None
     transaction_ref: Optional[str] = None
     notes: Optional[str] = None
@@ -246,6 +247,7 @@ class DispatchPickIn(BaseModel):
     additional_charges: list = []
     narration: Optional[str] = None
     pick_narration: Optional[str] = None
+    freight_handler: Optional[str] = None
 
 
 class DispatchNoteIn(BaseModel):
@@ -301,6 +303,7 @@ def mark_parcel_picked(
         narration=body.narration,
         pick_narration=body.pick_narration,
         actor_name=auth.actor_name,
+        freight_handler=body.freight_handler,
     )
     log_from_auth(
         db, auth, action="picked", entity_type="customer_bill",
@@ -389,6 +392,7 @@ def get_ledger(agent_id: int, db: Session = Depends(get_db), auth: AuthContext =
             customer_bill_id=r.get("customer_bill_id"),
             party_label=r.get("party_label"),
             bill_number=r.get("bill_number"),
+            freight_handler=r.get("freight_handler"),
             expense_id=r.get("expense_id"),
             transaction_ref=r.get("transaction_ref"),
             notes=r.get("notes"),

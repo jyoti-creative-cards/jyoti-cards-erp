@@ -230,6 +230,7 @@ def _parcel_dict(
         "customer_city": None,
         "freight_agent_id": bill.freight_agent_id,
         "freight_agent_name": agents.get(bill.freight_agent_id or 0),
+        "freight_handler": bill.freight_handler,
         "freight_charges": format(bill.freight_charges or 0, "f"),
         "transport_mode": bill.transport_mode or ("bus" if bill.freight_agent_id else "self_pickup"),
         "transport_receipt_number": bill.transport_receipt_number,
@@ -370,6 +371,7 @@ def save_dispatch_and_pick(
     narration: Optional[str],
     pick_narration: Optional[str],
     actor_name: str,
+    freight_handler: Optional[str] = None,
 ) -> CustomerBill:
     """Save the send-by form, then mark the parcel picked."""
     from app.services.commission_ledger import sync_bill_due
@@ -435,6 +437,9 @@ def save_dispatch_and_pick(
     totals["grand_total"] = format(raw, "f")
     totals["rounded_grand_total"] = format(rounded, "f")
     bill.totals_json = totals
+    from app.services.freight_handler import apply_freight_handler
+
+    apply_freight_handler(db, bill, freight_handler)
     bill.document_key = None
     remember(db, kind="bill", subject=str(bill.id), body=bill.narration or "", actor=actor_name)
     customer = db.get(Customer, bill.customer_id)

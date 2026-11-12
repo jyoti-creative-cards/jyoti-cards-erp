@@ -252,6 +252,9 @@ def _running_and_closing(
             label = "Transport Charges" + (f" ({receipt})" if receipt else "")
         else:
             agent = _txt(totals.get("freight_agent_name"), 28)
+            handler = _txt(totals.get("freight_handler"), 16)
+            if handler:
+                agent = f"{agent} · {handler}" if agent else handler
             label = "Freight Charges" + (f" ({agent})" if agent else "")
         charges.append({"kind": "charge", "label": label, "amount": freight})
 

@@ -34,6 +34,8 @@ class CustomerBill(Base):
     # Dues post to freight agent only after pick (dispatch). Null = still pending pickup.
     freight_picked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     freight_picked_by: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    # Vishnu, Rahul, or Ganesh when the freight agent is Vishnu.
+    freight_handler: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
     dispatch_narration: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     dispatch_narration_by: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     dispatch_narration_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -106,6 +106,9 @@ def _build_summary_rows(totals: Dict[str, Any], gst_on: bool, gst_label: str) ->
                 else:
                     rows.append(["Freight charges", f"Rs. {_money(freight)}"])
                     agent = (totals.get("freight_agent_name") or "").strip()
+                    handler = (totals.get("freight_handler") or "").strip()
+                    if handler:
+                        agent = f"{agent} · {handler}" if agent else handler
                     if agent:
                         rows.append(["Freight agent", _safe(agent, 40)])
         except (TypeError, ValueError):

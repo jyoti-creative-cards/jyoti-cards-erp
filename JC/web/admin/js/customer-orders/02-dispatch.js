@@ -12,6 +12,8 @@
       if (mode) d.mode = mode.value;
       const agent = read("agent");
       if (agent) d.agent = agent.value;
+      const picked = root.querySelector("[data-field=handler].btn-primary");
+      if (picked) d.handler = picked.textContent.trim();
       const freight = read("freight");
       if (freight) d.freight = freight.value;
       const receipt = read("receipt");
@@ -40,6 +42,7 @@
       dispatchDrafts[id] = {
         mode: p.transport_mode || (p.freight_agent_id ? "bus" : "self_pickup"),
         agent: p.freight_agent_id || "",
+        handler: p.freight_handler || "",
         freight: p.freight_charges && Number(p.freight_charges) ? String(p.freight_charges) : "",
         receipt: p.transport_receipt_number || "",
         packing: p.packaging_charges && Number(p.packaging_charges) ? String(p.packaging_charges) : "",
@@ -49,6 +52,26 @@
       };
     }
     return dispatchDrafts[id];
+  }
+
+  function parcelAgentIsVishnu(agentId) {
+    const hit = (dispatchAgents || []).find(a => String(a.id) === String(agentId));
+    return !!(hit && String(hit.name || "").toLowerCase().includes("vishnu"));
+  }
+
+  function setParcelAgent(billId, value) {
+    pullDispatchDrafts();
+    const d = dispatchDrafts[billId];
+    if (!d) return;
+    d.agent = value;
+    if (!parcelAgentIsVishnu(value)) d.handler = "";
+    renderDispatchList();
+  }
+
+  function setParcelHandler(billId, name) {
+    pullDispatchDrafts();
+    if (dispatchDrafts[billId]) dispatchDrafts[billId].handler = name;
+    renderDispatchList();
   }
 
   function setDispatchMode(billId, value) {
@@ -99,7 +122,11 @@
     ).join("");
     const modeBits = d.mode === "bus" ? `
       <label class="label">Freight agent</label>
-      <select class="input" data-field="agent"><option value="">—</option>${agents}</select>
+      <select class="input" data-field="agent" onchange="CustomerOrders.setParcelAgent(${p.bill_id}, this.value)"><option value="">—</option>${agents}</select>
+      ${parcelAgentIsVishnu(d.agent) ? `<label class="label">Who picked it</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+        ${["Vishnu", "Rahul", "Ganesh"].map(name => `<button type="button" class="btn ${d.handler === name ? "btn-primary" : "btn-secondary"} btn-sm" data-field="handler" onclick="CustomerOrders.setParcelHandler(${p.bill_id}, '${name}')">${name}</button>`).join("")}
+      </div>` : ""}
       <label class="label">Freight (₹)</label>
       <input class="input" data-field="freight" value="${ctx.esc(d.freight)}">`
       : d.mode === "transport" ? `
@@ -174,6 +201,7 @@
       const lines = (p.lines || []).map(l => `${ctx.esc(l.our_product_id)} × ${l.quantity}`).join(" · ");
       const meta = [
         p.bill_number ? `Bill ${p.bill_number}` : null,
+        p.freight_handler ? `Picked by ${p.freight_handler}` : null,
         p.customer_city || null,
         `${p.total_pcs || 0} pcs`,
       ].filter(Boolean).join(" · ");
@@ -252,6 +280,7 @@
     pullDispatchDrafts();
     const d = dispatchDrafts[String(billId)];
     if (!d) return;
+    if (d.mode === "bus" && parcelAgentIsVishnu(d.agent) && !d.handler) return ctx.toast("Select who picked it", "error");
     if (!String(d.pickNarration || "").trim()) return ctx.toast("Enter a narration", "error");
     ctx.showLoading?.();
     try {
@@ -266,6 +295,7 @@
           additional_charges: d.charges,
           narration: d.marking,
           pick_narration: d.pickNarration,
+          freight_handler: d.handler || null,
         }),
       }, 0);
       delete dispatchDrafts[String(billId)];

@@ -203,6 +203,7 @@ def build_freight_ledger(db: Session, agent_id: int) -> list[dict]:
                 "customer_bill_id": e.customer_bill_id,
                 "party_label": party_label,
                 "bill_number": bill_number,
+                "freight_handler": (bill.freight_handler or None) if bill else None,
                 "expense_id": e.expense_id,
                 "transaction_ref": e.transaction_ref,
                 "notes": e.notes,

@@ -36,6 +36,7 @@ const CustomerOrders = (() => {
   let freightAgents = [];
   let billSeries = [];
   let freightAgentId = "";
+  let freightHandler = "";
   let freightCharges = "";
   let transportMode = "";
   let transportReceiptNumber = "";
@@ -626,6 +627,8 @@ const CustomerOrders = (() => {
       if (mode) d.mode = mode.value;
       const agent = read("agent");
       if (agent) d.agent = agent.value;
+      const picked = root.querySelector("[data-field=handler].btn-primary");
+      if (picked) d.handler = picked.textContent.trim();
       const freight = read("freight");
       if (freight) d.freight = freight.value;
       const receipt = read("receipt");
@@ -654,6 +657,7 @@ const CustomerOrders = (() => {
       dispatchDrafts[id] = {
         mode: p.transport_mode || (p.freight_agent_id ? "bus" : "self_pickup"),
         agent: p.freight_agent_id || "",
+        handler: p.freight_handler || "",
         freight: p.freight_charges && Number(p.freight_charges) ? String(p.freight_charges) : "",
         receipt: p.transport_receipt_number || "",
         packing: p.packaging_charges && Number(p.packaging_charges) ? String(p.packaging_charges) : "",
@@ -663,6 +667,26 @@ const CustomerOrders = (() => {
       };
     }
     return dispatchDrafts[id];
+  }
+
+  function parcelAgentIsVishnu(agentId) {
+    const hit = (dispatchAgents || []).find(a => String(a.id) === String(agentId));
+    return !!(hit && String(hit.name || "").toLowerCase().includes("vishnu"));
+  }
+
+  function setParcelAgent(billId, value) {
+    pullDispatchDrafts();
+    const d = dispatchDrafts[billId];
+    if (!d) return;
+    d.agent = value;
+    if (!parcelAgentIsVishnu(value)) d.handler = "";
+    renderDispatchList();
+  }
+
+  function setParcelHandler(billId, name) {
+    pullDispatchDrafts();
+    if (dispatchDrafts[billId]) dispatchDrafts[billId].handler = name;
+    renderDispatchList();
   }
 
   function setDispatchMode(billId, value) {
@@ -713,7 +737,11 @@ const CustomerOrders = (() => {
     ).join("");
     const modeBits = d.mode === "bus" ? `
       <label class="label">Freight agent</label>
-      <select class="input" data-field="agent"><option value="">—</option>${agents}</select>
+      <select class="input" data-field="agent" onchange="CustomerOrders.setParcelAgent(${p.bill_id}, this.value)"><option value="">—</option>${agents}</select>
+      ${parcelAgentIsVishnu(d.agent) ? `<label class="label">Who picked it</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+        ${["Vishnu", "Rahul", "Ganesh"].map(name => `<button type="button" class="btn ${d.handler === name ? "btn-primary" : "btn-secondary"} btn-sm" data-field="handler" onclick="CustomerOrders.setParcelHandler(${p.bill_id}, '${name}')">${name}</button>`).join("")}
+      </div>` : ""}
       <label class="label">Freight (₹)</label>
       <input class="input" data-field="freight" value="${ctx.esc(d.freight)}">`
       : d.mode === "transport" ? `
@@ -788,6 +816,7 @@ const CustomerOrders = (() => {
       const lines = (p.lines || []).map(l => `${ctx.esc(l.our_product_id)} × ${l.quantity}`).join(" · ");
       const meta = [
         p.bill_number ? `Bill ${p.bill_number}` : null,
+        p.freight_handler ? `Picked by ${p.freight_handler}` : null,
         p.customer_city || null,
         `${p.total_pcs || 0} pcs`,
       ].filter(Boolean).join(" · ");
@@ -866,6 +895,7 @@ const CustomerOrders = (() => {
     pullDispatchDrafts();
     const d = dispatchDrafts[String(billId)];
     if (!d) return;
+    if (d.mode === "bus" && parcelAgentIsVishnu(d.agent) && !d.handler) return ctx.toast("Select who picked it", "error");
     if (!String(d.pickNarration || "").trim()) return ctx.toast("Enter a narration", "error");
     ctx.showLoading?.();
     try {
@@ -880,6 +910,7 @@ const CustomerOrders = (() => {
           additional_charges: d.charges,
           narration: d.marking,
           pick_narration: d.pickNarration,
+          freight_handler: d.handler || null,
         }),
       }, 0);
       delete dispatchDrafts[String(billId)];
@@ -2044,6 +2075,7 @@ const CustomerOrders = (() => {
       body.transport_receipt_number = transportReceiptNumber.trim();
     }
     if (transportMode === "bus" && freightAgentId) body.freight_agent_id = Number(freightAgentId);
+    if (transportMode === "bus" && agentIsVishnu(freightAgentId) && freightHandler) body.freight_handler = freightHandler;
     if (transportMode === "bus" || transportMode === "transport") {
       if (freightCharges.trim() !== "") body.freight_charges = String(freightCharges);
     }
@@ -2187,6 +2219,7 @@ const CustomerOrders = (() => {
       gstEnabled = false;
       gstRate = "18";
       freightAgentId = "";
+      freightHandler = "";
       freightCharges = "";
       transportMode = "self_pickup";
       transportReceiptNumber = "";
@@ -2344,6 +2377,7 @@ const CustomerOrders = (() => {
       gstEnabled = !!bill.gst_enabled;
       gstRate = bill.gst_rate_percent != null ? String(bill.gst_rate_percent) : "18";
       freightAgentId = bill.freight_agent_id != null ? String(bill.freight_agent_id) : "";
+      freightHandler = bill.freight_handler || "";
       if ((bill.transport_mode || (bill.freight_agent_id ? "bus" : "")) === "bus" && !freightAgentId) {
         freightAgentId = defaultFreightAgentId();
       }
@@ -2645,6 +2679,10 @@ const CustomerOrders = (() => {
           <option value="">—</option>
           ${freightAgents.map(a => `<option value="${a.id}" ${String(a.id) === String(freightAgentId) ? "selected" : ""}>${ctx.esc(a.name)}</option>`).join("")}
         </select>
+        ${agentIsVishnu(freightAgentId) ? `<label class="label">Who picked it</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+          ${["Vishnu", "Rahul", "Ganesh"].map(name => `<button type="button" class="btn ${freightHandler === name ? "btn-primary" : "btn-secondary"} btn-sm" onclick="CustomerOrders.setFreightHandler('${name}')">${name}</button>`).join("")}
+        </div>` : ""}
         <label class="label">Freight (₹)</label>
         <input id="co-freight-amount" class="input" value="${ctx.esc(freightCharges)}" oninput="CustomerOrders.setFreightCharges(this.value)" />`;
     }
@@ -2847,16 +2885,30 @@ const CustomerOrders = (() => {
     const hit = freightAgents.find(a => String(a.name || "").trim().toLowerCase() === "vishnu parcel");
     return hit ? String(hit.id) : "";
   }
-  function setFreightAgent(v) { freightAgentId = v; }
+  function agentIsVishnu(id) {
+    const hit = freightAgents.find(a => String(a.id) === String(id));
+    return !!(hit && String(hit.name || "").toLowerCase().includes("vishnu"));
+  }
+  function setFreightAgent(v) {
+    freightAgentId = v;
+    if (!agentIsVishnu(v)) freightHandler = "";
+    renderProcessWizard();
+  }
+  function setFreightHandler(name) {
+    freightHandler = name;
+    renderProcessWizard();
+  }
   function setFreightCharges(v) { freightCharges = v; renderWizardTotalsBar(); }
   function setTransportMode(v) {
     transportMode = v;
     if (v === "self_pickup") {
       freightAgentId = "";
+      freightHandler = "";
       freightCharges = "";
       transportReceiptNumber = "";
     } else if (v === "transport") {
       freightAgentId = "";
+      freightHandler = "";
     } else if (v === "bus") {
       transportReceiptNumber = "";
       if (!freightAgentId) freightAgentId = defaultFreightAgentId();
@@ -3082,6 +3134,7 @@ const CustomerOrders = (() => {
       if (!transportMode) return ctx.toast("Select mode of transport", "error");
       if (transportMode === "bus") {
         if (!freightAgentId) return ctx.toast("Select freight agent", "error");
+        if (agentIsVishnu(freightAgentId) && !freightHandler) return ctx.toast("Select who picked it", "error");
         if (freightCharges.trim() === "") return ctx.toast("Enter freight charges", "error");
       }
       if (transportMode === "transport" && freightCharges.trim() === "") {
@@ -3134,6 +3187,7 @@ const CustomerOrders = (() => {
     if (!transportMode) return ctx.toast("Select how this is sent", "error");
     if (transportMode === "bus") {
       if (!freightAgentId) return ctx.toast("Select the freight agent", "error");
+      if (agentIsVishnu(freightAgentId) && !freightHandler) return ctx.toast("Select who picked it", "error");
       if (String(freightCharges || "").trim() === "") return ctx.toast("Enter freight", "error");
     }
     if (transportMode === "transport" && String(freightCharges || "").trim() === "") {
@@ -4145,14 +4199,14 @@ const CustomerOrders = (() => {
   return {
     init, loadList, setBucket, setHubMode, setPrintDay, setQueueFilter, setHubSearch, setHubPrice, setHubSort, showHub, openDetail, openCustomer, switchBucket, toggleDetailExpand,
     openSlidePanel, closeSlidePanel, toggleCardMore, closeAllCardMore,
-    goToDispatch, goCollectPayment, setDispatchStatus, setDispatchAgent, pickParcel, askDispatchNarration, saveDispatchNarration, markDispatchPicked, setDispatchMode, addDispatchCharge, togglePickedStory, reassignParcel, submitParcelReassign,
+    goToDispatch, goCollectPayment, setDispatchStatus, setDispatchAgent, setParcelAgent, setParcelHandler, pickParcel, askDispatchNarration, saveDispatchNarration, markDispatchPicked, setDispatchMode, addDispatchCharge, togglePickedStory, reassignParcel, submitParcelReassign,
     showCreateMenu, showCreateMenuFromCustomer, openCloseBatch,
     processOrder, processFromHub, billNow, billBookedOrder, closeProcessWizard, renderProcessWizard,
     openEditBill, editLatestBill, promptEditBillNumber, saveBillNumber, enableDiscount, clearDiscount, setBillEditSearch, addBillEditProduct, removeProcessLine, cancelProcessLine,
     openEditFromOpen,
     _detailCustomerId,
     setShipQty, setLineDisc, setLineNetRate, setDiscToggle, setOverallDisc, skipBillAddon,
-    setFreightAgent, setFreightCharges, setTransportMode, setTransportReceipt, setPackagingCharges,
+    setFreightAgent, setFreightHandler, setFreightCharges, setTransportMode, setTransportReceipt, setPackagingCharges,
     setGst, setGstRate, setBillSeries, setNarration, setEditBillNumber, setBillDate, setAddCharge, addChargeRow, openCatalogPicker, addPickedCatalog, toggleBillCatalog, setBillCatalogPrice,
     setOfflinePlacedOn,
     setForceCredit, setBillOnAgent, printDayDuplicates,

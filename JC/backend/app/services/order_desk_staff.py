@@ -1,4 +1,4 @@
-"""Two booking clerks: jeevan and sudhir. Login is the name, not a phone."""
+"""Booking clerks. Login is the name, not a phone. Each one sees Create order and View stock."""
 
 from __future__ import annotations
 
@@ -20,8 +20,11 @@ DESK_PERMISSIONS = [
 
 DESK_ACCOUNTS = (
     {"name": "jeevan", "password": "jeevanbhaiya", "phone": "6191000001"},
-    {"name": "sudhir", "password": "sud_jcc", "phone": "6191000002"},
+    {"name": "sudhir", "password": "sudhirbhai", "phone": "6191000002"},
     {"name": "NC", "password": "ncdispatch", "phone": "6191000003"},
+    {"name": "anmol", "password": "anmolbhai", "phone": "6191000004"},
+    {"name": "lokesh", "password": "lokeshbhai", "phone": "6191000005"},
+    {"name": "anshulorder", "password": "anshulagrawal", "phone": "6191000006"},
 )
 
 

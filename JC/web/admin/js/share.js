@@ -40,21 +40,26 @@ const DocShare = (() => {
   function printPdfUrl(url) {
     const frame = document.createElement("iframe");
     frame.setAttribute("title", "Print");
-    frame.style.cssText = "position:fixed;left:0;top:0;width:100vw;height:100vh;border:0;z-index:-1;";
-    frame.src = url;
+    frame.setAttribute("aria-hidden", "true");
+    frame.style.cssText = "position:fixed;left:-12000px;top:0;width:900px;height:1200px;border:0;";
     document.body.appendChild(frame);
     let started = false;
+    const cleanup = () => {
+      frame.remove();
+      try { if (String(url).startsWith("blob:")) URL.revokeObjectURL(url); } catch (_) {}
+    };
     const go = () => {
       if (started) return;
       started = true;
-      try { frame.contentWindow.focus(); frame.contentWindow.print(); } catch (_) {}
+      try {
+        frame.contentWindow.addEventListener("afterprint", () => setTimeout(cleanup, 400), { once: true });
+        frame.contentWindow.print();
+      } catch (_) {}
     };
     frame.addEventListener("load", () => setTimeout(go, 300));
+    frame.src = url;
     setTimeout(() => { if (!started) go(); }, 1500);
-    setTimeout(() => {
-      frame.remove();
-      try { URL.revokeObjectURL(url); } catch (_) {}
-    }, 60000);
+    setTimeout(cleanup, 120000);
   }
 
   async function whatsapp(body) {
@@ -150,5 +155,5 @@ const DocShare = (() => {
     return btns.length ? `<div class="rep-share-bar" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">${btns.join("")}</div>` : "";
   }
 
-  return { init, openPdf, whatsapp, shareFlow, pdfPath, downloadExport, toolbarHtml };
+  return { init, openPdf, printPdfUrl, whatsapp, shareFlow, pdfPath, downloadExport, toolbarHtml };
 })();

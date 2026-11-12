@@ -3363,23 +3363,7 @@ const CustomerOrders = (() => {
   }
 
   function printPdfHere(url) {
-    const frame = document.createElement("iframe");
-    frame.setAttribute("title", "Print");
-    frame.style.cssText = "position:fixed;left:0;top:0;width:100vw;height:100vh;border:0;z-index:-1;";
-    frame.src = url;
-    document.body.appendChild(frame);
-    let started = false;
-    const go = () => {
-      if (started) return;
-      started = true;
-      try { frame.contentWindow.focus(); frame.contentWindow.print(); } catch (_) {}
-    };
-    frame.addEventListener("load", () => setTimeout(go, 300));
-    setTimeout(() => { if (!started) go(); }, 1500);
-    setTimeout(() => {
-      frame.remove();
-      try { URL.revokeObjectURL(url); } catch (_) {}
-    }, 60000);
+    if (window.DocShare && DocShare.printPdfUrl) DocShare.printPdfUrl(url);
   }
 
   async function printStoredBill(billId) {

@@ -318,17 +318,13 @@ def list_parcels(
         for ln in db.query(CustomerBillLine).filter(CustomerBillLine.bill_id.in_(bill_ids)).all():
             lines_by_bill.setdefault(ln.bill_id, []).append(ln)
 
-    from app.routers.customer_orders.listing import _best_customer_pairs
-    from app.services.customer_selling.marking import one_mark
+    from app.services.customer_selling.marking import clean_mark
 
-    pairs = _best_customer_pairs(db, list(customer_ids))
     out = []
     for b in rows:
         c = cust_map.get(b.customer_id)
         d = _parcel_dict(db, b, agents, customer=c, lines=lines_by_bill.get(b.id, []))
-        staff, cust_mark = pairs.get(b.customer_id, (None, None))
-        shown = one_mark(b.narration, staff, cust_mark)
-        d["marking"] = shown
+        d["marking"] = clean_mark(b.narration)
         d["customer_marking"] = None
         if c and c.city_id:
             d["customer_city"] = cities.get(c.city_id)

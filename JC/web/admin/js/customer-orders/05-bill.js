@@ -204,7 +204,7 @@
       additionalCharges = [{ name: "", amount: "" }];
       billSeriesId = defaultBillSeriesId(billSeries);
       customerNotes = pctx.customer_marking || "";
-      narration = pctx.default_narration || "";
+      narration = "";
       dueCatalogs = [];
       pickedCatalogs = {};
       try { dueCatalogs = await ctx.api(`/our-catalogs/for-customer/${detailCustomerId}`, {}, 0) || []; } catch (_) { dueCatalogs = []; }
@@ -791,7 +791,8 @@
         ${gstEnabled ? `<input class="input" style="width:80px;" value="${ctx.esc(gstRate)}" oninput="CustomerOrders.setGstRate(this.value)" />` : ""}
       </label>
       <label class="label">Marking</label>
-      <textarea class="input" rows="3" style="background:#fee2e2;border:1px solid #dc2626;font-weight:800;color:#b91c1c;" oninput="CustomerOrders.setNarration(this.value)">${ctx.esc(narration)}</textarea>
+      <textarea id="co-bill-mark" class="input" rows="3" data-latest="${ctx.esc(processContext?.latest_marking || "")}" style="background:#fee2e2;border:1px solid #dc2626;font-weight:800;color:#b91c1c;" oninput="CustomerOrders.setNarration(this.value)">${ctx.esc(narration)}</textarea>
+      <p style="margin:4px 0 0;font-size:12px;color:var(--muted);">Ctrl+R repeats the latest marking.</p>
     `;
     footerEl.innerHTML = `
       <button class="btn btn-secondary" onclick="CustomerOrders.closeProcessWizard()">Cancel</button>

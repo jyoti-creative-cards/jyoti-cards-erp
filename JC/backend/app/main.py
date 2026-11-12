@@ -115,7 +115,7 @@ def _order_taker_allowed(method: str, path: str) -> bool:
     """Book a customer order. Search the customer and the item. Nothing else."""
     if path.startswith("/api/v1/auth"):
         return True
-    if path.startswith("/api/v1/tile-notes") or path.startswith("/api/v1/sticky-notes"):
+    if path.startswith("/api/v1/tile-notes") or path.startswith("/api/v1/text-events"):
         return True
     if method == "GET" and path.startswith("/api/v1/customers"):
         return True

@@ -453,6 +453,7 @@ def update_customer_marking(
     if not customer or customer.deleted_at:
         raise HTTPException(404, "customer not found")
     from app.services.customer_selling.marking import clean_mark, set_live_marking
+    from app.services.text_events import remember
 
     if body.kind == "marking" and body.bill_ids:
         bills = (
@@ -465,7 +466,10 @@ def update_customer_marking(
         value = clean_mark(body.text)
         for bill in bills:
             bill.narration = value
-    set_live_marking(db, customer_id, kind=body.kind, text=body.text)
+            remember(db, kind="bill", subject=str(bill.id), body=value or "", actor=auth.actor_name)
+    else:
+        set_live_marking(db, customer_id, kind=body.kind, text=body.text)
+        remember(db, kind="order", subject=str(customer_id), body=body.text, actor=auth.actor_name)
     log_from_auth(
         db, auth, action="marking", entity_type="customer_order",
         entity_id=customer_id, entity_label=customer.business_name,

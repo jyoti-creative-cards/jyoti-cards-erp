@@ -218,10 +218,10 @@ def test_billed_tile_includes_order_and_bill_marking(db):
     ))
     db.commit()
     rows = list_customer_orders(bucket="billed", day="all", db=db, auth=AUTH)
-    assert "Do not mix." in (rows[0].marking or "")
-    assert "Bill after Holi" in (rows[0].marking or "")
+    assert rows[0].marking == "Do not mix."
+    assert rows[0].bills[0].narration == "Bill after Holi"
     assert not rows[0].customer_marking
-    assert rows[0].markings == [rows[0].marking]
+    assert rows[0].markings == ["Do not mix."]
 
 
 def test_portal_words_are_the_customer_marking(db):

@@ -296,6 +296,7 @@ class ProcessContextOut(BaseModel):
     customer_name: str
     lines: List[ProcessLineOut]
     default_narration: str = ""
+    latest_marking: str = ""
     customer_marking: Optional[str] = None
     credit: Optional[dict] = None
     party_number: Optional[int] = None

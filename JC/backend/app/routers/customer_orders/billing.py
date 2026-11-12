@@ -116,7 +116,8 @@ def get_process_context(
         customer_id=customer_id,
         customer_name=customer.business_name,
         lines=lines_out,
-        default_narration=ctx.get("default_narration") or "",
+        default_narration="",
+        latest_marking=ctx.get("latest_marking") or "",
         customer_marking=ctx.get("customer_marking") or "",
         credit=ctx.get("credit"),
         party_number=getattr(customer, "party_number", None),
@@ -262,9 +263,9 @@ def submit_process_bill(
         issued_on=body.bill_date,
     )
     log_from_auth(db, auth, action="bill", entity_type="customer_order", entity_id=bill.id, entity_label=customer.business_name, detail=f"Bill {bill.bill_number}")
-    from app.services.customer_selling.marking import set_live_marking
+    from app.services.text_events import remember
 
-    set_live_marking(db, customer_id, kind="marking", text=body.narration)
+    remember(db, kind="bill", subject=str(bill.id), body=body.narration, actor=auth.actor_name)
     db.commit()
     from app.services.doc_jobs import enqueue_bill_pdf
     from app.services.whatsapp_notify import schedule_whatsapp

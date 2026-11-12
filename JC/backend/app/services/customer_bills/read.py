@@ -66,7 +66,7 @@ def get_process_lines(db: Session, customer_id: int) -> dict:
         )
     orders = billable_orders(db, customer_id)
     from app.models.customer_order import CustomerOrder, CustomerOrderPlacement
-    from app.services.customer_selling.marking import one_mark, resolve_pair
+    from app.services.customer_selling.marking import _last_piece, resolve_pair, single_mark
 
     live = (
         db.query(CustomerOrder)
@@ -89,11 +89,22 @@ def get_process_lines(db: Session, customer_id: int) -> dict:
             .all()
         )
         staff, cust = resolve_pair(chosen, [(source, note) for source, note in notes])
-    shown = one_mark(staff, cust) or ""
+    latest_bill = (
+        db.query(CustomerBill.narration)
+        .filter(
+            CustomerBill.customer_id == customer_id,
+            CustomerBill.cancelled_at.is_(None),
+            CustomerBill.deleted_at.is_(None),
+        )
+        .order_by(CustomerBill.id.desc())
+        .first()
+    )
+    repeat = _last_piece(latest_bill[0] if latest_bill else None) or single_mark(staff, cust) or ""
     return {
         "lines": out,
         "orders": orders,
-        "default_narration": shown,
+        "default_narration": "",
+        "latest_marking": repeat,
         "customer_marking": "",
         "credit": credit_status(db, customer_id),
     }

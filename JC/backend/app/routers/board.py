@@ -64,6 +64,8 @@ def save_tile_note(
     if not text:
         if row is not None:
             db.delete(row)
+        from app.services.text_events import remember
+        remember(db, kind="note", subject=key, body="", actor=_who(auth))
         db.commit()
         return {"tile_key": key, "body": ""}
     if row is None:
@@ -72,8 +74,24 @@ def save_tile_note(
     else:
         row.body = text
         row.updated_by_name = _who(auth)
+    from app.services.text_events import remember
+    remember(db, kind="note", subject=key, body=text, actor=_who(auth))
     db.commit()
     return {"tile_key": key, "body": text}
+
+
+@router.get("/text-events")
+def list_text_events(
+    kind: str = "",
+    subject: str = "",
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(get_auth_context),
+):
+    if kind not in {"order", "bill", "note"} or not subject.strip():
+        return []
+    from app.services.text_events import history
+
+    return history(db, kind=kind, subject=subject.strip())
 
 
 @router.get("/sticky-notes")

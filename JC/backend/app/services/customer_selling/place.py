@@ -274,5 +274,16 @@ def create_received_placement(
     from app.services.customer_selling.marking import note_onto_order
 
     note_onto_order(received, source=order_source, notes=customer_notes)
+    from app.services.customer_selling.marking import clean_mark
+    from app.services.text_events import remember
+
+    if clean_mark(customer_notes):
+        remember(
+            db,
+            kind="order",
+            subject=str(customer_id),
+            body=customer_notes,
+            actor=(placed_by_name or "").strip() or ("Customer" if (order_source or "").strip().lower() in {"app", "portal", "shop"} else "Staff"),
+        )
     return placement
 

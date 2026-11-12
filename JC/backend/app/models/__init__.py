@@ -34,7 +34,7 @@ from app.models.sticker_label import StickerLabel
 from app.models.sticker_print import StickerPrint
 from app.models.whatsapp_message import WhatsAppMessage
 from app.models.runtime_flag import RuntimeFlag
-from app.models.board import StickyNote, TileNote
+from app.models.board import StickyNote, TextEvent, TileNote
 
 __all__ = [
     "ActivityLog", "AddonProduct", "AddonStockLedger", "CatalogAddonLink", "CatalogAlternative",

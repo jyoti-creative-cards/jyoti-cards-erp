@@ -1286,13 +1286,23 @@ const App = (() => {
     if (!e.altKey || e.ctrlKey || e.metaKey) return;
     if (document.getElementById("app")?.classList.contains("hidden")) return;
     const code = e.code;
-    if (code !== "KeyC" && code !== "KeyB" && code !== "KeyS" && code !== "KeyL" && code !== "KeyY") return;
+    if (code !== "KeyC" && code !== "KeyB" && code !== "KeyS" && code !== "KeyL") return;
     e.preventDefault();
     if (code === "KeyC") CustomerOrders.openOfflineWizard?.();
     else if (code === "KeyB") openShortcut("bill");
     else if (code === "KeyS") openShortcut("item");
     else if (code === "KeyL") openShortcut("ledger");
-    else if (code === "KeyY") toggleSticky();
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || e.code !== "KeyR") return;
+    const el = e.target;
+    if (!el || (el.id !== "co-bill-mark" && el.getAttribute?.("data-field") !== "bmark")) return;
+    const latest = el.getAttribute("data-latest") || "";
+    if (!latest) return;
+    e.preventDefault();
+    el.value = latest;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
   });
 
   // ── Data ──────────────────────────────────────────────────────────
@@ -3828,7 +3838,8 @@ const App = (() => {
     (root || document).querySelectorAll("[data-tile-note]").forEach(el => {
       const key = el.getAttribute("data-tile-note");
       if (!key) return;
-      el.innerHTML = tileNoteHtml(key);
+      const html = tileNoteHtml(key);
+      if (el.innerHTML !== html) el.innerHTML = html;
     });
   }
 
@@ -3855,18 +3866,50 @@ const App = (() => {
     const obs = new MutationObserver(() => scheduleTileNotes());
     obs.observe(document.body, { childList: true, subtree: true });
     scheduleTileNotes();
-    ensureSticky();
+    document.getElementById("jc-sticky")?.remove();
+  }
+
+  function historyRows(rows) {
+    if (!rows || !rows.length) return `<p style="margin:12px 0 0;font-size:13px;color:var(--muted);">No history yet.</p>`;
+    return `<div style="margin-top:14px;">${rows.map(r => {
+      const when = r.created_at ? new Date(r.created_at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+      return `<div style="padding:8px 0;border-top:1px solid #e2e8f0;"><div style="font-size:12px;color:var(--muted);">${esc(r.actor_name || "Staff")}${when ? " · " + esc(when) : ""}</div><div>${esc(r.body || "(cleared)")}</div></div>`;
+    }).join("")}</div>`;
   }
 
   async function editTileNote(key) {
-    const next = prompt("Note for this tile", tileNoteCache[key] || "");
-    if (next === null) return;
-    const saved = await api(`/tile-notes/${encodeURIComponent(key)}`, {
-      method: "PUT",
-      body: JSON.stringify({ body: next }),
-    });
-    tileNoteCache[key] = (saved && saved.body) || "";
-    paintTileNotes(document);
+    let rows = [];
+    try { rows = await api(`/text-events?kind=note&subject=${encodeURIComponent(key)}`, {}, 0) || []; }
+    catch (e) { rows = []; }
+    const current = tileNoteCache[key] || "";
+    const safe = JSON.stringify(key);
+    openDetail(
+      "Note",
+      `<textarea id="jc-note-box" class="input" rows="4" style="width:100%;">${esc(current)}</textarea>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
+        <button type="button" class="btn btn-primary" onclick="App.saveTileNote(${safe}, false)">Save</button>
+        <button type="button" class="btn btn-danger" onclick="App.saveTileNote(${safe}, true)">Delete</button>
+        <button type="button" class="btn btn-secondary" onclick="App.closeDetail()">Cancel</button>
+      </div>
+      ${historyRows(rows)}`,
+      "",
+      "sm"
+    );
+    setTimeout(() => document.getElementById("jc-note-box")?.focus(), 30);
+  }
+
+  async function saveTileNote(key, remove) {
+    const text = remove ? "" : (document.getElementById("jc-note-box")?.value || "");
+    closeDetail();
+    try {
+      const saved = await api(`/tile-notes/${encodeURIComponent(key)}`, {
+        method: "PUT",
+        body: JSON.stringify({ body: text }),
+      });
+      tileNoteCache[key] = (saved && saved.body) || "";
+      paintTileNotes(document);
+      toast(remove ? "Note deleted" : "Note saved", "success");
+    } catch (e) { toast(e.message, "error"); }
   }
 
   function stickyPos() {
@@ -3875,6 +3918,8 @@ const App = (() => {
   }
 
   function ensureSticky() {
+    document.getElementById("jc-sticky")?.remove();
+    return;
     if (document.getElementById("jc-sticky")) return;
     const box = document.createElement("div");
     box.id = "jc-sticky";
@@ -3992,7 +4037,7 @@ const App = (() => {
     addLookup, submitLookup, submitCatalogCategory, editLookup, deleteLookup, openCustomerLedgerEntry, createCustomerOrder,
     setOrderTakerMode, onOrderTakerStock, onOrderTakerCustomer, pickOrderTakerCustomer, clearOrderTakerCustomer, onOrderTakerItem, addOrderTakerItem, removeOrderTakerLine, saveOrderTakerOrder,
     deskShow, onDeskCustomer, onDeskItem, onDeskStock, deskPickCustomer, deskPickProduct, deskAddMore, deskRemoveLine, deskPlace, deskSetMark, deskClearCustomer, deskClearProduct, openFromMore, deskBack,
-    editTileNote, toggleSticky, closeSticky, minimizeSticky, addSticky, deleteSticky,
+    editTileNote, saveTileNote, toggleSticky, closeSticky, minimizeSticky, addSticky, deleteSticky,
     closeModal, init, searchItemLookup, setWhatsappSends,
     downloadExportKind, downloadBackupZip,
     debouncedLoadCustomers, debouncedVendorSearch, debouncedCatalogSearch, debouncedAddonSearch, debouncedStockSearch,

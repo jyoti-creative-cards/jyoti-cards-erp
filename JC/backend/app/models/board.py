@@ -22,6 +22,19 @@ class TileNote(Base):
     )
 
 
+class TextEvent(Base):
+    """One saved version of a marking or a tile note. Older rows stay."""
+
+    __tablename__ = "jc_text_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    subject: Mapped[str] = mapped_column(String(160), nullable=False, index=True)
+    body: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    actor_name: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
 class StickyNote(Base):
     __tablename__ = "jc_sticky_notes"
 

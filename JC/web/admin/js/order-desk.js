@@ -271,7 +271,8 @@ const OrderDesk = (() => {
         ${f.gstEnabled ? `<input class="input" style="width:80px;" data-field="gstrate" value="${esc(f.gstRate || "18")}">` : ""}
       </label>
       <label class="label">Marking</label>
-      <textarea class="input" data-field="bmark" rows="3" style="background:#fee2e2;border:1px solid #dc2626;font-weight:800;color:#b91c1c;">${esc(f.narration || "")}</textarea>
+      <textarea class="input" data-field="bmark" data-latest="${esc(f.latestMark || "")}" rows="3" style="background:#fee2e2;border:1px solid #dc2626;font-weight:800;color:#b91c1c;">${esc(f.narration || "")}</textarea>
+      <p style="margin:4px 0 0;font-size:12px;color:var(--muted);">Ctrl+R repeats the latest marking.</p>
       ${keyBox}
       ${f.alsoPick ? `<p style="margin:8px 0 0;font-size:13px;color:var(--muted);">Saving also marks this dispatched.</p>` : ""}
       ${f.error ? `<p style="color:#b91c1c;font-weight:700;">${esc(f.error)}</p>` : ""}
@@ -668,7 +669,8 @@ const OrderDesk = (() => {
       packagingCharges: "",
       additionalCharges: [{ name: "", amount: "" }],
       billSeriesId: L().defaultBillSeriesId(shared.series),
-      narration: pctx.default_narration || "",
+      narration: "",
+      latestMark: pctx.latest_marking || "",
       billDate: today(),
       pickedCatalogs: {},
       dueCatalogs: [],

@@ -577,13 +577,23 @@
     if (!e.altKey || e.ctrlKey || e.metaKey) return;
     if (document.getElementById("app")?.classList.contains("hidden")) return;
     const code = e.code;
-    if (code !== "KeyC" && code !== "KeyB" && code !== "KeyS" && code !== "KeyL" && code !== "KeyY") return;
+    if (code !== "KeyC" && code !== "KeyB" && code !== "KeyS" && code !== "KeyL") return;
     e.preventDefault();
     if (code === "KeyC") CustomerOrders.openOfflineWizard?.();
     else if (code === "KeyB") openShortcut("bill");
     else if (code === "KeyS") openShortcut("item");
     else if (code === "KeyL") openShortcut("ledger");
-    else if (code === "KeyY") toggleSticky();
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || e.code !== "KeyR") return;
+    const el = e.target;
+    if (!el || (el.id !== "co-bill-mark" && el.getAttribute?.("data-field") !== "bmark")) return;
+    const latest = el.getAttribute("data-latest") || "";
+    if (!latest) return;
+    e.preventDefault();
+    el.value = latest;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
   });
 
   // ── Data ──────────────────────────────────────────────────────────

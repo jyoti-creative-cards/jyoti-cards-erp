@@ -459,21 +459,40 @@ const CustomerOrders = (() => {
     return all.map(text => markingBanner(text)).join("");
   }
 
-  function openTileMark(_kind, customerId, billIds) {
+  function markHistoryHtml(rows) {
+    if (!rows || !rows.length) return `<p style="margin:12px 0 0;font-size:13px;color:var(--muted);">No history yet.</p>`;
+    return `<div style="margin-top:14px;">${rows.map(r => {
+      const when = r.created_at ? new Date(r.created_at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+      return `<div style="padding:8px 0;border-top:1px solid #e2e8f0;"><div style="font-size:12px;color:var(--muted);">${ctx.esc(r.actor_name || "Staff")}${when ? " · " + ctx.esc(when) : ""}</div><div>${ctx.esc(r.body || "(cleared)")}</div></div>`;
+    }).join("")}</div>`;
+  }
+
+  async function openTileMark(_kind, customerId, billIds) {
     const cid = Number(customerId);
     const bills = String(billIds || "");
+    const billList = bills.split(",").filter(Boolean).map(Number);
     let text = "";
-    if (currentBucket === "dispatch") {
-      const parcel = dispatchParcels.find(p => String(p.bill_id) === bills);
-      text = (parcel && parcel.marking) || "";
+    if (currentBucket === "dispatch" || billList.length === 1) {
+      const parcel = (dispatchParcels || []).find(p => String(p.bill_id) === String(billList[0] || bills));
+      if (parcel) text = parcel.marking || "";
+      if (!text && billList.length === 1) {
+        const row = (orders || []).find(o => Number(o.customer_id) === cid);
+        const chip = ((row && row.bills) || []).find(b => Number(b.bill_id) === billList[0]);
+        text = (chip && chip.narration) || "";
+      }
     } else {
       const row = (orders || []).find(o => Number(o.customer_id) === cid);
       text = (row && row.marking) || "";
     }
+    const kind = billList.length === 1 ? "bill" : "order";
+    const subject = billList.length === 1 ? String(billList[0]) : String(cid);
+    let rows = [];
+    try { rows = await ctx.api(`/text-events?kind=${kind}&subject=${encodeURIComponent(subject)}`, {}, 0) || []; }
+    catch (e) { rows = []; }
     markEdit = {
       kind: "marking",
       customerId: cid,
-      billIds: bills.split(",").filter(Boolean).map(Number),
+      billIds: billList.length === 1 ? billList : [],
       text: text || "",
       key: "marking:" + cid + ":" + bills,
     };
@@ -484,7 +503,8 @@ const CustomerOrders = (() => {
         <button type="button" class="btn btn-primary" onclick="CustomerOrders.saveTileMark(false)">Save</button>
         <button type="button" class="btn btn-danger" onclick="CustomerOrders.saveTileMark(true)">Delete</button>
         <button type="button" class="btn btn-secondary" onclick="App.closeDetail?.()">Cancel</button>
-      </div>`,
+      </div>
+      ${markHistoryHtml(rows)}`,
       "",
       "sm"
     );
@@ -517,18 +537,23 @@ const CustomerOrders = (() => {
     finally { ctx.hideLoading?.(); }
   }
 
-  function markStrip(text, customerId, billIds) {
+  function markStrip(text, customerId, billIds, label) {
     const bills = billIds || "";
     const box = "display:block;width:calc(100% - 28px);margin:8px 14px;padding:10px 12px;background:#fee2e2;border:1px solid #dc2626;border-radius:8px;font-weight:800;font-size:16px;color:#b91c1c;text-align:left;cursor:pointer;";
+    const shown = label || (text ? `Marking: ${text}` : "Add marking");
     if (!text) {
       return `<button type="button" class="btn btn-secondary btn-sm" style="margin:8px 14px;" onclick="event.stopPropagation();CustomerOrders.openTileMark('marking',${customerId},'${bills}')">Add marking</button>`;
     }
-    return `<button type="button" style="${box}" onclick="event.stopPropagation();CustomerOrders.openTileMark('marking',${customerId},'${bills}')">Marking: ${ctx.esc(text)}</button>`;
+    return `<button type="button" style="${box}" onclick="event.stopPropagation();CustomerOrders.openTileMark('marking',${customerId},'${bills}')">${ctx.esc(shown)}</button>`;
   }
 
   function tileMarkHtml(o) {
-    const bills = (Array.isArray(o && o.bills) ? o.bills : []).map(b => b.bill_id).filter(Boolean).join(",");
-    return markStrip((o && o.marking) || "", o.customer_id, bills);
+    const orderMark = markStrip((o && o.marking) || "", o.customer_id, "");
+    const bills = (Array.isArray(o && o.bills) ? o.bills : [])
+      .filter(b => b && b.narration && b.bill_id)
+      .map(b => markStrip(b.narration, o.customer_id, String(b.bill_id), `Bill ${b.bill_number || b.bill_id}: ${b.narration}`))
+      .join("");
+    return orderMark + bills;
   }
 
   function parcelMarkHtml(p) {
@@ -1994,7 +2019,7 @@ const CustomerOrders = (() => {
       additionalCharges = [{ name: "", amount: "" }];
       billSeriesId = defaultBillSeriesId(billSeries);
       customerNotes = pctx.customer_marking || "";
-      narration = pctx.default_narration || "";
+      narration = "";
       dueCatalogs = [];
       pickedCatalogs = {};
       try { dueCatalogs = await ctx.api(`/our-catalogs/for-customer/${detailCustomerId}`, {}, 0) || []; } catch (_) { dueCatalogs = []; }
@@ -2581,7 +2606,8 @@ const CustomerOrders = (() => {
         ${gstEnabled ? `<input class="input" style="width:80px;" value="${ctx.esc(gstRate)}" oninput="CustomerOrders.setGstRate(this.value)" />` : ""}
       </label>
       <label class="label">Marking</label>
-      <textarea class="input" rows="3" style="background:#fee2e2;border:1px solid #dc2626;font-weight:800;color:#b91c1c;" oninput="CustomerOrders.setNarration(this.value)">${ctx.esc(narration)}</textarea>
+      <textarea id="co-bill-mark" class="input" rows="3" data-latest="${ctx.esc(processContext?.latest_marking || "")}" style="background:#fee2e2;border:1px solid #dc2626;font-weight:800;color:#b91c1c;" oninput="CustomerOrders.setNarration(this.value)">${ctx.esc(narration)}</textarea>
+      <p style="margin:4px 0 0;font-size:12px;color:var(--muted);">Ctrl+R repeats the latest marking.</p>
     `;
     footerEl.innerHTML = `
       <button class="btn btn-secondary" onclick="CustomerOrders.closeProcessWizard()">Cancel</button>

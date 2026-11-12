@@ -16,7 +16,7 @@ from app.models.city import City
 from app.models.customer import Customer
 from app.models.customer_bill import CustomerBill, CustomerBillLine
 from app.models.customer_order import CustomerOpenLine, CustomerOrder, CustomerOrderLine, CustomerOrderPlacement
-from app.services.customer_selling.marking import mark_list as _mark_list, one_mark
+from app.services.customer_selling.marking import mark_list as _mark_list, single_mark
 from app.schemas.customer_order import (
     CancelRequest,
     EditBillIn,
@@ -450,7 +450,7 @@ def _summaries_batch(db: Session, orders: list[CustomerOrder]) -> list[CustomerO
         city = cities.get(cust.city_id) if cust and cust.city_id else None
         line_count, total = line_stats.get(order.id, (0, 0))
         display_date = order.updated_at
-        shown = one_mark(*pairs.get(order.id, (None, None)))
+        shown = single_mark(*pairs.get(order.id, (None, None)))
         out.append(
             CustomerOrderSummary(
                 id=order.id,
@@ -503,7 +503,7 @@ def _summary(db: Session, order: CustomerOrder) -> CustomerOrderSummary:
     cust = db.get(Customer, order.customer_id)
     city = db.get(City, cust.city_id) if cust and cust.city_id else None
     display_date = order.updated_at
-    shown = one_mark(*_order_pairs(db, [order]).get(order.id, (None, None)))
+    shown = single_mark(*_order_pairs(db, [order]).get(order.id, (None, None)))
     return CustomerOrderSummary(
         id=order.id,
         customer_id=order.customer_id,
@@ -665,7 +665,7 @@ def list_customer_orders(
                     marker_2=getattr(cust_obj, "marker_2", None) if cust_obj else None,
                     payment_type=getattr(cust_obj, "payment_type", None) if cust_obj else None,
                     city_name=cities.get(cust_obj.city_id) if cust_obj and cust_obj.city_id else None,
-                    narration=(shown_open := one_mark(*marks_by_cid.get(cid, (None, None)))),
+                    narration=(shown_open := single_mark(*marks_by_cid.get(cid, (None, None)))),
                     marking=shown_open,
                     customer_marking=None,
                     markings=[shown_open] if shown_open else [],
@@ -791,10 +791,7 @@ def list_customer_orders(
                 for b in ordered_bills
             ]
             total = sum((b.grand_total or Decimal("0") for b in bills), Decimal("0"))
-            shown = one_mark(
-                *marks_by_cid.get(int(cid), (None, None)),
-                [b.narration for b in ordered_bills],
-            )
+            shown = single_mark(*marks_by_cid.get(int(cid), (None, None)))
             out.append(
                 CustomerOrderSummary(
                     id=0,

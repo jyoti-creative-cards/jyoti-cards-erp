@@ -36,7 +36,7 @@ def note_onto_order(order: CustomerOrder | None, *, source: str | None, notes: s
     if order is None or not text:
         return
     if (source or "").strip().lower() in PORTAL_SOURCES:
-        order.customer_marking = _merge(order.customer_marking, text)
+        order.customer_marking = text
         return
     if not clean_mark(order.marking):
         order.marking = text
@@ -57,7 +57,7 @@ def carry_marks(src: CustomerOrder | None, dest: CustomerOrder | None) -> None:
         dest.marking = staff
     cust = clean_mark(src.customer_marking)
     if cust:
-        dest.customer_marking = _merge(dest.customer_marking, cust)
+        dest.customer_marking = cust
 
 
 def resolve_pair(order: CustomerOrder | None, placement_rows: list[tuple[str | None, str | None]]) -> tuple[str | None, str | None]:
@@ -102,8 +102,22 @@ def one_mark(*values) -> str | None:
     return " · ".join(parts) or None
 
 
+def _last_piece(value: str | None) -> str | None:
+    latest = None
+    for piece in str(value or "").split("·"):
+        text = clean_mark(piece)
+        if text:
+            latest = text
+    return latest
+
+
+def single_mark(staff: str | None, cust: str | None = None) -> str | None:
+    """The latest marking only. A stored join keeps its last piece."""
+    return _last_piece(staff) or _last_piece(cust)
+
+
 def mark_list(staff: str | None, cust: str | None = None) -> list[str]:
-    text = one_mark(staff, cust)
+    text = single_mark(staff, cust)
     return [text] if text else []
 
 

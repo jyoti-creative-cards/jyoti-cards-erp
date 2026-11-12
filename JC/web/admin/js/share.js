@@ -27,25 +27,34 @@ const DocShare = (() => {
     const url = URL.createObjectURL(blob);
     const headerName = filenameFromDisposition(res.headers.get("Content-Disposition"));
     const saveName = headerName || filename;
-    if (print) {
-      const w = window.open(url, "_blank");
-      if (w) {
-        let started = false;
-        const go = () => {
-          if (started) return;
-          started = true;
-          try { w.focus(); w.print(); } catch (_) {}
-        };
-        w.addEventListener("load", go);
-        setTimeout(go, 800);
-      }
-    } else {
+    if (print) printPdfUrl(url);
+    else {
       const a = document.createElement("a");
       a.href = url;
       a.download = saveName;
       a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
     }
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
+
+  function printPdfUrl(url) {
+    const frame = document.createElement("iframe");
+    frame.setAttribute("title", "Print");
+    frame.style.cssText = "position:fixed;left:0;top:0;width:100vw;height:100vh;border:0;z-index:-1;";
+    frame.src = url;
+    document.body.appendChild(frame);
+    let started = false;
+    const go = () => {
+      if (started) return;
+      started = true;
+      try { frame.contentWindow.focus(); frame.contentWindow.print(); } catch (_) {}
+    };
+    frame.addEventListener("load", () => setTimeout(go, 300));
+    setTimeout(() => { if (!started) go(); }, 1500);
+    setTimeout(() => {
+      frame.remove();
+      try { URL.revokeObjectURL(url); } catch (_) {}
+    }, 60000);
   }
 
   async function whatsapp(body) {

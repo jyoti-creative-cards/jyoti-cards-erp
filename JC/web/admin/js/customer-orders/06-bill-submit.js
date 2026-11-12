@@ -178,15 +178,32 @@
     return res.blob();
   }
 
+  function printPdfHere(url) {
+    const frame = document.createElement("iframe");
+    frame.setAttribute("title", "Print");
+    frame.style.cssText = "position:fixed;left:0;top:0;width:100vw;height:100vh;border:0;z-index:-1;";
+    frame.src = url;
+    document.body.appendChild(frame);
+    let started = false;
+    const go = () => {
+      if (started) return;
+      started = true;
+      try { frame.contentWindow.focus(); frame.contentWindow.print(); } catch (_) {}
+    };
+    frame.addEventListener("load", () => setTimeout(go, 300));
+    setTimeout(() => { if (!started) go(); }, 1500);
+    setTimeout(() => {
+      frame.remove();
+      try { URL.revokeObjectURL(url); } catch (_) {}
+    }, 60000);
+  }
+
   async function printStoredBill(billId) {
     ctx.showLoading?.();
     try {
       const blob = await fetchStoredBill(billId);
       if (!blob) return ctx.toast("Saved bill is not ready yet", "error");
-      const url = URL.createObjectURL(blob);
-      const w = window.open(url, "_blank");
-      if (!w) return ctx.toast("Allow pop-ups to print", "error");
-      setTimeout(() => { try { w.focus(); w.print(); } catch (_) {} }, 700);
+      printPdfHere(URL.createObjectURL(blob));
     } catch (e) {
       ctx.toast(e.message || "Could not print", "error");
     } finally { ctx.hideLoading?.(); }
@@ -221,12 +238,8 @@
       try {
         const d = await ctx.api(`/customer-orders/bills/${billId}/document`, {}, 0);
         if (!d.document_url) throw e;
-        if (print) {
-          const w = window.open(d.document_url, "_blank");
-          if (w) w.addEventListener("load", () => w.print());
-        } else {
-          window.open(d.document_url, "_blank");
-        }
+        if (print) printPdfHere(d.document_url);
+        else window.open(d.document_url, "_blank");
       } catch (e2) { ctx.toast(e2.message || e.message, "error"); }
     } finally {
       ctx.hideLoading?.();

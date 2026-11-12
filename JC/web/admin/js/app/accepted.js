@@ -3842,6 +3842,7 @@ const App = (() => {
 
   const tileNoteCache = {};
   let tileNoteTimer = null;
+  let tileNoteSerial = 0;
   let stickyNotes = [];
   let stickyOpen = false;
   let stickyMin = false;
@@ -3867,7 +3868,9 @@ const App = (() => {
   async function loadTileNotes(keys) {
     const wanted = [...new Set(keys.filter(Boolean))];
     if (!wanted.length) return;
+    const serial = tileNoteSerial;
     const data = await api(`/tile-notes?keys=${encodeURIComponent(wanted.join(","))}`, {}, 0);
+    if (serial !== tileNoteSerial) return;
     wanted.forEach(key => { tileNoteCache[key] = (data && data[key]) || ""; });
   }
 
@@ -3903,31 +3906,35 @@ const App = (() => {
     try { rows = await api(`/text-events?kind=note&subject=${encodeURIComponent(key)}`, {}, 0) || []; }
     catch (e) { rows = []; }
     const current = tileNoteCache[key] || "";
-    const safe = JSON.stringify(key);
     openDetail(
       "Note",
       `<textarea id="jc-note-box" class="input" rows="4" style="width:100%;">${esc(current)}</textarea>
       <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
-        <button type="button" class="btn btn-primary" onclick="App.saveTileNote(${safe}, false)">Save</button>
-        <button type="button" class="btn btn-danger" onclick="App.saveTileNote(${safe}, true)">Delete</button>
-        <button type="button" class="btn btn-secondary" onclick="App.closeDetail()">Cancel</button>
+        <button type="button" class="btn btn-primary" id="jc-note-save">Save</button>
+        <button type="button" class="btn btn-danger" id="jc-note-delete">Delete</button>
+        <button type="button" class="btn btn-secondary" id="jc-note-cancel">Cancel</button>
       </div>
       ${historyRows(rows)}`,
       "",
       "sm"
     );
+    document.getElementById("jc-note-save")?.addEventListener("click", () => saveTileNote(key, false));
+    document.getElementById("jc-note-delete")?.addEventListener("click", () => saveTileNote(key, true));
+    document.getElementById("jc-note-cancel")?.addEventListener("click", () => closeDetail());
     setTimeout(() => document.getElementById("jc-note-box")?.focus(), 30);
   }
 
   async function saveTileNote(key, remove) {
     const text = remove ? "" : (document.getElementById("jc-note-box")?.value || "");
     closeDetail();
+    tileNoteSerial += 1;
     try {
       const saved = await api(`/tile-notes/${encodeURIComponent(key)}`, {
         method: "PUT",
         body: JSON.stringify({ body: text }),
       });
       tileNoteCache[key] = (saved && saved.body) || "";
+      tileNoteSerial += 1;
       paintTileNotes(document);
       toast(remove ? "Note deleted" : "Note saved", "success");
     } catch (e) { toast(e.message, "error"); }

@@ -1052,6 +1052,7 @@ const Products = (() => {
         <div><label class="label" style="margin:0;">Until</label>
           <input id="prod-mark-until" class="input" type="date" value="2099-12-31" /></div>
         <button type="button" class="btn btn-secondary btn-sm" onclick="Products.saveMarking(${id}, '${section}')">Save</button>
+        <button type="button" class="btn btn-danger btn-sm" onclick="Products.clearMarking(${id}, '${section}')">Clear</button>
       </div>
     </div>`;
   }
@@ -1062,27 +1063,26 @@ const Products = (() => {
   }
 
   async function clearMarking(id, section) {
-    if (!confirm("Remove this marking from the item?")) return;
     try {
       await ctx.api("/reports/product-markings/apply", {
         method: "POST",
         body: JSON.stringify({ marking: "", product_ids: [id] }),
       });
-      ctx.toast("Marking removed", "success");
+      ctx.toast("Marking cleared", "success");
       await openProductDetail(id, section || "stock");
     } catch (e) { ctx.toast(e.message, "error"); }
   }
 
   async function saveMarking(id, section) {
     const marking = document.getElementById("prod-marking")?.value.trim() || "";
-    const starts_on = document.getElementById("prod-mark-from")?.value;
-    const ends_on = document.getElementById("prod-mark-until")?.value;
-    if (!marking) return ctx.toast("Type the marking", "error");
-    if (!starts_on || !ends_on) return ctx.toast("Pick the dates", "error");
+    if (!marking) {
+      await clearMarking(id, section);
+      return;
+    }
     try {
-      await ctx.api("/reports/product-markings/assign", {
+      await ctx.api("/reports/product-markings/apply", {
         method: "POST",
-        body: JSON.stringify({ marking, product_ids: [id], starts_on, ends_on }),
+        body: JSON.stringify({ marking, product_ids: [id] }),
       });
       ctx.toast("Marking saved", "success");
       await openProductDetail(id, section || "stock");

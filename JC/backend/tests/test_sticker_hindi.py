@@ -224,9 +224,10 @@ def test_a_typed_hindi_name_is_kept(db):
     customer = Customer(business_name="Payal Computer", phone="9800000099", password_hash="x")
     db.add(customer)
     db.commit()
-    save_hindi_name(db, customer, "Indore", "पायल स्पेशल")
+    save_hindi_name(db, customer, "Indore", "पायल स्पेशल", "इंदौर शहर")
     again = label_for_customer(db, customer, "Indore")
     assert again.name_hi == "पायल स्पेशल"
+    assert again.city_hi == "इंदौर शहर"
 
 
 def test_staff_signs_in_by_name_for_sticker_only(db):

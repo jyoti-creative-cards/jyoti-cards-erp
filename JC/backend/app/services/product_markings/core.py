@@ -256,7 +256,7 @@ def apply_marking(db: Session, product_ids: list[int], marking: str | None) -> i
     cleaned = clean_marking(marking)
     rows = _products(db, product_ids)
     for product in rows:
-        db.query(ProductMarking).filter(ProductMarking.catalog_product_id == product.id).delete()
+        db.query(ProductMarking).filter(ProductMarking.catalog_product_id == product.id).delete(synchronize_session="fetch")
         if cleaned:
             db.add(ProductMarking(
                 catalog_product_id=product.id,

@@ -319,7 +319,13 @@ def patch_customer_sticker(
         if city is not None and city.deleted_at is None:
             city_name = city.name
     try:
-        label = save_hindi_name(db, row, city_name, str((body or {}).get("name_hi") or ""))
+        label = save_hindi_name(
+            db,
+            row,
+            city_name,
+            str((body or {}).get("name_hi") or ""),
+            str((body or {}).get("city_hi") or ""),
+        )
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return {

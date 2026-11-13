@@ -82,7 +82,10 @@ const Sticker = (() => {
             <label class="label" style="margin-top:12px;">Hindi name
               <input id="sticker-mod-hi" class="input" autocomplete="off" />
             </label>
-            <button type="button" class="btn btn-primary" style="margin-top:10px;" onclick="Sticker.saveHindi()">Save Hindi name</button>
+            <label class="label" style="margin-top:12px;">Hindi city
+              <input id="sticker-mod-city" class="input" autocomplete="off" />
+            </label>
+            <button type="button" class="btn btn-primary" style="margin-top:10px;" onclick="Sticker.saveHindi()">Save</button>
             <p id="sticker-mod-note" class="fin-panel-sub" style="margin:8px 0 0;"></p>
           </div>
           <div id="sticker-log-wrap">
@@ -132,7 +135,7 @@ const Sticker = (() => {
   }
 
   function onKey(event) {
-    if (!isDesk() || !event) return;
+    if (!event) return;
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       const box = document.getElementById("sticker-results");
       const rows = box && box._rows ? box._rows : [];
@@ -145,12 +148,12 @@ const Sticker = (() => {
     }
     if (event.key !== "Enter") return;
     event.preventDefault();
-    if (step === "pick" && picked) {
+    if (picked) {
       print();
       return;
     }
     const q = String(document.getElementById("sticker-q")?.value || "").trim();
-    if (q) search(q);
+    if (q) search(q).then(() => { if (picked) print(); });
   }
 
   function choose(index) {
@@ -164,36 +167,25 @@ const Sticker = (() => {
   }
 
   function onType(value) {
-    if (isDesk()) {
-      picked = null;
-      step = "number";
-      carry = "bus";
-      const box = document.getElementById("sticker-results");
-      if (box) box.innerHTML = "";
-      const note = document.getElementById("sticker-picked");
-      if (note && String(value || "").trim()) note.textContent = "";
-      paintCarry();
-      return;
-    }
     const q = String(value || "").trim();
     picked = null;
+    step = "number";
     const btn = document.getElementById("sticker-print");
     if (btn) btn.disabled = true;
     const note = document.getElementById("sticker-picked");
     if (note) note.textContent = "";
     clearTimeout(timer);
+    const box = document.getElementById("sticker-results");
     if (!q) {
-      const box = document.getElementById("sticker-results");
       if (box) box.innerHTML = "";
-      loadPrints("");
+      if (!isDesk()) loadPrints("");
       return;
     }
     if (!/^\d+$/.test(q)) {
-      const box = document.getElementById("sticker-results");
       if (box) box.innerHTML = `<p class="fin-panel-sub" style="margin:8px 0 0;">Type the party number.</p>`;
       return;
     }
-    timer = setTimeout(() => { search(q); loadPrints(q); }, 180);
+    timer = setTimeout(() => { search(q); if (!isDesk()) loadPrints(q); }, 180);
   }
 
   async function search(q) {
@@ -219,19 +211,6 @@ const Sticker = (() => {
         return;
       }
       box._rows = exact;
-      if (isDesk() && exact.length === 1) {
-        box.innerHTML = "";
-        pick(0);
-        print();
-        return;
-      }
-      if (isDesk()) {
-        step = "pick";
-        box.innerHTML = exact.map((r, i) => `
-          <button type="button" class="btn btn-secondary sticker-hit" style="display:block;width:100%;margin-top:8px;text-align:left;font-size:18px;font-weight:800;" onclick="Sticker.choose(${i})">${esc(r.business_name || "Party")} · ${esc(r.party_number ?? "")}</button>`).join("");
-        pick(0);
-        return;
-      }
       box.innerHTML = "";
       pick(0);
       return;
@@ -297,7 +276,13 @@ const Sticker = (() => {
     fetch(`${apiBase()}/customers/sticker-search?q=${encodeURIComponent(q)}`, { headers: headers() })
       .then(res => res.ok ? res.json() : [])
       .then(rows => {
-        box.innerHTML = (rows || []).map(row =>
+        const list = rows || [];
+        if (list.length === 1) {
+          box.innerHTML = "";
+          pickModify(list[0].id);
+          return;
+        }
+        box.innerHTML = list.map(row =>
           `<button type="button" class="btn btn-secondary" style="display:block;width:100%;text-align:left;margin-top:6px;" onclick="Sticker.pickModify(${row.id})">${esc(row.business_name || "")}${row.city_name ? " · " + esc(row.city_name) : ""}</button>`
         ).join("") || `<p style="color:var(--muted);">No match</p>`;
       })
@@ -311,8 +296,10 @@ const Sticker = (() => {
       .then(res => { if (!res.ok) throw new Error("Could not load the Hindi name"); return res.json(); })
       .then(label => {
         const input = document.getElementById("sticker-mod-hi");
+        const city = document.getElementById("sticker-mod-city");
         if (input) input.value = label.name_hi || "";
-        if (note) note.textContent = label.business_name || "";
+        if (city) city.value = label.city_hi || "";
+        if (note) note.textContent = `${label.business_name || ""}${label.city_hi ? " · " + label.city_hi : ""}`;
         document.getElementById("sticker-mod-hits").innerHTML = "";
       })
       .catch(e => { if (note) note.textContent = e.message || "Could not load"; });
@@ -322,10 +309,11 @@ const Sticker = (() => {
     const note = document.getElementById("sticker-mod-note");
     if (!modifyParty) { if (note) note.textContent = "Pick a party first."; return; }
     const name = document.getElementById("sticker-mod-hi")?.value || "";
+    const city = document.getElementById("sticker-mod-city")?.value || "";
     fetch(`${apiBase()}/customers/${modifyParty}/sticker`, {
       method: "PATCH",
       headers: headers(),
-      body: JSON.stringify({ name_hi: name }),
+      body: JSON.stringify({ name_hi: name, city_hi: city }),
     })
       .then(res => res.json().then(body => { if (!res.ok) throw new Error(body.detail || "Could not save"); return body; }))
       .then(label => { if (note) note.textContent = `Saved for ${label.business_name || "this party"}. Prints will use this name.`; })

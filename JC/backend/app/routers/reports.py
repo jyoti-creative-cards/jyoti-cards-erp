@@ -666,7 +666,7 @@ def product_markings_report(
 def product_markings_apply(
     body: MarkingApplyIn,
     db: Session = Depends(get_db),
-    auth: AuthContext = Depends(require_admin),
+    auth: AuthContext = Depends(require_permission("catalog.write")),
 ):
     from app.services import response_cache
     from app.services.product_markings import apply_marking

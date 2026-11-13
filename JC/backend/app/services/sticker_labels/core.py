@@ -44,13 +44,22 @@ def label_for_customer(db: Session, customer, city_name: str | None) -> StickerL
     return row
 
 
-def save_hindi_name(db: Session, customer, city_name: str | None, name_hi: str) -> StickerLabel:
-    """Keep a hand-typed Hindi spelling for this party. Later prints use it."""
+def save_hindi_name(
+    db: Session,
+    customer,
+    city_name: str | None,
+    name_hi: str,
+    city_hi: str | None = None,
+) -> StickerLabel:
+    """Keep a hand-typed Hindi name and city. Later prints use them."""
     text = " ".join((name_hi or "").split())
     if not text:
         raise ValueError("Enter the Hindi name")
     row = label_for_customer(db, customer, city_name)
     row.name_hi = text[:500]
+    city_text = " ".join((city_hi or "").split())
+    if city_text:
+        row.city_hi = city_text[:300]
     row.source_name = (customer.business_name or "").strip()
     row.source_city = (city_name or "").strip()
     row.name_edited = True

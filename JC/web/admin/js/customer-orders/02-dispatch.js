@@ -113,9 +113,10 @@
   }
 
   function filterDispatchParcels(list) {
+    const rows = (list || []).filter(rowMatchesCreators);
     const q = hubSearch.trim().toLowerCase();
-    if (!q) return list;
-    return list.filter(p => {
+    if (!q) return rows;
+    return rows.filter(p => {
       const hay = [
         p.customer_label, p.bill_number, p.customer_city, p.customer_phone,
         p.freight_agent_name, String(p.bill_id || ""), p.transport_mode, p.transport_receipt_number,

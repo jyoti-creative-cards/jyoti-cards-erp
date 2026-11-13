@@ -106,6 +106,7 @@ const OrderDeskLogic = (() => {
         skip_addon_ids: [],
         direct: false,
         open_line_id: l.open_line_id,
+        marking: l.marking || "",
       };
     }).filter(l => l && l.quantity_open > 0);
     const bookedIds = new Set(booked.map(l => Number(l.catalog_product_id)));

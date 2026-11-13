@@ -508,7 +508,7 @@
   function setVendors(list) { vendors = list || []; }
 
   const sharedCtx = () => ({
-    api, toast, esc, fmtDate, fmtDay, timeAgo, reviewRow, productIdLabel, changeHistoryTable, openDetail,
+    api, toast, esc, fmtDate, fmtDay, fmtWhen, timeAgo, reviewRow, productIdLabel, changeHistoryTable, openDetail,
     closeDetail: () => closeDetail(), detailBack, detailFooterChild, ledgerDetailCard, bindLedgerRowClicks,
     entityLedgerTableHtml, activityTableHtml, loadActivity,
     getCities: () => cities,

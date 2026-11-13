@@ -4,7 +4,7 @@ import re
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -294,6 +294,37 @@ def get_customer_sticker(
     label = label_for_customer(db, row, city_name)
     return {
         "customer_id": row.id,
+        "business_name": row.business_name,
+        "name_hi": label.name_hi,
+        "city_hi": label.city_hi,
+        "phone": row.phone,
+    }
+
+
+@router.patch("/{customer_id}/sticker")
+def patch_customer_sticker(
+    customer_id: int,
+    body: dict = Body(...),
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_any_permission("stickers.print", "customers.write", "customers.read")),
+) -> dict:
+    from app.services.sticker_labels import save_hindi_name
+
+    row = db.get(Customer, customer_id)
+    if row is None or row.deleted_at is not None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="customer not found")
+    city_name = None
+    if row.city_id:
+        city = db.get(City, row.city_id)
+        if city is not None and city.deleted_at is None:
+            city_name = city.name
+    try:
+        label = save_hindi_name(db, row, city_name, str((body or {}).get("name_hi") or ""))
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return {
+        "customer_id": row.id,
+        "business_name": row.business_name,
         "name_hi": label.name_hi,
         "city_hi": label.city_hi,
         "phone": row.phone,

@@ -185,7 +185,7 @@ const OrderDesk = (() => {
       const ship = Number(ln.quantity_to_ship);
       const short = Number.isFinite(stock) && Number.isFinite(ship) && ship > stock;
       return `<tr style="${short ? "background:#fef2f2;" : ""}">
-        <td><strong>${esc(ln.our_product_id)}</strong>${ln.direct ? ` <span style="font-size:12px;color:var(--muted);">direct</span>` : ""}${addonHtml(key, ln, "bill")}${short ? `<div style="color:#b91c1c;font-weight:800;font-size:12px;">Only ${stock} in stock</div>` : ""}</td>
+        <td><strong>${esc(ln.our_product_id)}</strong>${ln.marking ? ` <span class="marking-flag">${esc(ln.marking)}</span>` : ""}${ln.direct ? ` <span style="font-size:12px;color:var(--muted);">direct</span>` : ""}${addonHtml(key, ln, "bill")}${short ? `<div style="color:#b91c1c;font-weight:800;font-size:12px;">Only ${stock} in stock</div>` : ""}</td>
         <td style="${short ? "color:#b91c1c;font-weight:800;" : ""}">${ln.quantity_on_hand ?? "—"}</td>
         <td>${money(ln.unit_price)}</td>
         <td><input data-field="bqty" data-i="${i}" type="number" class="input" style="width:72px;${short ? "border-color:#dc2626;background:#fff1f2;" : ""}" min="0" value="${ln.quantity_to_ship ?? ""}"></td>

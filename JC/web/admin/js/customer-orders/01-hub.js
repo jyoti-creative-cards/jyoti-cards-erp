@@ -138,6 +138,7 @@
       ].join("");
       searchSlot.innerHTML = dispatch
         ? `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;width:100%;">
+            ${createdByFilterHtml(dispatchParcels)}
             <select class="input" style="max-width:200px;" onchange="CustomerOrders.setDispatchAgent(this.value)">
               ${agentOpts}
             </select>
@@ -149,6 +150,7 @@
             })}
           </div>`
         : `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;width:100%;">
+            ${createdByFilterHtml(orders)}
             ${HubUI.searchBar({
               id: "co-hub-search",
               value: hubSearch,
@@ -279,8 +281,59 @@
     return lineHit;
   }
 
+  function creatorNames(row) {
+    const raw = row && row.created_by;
+    const list = Array.isArray(raw) ? raw : (raw ? [raw] : []);
+    return list.map(x => String(x || "").trim()).filter(Boolean);
+  }
+
+  function rowMatchesCreators(row) {
+    if (!createdByPick.length) return true;
+    const names = creatorNames(row).map(n => n.toLowerCase());
+    return createdByPick.some(picked => names.includes(picked.toLowerCase()));
+  }
+
+  function toggleCreatedBy(name, on) {
+    const key = String(name || "").trim();
+    if (!key) return;
+    if (on) {
+      if (!createdByPick.some(n => n.toLowerCase() === key.toLowerCase())) createdByPick.push(key);
+    } else {
+      createdByPick = createdByPick.filter(n => n.toLowerCase() !== key.toLowerCase());
+    }
+    if (isDispatchBucket()) renderDispatchList();
+    else renderList();
+  }
+
+  function createdByFilterHtml(rows) {
+    const names = [];
+    const seen = new Set();
+    for (const row of rows || []) {
+      for (const name of creatorNames(row)) {
+        const key = name.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        names.push(name);
+      }
+    }
+    for (const name of createdByPick) {
+      if (!seen.has(name.toLowerCase())) names.push(name);
+    }
+    names.sort((a, b) => a.localeCompare(b));
+    if (!names.length && !createdByPick.length) return "";
+    const summary = createdByPick.length ? createdByPick.join(", ") : "Created by";
+    const boxes = names.map(name => {
+      const on = createdByPick.some(n => n.toLowerCase() === name.toLowerCase());
+      return `<label style="display:flex;gap:8px;align-items:center;padding:4px 0;"><input type="checkbox" ${on ? "checked" : ""} onchange="CustomerOrders.toggleCreatedBy(this.value, this.checked)" value="${ctx.esc(name)}" /> ${ctx.esc(name)}</label>`;
+    }).join("");
+    return `<details style="position:relative;">
+      <summary class="btn btn-secondary btn-sm" style="list-style:none;cursor:pointer;">${ctx.esc(summary)}</summary>
+      <div style="position:absolute;z-index:20;background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:8px 12px;min-width:180px;box-shadow:0 8px 24px rgba(15,23,42,.12);">${boxes}</div>
+    </details>`;
+  }
+
   function filterHubOrders(list) {
-    let rows = list || [];
+    let rows = (list || []).filter(rowMatchesCreators);
     const tokens = hubSearch.trim() ? OrdersUI.partySearchTokens(hubSearch) : [];
     const hasPrice = currentBucket === "open" && (hubPriceMin !== "" || hubPriceMax !== "");
     if (currentBucket === "open" && (tokens.length || hasPrice)) {
@@ -299,7 +352,7 @@
     );
     if (currentBucket !== "billed") return sortHubOrders(ranked);
     const seen = new Set(ranked.map(o => o.customer_id));
-    const billHits = (list || []).filter(o => {
+    const billHits = rows.filter(o => {
       if (seen.has(o.customer_id)) return false;
       const bills = o.bills || [];
       return tokens.every(t => bills.some(b => billNumberMatches(b.bill_number, t))

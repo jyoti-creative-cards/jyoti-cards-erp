@@ -37,6 +37,10 @@ def test_known_parties_and_cities_are_hindi():
     assert hindi_name("Dream Cards") == "ड्रीम कार्ड्स"
     assert hindi_name("Ideal Stationary") == "आइडियल स्टेशनरी"
     assert hindi_name("Real Graphics") == "रियल ग्राफिक्स"
+    assert hindi_name("DELUXE KHARGONE") == "डीलक्स खरगोन"
+    assert hindi_name("Deluxe Khargone") == "डीलक्स खरगोन"
+    assert hindi_name("SHANSKAR KHALWA") == "संस्कार खालवा"
+    assert hindi_name("Sanskar Khalwa") == "संस्कार खालवा"
 
 
 @pytest.fixture()
@@ -80,6 +84,31 @@ def test_sticker_row_stores_hindi_and_keeps_phone(db):
     assert changed["name_hi"] == "श्री नटराज स्टूडियो"
     assert changed["city_hi"] == "मंदसौर"
     assert changed["phone"] == "9876543210"
+
+
+def test_cached_sticker_updates_when_hindi_mapping_improves(db):
+    city = City(name="Khargone")
+    db.add(city)
+    db.flush()
+    customer = Customer(
+        business_name="Deluxe Khargone",
+        phone="9876500001",
+        password_hash="x",
+        city_id=city.id,
+    )
+    db.add(customer)
+    db.flush()
+    db.add(StickerLabel(
+        customer_id=customer.id,
+        name_hi="देलुक्से खर्गोने",
+        city_hi="खर्गोने",
+        source_name="Deluxe Khargone",
+        source_city="Khargone",
+    ))
+    db.commit()
+    out = get_customer_sticker(customer.id, db=db, auth=AUTH)
+    assert out["name_hi"] == "डीलक्स खरगोन"
+    assert out["city_hi"] == "खरगोन"
 
 
 def test_print_stamp_is_english():
@@ -187,6 +216,17 @@ def test_print_report_filters_self_pickup(db):
     assert {row.business_name for row in pickup} == {"Walk Party", "Blank Carry Party"}
     buses = list_print_report(db, carry="bus")
     assert [row.business_name for row in buses] == ["Bus Party"]
+
+
+def test_a_typed_hindi_name_is_kept(db):
+    from app.services.sticker_labels import label_for_customer, save_hindi_name
+
+    customer = Customer(business_name="Payal Computer", phone="9800000099", password_hash="x")
+    db.add(customer)
+    db.commit()
+    save_hindi_name(db, customer, "Indore", "पायल स्पेशल")
+    again = label_for_customer(db, customer, "Indore")
+    assert again.name_hi == "पायल स्पेशल"
 
 
 def test_staff_signs_in_by_name_for_sticker_only(db):

@@ -10,6 +10,7 @@ const CustomerOrders = (() => {
   let hubPriceMin = "";
   let hubPriceMax = "";
   let hubSort = "latest"; // latest | oldest — unfiltered hub-list order
+  let createdByPick = [];
   let coExpandedId = null;
   let hubExpandedCustomerId = null;
   let hubExpandCache = {};
@@ -227,6 +228,7 @@ const CustomerOrders = (() => {
       ].join("");
       searchSlot.innerHTML = dispatch
         ? `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;width:100%;">
+            ${createdByFilterHtml(dispatchParcels)}
             <select class="input" style="max-width:200px;" onchange="CustomerOrders.setDispatchAgent(this.value)">
               ${agentOpts}
             </select>
@@ -238,6 +240,7 @@ const CustomerOrders = (() => {
             })}
           </div>`
         : `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;width:100%;">
+            ${createdByFilterHtml(orders)}
             ${HubUI.searchBar({
               id: "co-hub-search",
               value: hubSearch,
@@ -368,8 +371,59 @@ const CustomerOrders = (() => {
     return lineHit;
   }
 
+  function creatorNames(row) {
+    const raw = row && row.created_by;
+    const list = Array.isArray(raw) ? raw : (raw ? [raw] : []);
+    return list.map(x => String(x || "").trim()).filter(Boolean);
+  }
+
+  function rowMatchesCreators(row) {
+    if (!createdByPick.length) return true;
+    const names = creatorNames(row).map(n => n.toLowerCase());
+    return createdByPick.some(picked => names.includes(picked.toLowerCase()));
+  }
+
+  function toggleCreatedBy(name, on) {
+    const key = String(name || "").trim();
+    if (!key) return;
+    if (on) {
+      if (!createdByPick.some(n => n.toLowerCase() === key.toLowerCase())) createdByPick.push(key);
+    } else {
+      createdByPick = createdByPick.filter(n => n.toLowerCase() !== key.toLowerCase());
+    }
+    if (isDispatchBucket()) renderDispatchList();
+    else renderList();
+  }
+
+  function createdByFilterHtml(rows) {
+    const names = [];
+    const seen = new Set();
+    for (const row of rows || []) {
+      for (const name of creatorNames(row)) {
+        const key = name.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        names.push(name);
+      }
+    }
+    for (const name of createdByPick) {
+      if (!seen.has(name.toLowerCase())) names.push(name);
+    }
+    names.sort((a, b) => a.localeCompare(b));
+    if (!names.length && !createdByPick.length) return "";
+    const summary = createdByPick.length ? createdByPick.join(", ") : "Created by";
+    const boxes = names.map(name => {
+      const on = createdByPick.some(n => n.toLowerCase() === name.toLowerCase());
+      return `<label style="display:flex;gap:8px;align-items:center;padding:4px 0;"><input type="checkbox" ${on ? "checked" : ""} onchange="CustomerOrders.toggleCreatedBy(this.value, this.checked)" value="${ctx.esc(name)}" /> ${ctx.esc(name)}</label>`;
+    }).join("");
+    return `<details style="position:relative;">
+      <summary class="btn btn-secondary btn-sm" style="list-style:none;cursor:pointer;">${ctx.esc(summary)}</summary>
+      <div style="position:absolute;z-index:20;background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:8px 12px;min-width:180px;box-shadow:0 8px 24px rgba(15,23,42,.12);">${boxes}</div>
+    </details>`;
+  }
+
   function filterHubOrders(list) {
-    let rows = list || [];
+    let rows = (list || []).filter(rowMatchesCreators);
     const tokens = hubSearch.trim() ? OrdersUI.partySearchTokens(hubSearch) : [];
     const hasPrice = currentBucket === "open" && (hubPriceMin !== "" || hubPriceMax !== "");
     if (currentBucket === "open" && (tokens.length || hasPrice)) {
@@ -388,7 +442,7 @@ const CustomerOrders = (() => {
     );
     if (currentBucket !== "billed") return sortHubOrders(ranked);
     const seen = new Set(ranked.map(o => o.customer_id));
-    const billHits = (list || []).filter(o => {
+    const billHits = rows.filter(o => {
       if (seen.has(o.customer_id)) return false;
       const bills = o.bills || [];
       return tokens.every(t => bills.some(b => billNumberMatches(b.bill_number, t))
@@ -734,9 +788,10 @@ const CustomerOrders = (() => {
   }
 
   function filterDispatchParcels(list) {
+    const rows = (list || []).filter(rowMatchesCreators);
     const q = hubSearch.trim().toLowerCase();
-    if (!q) return list;
-    return list.filter(p => {
+    if (!q) return rows;
+    return rows.filter(p => {
       const hay = [
         p.customer_label, p.bill_number, p.customer_city, p.customer_phone,
         p.freight_agent_name, String(p.bill_id || ""), p.transport_mode, p.transport_receipt_number,
@@ -1326,7 +1381,7 @@ const CustomerOrders = (() => {
         ${waiting.map(p => {
           const bits = (p.lines || []).map(ln => `${ctx.esc(ln.our_product_id)} × ${ln.quantity} · stock ${ln.stock ?? 0}`).join(", ");
           return `<div style="margin:0 0 8px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;">
-            <div style="font-size:13px;">${ctx.fmtDay ? ctx.fmtDay(p.placed_at) : ""} · ${bits}</div>
+            <div style="font-size:13px;">${ctx.fmtWhen ? ctx.fmtWhen(p.placed_at) : (ctx.fmtDay ? ctx.fmtDay(p.placed_at) : "")} · ${bits}</div>
             ${markingBanner(p.customer_notes)}
           </div>`;
         }).join("")}
@@ -2732,7 +2787,7 @@ const CustomerOrders = (() => {
       <button type="button" class="btn btn-secondary btn-sm" style="margin:0 0 10px;" onclick="CustomerOrders.toggleAllBillOrders(false)">Deselect all</button>
       ${billableOrders.map(order => {
         const on = selectedPlacementIds.includes(Number(order.placement_id));
-        const when = ctx.fmtDay ? ctx.fmtDay(order.placed_at) : "Order";
+        const when = ctx.fmtWhen ? ctx.fmtWhen(order.placed_at) : (ctx.fmtDay ? ctx.fmtDay(order.placed_at) : "Order");
         const bits = (order.lines || []).map(ln => `${ctx.esc(ln.our_product_id)} × ${ln.quantity} · stock ${ln.quantity_on_hand ?? 0}`).join(", ");
         return `<div style="margin:0 0 8px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;">
           <label style="display:block;font-size:14px;">
@@ -2899,7 +2954,7 @@ const CustomerOrders = (() => {
     if (matches.length) {
       return `<div style="display:flex;flex-direction:column;gap:4px;">${matches.map(p => `
         <button type="button" class="btn btn-secondary btn-sm" style="justify-content:flex-start;" onclick="CustomerOrders.addBillEditProduct(${p.catalog_product_id})">
-          ${ctx.esc(p.our_product_id)}${p.marking ? " · " + ctx.esc(p.marking) : ""}${p.vendor_product_id ? " · " + ctx.esc(p.vendor_product_id) : ""} · ${fmtPrice(p.selling_price)} · stock ${signedStock(p.quantity_on_hand)}
+          ${ctx.esc(p.our_product_id)}${p.marking ? ` <span class="marking-flag">${ctx.esc(p.marking)}</span>` : ""}${p.vendor_product_id ? " · " + ctx.esc(p.vendor_product_id) : ""} · ${fmtPrice(p.selling_price)} · stock ${signedStock(p.quantity_on_hand)}
         </button>`).join("")}</div>`;
     }
     if (q) return `<p style="font-size:12px;color:var(--muted);">${billEditSearchPending ? "Searching…" : "No matches"}</p>`;
@@ -4224,7 +4279,7 @@ const CustomerOrders = (() => {
   }
 
   return {
-    init, loadList, setBucket, setHubMode, setPrintDay, setQueueFilter, setHubSearch, setHubPrice, setHubSort, showHub, openDetail, openCustomer, switchBucket, toggleDetailExpand,
+    init, loadList, setBucket, setHubMode, setPrintDay, setQueueFilter, setHubSearch, setHubPrice, setHubSort, toggleCreatedBy, showHub, openDetail, openCustomer, switchBucket, toggleDetailExpand,
     openSlidePanel, closeSlidePanel, toggleCardMore, closeAllCardMore,
     goToDispatch, goCollectPayment, setDispatchStatus, setDispatchAgent, setParcelAgent, setParcelHandler, pickParcel, askDispatchNarration, saveDispatchNarration, markDispatchPicked, setDispatchMode, addDispatchCharge, togglePickedStory, reassignParcel, submitParcelReassign,
     showCreateMenu, showCreateMenuFromCustomer, openCloseBatch,

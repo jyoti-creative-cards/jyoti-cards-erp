@@ -67,7 +67,7 @@
         ${waiting.map(p => {
           const bits = (p.lines || []).map(ln => `${ctx.esc(ln.our_product_id)} × ${ln.quantity} · stock ${ln.stock ?? 0}`).join(", ");
           return `<div style="margin:0 0 8px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;">
-            <div style="font-size:13px;">${ctx.fmtDay ? ctx.fmtDay(p.placed_at) : ""} · ${bits}</div>
+            <div style="font-size:13px;">${ctx.fmtWhen ? ctx.fmtWhen(p.placed_at) : (ctx.fmtDay ? ctx.fmtDay(p.placed_at) : "")} · ${bits}</div>
             ${markingBanner(p.customer_notes)}
           </div>`;
         }).join("")}

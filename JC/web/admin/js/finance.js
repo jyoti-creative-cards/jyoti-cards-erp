@@ -1584,10 +1584,11 @@ const Finance = (() => {
       : outstanding < 0
         ? `Credit ${fmtPrice(Math.abs(outstanding))}`
         : "Clear";
+    const phones = [arDetail.phone, arDetail.secondary_phone].map(p => String(p || "").trim()).filter(Boolean);
     if (hero) {
       hero.innerHTML = HubUI.pageHero({
         title: arDetail.customer_label,
-        sub: `Collect · ${dueLine}`,
+        sub: `Collect · ${dueLine}${phones.length ? " · " + phones.join(" · ") : ""}`,
         actionsHtml: `
             ${(ctx.can?.("customer_orders.write") || ctx.isAdmin?.()) ? `<button class="btn btn-primary" onclick="CustomerOrders.openOfflineWizard(${currentCustomer})">Create order</button>` : ""}
             ${(ctx.isAdmin?.() || ctx.can?.("ar.write")) ? `<button class="btn btn-primary" onclick="Finance.openArSettle()">Collect</button>` : ""}

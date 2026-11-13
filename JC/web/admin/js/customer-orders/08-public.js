@@ -5,7 +5,7 @@
   }
 
   return {
-    init, loadList, setBucket, setHubMode, setPrintDay, setQueueFilter, setHubSearch, setHubPrice, setHubSort, showHub, openDetail, openCustomer, switchBucket, toggleDetailExpand,
+    init, loadList, setBucket, setHubMode, setPrintDay, setQueueFilter, setHubSearch, setHubPrice, setHubSort, toggleCreatedBy, showHub, openDetail, openCustomer, switchBucket, toggleDetailExpand,
     openSlidePanel, closeSlidePanel, toggleCardMore, closeAllCardMore,
     goToDispatch, goCollectPayment, setDispatchStatus, setDispatchAgent, setParcelAgent, setParcelHandler, pickParcel, askDispatchNarration, saveDispatchNarration, markDispatchPicked, setDispatchMode, addDispatchCharge, togglePickedStory, reassignParcel, submitParcelReassign,
     showCreateMenu, showCreateMenuFromCustomer, openCloseBatch,

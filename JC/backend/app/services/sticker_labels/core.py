@@ -19,10 +19,11 @@ def label_for_customer(db: Session, customer, city_name: str | None) -> StickerL
     name = (customer.business_name or "").strip()
     city = (city_name or "").strip()
     row = db.get(StickerLabel, customer.id)
-    if row is not None and row.source_name == name and row.source_city == city:
-        return row
     name_hi = hindi_name(name)
     city_hi = hindi_city(city)
+    if row is not None and row.source_name == name and row.source_city == city:
+        if row.name_edited or (row.name_hi == name_hi and row.city_hi == city_hi):
+            return row
     if row is None:
         row = StickerLabel(
             customer_id=customer.id,
@@ -37,6 +38,22 @@ def label_for_customer(db: Session, customer, city_name: str | None) -> StickerL
         row.city_hi = city_hi
         row.source_name = name
         row.source_city = city
+        row.name_edited = False
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def save_hindi_name(db: Session, customer, city_name: str | None, name_hi: str) -> StickerLabel:
+    """Keep a hand-typed Hindi spelling for this party. Later prints use it."""
+    text = " ".join((name_hi or "").split())
+    if not text:
+        raise ValueError("Enter the Hindi name")
+    row = label_for_customer(db, customer, city_name)
+    row.name_hi = text[:500]
+    row.source_name = (customer.business_name or "").strip()
+    row.source_city = (city_name or "").strip()
+    row.name_edited = True
     db.commit()
     db.refresh(row)
     return row

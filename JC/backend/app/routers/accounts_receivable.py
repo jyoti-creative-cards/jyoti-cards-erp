@@ -87,6 +87,8 @@ def get_customer_ar(customer_id: int, db: Session = Depends(get_db), auth: AuthC
     return ArCustomerDetail(
         customer_id=customer_id,
         customer_label=_customer_label(db, customer_id),
+        phone=customer.phone or None,
+        secondary_phone=customer.secondary_phone or None,
         outstanding=format(totals["outstanding"], "f"),
         opening_total=format(totals["opening_total"], "f"),
         opening_as_on=opening.value_date.isoformat() if opening and opening.value_date else None,

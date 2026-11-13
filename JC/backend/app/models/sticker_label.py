@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import ForeignKey, Integer, String
+from sqlalchemy import Boolean, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -18,3 +18,4 @@ class StickerLabel(Base):
     city_hi: Mapped[str] = mapped_column(String(300), nullable=False, default="", server_default="")
     source_name: Mapped[str] = mapped_column(String(500), nullable=False, default="", server_default="")
     source_city: Mapped[str] = mapped_column(String(300), nullable=False, default="", server_default="")
+    name_edited: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")

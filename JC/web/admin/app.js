@@ -355,6 +355,15 @@ const App = (() => {
     return fmtDay(dt);
   }
 
+  function fmtWhen(d) {
+    const day = fmtDay(d);
+    if (!d || day === "—") return day;
+    const dt = d instanceof Date ? d : new Date(d);
+    if (Number.isNaN(dt.getTime())) return day;
+    const time = dt.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit" });
+    return `${day}, ${time}`;
+  }
+
   function fmtDay(d) {
     if (!d) return "—";
     if (typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
@@ -1293,8 +1302,8 @@ const App = (() => {
     e.preventDefault();
     if (code === "KeyC") CustomerOrders.openOfflineWizard?.();
     else if (code === "KeyN") {
-      showView("order-desk");
-      OrderDesk.setFilter?.("new");
+      showView("customer-orders");
+      CustomerOrders.setBucket?.("received");
     }
     else if (code === "KeyB") openShortcut("bill");
     else if (code === "KeyS") openShortcut("item");
@@ -2185,7 +2194,7 @@ const App = (() => {
     const tokens = needle.split(/\s+/).filter(Boolean);
     const digits = raw.replace(/\D/g, "");
     return (partyLedgerParties || []).filter(c => {
-      const blob = foldParty(`${c.business_name || ""} ${c.city_name || ""} ${c.marker_1 || ""} ${c.marker_2 || ""} ${c.party_number || ""}`);
+      const blob = foldParty(`${c.business_name || ""} ${c.person_name || ""} ${c.alias || ""} ${c.city_name || ""} ${c.marker_1 || ""} ${c.marker_2 || ""} ${c.party_number || ""}`);
       const phone = String(c.phone || "");
       const textHit = tokens.every(t => blob.includes(t));
       const phoneHit = digits.length >= 4 && phone.includes(digits);
@@ -3706,7 +3715,7 @@ const App = (() => {
   function setVendors(list) { vendors = list || []; }
 
   const sharedCtx = () => ({
-    api, toast, esc, fmtDate, fmtDay, timeAgo, reviewRow, productIdLabel, changeHistoryTable, openDetail,
+    api, toast, esc, fmtDate, fmtDay, fmtWhen, timeAgo, reviewRow, productIdLabel, changeHistoryTable, openDetail,
     closeDetail: () => closeDetail(), detailBack, detailFooterChild, ledgerDetailCard, bindLedgerRowClicks,
     entityLedgerTableHtml, activityTableHtml, loadActivity,
     getCities: () => cities,
@@ -3998,7 +4007,7 @@ const App = (() => {
     staffToken = sessionStorage.getItem("jc_staff_token") || "";
     try { staffUser = JSON.parse(sessionStorage.getItem("jc_staff_user") || "null"); } catch (_) { staffUser = null; }
     permissions = new Set((staffUser && staffUser.permissions) || []);
-    setLoginTab("admin");
+    setLoginTab("staff");
     const logoutMsg = sessionStorage.getItem("jc_logout_msg");
     if (logoutMsg) {
       sessionStorage.removeItem("jc_logout_msg");

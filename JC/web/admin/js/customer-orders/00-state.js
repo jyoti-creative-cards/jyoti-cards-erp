@@ -9,6 +9,7 @@ const CustomerOrders = (() => {
   let hubPriceMin = "";
   let hubPriceMax = "";
   let hubSort = "latest"; // latest | oldest — unfiltered hub-list order
+  let createdByPick = [];
   let coExpandedId = null;
   let hubExpandedCustomerId = null;
   let hubExpandCache = {};

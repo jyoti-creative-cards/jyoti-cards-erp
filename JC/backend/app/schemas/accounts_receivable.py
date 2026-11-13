@@ -50,6 +50,8 @@ class ArCustomerSummary(BaseModel):
 class ArCustomerDetail(BaseModel):
     customer_id: int
     customer_label: str
+    phone: Optional[str] = None
+    secondary_phone: Optional[str] = None
     outstanding: str
     opening_total: str = "0.00"
     opening_as_on: Optional[str] = None

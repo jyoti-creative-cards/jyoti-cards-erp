@@ -424,7 +424,7 @@
     const tokens = needle.split(/\s+/).filter(Boolean);
     const digits = raw.replace(/\D/g, "");
     return (partyLedgerParties || []).filter(c => {
-      const blob = foldParty(`${c.business_name || ""} ${c.city_name || ""} ${c.marker_1 || ""} ${c.marker_2 || ""} ${c.party_number || ""}`);
+      const blob = foldParty(`${c.business_name || ""} ${c.person_name || ""} ${c.alias || ""} ${c.city_name || ""} ${c.marker_1 || ""} ${c.marker_2 || ""} ${c.party_number || ""}`);
       const phone = String(c.phone || "");
       const textHit = tokens.every(t => blob.includes(t));
       const phoneHit = digits.length >= 4 && phone.includes(digits);

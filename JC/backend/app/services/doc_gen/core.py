@@ -370,24 +370,20 @@ def generate_customer_bill_document(
     totals = {**totals, "lines": [dict(ln) for ln in lines if isinstance(ln, dict)]}
     placement = db.get(CustomerOrderPlacement, bill.placement_id) if bill.placement_id else None
     order_at = placement.placed_at if placement else bill.created_at
-    order_by = customer_order_by_label(
-        db,
-        placement,
-        fallback_name=bill.created_by_name,
-        fallback_type=bill.created_by_type,
-    )
-    # A bill row is a new placement created at invoice time. The customer's
-    # order date and who placed it live on the earlier open/received order.
+    who = (bill.created_by_name or "").strip()
+    if (bill.created_by_type or "").strip() == "admin" or who.lower() == "admin":
+        order_by = "Admin"
+    else:
+        order_by = who or "Staff"
+    # The date is the order. The By line is who saved this bill.
     if placement is None or not (placement.order_source or placement.placed_by_name):
         product_ids = [
             int(ln.catalog_product_id)
             for ln in db.query(CustomerBillLine).filter(CustomerBillLine.bill_id == bill.id).all()
         ]
-        src_at, src_by = source_order_for_customer(db, bill.customer_id, product_ids)
+        src_at, _src_by = source_order_for_customer(db, bill.customer_id, product_ids)
         if src_at is not None:
             order_at = src_at
-        if src_by:
-            order_by = src_by
     from app.services.ar_ledger import customer_ar_totals
 
     ar = customer_ar_totals(db, bill.customer_id)

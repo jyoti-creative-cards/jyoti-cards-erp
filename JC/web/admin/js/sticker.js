@@ -74,6 +74,17 @@ const Sticker = (() => {
               <button type="button" id="sticker-transport" class="btn btn-secondary" style="flex:1;font-size:22px;font-weight:800;padding:16px;" onclick="Sticker.choose('transport')">Transport</button>
             </div>
           </div>
+          <div id="sticker-modify" class="hidden" style="margin-top:16px;">
+            <label class="label">English party name
+              <input id="sticker-mod-q" class="input" type="search" autocomplete="off" placeholder="Party name" oninput="Sticker.onModifyType(this.value)" />
+            </label>
+            <div id="sticker-mod-hits"></div>
+            <label class="label" style="margin-top:12px;">Hindi name
+              <input id="sticker-mod-hi" class="input" autocomplete="off" />
+            </label>
+            <button type="button" class="btn btn-primary" style="margin-top:10px;" onclick="Sticker.saveHindi()">Save Hindi name</button>
+            <p id="sticker-mod-note" class="fin-panel-sub" style="margin:8px 0 0;"></p>
+          </div>
           <div id="sticker-log-wrap">
             <h4 style="margin:18px 0 0; font-size:14px;">Prints given</h4>
             <div id="sticker-log"></div>
@@ -82,6 +93,7 @@ const Sticker = (() => {
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" onclick="App.logout()">Logout</button>
           <button type="button" class="btn btn-secondary" onclick="Sticker.close()">Close</button>
+          <button type="button" class="btn btn-secondary" onclick="Sticker.openModify()">Modify</button>
           <button type="button" class="btn btn-primary" id="sticker-print" onclick="Sticker.print()" disabled>Print A5</button>
         </div>
       </div>`;
@@ -265,7 +277,74 @@ const Sticker = (() => {
     }
   }
 
-  function writeSheet(w, label) {
+  let modifyParty = null;
+
+  function openModify() {
+    document.getElementById("sticker-modify")?.classList.remove("hidden");
+    document.getElementById("sticker-mod-q")?.focus();
+  }
+
+  function onModifyType(val) {
+    clearTimeout(timer);
+    const q = String(val || "").trim();
+    timer = setTimeout(() => searchModify(q), 250);
+  }
+
+  function searchModify(q) {
+    const box = document.getElementById("sticker-mod-hits");
+    if (!box) return;
+    if (q.length < 1) { box.innerHTML = ""; return; }
+    fetch(`${apiBase()}/customers/sticker-search?q=${encodeURIComponent(q)}`, { headers: headers() })
+      .then(res => res.ok ? res.json() : [])
+      .then(rows => {
+        box.innerHTML = (rows || []).map(row =>
+          `<button type="button" class="btn btn-secondary" style="display:block;width:100%;text-align:left;margin-top:6px;" onclick="Sticker.pickModify(${row.id})">${esc(row.business_name || "")}${row.city_name ? " · " + esc(row.city_name) : ""}</button>`
+        ).join("") || `<p style="color:var(--muted);">No match</p>`;
+      })
+      .catch(() => { box.innerHTML = `<p style="color:var(--muted);">Could not search</p>`; });
+  }
+
+  function pickModify(id) {
+    modifyParty = id;
+    const note = document.getElementById("sticker-mod-note");
+    fetch(`${apiBase()}/customers/${id}/sticker`, { headers: headers() })
+      .then(res => { if (!res.ok) throw new Error("Could not load the Hindi name"); return res.json(); })
+      .then(label => {
+        const input = document.getElementById("sticker-mod-hi");
+        if (input) input.value = label.name_hi || "";
+        if (note) note.textContent = label.business_name || "";
+        document.getElementById("sticker-mod-hits").innerHTML = "";
+      })
+      .catch(e => { if (note) note.textContent = e.message || "Could not load"; });
+  }
+
+  function saveHindi() {
+    const note = document.getElementById("sticker-mod-note");
+    if (!modifyParty) { if (note) note.textContent = "Pick a party first."; return; }
+    const name = document.getElementById("sticker-mod-hi")?.value || "";
+    fetch(`${apiBase()}/customers/${modifyParty}/sticker`, {
+      method: "PATCH",
+      headers: headers(),
+      body: JSON.stringify({ name_hi: name }),
+    })
+      .then(res => res.json().then(body => { if (!res.ok) throw new Error(body.detail || "Could not save"); return body; }))
+      .then(label => { if (note) note.textContent = `Saved for ${label.business_name || "this party"}. Prints will use this name.`; })
+      .catch(e => { if (note) note.textContent = e.message || "Could not save"; });
+  }
+
+  function printFrame() {
+    let frame = document.getElementById("sticker-print-frame");
+    if (!frame) {
+      frame = document.createElement("iframe");
+      frame.id = "sticker-print-frame";
+      frame.title = "Print sticker";
+      frame.style.cssText = "position:fixed;left:-12000px;top:0;width:900px;height:1200px;border:0;";
+      document.body.appendChild(frame);
+    }
+    return frame;
+  }
+
+  function writeSheet(frame, label) {
     const html = `<!DOCTYPE html><html lang="hi"><head><meta charset="utf-8"><title>Sticker</title>
       <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@500;700&display=swap">
       <style>
@@ -310,14 +389,14 @@ const Sticker = (() => {
         <p class="time">${esc(label.printed_label || "")}</p>
         </div>
       </body></html>`;
-    w.document.open();
-    w.document.write(html);
-    w.document.close();
-    w.focus();
-    const go = () => { try { w.print(); } catch (e) { /* browser print dialog */ } };
+    const doc = frame.contentDocument || frame.contentWindow.document;
+    doc.open();
+    doc.write(html);
+    doc.close();
+    const go = () => { try { frame.contentWindow.focus(); frame.contentWindow.print(); } catch (e) { /* browser print dialog */ } };
     let started = false;
     const once = () => { if (started) return; started = true; go(); };
-    const fonts = w.document.fonts;
+    const fonts = doc.fonts;
     if (fonts && fonts.ready) {
       const wait = setTimeout(once, 2000);
       fonts.ready.then(() => { clearTimeout(wait); once(); });
@@ -332,12 +411,7 @@ const Sticker = (() => {
     const desk = isDesk();
     printing = true;
     const note = document.getElementById("sticker-picked");
-    const w = window.open("", "_blank");
-    if (!w) {
-      printing = false;
-      if (note) note.textContent = "Allow pop-ups to print.";
-      return;
-    }
+    const frame = printFrame();
     fetch(`${apiBase()}/customers/${partyId}/sticker-prints`, { method: "POST", headers: headers() })
       .then((res) => {
         if (!res.ok) throw new Error("Could not record the print");
@@ -346,7 +420,7 @@ const Sticker = (() => {
       .then((label) => {
         const printed = Object.assign({}, label);
         if (desk && label.carry_label) printed.carry = label.carry_label;
-        writeSheet(w, printed);
+        writeSheet(frame, printed);
         printing = false;
         if (desk) resetReady();
         else {
@@ -356,10 +430,9 @@ const Sticker = (() => {
       })
       .catch((e) => {
         printing = false;
-        try { w.close(); } catch (err) { /* window already gone */ }
         if (note) note.textContent = e.message || "Could not record the print";
       });
   }
 
-  return { open, close, onType, onKey, choose, pick, print };
+  return { open, close, onType, onKey, choose, pick, print, openModify, onModifyType, pickModify, saveHindi };
 })();

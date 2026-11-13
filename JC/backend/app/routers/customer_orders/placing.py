@@ -469,6 +469,22 @@ def update_customer_marking(
             remember(db, kind="bill", subject=str(bill.id), body=value or "", actor=auth.actor_name)
     else:
         set_live_marking(db, customer_id, kind=body.kind, text=body.text)
+        if body.kind == "marking" and clean_mark(body.text) is None:
+            latest = (
+                db.query(CustomerOrderPlacement)
+                .join(CustomerOrder, CustomerOrder.id == CustomerOrderPlacement.customer_order_id)
+                .filter(
+                    CustomerOrder.customer_id == customer_id,
+                    CustomerOrder.bucket == "open",
+                    CustomerOrder.is_open.is_(True),
+                    CustomerOrderPlacement.deleted_at.is_(None),
+                    CustomerOrderPlacement.status == "open",
+                )
+                .order_by(CustomerOrderPlacement.placed_at.desc(), CustomerOrderPlacement.id.desc())
+                .first()
+            )
+            if latest is not None and clean_mark(latest.customer_notes):
+                latest.customer_notes = None
         remember(db, kind="order", subject=str(customer_id), body=body.text, actor=auth.actor_name)
     log_from_auth(
         db, auth, action="marking", entity_type="customer_order",

@@ -299,6 +299,15 @@
     return fmtDay(dt);
   }
 
+  function fmtWhen(d) {
+    const day = fmtDay(d);
+    if (!d || day === "—") return day;
+    const dt = d instanceof Date ? d : new Date(d);
+    if (Number.isNaN(dt.getTime())) return day;
+    const time = dt.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit" });
+    return `${day}, ${time}`;
+  }
+
   function fmtDay(d) {
     if (!d) return "—";
     if (typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d)) {

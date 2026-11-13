@@ -256,7 +256,7 @@
     staffToken = sessionStorage.getItem("jc_staff_token") || "";
     try { staffUser = JSON.parse(sessionStorage.getItem("jc_staff_user") || "null"); } catch (_) { staffUser = null; }
     permissions = new Set((staffUser && staffUser.permissions) || []);
-    setLoginTab("admin");
+    setLoginTab("staff");
     const logoutMsg = sessionStorage.getItem("jc_logout_msg");
     if (logoutMsg) {
       sessionStorage.removeItem("jc_logout_msg");

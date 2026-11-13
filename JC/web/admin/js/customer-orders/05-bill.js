@@ -696,7 +696,7 @@
       <button type="button" class="btn btn-secondary btn-sm" style="margin:0 0 10px;" onclick="CustomerOrders.toggleAllBillOrders(false)">Deselect all</button>
       ${billableOrders.map(order => {
         const on = selectedPlacementIds.includes(Number(order.placement_id));
-        const when = ctx.fmtDay ? ctx.fmtDay(order.placed_at) : "Order";
+        const when = ctx.fmtWhen ? ctx.fmtWhen(order.placed_at) : (ctx.fmtDay ? ctx.fmtDay(order.placed_at) : "Order");
         const bits = (order.lines || []).map(ln => `${ctx.esc(ln.our_product_id)} × ${ln.quantity} · stock ${ln.quantity_on_hand ?? 0}`).join(", ");
         return `<div style="margin:0 0 8px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;">
           <label style="display:block;font-size:14px;">
@@ -863,7 +863,7 @@
     if (matches.length) {
       return `<div style="display:flex;flex-direction:column;gap:4px;">${matches.map(p => `
         <button type="button" class="btn btn-secondary btn-sm" style="justify-content:flex-start;" onclick="CustomerOrders.addBillEditProduct(${p.catalog_product_id})">
-          ${ctx.esc(p.our_product_id)}${p.marking ? " · " + ctx.esc(p.marking) : ""}${p.vendor_product_id ? " · " + ctx.esc(p.vendor_product_id) : ""} · ${fmtPrice(p.selling_price)} · stock ${signedStock(p.quantity_on_hand)}
+          ${ctx.esc(p.our_product_id)}${p.marking ? ` <span class="marking-flag">${ctx.esc(p.marking)}</span>` : ""}${p.vendor_product_id ? " · " + ctx.esc(p.vendor_product_id) : ""} · ${fmtPrice(p.selling_price)} · stock ${signedStock(p.quantity_on_hand)}
         </button>`).join("")}</div>`;
     }
     if (q) return `<p style="font-size:12px;color:var(--muted);">${billEditSearchPending ? "Searching…" : "No matches"}</p>`;

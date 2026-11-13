@@ -74,10 +74,10 @@ def resolve_pair(order: CustomerOrder | None, placement_rows: list[tuple[str | N
             bucket = leg_cust if (source or "").strip().lower() in PORTAL_SOURCES else leg_staff
             if text not in bucket:
                 bucket.append(text)
-    if staff is None:
-        staff = " · ".join(leg_staff) or None
-    if cust is None:
-        cust = " · ".join(leg_cust) or None
+    if staff is None and leg_staff:
+        staff = leg_staff[-1]
+    if cust is None and leg_cust:
+        cust = leg_cust[-1]
     if staff and cust and staff.casefold() == cust.casefold():
         cust = None
     return staff, cust

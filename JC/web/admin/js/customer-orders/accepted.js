@@ -526,7 +526,13 @@ const CustomerOrders = (() => {
     finally { ctx.hideLoading?.(); }
   }
 
+  function onlyMark(text) {
+    const parts = String(text || "").split("·").map(part => part.trim()).filter(Boolean);
+    return parts.length ? parts[parts.length - 1] : "";
+  }
+
   function markStrip(text, customerId, billIds, label) {
+    text = onlyMark(text);
     const bills = billIds || "";
     const box = "display:block;width:calc(100% - 28px);margin:8px 14px;padding:10px 12px;background:#fee2e2;border:1px solid #dc2626;border-radius:8px;font-weight:800;font-size:16px;color:#b91c1c;text-align:left;cursor:pointer;";
     const shown = label || (text ? `Marking: ${text}` : "Add marking");
@@ -540,7 +546,7 @@ const CustomerOrders = (() => {
     const orderMark = markStrip((o && o.marking) || "", o.customer_id, "");
     const bills = (Array.isArray(o && o.bills) ? o.bills : [])
       .filter(b => b && b.narration && b.bill_id)
-      .map(b => markStrip(b.narration, o.customer_id, String(b.bill_id), `Bill ${b.bill_number || b.bill_id}: ${b.narration}`))
+      .map(b => markStrip(b.narration, o.customer_id, String(b.bill_id), `Bill ${b.bill_number || b.bill_id}: ${onlyMark(b.narration)}`))
       .join("");
     return orderMark + bills;
   }
@@ -1413,7 +1419,7 @@ const CustomerOrders = (() => {
         const receiptBit = b.transport_receipt_number ? ` · Rcpt ${ctx.esc(b.transport_receipt_number)}` : "";
         return HubUI.partyCard({
           title: b.display_name || `Bill ${b.bill_number}`,
-          meta: `${fmtPrice(b.grand_total)} · ${ctx.fmtDate(b.created_at || b.display_date || b.bill_date)}${b.created_by_name ? ` · ${ctx.esc(b.created_by_name)}` : ""}${modeLbl ? ` · ${modeLbl}` : ""}${chargeBit}${receiptBit}${(b.additional_charges || []).filter(c => Number(c.amount) > 0).map(c => ` · ${ctx.esc(c.name)} ${fmtPrice(c.amount)}`).join("")}${b.status && b.status !== "open" ? ` · ${ctx.esc(b.status)}` : ""}${b.narration ? `<div style="margin-top:2px;">${ctx.esc(b.narration)}</div>` : ""}`,
+          meta: `${fmtPrice(b.grand_total)} · ${ctx.fmtDate(b.created_at || b.display_date || b.bill_date)}${b.created_by_name ? ` · ${ctx.esc(b.created_by_name)}` : ""}${modeLbl ? ` · ${modeLbl}` : ""}${chargeBit}${receiptBit}${(b.additional_charges || []).filter(c => Number(c.amount) > 0).map(c => ` · ${ctx.esc(c.name)} ${fmtPrice(c.amount)}`).join("")}${b.status && b.status !== "open" ? ` · ${ctx.esc(b.status)}` : ""}${b.narration ? `<div style="margin-top:2px;">${ctx.esc(onlyMark(b.narration))}</div>` : ""}`,
           pillHtml: "",
           primaryLabel: canEditBill ? "Edit" : "Print",
           primaryOnclick: canEditBill
@@ -2398,7 +2404,7 @@ const CustomerOrders = (() => {
       editBillNumber = bill.bill_number || "";
       billDate = bill.bill_date ? String(bill.bill_date).slice(0, 10) : localToday();
       customerNotes = "";
-      narration = bill.narration || "";
+      narration = onlyMark(bill.narration || "");
       billEditSearch = "";
       billEditProducts = [];
       billEditSearchPending = false;
@@ -3898,13 +3904,18 @@ const CustomerOrders = (() => {
       return;
     }
     box.innerHTML = `<table class="data"><thead><tr><th>Item</th><th>Stock</th><th>Rate</th><th>Qty</th><th></th></tr></thead><tbody>
-      ${offlineLines.map(l => `<tr>
-        <td><strong>${ctx.esc(l.our_product_id)}</strong>${pricedAddonHtml({ catalog_product_id: l.catalog_product_id }, l)}</td>
-        <td>${l.quantity_on_hand ?? "—"}${Number(l.quantity_on_hand) <= 0 ? ` <span style="color:#b45309;">in transit</span>` : ""}</td>
+      ${offlineLines.map(l => {
+        const stock = signedStock(l.quantity_on_hand);
+        const qty = signedStock(l.quantity);
+        const short = qty > stock;
+        return `<tr style="${short ? "background:#fef2f2;" : ""}">
+        <td><strong>${ctx.esc(l.our_product_id)}</strong>${pricedAddonHtml({ catalog_product_id: l.catalog_product_id }, l)}${short ? `<div style="color:#b91c1c;font-weight:800;font-size:12px;">Only ${stock} in stock</div>` : ""}</td>
+        <td style="${short ? "color:#b91c1c;font-weight:800;" : ""}">${l.quantity_on_hand ?? "—"}${!short && stock <= 0 ? ` <span style="color:#b45309;">in transit</span>` : ""}</td>
         <td>${fmtPrice(l.selling_price)}</td>
-        <td><input data-qty-for="${l.catalog_product_id}" type="number" class="input" style="width:72px;" min="${Number(l.min_qty) || 1}" value="${l.quantity}" oninput="CustomerOrders.setOfflineQty(${l.catalog_product_id}, this.value)" onkeydown="CustomerOrders.onOfflineQtyKey(event)" /></td>
+        <td><input data-qty-for="${l.catalog_product_id}" type="number" class="input" style="width:72px;${short ? "border-color:#dc2626;background:#fff1f2;" : ""}" min="${Number(l.min_qty) || 1}" value="${l.quantity}" oninput="CustomerOrders.setOfflineQty(${l.catalog_product_id}, this.value)" onkeydown="CustomerOrders.onOfflineQtyKey(event)" /></td>
         <td><button type="button" class="btn btn-ghost btn-sm" onclick="CustomerOrders.removeOfflineLine(${l.catalog_product_id})">Remove</button></td>
-      </tr>`).join("")}
+      </tr>`;
+      }).join("")}
     </tbody></table>
     <p style="margin:8px 0 0;font-size:13px;">${offlineLines.length} item(s) · ${fmtPrice(offlineCartTotal())}</p>`;
   }

@@ -374,7 +374,7 @@
       editBillNumber = bill.bill_number || "";
       billDate = bill.bill_date ? String(bill.bill_date).slice(0, 10) : localToday();
       customerNotes = "";
-      narration = bill.narration || "";
+      narration = onlyMark(bill.narration || "");
       billEditSearch = "";
       billEditProducts = [];
       billEditSearchPending = false;

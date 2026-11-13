@@ -139,13 +139,18 @@ const OrderDesk = (() => {
   }
 
   function confirmFormHtml(key, f) {
-    const lines = (f.lines || []).map((ln, i) => `<tr>
-      <td><strong>${esc(ln.our_product_id)}</strong>${addonHtml(key, ln, "confirm")}</td>
-      <td>${ln.stock ?? "—"}</td>
+    const lines = (f.lines || []).map((ln, i) => {
+      const stock = Number(ln.stock);
+      const qty = Number(ln.quantity);
+      const short = Number.isFinite(stock) && Number.isFinite(qty) && qty > stock;
+      return `<tr style="${short ? "background:#fef2f2;" : ""}">
+      <td><strong>${esc(ln.our_product_id)}</strong>${addonHtml(key, ln, "confirm")}${short ? `<div style="color:#b91c1c;font-weight:800;font-size:12px;">Only ${stock} in stock</div>` : ""}</td>
+      <td style="${short ? "color:#b91c1c;font-weight:800;" : ""}">${ln.stock ?? "—"}</td>
       <td>${money(ln.unit_price)}</td>
-      <td><input data-field="cqty" data-i="${i}" type="number" class="input" style="width:72px;" min="${ln.min_qty || 0}" value="${ln.quantity}"></td>
+      <td><input data-field="cqty" data-i="${i}" type="number" class="input" style="width:72px;${short ? "border-color:#dc2626;background:#fff1f2;" : ""}" min="${ln.min_qty || 0}" value="${ln.quantity}"></td>
       <td><button type="button" class="btn btn-ghost btn-sm" onclick="OrderDesk.removeConfirmLine('${key}', ${i})">Remove</button></td>
-    </tr>`).join("");
+    </tr>`;
+    }).join("");
     const hits = findItem(f.search || "").map(p =>
       `<button type="button" class="btn btn-secondary btn-sm" style="display:block;width:100%;text-align:left;margin-top:4px;" onclick="OrderDesk.addConfirmItem('${key}', ${p.catalog_product_id})">${esc(p.our_product_id)} · stock ${p.quantity_on_hand ?? 0}</button>`
     ).join("");
@@ -171,11 +176,14 @@ const OrderDesk = (() => {
         ? L().calcNetFromDisc(ln.unit_price, f.overallDiscount)
         : (ln.net_rate || L().calcNetFromDisc(ln.unit_price, ln.discount_percent || 0));
       const shownDisc = f.useOverallDiscount ? (f.overallDiscount || "") : (ln.discount_percent || "");
-      return `<tr>
-        <td><strong>${esc(ln.our_product_id)}</strong>${ln.direct ? ` <span style="font-size:12px;color:var(--muted);">direct</span>` : ""}${addonHtml(key, ln, "bill")}</td>
-        <td>${ln.quantity_on_hand ?? "—"}</td>
+      const stock = Number(ln.quantity_on_hand);
+      const ship = Number(ln.quantity_to_ship);
+      const short = Number.isFinite(stock) && Number.isFinite(ship) && ship > stock;
+      return `<tr style="${short ? "background:#fef2f2;" : ""}">
+        <td><strong>${esc(ln.our_product_id)}</strong>${ln.direct ? ` <span style="font-size:12px;color:var(--muted);">direct</span>` : ""}${addonHtml(key, ln, "bill")}${short ? `<div style="color:#b91c1c;font-weight:800;font-size:12px;">Only ${stock} in stock</div>` : ""}</td>
+        <td style="${short ? "color:#b91c1c;font-weight:800;" : ""}">${ln.quantity_on_hand ?? "—"}</td>
         <td>${money(ln.unit_price)}</td>
-        <td><input data-field="bqty" data-i="${i}" type="number" class="input" style="width:72px;" min="0" value="${ln.quantity_to_ship ?? ""}"></td>
+        <td><input data-field="bqty" data-i="${i}" type="number" class="input" style="width:72px;${short ? "border-color:#dc2626;background:#fff1f2;" : ""}" min="0" value="${ln.quantity_to_ship ?? ""}"></td>
         <td><input data-field="bdisc" data-i="${i}" type="number" class="input" style="width:72px;" min="0" max="100" step="0.1" ${ro} value="${esc(shownDisc)}"></td>
         <td><input data-field="bnet" data-i="${i}" type="number" class="input" style="width:88px;" min="0" step="0.01" ${ro} value="${esc(shownNet || "")}"></td>
         <td>${(f.editBillId || ln.direct) ? `<button type="button" class="btn btn-ghost btn-sm" onclick="OrderDesk.removeBillLine('${key}', ${i})">Remove</button>` : ""}</td>

@@ -2,7 +2,7 @@
     init, showHub, setMode, setChip, setLedgerKind, setAgeingSide, setHubSearch, pickQuestion,
     setDatePreset, onRangeChange, onDayBillChange, setDayBillToday, onThresholdChange,
     openLedger, openAgentLedger, openStaffLedger, openExpenseLedger, addExpenseHead, addExpenseSubhead, addExpenseSource, renameExpenseSource, deleteExpenseSource, openCashLedger, backFromLedger, openDoc,
-    shareDaybook, waDaybook, shareStockSummary, shareAgeing, waAgeing, exportExcel,
+    shareDaybook, waDaybook, shareStockSummary, shareNoAlbum, shareAgeing, waAgeing, exportExcel,
     printCurrent, exportCurrentExcel, downloadSalesPdf, downloadPaymentsPdf, setHideVoids, setJournalReportKind, setStockYear, setPrintCarry, togglePrintGroup, toggleStockAlbum,
     toggleVendorDcu, downloadVendorOrderCsv, downloadConfirmedPdf,
     setMarkingScope, toggleMarkingPick, saveProductMarking, applyMarkingToPicked, renameMarking,

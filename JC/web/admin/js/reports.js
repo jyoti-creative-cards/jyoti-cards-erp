@@ -48,6 +48,7 @@ const Reports = (() => {
       { id: "confirmed-orders", label: "Confirmed orders" },
       { id: "transport", label: "Transport" },
       { id: "item-outward", label: "Daily stock" },
+      { id: "no-album", label: "Items without album" },
       { id: "daybook", label: "Daybook" },
       { id: "sales-book", label: "Sales book" },
       { id: "day-bills", label: "Day bills" },
@@ -72,6 +73,7 @@ const Reports = (() => {
     stock: [
       { id: "vendor-orders", label: "Vendor order report" },
       { id: "item-outward", label: "Daily stock" },
+      { id: "no-album", label: "Items without album" },
       { id: "stock-wise", label: "Stock wise" },
       { id: "stock-journal", label: "Stock journal" },
       { id: "valuation", label: "Valuation" },
@@ -382,6 +384,7 @@ const Reports = (() => {
 
   function printCurrent() {
     if (chip === "item-outward") return shareStockSummary(true);
+    if (chip === "no-album") return shareNoAlbum(true);
     const root = reportPrintRoot();
     const tables = reportTables(root);
     const chunk = tables.length ? tables.map(t => t.outerHTML).join("<br>") : (root?.innerHTML || "");
@@ -438,7 +441,7 @@ const Reports = (() => {
     if (!slot) return;
     const caret = (typeof OrdersUI !== "undefined" && OrdersUI.captureSearchCaret)
       ? OrdersUI.captureSearchCaret("reports-hub-search") : null;
-    const searchable = ["sales", "sales-book", "day-bills", "transport", "receipt-book", "daybook", "purchases", "payments", "ledgers", "ageing", "customer-sales", "vendor-purchases", "item-sales", "item-purchases", "stock-wise", "vendor-orders", "confirmed-orders", "item-outward", "stock-journal", "valuation", "movers", "low", "markings", "returns", "debit-notes", "gst-sales", "gst-purchases", "cashbook", "expense-cat", "sticker-prints"].includes(chip);
+    const searchable = ["sales", "sales-book", "day-bills", "transport", "receipt-book", "daybook", "purchases", "payments", "ledgers", "ageing", "customer-sales", "vendor-purchases", "item-sales", "item-purchases", "stock-wise", "vendor-orders", "confirmed-orders", "item-outward", "no-album", "stock-journal", "valuation", "movers", "low", "markings", "returns", "debit-notes", "gst-sales", "gst-purchases", "cashbook", "expense-cat", "sticker-prints"].includes(chip);
     if (!searchable) { slot.innerHTML = ""; return; }
     const ph = chip === "sticker-prints" ? "Search party name or number…"
       : chip === "day-bills" ? "Search bill, party, city…"
@@ -719,6 +722,7 @@ const Reports = (() => {
       else if (chip === "vendor-orders") await renderVendorOrderReport(body);
       else if (chip === "confirmed-orders") await renderConfirmedOrders(body);
       else if (chip === "item-outward") await renderItemOutward(body);
+      else if (chip === "no-album") await renderNoAlbum(body);
       else if (chip === "stock-journal") await renderStockJournal(body);
       else if (chip === "valuation") await renderValuation(body);
       else if (chip === "movers") await renderMovers(body);
@@ -1234,6 +1238,52 @@ const Reports = (() => {
         : `stock_summary_${fromDate || toDate || "all"}${yearBit}.pdf`;
       await DocShare.openPdf(`/share/stock-summary/pdf${stockQs()}`, { print: !!print, filename: name });
     } catch (e) { ctx.toast(e.message, "error"); }
+  }
+
+  async function shareNoAlbum(print) {
+    try {
+      const name = fromDate && toDate && fromDate !== toDate
+        ? `items-without-album_${fromDate}_${toDate}.pdf`
+        : `items-without-album_${fromDate || toDate || "all"}.pdf`;
+      await DocShare.openPdf(`/reports/items-without-album/pdf${rangeQs()}`, { print: !!print, filename: name });
+    } catch (e) { ctx.toast(e.message, "error"); }
+  }
+
+  async function renderNoAlbum(body) {
+    const data = await ctx.api(`/reports/items-without-album${rangeQs()}`, {}, 0);
+    const items = (data.items || []).filter(it => matchSearch(it.item));
+    const period = data.period || "";
+    const num = "text-align:right;white-space:nowrap;";
+    const sum = (key) => items.reduce((s, it) => s + (Number(it[key]) || 0), 0);
+    body.innerHTML = `
+      ${DocShare.toolbarHtml({
+        printOnclick: "Reports.shareNoAlbum(true)",
+        pdfOnclick: "Reports.shareNoAlbum(false)",
+        excelOnclick: "Reports.exportCurrentExcel()",
+      })}
+      <h2 class="report-print-title" style="position:absolute;left:-9999px;">Items without album · ${ctx.esc(period)}</h2>
+      <p class="fin-panel-sub" style="margin:0 0 12px;">${ctx.esc(period)}. Items with no album in category 1, 2, or 3. Total amount is stock × price.</p>
+      <div class="fin-hub-strip" style="margin-bottom:16px;">
+        <div class="fin-stat"><span class="fin-stat-label">Items</span><strong>${items.length}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">Stock</span><strong>${sum("stock")}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">Total sales</span><strong>${sum("total_sales")}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">Total amount</span><strong>${sum("total_amount").toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></div>
+      </div>
+      ${items.length ? `<div class="card table-wrap"><table class="data"><caption style="caption-side:top;text-align:left;font-weight:700;padding:8px 12px;">Items without album · ${ctx.esc(period)}</caption><thead><tr>
+          <th>Item</th><th style="${num}">Stock</th><th style="${num}">Price</th><th style="${num}">Inward</th><th style="${num}">Outward</th><th>Last sale</th><th style="${num}">Total bills</th><th style="${num}">Total sales</th><th style="${num}">Total amount</th>
+        </tr></thead><tbody>
+        ${items.map(it => `<tr>
+          <td><strong>${ctx.esc(it.item)}</strong></td>
+          <td style="${num}">${it.stock}</td>
+          <td style="${num}">${ctx.esc(it.price)}</td>
+          <td style="${num}">${it.inward}</td>
+          <td style="${num}">${it.outward}</td>
+          <td>${ctx.esc(it.last_sale || "—")}</td>
+          <td style="${num}">${it.total_bills}</td>
+          <td style="${num}">${it.total_sales}</td>
+          <td style="${num}">${ctx.esc(it.total_amount)}</td>
+        </tr>`).join("")}
+      </tbody></table></div>` : empty("No items", "Every active item is in an album.")}`;
   }
 
   async function renderItemOutward(body) {
@@ -2059,7 +2109,7 @@ const Reports = (() => {
     init, showHub, setMode, setChip, setLedgerKind, setAgeingSide, setHubSearch, pickQuestion,
     setDatePreset, onRangeChange, onDayBillChange, setDayBillToday, onThresholdChange,
     openLedger, openAgentLedger, openStaffLedger, openExpenseLedger, addExpenseHead, addExpenseSubhead, addExpenseSource, renameExpenseSource, deleteExpenseSource, openCashLedger, backFromLedger, openDoc,
-    shareDaybook, waDaybook, shareStockSummary, shareAgeing, waAgeing, exportExcel,
+    shareDaybook, waDaybook, shareStockSummary, shareNoAlbum, shareAgeing, waAgeing, exportExcel,
     printCurrent, exportCurrentExcel, downloadSalesPdf, downloadPaymentsPdf, setHideVoids, setJournalReportKind, setStockYear, setPrintCarry, togglePrintGroup, toggleStockAlbum,
     toggleVendorDcu, downloadVendorOrderCsv, downloadConfirmedPdf,
     setMarkingScope, toggleMarkingPick, saveProductMarking, applyMarkingToPicked, renameMarking,

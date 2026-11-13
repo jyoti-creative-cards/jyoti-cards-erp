@@ -439,7 +439,13 @@
     finally { ctx.hideLoading?.(); }
   }
 
+  function onlyMark(text) {
+    const parts = String(text || "").split("·").map(part => part.trim()).filter(Boolean);
+    return parts.length ? parts[parts.length - 1] : "";
+  }
+
   function markStrip(text, customerId, billIds, label) {
+    text = onlyMark(text);
     const bills = billIds || "";
     const box = "display:block;width:calc(100% - 28px);margin:8px 14px;padding:10px 12px;background:#fee2e2;border:1px solid #dc2626;border-radius:8px;font-weight:800;font-size:16px;color:#b91c1c;text-align:left;cursor:pointer;";
     const shown = label || (text ? `Marking: ${text}` : "Add marking");
@@ -453,7 +459,7 @@
     const orderMark = markStrip((o && o.marking) || "", o.customer_id, "");
     const bills = (Array.isArray(o && o.bills) ? o.bills : [])
       .filter(b => b && b.narration && b.bill_id)
-      .map(b => markStrip(b.narration, o.customer_id, String(b.bill_id), `Bill ${b.bill_number || b.bill_id}: ${b.narration}`))
+      .map(b => markStrip(b.narration, o.customer_id, String(b.bill_id), `Bill ${b.bill_number || b.bill_id}: ${onlyMark(b.narration)}`))
       .join("");
     return orderMark + bills;
   }

@@ -211,9 +211,19 @@ def _draw_header(
     return top
 
 
+def _own_mark(value: str | None) -> str:
+    """A stored join keeps only the last marking."""
+    latest = ""
+    for piece in str(value or "").split("·"):
+        text = " ".join(piece.split())
+        if text:
+            latest = text
+    return latest
+
+
 def _draw_narration_banner(c: canvas.Canvas, narration: str | None) -> float:
     """Yellow narration at the top left. Returns how far the header must move down."""
-    text = _txt(narration, 180)
+    text = _txt(_own_mark(narration), 180)
     if not text:
         return 0.0
     font = "Helvetica-Bold"

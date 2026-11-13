@@ -17,6 +17,7 @@ from app.models.city import City
 from app.models.customer import Customer
 from app.models.customer_order import CustomerOrder, CustomerOrderLine, CustomerOrderPlacement
 from app.services.biz_date import ist_day_bounds_utc
+from app.services.customer_selling.marking import single_mark
 from app.services.pdf_documents import add_page_number
 
 
@@ -44,7 +45,7 @@ def confirmed_order_report(
     label = "all" if start is None else (on.isoformat() if on else f"{(from_date or to_date).isoformat()} to {(to_date or from_date).isoformat()}")
     placed = db.query(CustomerOrderPlacement.id).filter(
         CustomerOrderPlacement.deleted_at.is_(None),
-        CustomerOrderPlacement.status.in_(("open", "billed")),
+        CustomerOrderPlacement.status == "open",
     )
     if start is not None:
         placed = placed.filter(CustomerOrderPlacement.placed_at >= start, CustomerOrderPlacement.placed_at < end)
@@ -79,7 +80,7 @@ def confirmed_order_report(
     for placement, order, customer, city_name in placements:
         item_lines = []
         for line in by_placement.get(int(placement.id), []):
-            qty = int(line.quantity or 0)
+            qty = int(line.quantity or 0) - int(line.quantity_billed or 0)
             if qty <= 0:
                 continue
             rate = format(line.unit_price or 0, "f")
@@ -92,7 +93,7 @@ def confirmed_order_report(
                 "party_number": customer.party_number,
                 "party": customer.business_name,
                 "city": city_name or "",
-                "marking": (order.marking or placement.customer_notes or "") or "",
+                "marking": single_mark(order.marking, placement.customer_notes) or "",
                 "order_id": int(placement.id),
                 "item_no": line.our_product_id,
                 "qty": qty,
@@ -106,7 +107,7 @@ def confirmed_order_report(
             "party_number": customer.party_number,
             "party": customer.business_name,
             "city": city_name or "",
-            "marking": (order.marking or placement.customer_notes or "") or "",
+            "marking": single_mark(order.marking, placement.customer_notes) or "",
             "placed_at": placement.placed_at.isoformat() if placement.placed_at else "",
             "lines": item_lines,
         })

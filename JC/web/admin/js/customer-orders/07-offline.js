@@ -341,13 +341,18 @@
       return;
     }
     box.innerHTML = `<table class="data"><thead><tr><th>Item</th><th>Stock</th><th>Rate</th><th>Qty</th><th></th></tr></thead><tbody>
-      ${offlineLines.map(l => `<tr>
-        <td><strong>${ctx.esc(l.our_product_id)}</strong>${pricedAddonHtml({ catalog_product_id: l.catalog_product_id }, l)}</td>
-        <td>${l.quantity_on_hand ?? "—"}${Number(l.quantity_on_hand) <= 0 ? ` <span style="color:#b45309;">in transit</span>` : ""}</td>
+      ${offlineLines.map(l => {
+        const stock = signedStock(l.quantity_on_hand);
+        const qty = signedStock(l.quantity);
+        const short = qty > stock;
+        return `<tr style="${short ? "background:#fef2f2;" : ""}">
+        <td><strong>${ctx.esc(l.our_product_id)}</strong>${pricedAddonHtml({ catalog_product_id: l.catalog_product_id }, l)}${short ? `<div style="color:#b91c1c;font-weight:800;font-size:12px;">Only ${stock} in stock</div>` : ""}</td>
+        <td style="${short ? "color:#b91c1c;font-weight:800;" : ""}">${l.quantity_on_hand ?? "—"}${!short && stock <= 0 ? ` <span style="color:#b45309;">in transit</span>` : ""}</td>
         <td>${fmtPrice(l.selling_price)}</td>
-        <td><input data-qty-for="${l.catalog_product_id}" type="number" class="input" style="width:72px;" min="${Number(l.min_qty) || 1}" value="${l.quantity}" oninput="CustomerOrders.setOfflineQty(${l.catalog_product_id}, this.value)" onkeydown="CustomerOrders.onOfflineQtyKey(event)" /></td>
+        <td><input data-qty-for="${l.catalog_product_id}" type="number" class="input" style="width:72px;${short ? "border-color:#dc2626;background:#fff1f2;" : ""}" min="${Number(l.min_qty) || 1}" value="${l.quantity}" oninput="CustomerOrders.setOfflineQty(${l.catalog_product_id}, this.value)" onkeydown="CustomerOrders.onOfflineQtyKey(event)" /></td>
         <td><button type="button" class="btn btn-ghost btn-sm" onclick="CustomerOrders.removeOfflineLine(${l.catalog_product_id})">Remove</button></td>
-      </tr>`).join("")}
+      </tr>`;
+      }).join("")}
     </tbody></table>
     <p style="margin:8px 0 0;font-size:13px;">${offlineLines.length} item(s) · ${fmtPrice(offlineCartTotal())}</p>`;
   }

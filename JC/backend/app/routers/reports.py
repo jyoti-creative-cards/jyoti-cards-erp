@@ -217,6 +217,36 @@ def billed_items_report(
     return ext.billed_item_outward(db, from_date, to_date)
 
 
+@router.get("/items-without-album")
+def items_without_album_report(
+    from_date: Optional[date] = Query(None),
+    to_date: Optional[date] = Query(None),
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    from app.services.reports.items_without_album import items_without_album
+    return items_without_album(db, from_date, to_date)
+
+
+@router.get("/items-without-album/pdf")
+def items_without_album_pdf(
+    from_date: Optional[date] = Query(None),
+    to_date: Optional[date] = Query(None),
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    from fastapi.responses import Response
+    from app.services.reports.items_without_album import render_items_without_album_pdf
+
+    pdf = render_items_without_album_pdf(db, from_date, to_date)
+    label = f"{from_date or 'start'}-to-{to_date or 'now'}"
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="items-without-album-{label}.pdf"'},
+    )
+
+
 @router.get("/confirmed-orders")
 def confirmed_orders_report(
     on: Optional[date] = Query(None, description="One IST day. Ignored when from_date or to_date is set."),

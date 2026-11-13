@@ -171,6 +171,52 @@
     } catch (e) { ctx.toast(e.message, "error"); }
   }
 
+  async function shareNoAlbum(print) {
+    try {
+      const name = fromDate && toDate && fromDate !== toDate
+        ? `items-without-album_${fromDate}_${toDate}.pdf`
+        : `items-without-album_${fromDate || toDate || "all"}.pdf`;
+      await DocShare.openPdf(`/reports/items-without-album/pdf${rangeQs()}`, { print: !!print, filename: name });
+    } catch (e) { ctx.toast(e.message, "error"); }
+  }
+
+  async function renderNoAlbum(body) {
+    const data = await ctx.api(`/reports/items-without-album${rangeQs()}`, {}, 0);
+    const items = (data.items || []).filter(it => matchSearch(it.item));
+    const period = data.period || "";
+    const num = "text-align:right;white-space:nowrap;";
+    const sum = (key) => items.reduce((s, it) => s + (Number(it[key]) || 0), 0);
+    body.innerHTML = `
+      ${DocShare.toolbarHtml({
+        printOnclick: "Reports.shareNoAlbum(true)",
+        pdfOnclick: "Reports.shareNoAlbum(false)",
+        excelOnclick: "Reports.exportCurrentExcel()",
+      })}
+      <h2 class="report-print-title" style="position:absolute;left:-9999px;">Items without album · ${ctx.esc(period)}</h2>
+      <p class="fin-panel-sub" style="margin:0 0 12px;">${ctx.esc(period)}. Items with no album in category 1, 2, or 3. Total amount is stock × price.</p>
+      <div class="fin-hub-strip" style="margin-bottom:16px;">
+        <div class="fin-stat"><span class="fin-stat-label">Items</span><strong>${items.length}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">Stock</span><strong>${sum("stock")}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">Total sales</span><strong>${sum("total_sales")}</strong></div>
+        <div class="fin-stat"><span class="fin-stat-label">Total amount</span><strong>${sum("total_amount").toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></div>
+      </div>
+      ${items.length ? `<div class="card table-wrap"><table class="data"><caption style="caption-side:top;text-align:left;font-weight:700;padding:8px 12px;">Items without album · ${ctx.esc(period)}</caption><thead><tr>
+          <th>Item</th><th style="${num}">Stock</th><th style="${num}">Price</th><th style="${num}">Inward</th><th style="${num}">Outward</th><th>Last sale</th><th style="${num}">Total bills</th><th style="${num}">Total sales</th><th style="${num}">Total amount</th>
+        </tr></thead><tbody>
+        ${items.map(it => `<tr>
+          <td><strong>${ctx.esc(it.item)}</strong></td>
+          <td style="${num}">${it.stock}</td>
+          <td style="${num}">${ctx.esc(it.price)}</td>
+          <td style="${num}">${it.inward}</td>
+          <td style="${num}">${it.outward}</td>
+          <td>${ctx.esc(it.last_sale || "—")}</td>
+          <td style="${num}">${it.total_bills}</td>
+          <td style="${num}">${it.total_sales}</td>
+          <td style="${num}">${ctx.esc(it.total_amount)}</td>
+        </tr>`).join("")}
+      </tbody></table></div>` : empty("No items", "Every active item is in an album.")}`;
+  }
+
   async function renderItemOutward(body) {
     if (!stockYears) {
       try { stockYears = await ctx.api("/catalog/year-groups", {}, 60000) || []; }

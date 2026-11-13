@@ -47,6 +47,7 @@ const Reports = (() => {
       { id: "confirmed-orders", label: "Confirmed orders" },
       { id: "transport", label: "Transport" },
       { id: "item-outward", label: "Daily stock" },
+      { id: "no-album", label: "Items without album" },
       { id: "daybook", label: "Daybook" },
       { id: "sales-book", label: "Sales book" },
       { id: "day-bills", label: "Day bills" },
@@ -71,6 +72,7 @@ const Reports = (() => {
     stock: [
       { id: "vendor-orders", label: "Vendor order report" },
       { id: "item-outward", label: "Daily stock" },
+      { id: "no-album", label: "Items without album" },
       { id: "stock-wise", label: "Stock wise" },
       { id: "stock-journal", label: "Stock journal" },
       { id: "valuation", label: "Valuation" },

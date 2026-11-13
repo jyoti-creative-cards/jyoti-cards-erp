@@ -69,9 +69,7 @@ def display_marking(db: Session, product: CatalogProduct | None) -> str | None:
     if product is None:
         return None
     labels = marking_labels(db, [product.id])
-    if product.id in labels:
-        return labels[product.id]
-    return product.marking or None
+    return labels.get(product.id)
 
 
 def active_marking_text(db: Session, product_id: int, on: date | None = None) -> str | None:

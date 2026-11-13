@@ -3456,8 +3456,11 @@ const CustomerOrders = (() => {
     ctx.showLoading?.();
     try {
       const blob = await fetchStoredBill(billId);
-      if (!blob) return ctx.toast("Saved bill is not ready yet", "error");
-      printPdfHere(URL.createObjectURL(blob));
+      if (blob) {
+        printPdfHere(URL.createObjectURL(blob));
+        return;
+      }
+      await DocShare.openPdf(`/share/bills/${billId}/pdf?layout=print`, { print: true, filename: "bill.pdf" });
     } catch (e) {
       ctx.toast(e.message || "Could not print", "error");
     } finally { ctx.hideLoading?.(); }

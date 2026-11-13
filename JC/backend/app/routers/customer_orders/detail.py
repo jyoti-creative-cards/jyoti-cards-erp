@@ -287,7 +287,7 @@ def get_customer_order_detail(
                     cancel_reason=row.cancel_reason,
                     image_urls=presigned_urls(first_key) if first_key else [],
                     addons=addon_map.get(int(row.catalog_product_id), []),
-                    marking=(open_marks[int(row.catalog_product_id)] if int(row.catalog_product_id) in open_marks else (prod.marking if prod else None)),
+                    marking=open_marks.get(int(row.catalog_product_id)),
                     stock=open_stock.get(int(row.catalog_product_id), 0),
                 )
             )
@@ -373,7 +373,7 @@ def get_customer_order_detail(
     from app.services.product_markings import marking_labels
     dated_marks = marking_labels(db, all_line_cids)
     marking_by_cid = {
-        p.id: dated_marks[p.id] if p.id in dated_marks else p.marking
+        p.id: dated_marks.get(p.id)
         for p in (db.query(CatalogProduct).filter(CatalogProduct.id.in_(all_line_cids)).all() if all_line_cids else [])
     }
     pl_out: list[CustomerPlacementOut] = []

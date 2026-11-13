@@ -44,11 +44,7 @@ def _bill_item_label(db: Session, catalog_product_id: int, sku: str) -> str:
     from app.services.product_markings import marking_labels
 
     marks = marking_labels(db, [catalog_product_id])
-    mark = marks.get(catalog_product_id)
-    if not mark:
-        product = db.get(CatalogProduct, catalog_product_id)
-        mark = product.marking if product else None
-    text = (mark or "").strip()
+    text = (marks.get(catalog_product_id) or "").strip()
     if text:
         return f"{sku} · {text}"
     return sku

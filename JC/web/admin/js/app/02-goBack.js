@@ -581,7 +581,7 @@
     e.preventDefault();
     if (code === "KeyC") CustomerOrders.openOfflineWizard?.();
     else if (code === "KeyN") {
-      showView("customer-orders");
+      showView("selling");
       CustomerOrders.setBucket?.("received");
     }
     else if (code === "KeyB") openShortcut("bill");

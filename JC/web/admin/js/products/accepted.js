@@ -1029,21 +1029,48 @@ const Products = (() => {
 
   function markingEditor(id, section, marking) {
     const canEdit = ctx.canWrite?.("catalog") || ctx.isAdmin?.();
-    if (!canEdit) {
-      return marking
-        ? `<p style="margin:0 0 12px;"><span class="marking-flag">${ctx.esc(marking)}</span></p>`
-        : "";
-    }
-    return `<div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin:0 0 12px;">
-      <div><label class="label" style="margin:0;">Marking</label>
-        <input id="prod-marking" class="input" maxlength="200" placeholder="Monday" value="" style="max-width:220px;" /></div>
-      <div><label class="label" style="margin:0;">From</label>
-        <input id="prod-mark-from" class="input" type="date" value="${new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" })}" /></div>
-      <div><label class="label" style="margin:0;">Until</label>
-        <input id="prod-mark-until" class="input" type="date" value="2099-12-31" /></div>
-      <button type="button" class="btn btn-secondary btn-sm" onclick="Products.saveMarking(${id}, '${section}')">Add</button>
-      ${marking ? `<span class="marking-flag">${ctx.esc(marking)}</span>` : ""}
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+    const flag = marking
+      ? `<button type="button" class="marking-flag" onclick="Products.toggleMarkingEdit()">${ctx.esc(marking)}</button>`
+      : "";
+    const actions = marking && canEdit
+      ? `<button type="button" class="btn btn-secondary btn-sm" onclick="Products.toggleMarkingEdit()">Edit</button>
+         <button type="button" class="btn btn-danger btn-sm" onclick="Products.clearMarking(${id}, '${section}')">Delete</button>`
+      : "";
+    if (!canEdit) return flag ? `<p style="margin:0 0 12px;">${flag}</p>` : "";
+    return `<div style="margin:0 0 12px;">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <span class="label" style="margin:0;">Marking</span>
+        ${flag || `<span style="color:var(--muted);">None</span>`}
+        ${actions}
+      </div>
+      <div id="prod-mark-form" class="${marking ? "hidden" : ""}" style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin-top:8px;">
+        <div><label class="label" style="margin:0;">Text</label>
+          <input id="prod-marking" class="input" maxlength="200" placeholder="Monday" value="${ctx.esc(marking || "")}" style="max-width:220px;" /></div>
+        <div><label class="label" style="margin:0;">From</label>
+          <input id="prod-mark-from" class="input" type="date" value="${today}" /></div>
+        <div><label class="label" style="margin:0;">Until</label>
+          <input id="prod-mark-until" class="input" type="date" value="2099-12-31" /></div>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="Products.saveMarking(${id}, '${section}')">Save</button>
+      </div>
     </div>`;
+  }
+
+  function toggleMarkingEdit() {
+    document.getElementById("prod-mark-form")?.classList.toggle("hidden");
+    document.getElementById("prod-marking")?.focus();
+  }
+
+  async function clearMarking(id, section) {
+    if (!confirm("Remove this marking from the item?")) return;
+    try {
+      await ctx.api("/reports/product-markings/apply", {
+        method: "POST",
+        body: JSON.stringify({ marking: "", product_ids: [id] }),
+      });
+      ctx.toast("Marking removed", "success");
+      await openProductDetail(id, section || "stock");
+    } catch (e) { ctx.toast(e.message, "error"); }
   }
 
   async function saveMarking(id, section) {
@@ -1156,7 +1183,6 @@ const Products = (() => {
           ${ctx.reviewRow("Category 1", cat.category)}
           ${ctx.reviewRow("Category 2", cat.second_category)}
           ${ctx.reviewRow("Category 3", cat.category_3)}
-          ${ctx.reviewRow("Marking", cat.marking)}
           ${ctx.reviewRow("Created", ctx.fmtDate(cat.created_at))}
           ${ctx.reviewRow("Updated", ctx.fmtDate(cat.updated_at))}
         </div>
@@ -1537,7 +1563,7 @@ const Products = (() => {
     init, showHub, setMainTab, showAddons, showProducts, setTypeFilter, setViewMode, onSearch, clearSearch,
     onFilterChange, clearFilters, setAttentionFilter, toggleFilters,
     load, loadMoreCatalog, loadMoreStock, refreshHub,
-    openItem, openProductDetail, bookThisProduct, saveMarking, saveBulkSellPrices,
+    openItem, openProductDetail, bookThisProduct, saveMarking, clearMarking, toggleMarkingEdit, saveBulkSellPrices,
     openAlternativesManager, closeAlternativesManager, onAltsBoardSearch,
     openAltPicker, closeAltPicker, onAltPickerSearch, addAlternative, removeAlternative,
     enlargeImage, closeLightbox, forgetLookups,

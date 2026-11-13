@@ -32,6 +32,11 @@ const OrderDesk = (() => {
     if (!app) return false;
     return !(app.classList.contains("order-desk") || app.classList.contains("order-taker") || app.classList.contains("lookup-only") || app.classList.contains("sticker-only"));
   }
+  function ownMark(text) {
+    const value = String(text || "").replace(/\s+/g, " ").trim();
+    const skip = ["order placed by admin (phone)", "offline order", "order placed by admin"];
+    return skip.includes(value.toLowerCase()) ? "" : value;
+  }
   function money(v) {
     const n = Number(v);
     if (!Number.isFinite(n)) return "";
@@ -221,7 +226,8 @@ const OrderDesk = (() => {
       ${(f.dueCatalogs || []).map(c => {
         const on = Object.prototype.hasOwnProperty.call(f.pickedCatalogs || {}, String(c.id));
         const price = on ? f.pickedCatalogs[String(c.id)] : "0";
-        return `<label style="display:flex;gap:8px;align-items:center;margin-top:6px;"><input type="checkbox" ${on ? "checked" : ""} onchange="OrderDesk.toggleCatalog('${key}', ${c.id}, this.checked)"> ${esc(c.name)} <input class="input" style="width:90px;" data-cat="${c.id}" value="${esc(price)}" ${on ? "" : "disabled"}></label>`;
+        const again = Number(c.received) > 0 ? ` · already ${c.received}` : "";
+        return `<label style="display:flex;gap:8px;align-items:center;margin-top:6px;"><input type="checkbox" ${on ? "checked" : ""} onchange="OrderDesk.toggleCatalog('${key}', ${c.id}, this.checked)"> ${esc(c.name)} · ${c.copies_left} left${again} <input class="input" style="width:90px;" data-cat="${c.id}" value="${esc(price)}" ${on ? "" : "disabled"}></label>`;
       }).join("")}
     </div>` : "";
     const charges = (f.additionalCharges || []).map((c, i) => `
@@ -647,7 +653,7 @@ const OrderDesk = (() => {
       customerId: row.customer_id,
       placementId: placement.id,
       lines,
-      narration: row.marking || placement.customer_notes || "",
+      narration: ownMark(row.marking) || ownMark(placement.customer_notes) || "",
       placedOn: String(placement.placed_at || row.display_date || today()).slice(0, 10),
       party: detail,
       otherCount: ((detail.placements || []).filter(p => p.status === "received").length > 1),

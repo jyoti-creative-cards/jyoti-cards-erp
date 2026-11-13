@@ -49,15 +49,11 @@ def set_order_marking(order: CustomerOrder | None, text: str | None) -> None:
 
 
 def carry_marks(src: CustomerOrder | None, dest: CustomerOrder | None) -> None:
-    """Keep the marking when a new order is folded into the open one."""
+    """This order's marking replaces the old one. A blank marking clears it."""
     if src is None or dest is None or src is dest:
         return
-    staff = clean_mark(src.marking)
-    if staff:
-        dest.marking = staff
-    cust = clean_mark(src.customer_marking)
-    if cust:
-        dest.customer_marking = cust
+    dest.marking = clean_mark(src.marking)
+    dest.customer_marking = clean_mark(src.customer_marking)
 
 
 def resolve_pair(order: CustomerOrder | None, placement_rows: list[tuple[str | None, str | None]]) -> tuple[str | None, str | None]:

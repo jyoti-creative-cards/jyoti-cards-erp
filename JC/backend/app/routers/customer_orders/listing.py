@@ -203,13 +203,16 @@ def _creators_by_order(db: Session, order_ids: list[int]) -> dict[int, list[str]
     return found
 
 
-def _creators_by_customer(db: Session, customer_ids: list[int]) -> dict[int, list[str]]:
+def _confirmed_tile(db: Session, customer_ids: list[int]) -> tuple[dict[int, list[str]], dict[int, str]]:
+    """Who placed the latest confirmed order, and its own marking if one was typed."""
+    from app.services.customer_selling.marking import clean_mark
+
     if not customer_ids:
-        return {}
+        return {}, {}
     rows = (
         db.query(
             CustomerOrder.customer_id,
-            CustomerOrderPlacement.order_source,
+            CustomerOrderPlacement.placed_at,
             CustomerOrderPlacement.placed_by_name,
             CustomerOrderPlacement.customer_notes,
         )
@@ -218,17 +221,28 @@ def _creators_by_customer(db: Session, customer_ids: list[int]) -> dict[int, lis
             CustomerOrder.customer_id.in_(customer_ids),
             CustomerOrder.bucket == "open",
             CustomerOrder.is_open.is_(True),
+            CustomerOrderPlacement.status == "open",
             CustomerOrderPlacement.deleted_at.is_(None),
         )
         .all()
     )
-    found: dict[int, list[str]] = {}
-    for customer_id, source, name, notes in rows:
-        label = _who_made(source, name, notes)
-        bucket = found.setdefault(int(customer_id), [])
-        if label not in bucket:
-            bucket.append(label)
-    return found
+    latest: dict[int, tuple] = {}
+    for customer_id, placed_at, name, notes in rows:
+        cid = int(customer_id)
+        prev = latest.get(cid)
+        stamp = placed_at if placed_at is not None and placed_at.tzinfo else (placed_at or datetime.min).replace(tzinfo=timezone.utc)
+        prev_stamp = prev[0] if prev is not None and prev[0] is not None and prev[0].tzinfo else ((prev[0] if prev else None) or datetime.min).replace(tzinfo=timezone.utc)
+        if prev is None or stamp >= prev_stamp:
+            latest[cid] = (stamp, (name or "").strip(), notes)
+    creators: dict[int, list[str]] = {}
+    marks: dict[int, str] = {}
+    for cid, (_placed, name, notes) in latest.items():
+        if name:
+            creators[cid] = [name]
+        text = clean_mark(notes)
+        if text:
+            marks[cid] = text
+    return creators, marks
 
 
 def _placement_source(notes: str | None) -> str:
@@ -622,7 +636,7 @@ def list_customer_orders(
                 "price": format(price, "f") if price is not None else "",
             })
         touched_by_cid = {int(r[0]): r[3] for r in rows}
-        marks_by_cid = _best_customer_pairs(db, cids)
+        creators_by_cid, marks_by_cid = _confirmed_tile(db, cids)
         placed_by_cid: dict[int, object] = {}
         if received_ids:
             order_cid = {o.id: o.customer_id for o in received_rows}
@@ -639,7 +653,6 @@ def list_customer_orders(
                 if cid_for_order is not None:
                     placed_by_cid[cid_for_order] = placed
 
-        creators_by_cid = _creators_by_customer(db, cids)
         out: list[CustomerOrderSummary] = []
         for customer_id, total_qty, line_count, _touched in rows:
             cid = int(customer_id)
@@ -665,7 +678,7 @@ def list_customer_orders(
                     marker_2=getattr(cust_obj, "marker_2", None) if cust_obj else None,
                     payment_type=getattr(cust_obj, "payment_type", None) if cust_obj else None,
                     city_name=cities.get(cust_obj.city_id) if cust_obj and cust_obj.city_id else None,
-                    narration=(shown_open := single_mark(*marks_by_cid.get(cid, (None, None)))),
+                    narration=(shown_open := marks_by_cid.get(cid)),
                     marking=shown_open,
                     customer_marking=None,
                     markings=[shown_open] if shown_open else [],

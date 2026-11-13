@@ -9,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from app.db.session import Base
 from app.models.catalog_product import CatalogProduct
 from app.models.customer import Customer
-from app.models.customer_order import CustomerOrder, CustomerOrderLine, CustomerOrderPlacement
+from app.models.customer_order import CustomerOpenLine, CustomerOrder, CustomerOrderLine, CustomerOrderPlacement
 from app.models.stock import StockBalance
 from app.models.vendor import Vendor
 from app.services.reports.confirmed_orders import confirmed_order_report
@@ -24,7 +24,7 @@ def _db():
     return sessionmaker(bind=engine)()
 
 
-def test_confirmed_report_skips_new_and_billed():
+def test_confirmed_report_skips_orders_already_billed():
     db = _db()
     vendor = Vendor(business_name="V", phone="9998887771")
     db.add(vendor)
@@ -33,33 +33,39 @@ def test_confirmed_report_skips_new_and_billed():
         our_product_id="P", vendor_id=vendor.id, vendor_product_id="VP",
         buying_price=Decimal("1"), selling_price=Decimal("2"),
     )
-    customer = Customer(business_name="C", phone="9998887772", password_hash="x")
-    db.add_all([product, customer])
+    still = Customer(business_name="Still", phone="9998887772", password_hash="x")
+    billed = Customer(business_name="Billed", phone="9998887773", password_hash="x")
+    db.add_all([product, still, billed])
     db.flush()
-    order = CustomerOrder(customer_id=customer.id, bucket="open", status="open")
-    db.add(order)
+    order = CustomerOrder(customer_id=still.id, bucket="open", status="open", marking="Rush")
+    done = CustomerOrder(customer_id=billed.id, bucket="open", status="open")
+    db.add_all([order, done])
     db.flush()
-
-    def place(status, qty, billed):
-        row = CustomerOrderPlacement(
-            customer_order_id=order.id, status=status, placed_at=WHEN,
-        )
-        db.add(row)
-        db.flush()
-        db.add(CustomerOrderLine(
-            placement_id=row.id, catalog_product_id=product.id, our_product_id="P",
-            quantity=qty, quantity_billed=billed, unit_price=Decimal("2"), status="active",
-        ))
-        return row
-
-    place("received", 10, 0)
-    open_row = place("open", 8, 3)
-    place("billed", 5, 5)
+    open_row = CustomerOrderPlacement(
+        customer_order_id=order.id, status="open", placed_at=WHEN, customer_notes="Order placed by admin (phone)",
+    )
+    stale = CustomerOrderPlacement(customer_order_id=done.id, status="open", placed_at=WHEN)
+    db.add_all([open_row, stale])
+    db.flush()
+    db.add(CustomerOrderLine(
+        placement_id=open_row.id, catalog_product_id=product.id, our_product_id="P",
+        quantity=8, quantity_billed=0, unit_price=Decimal("2"), status="active",
+    ))
+    db.add(CustomerOrderLine(
+        placement_id=stale.id, catalog_product_id=product.id, our_product_id="P",
+        quantity=5, quantity_billed=0, unit_price=Decimal("2"), status="active",
+    ))
+    db.add(CustomerOpenLine(
+        customer_id=still.id, catalog_product_id=product.id, our_product_id="P",
+        quantity_open=5, quantity_billed=3, unit_price=Decimal("2"), status="open",
+    ))
     db.commit()
 
     data = confirmed_order_report(db, on=None, from_date=None, to_date=None)
-    assert [row["order_id"] for row in data["rows"]] == [open_row.id]
+    assert [row["party"] for row in data["rows"]] == ["Still"]
     assert data["rows"][0]["qty"] == 5
+    assert data["rows"][0]["marking"] == "Rush"
+    assert data["orders"][0]["confirmed_on"] == "2026-08-01"
     db.close()
 
 

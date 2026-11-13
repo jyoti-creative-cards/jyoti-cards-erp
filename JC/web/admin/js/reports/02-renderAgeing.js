@@ -952,7 +952,7 @@
     const orders = (data.orders || []).filter(order => {
       if (!q) return true;
       const items = (order.lines || []).map(l => l.item_no).join(" ");
-      return [order.party, order.party_number, order.city, order.marking, order.placement_id, items].join(" ").toLowerCase().includes(q);
+      return [order.party, order.party_number, order.city, order.marking, order.confirmed_on, items].join(" ").toLowerCase().includes(q);
     });
     const period = data.on || (datePreset === "all" ? "All dates" : "");
     const bands = ["#ffffff", "#f8fafc"];
@@ -962,9 +962,9 @@
       const head = `<tr style="background:${bg};">
         <td style="font-weight:800;">${order.party_number ?? ""}</td>
         <td style="font-weight:800;">${ctx.esc(order.party || "")}${city}</td>
+        <td>${ctx.esc(order.confirmed_on || "")}</td>
         <td style="color:#b91c1c;font-weight:700;">${ctx.esc(order.marking || "")}</td>
-        <td style="font-weight:800;">#${order.placement_id}</td>
-        <td></td><td></td><td></td>
+        <td></td><td></td>
       </tr>`;
       const lines = (order.lines || []).map(line => `<tr style="background:${bg};">
         <td></td>
@@ -972,7 +972,6 @@
         <td></td><td></td>
         <td>${line.qty}</td>
         <td>${ctx.esc(line.rate)}</td>
-        <td></td>
       </tr>`).join("");
       return head + lines;
     }).join("");
@@ -985,7 +984,7 @@
         <span style="color:var(--muted);font-size:13px;">${orders.length} order${orders.length === 1 ? "" : "s"} · ${ctx.esc(period)}</span>
       </div>
       ${orders.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
-        <th>Party no.</th><th>Party</th><th>Marking</th><th>Order</th><th>Qty</th><th>Rate</th><th></th>
+        <th>Party no.</th><th>Party</th><th>Date</th><th>Marking</th><th>Qty</th><th>Rate</th>
       </tr></thead><tbody>${html}</tbody></table></div>` : empty("No confirmed orders", "Choose another date, or All.")}`;
   }
 

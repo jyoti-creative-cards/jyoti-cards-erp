@@ -130,52 +130,78 @@ def catalog_detail(db: Session, catalog_id: int) -> dict:
     }
 
 
-def for_customer(db: Session, customer_id: int) -> list[dict]:
-    """Catalogues for this party, including copies already sold on a bill."""
+def _real_issue(note: str | None) -> bool:
+    """Album membership on a product bill is not a catalogue the party was given."""
+    return not (note or "").strip().lower().startswith("from bill")
+
+
+def real_received_copies(db: Session, catalog_id: int, customer_id: int | None = None) -> int:
+    query = db.query(OurCatalogIssue).filter(OurCatalogIssue.catalog_id == catalog_id)
+    if customer_id is not None:
+        query = query.filter(OurCatalogIssue.customer_id == customer_id)
+    return sum(int(row.copies or 0) for row in query.all() if _real_issue(row.note))
+
+
+def catalogue_units_billed(db: Session, customer_id: int | None = None) -> dict[str, int]:
+    """Copies of the catalogue item on a bill. A card from that album is not a copy."""
     from app.models.customer_bill import CustomerBill, CustomerBillLine
 
+    query = (
+        db.query(CustomerBillLine.our_product_id, func.sum(CustomerBillLine.quantity_shipped))
+        .join(CustomerBill, CustomerBill.id == CustomerBillLine.bill_id)
+        .filter(
+            CustomerBill.deleted_at.is_(None),
+            CustomerBill.cancelled_at.is_(None),
+            CustomerBillLine.status == "billed",
+            CustomerBillLine.quantity_shipped > 0,
+        )
+        .group_by(CustomerBillLine.our_product_id)
+    )
+    if customer_id is not None:
+        query = query.filter(CustomerBill.customer_id == customer_id)
+    totals: dict[str, int] = {}
+    for sku, qty in query.all():
+        name = catalog_name_for_bill_sku(sku or "")
+        if not name:
+            continue
+        totals[name] = totals.get(name, 0) + int(qty or 0)
+    return totals
+
+
+def for_customer(db: Session, customer_id: int) -> list[dict]:
+    """Catalogues this party was given, counted from the catalogue item on a bill."""
     assigned_ids = [
         row.catalog_id
         for row in db.query(OurCatalogAssignment).filter(OurCatalogAssignment.customer_id == customer_id).all()
     ]
-    issued_ids = [
-        row.catalog_id
-        for row in db.query(OurCatalogIssue.catalog_id).filter(OurCatalogIssue.customer_id == customer_id).distinct().all()
-    ]
     catalogs = db.query(OurCatalog).all()
-    by_name = {row.name.strip().upper(): row for row in catalogs}
-    billed: dict[int, int] = {}
-    bill_rows = (
-        db.query(CustomerBillLine.our_product_id, func.sum(CustomerBillLine.quantity_shipped))
-        .join(CustomerBill, CustomerBill.id == CustomerBillLine.bill_id)
-        .filter(
-            CustomerBill.customer_id == customer_id,
-            CustomerBill.deleted_at.is_(None),
-            CustomerBill.cancelled_at.is_(None),
-            CustomerBillLine.quantity_shipped > 0,
-        )
-        .group_by(CustomerBillLine.our_product_id)
-        .all()
-    )
-    for sku, qty in bill_rows:
-        catalog = by_name.get((sku or "").strip().upper())
-        if not catalog:
+    by_id = {int(row.id): row for row in catalogs}
+    by_name = {row.name: row for row in catalogs}
+    got_by_id: dict[int, int] = {}
+    for issue in db.query(OurCatalogIssue).filter(OurCatalogIssue.customer_id == customer_id).all():
+        if not _real_issue(issue.note):
             continue
-        billed[catalog.id] = billed.get(catalog.id, 0) + int(qty or 0)
-    ids = list(dict.fromkeys(assigned_ids + issued_ids + list(billed)))
+        cid = int(issue.catalog_id)
+        got_by_id[cid] = got_by_id.get(cid, 0) + int(issue.copies or 0)
+    for name, qty in catalogue_units_billed(db, customer_id).items():
+        row = by_name.get(name)
+        if row:
+            got_by_id[int(row.id)] = max(got_by_id.get(int(row.id), 0), int(qty))
+    sent_by_name = catalogue_units_billed(db)
+    ids = list(dict.fromkeys(assigned_ids + list(got_by_id)))
     out = []
     for catalog_id in ids:
-        row = db.get(OurCatalog, catalog_id)
+        row = by_id.get(int(catalog_id))
         if not row:
             continue
-        got = max(received_copies(db, row.id, customer_id), billed.get(row.id, 0))
-        sent = issued_copies(db, row.id)
+        got = got_by_id.get(int(row.id), 0)
+        sent = max(sent_by_name.get(row.name, 0), real_received_copies(db, row.id))
         out.append({
             "id": row.id,
             "name": row.name,
             "received": got,
             "needs_send": catalog_id in assigned_ids and got < 1,
-            "copies_left": row.copies_made - sent,
+            "copies_left": int(row.copies_made) - sent,
         })
     out.sort(key=lambda item: (not item["needs_send"], item["name"].lower()))
     return out
@@ -309,7 +335,7 @@ def bill_catalog_charges(db: Session, customer_id: int, catalogs: list[dict]) ->
         price = Decimal(str(item.get("price") or "0")).quantize(Decimal("0.01"))
         if price < 0:
             price = Decimal("0")
-        got = received_copies(db, row.id, customer_id)
+        got = real_received_copies(db, row.id, customer_id)
         printed.append({
             "catalog_id": row.id,
             "name": row.name,
@@ -332,7 +358,7 @@ def save_bill_catalogs(db: Session, *, bill_id: int, customer_id: int, catalogs:
         if not row:
             continue
         price = Decimal(str(item.get("price") or "0")).quantize(Decimal("0.01"))
-        got = received_copies(db, row.id, customer_id)
+        got = real_received_copies(db, row.id, customer_id)
         record_issue(
             db,
             catalog_id=row.id,

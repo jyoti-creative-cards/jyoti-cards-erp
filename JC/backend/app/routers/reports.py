@@ -252,13 +252,14 @@ def confirmed_orders_report(
     on: Optional[date] = Query(None, description="One IST day. Ignored when from_date or to_date is set."),
     from_date: Optional[date] = Query(None),
     to_date: Optional[date] = Query(None),
+    hide_catalogs: bool = Query(False),
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_admin),
 ):
     from app.services.reports.confirmed_orders import confirmed_order_report
     if from_date or to_date:
         on = None
-    return confirmed_order_report(db, on=on, from_date=from_date, to_date=to_date)
+    return confirmed_order_report(db, on=on, from_date=from_date, to_date=to_date, hide_catalogs=hide_catalogs)
 
 
 @router.get("/confirmed-orders/pdf")
@@ -266,6 +267,7 @@ def confirmed_orders_pdf(
     on: Optional[date] = Query(None),
     from_date: Optional[date] = Query(None),
     to_date: Optional[date] = Query(None),
+    hide_catalogs: bool = Query(False),
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_admin),
 ):
@@ -274,7 +276,7 @@ def confirmed_orders_pdf(
 
     if from_date or to_date:
         on = None
-    pdf = render_confirmed_orders_pdf(db, on=on, from_date=from_date, to_date=to_date)
+    pdf = render_confirmed_orders_pdf(db, on=on, from_date=from_date, to_date=to_date, hide_catalogs=hide_catalogs)
     label = "all" if on is None and not from_date and not to_date else (on.isoformat() if on else f"{from_date or to_date}-to-{to_date or from_date}")
     return Response(
         content=pdf,

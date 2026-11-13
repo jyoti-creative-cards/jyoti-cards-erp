@@ -28,6 +28,7 @@ class ArLedgerEntryOut(BaseModel):
     reverses_entry_id: Optional[int] = None
     created_by_name: str
     created_at: datetime
+    on_agent: bool = False
 
 
 class ArCustomerSummary(BaseModel):
@@ -62,6 +63,7 @@ class ArCustomerDetail(BaseModel):
     credit_left: Optional[str] = None
     credit_override: bool = False
     credit_unlimited: bool = True
+    commission_agent_name: Optional[str] = None
     entries: List[ArLedgerEntryOut]
 
 

@@ -17,6 +17,8 @@ const CustomerOrders = (() => {
   let detailCustomerId = null;
   let dueCatalogs = [];
   let pickedCatalogs = {};
+  let catalogsComplete = false;
+  let hideCatalogList = false;
 
   let dispatchParcels = [];
   let dispatchAgents = [];
@@ -2152,6 +2154,7 @@ const CustomerOrders = (() => {
     if (billDate) body.bill_date = billDate;
     if (!editBillId && selectedPlacementIds.length) body.placement_ids = selectedPlacementIds.map(Number);
     if (!editBillId && processContext?.commission_agent_id) body.on_commission_agent = !!billOnAgent;
+    if (!editBillId) body.catalogs_complete = !!catalogsComplete;
     return body;
   }
 
@@ -2252,6 +2255,8 @@ const CustomerOrders = (() => {
         ctx.api("/bill-series", {}, 0),
       ]);
       processContext = pctx;
+      catalogsComplete = !!pctx.catalogs_complete;
+      hideCatalogList = !!pctx.catalogs_complete;
       billOnAgent = true;
       freightAgents = agents || [];
       billSeries = (series || []).filter(s => s.is_active && s.current_num < s.end_num);
@@ -2643,12 +2648,44 @@ const CustomerOrders = (() => {
     if (!ln) return;
     if (val === "" || val == null) {
       ln.quantity_to_ship = "";
+      paintBillStockRow(idx);
       renderWizardTotalsBar();
       return;
     }
     let q = Math.max(0, parseInt(val, 10) || 0);
     ln.quantity_to_ship = q;
+    paintBillStockRow(idx);
     renderWizardTotalsBar();
+  }
+
+  function paintBillStockRow(idx) {
+    const input = document.querySelector(`[data-ship-for="${idx}"]`);
+    const ln = processLines[idx];
+    if (!input || !ln) return;
+    const stock = signedStock(ln.quantity_on_hand);
+    const ship = signedStock(ln.quantity_to_ship);
+    const short = ship > stock;
+    const tr = input.closest("tr");
+    if (!tr) return;
+    tr.style.background = short ? "#fef2f2" : "";
+    input.style.borderColor = short ? "#dc2626" : "";
+    input.style.background = short ? "#fff1f2" : "";
+    const name = tr.cells[0];
+    let note = name?.querySelector(".stock-short");
+    if (short) {
+      if (!note && name) {
+        note = document.createElement("div");
+        note.className = "stock-short";
+        note.style.cssText = "color:#b91c1c;font-weight:800;font-size:12px;";
+        name.appendChild(note);
+      }
+      if (note) note.textContent = `Only ${stock} in stock`;
+    } else if (note) note.remove();
+    const stockCell = tr.cells[1];
+    if (stockCell) {
+      stockCell.style.color = short ? "#b91c1c" : "";
+      stockCell.style.fontWeight = short ? "800" : "";
+    }
   }
 
   function setLineDisc(idx, val) {
@@ -2806,7 +2843,7 @@ const CustomerOrders = (() => {
       const ship = signedStock(ln.quantity_to_ship);
       const short = ship > stock;
       return `<tr style="${short ? "background:#fef2f2;" : ""}">
-        <td><strong>${ctx.esc(ln.our_product_id)}</strong>${ln.marking ? ` <span class="marking-flag">${ctx.esc(ln.marking)}</span>` : ""}${ln.direct ? ` <span style="font-size:12px;color:var(--muted);">direct</span>` : ""}${billAddonHtml(ln)}${short ? `<div style="color:#b91c1c;font-weight:800;font-size:12px;">Only ${stock} in stock</div>` : ""}</td>
+        <td><strong>${ctx.esc(ln.our_product_id)}</strong>${ln.marking ? ` <span class="marking-flag">${ctx.esc(ln.marking)}</span>` : ""}${ln.direct ? ` <span style="font-size:12px;color:var(--muted);">direct</span>` : ""}${billAddonHtml(ln)}${short ? `<div class="stock-short" style="color:#b91c1c;font-weight:800;font-size:12px;">Only ${stock} in stock</div>` : ""}</td>
         <td style="${short ? "color:#b91c1c;font-weight:800;" : ""}">${stock}</td>
         <td>${fmtPrice(ln.unit_price)}</td>
         <td><input data-ship-for="${i}" type="number" class="input" style="width:72px;${short ? "border-color:#dc2626;background:#fff1f2;" : ""}" min="0" value="${ln.quantity_to_ship ?? ""}" oninput="CustomerOrders.setShipQty(${i}, this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();CustomerOrders.focusNextBillItem();}" /></td>
@@ -2820,8 +2857,7 @@ const CustomerOrders = (() => {
     }).join("");
     const addProd = `
       <label class="label">Add products</label>
-      <input id="co-bill-edit-search" class="input" placeholder="Item number" oninput="CustomerOrders.setBillEditSearch(this.value)" />
-      <div id="co-bill-edit-matches"></div>`;
+      <input id="co-bill-edit-search" class="input" placeholder="Item number, then Enter" autocomplete="off" oninput="CustomerOrders.setBillEditSearch(this.value)" onkeydown="CustomerOrders.addBillSearchEnter(event)" />`;
     bodyEl.innerHTML = `
       ${partyHeadingHtml(processContext)}
       ${processContext?.commission_agent_name && !editBillId ? `<div style="margin:0 0 12px;padding:12px;background:#fef3c7;border:2px solid #d97706;border-radius:12px;">
@@ -2891,8 +2927,21 @@ const CustomerOrders = (() => {
     return Number.isFinite(n) ? n : 0;
   }
 
+  function setCatalogsComplete(on) {
+    catalogsComplete = !!on;
+    if (!on) hideCatalogList = false;
+    renderProcessWizard();
+  }
+
   function catalogChecksHtml() {
     if (editBillId) return "";
+    const box = `<label style="display:flex;gap:8px;align-items:center;margin-top:8px;font-weight:700;">
+      <input type="checkbox" ${catalogsComplete ? "checked" : ""} onchange="CustomerOrders.setCatalogsComplete(this.checked)" /> All sent
+    </label>
+    <p style="margin:4px 0 0;font-size:12px;color:var(--muted);">Tick this when every catalogue is already with this party. The list stays off on the next bill.</p>`;
+    if (hideCatalogList) {
+      return `<div style="margin:0 0 12px;"><label class="label">Catalogues</label>${box}</div>`;
+    }
     const rows = dueCatalogs || [];
     if (!rows.length) return "";
     return `<div style="margin:0 0 12px;">
@@ -2906,6 +2955,7 @@ const CustomerOrders = (() => {
           ${on ? `<input class="input" style="width:90px;" inputmode="decimal" value="${ctx.esc(pickedCatalogs[c.id] || "0")}" oninput="CustomerOrders.setBillCatalogPrice(${c.id}, this.value)" />` : ""}
         </label>`;
       }).join("")}
+      ${box}
     </div>`;
   }
 
@@ -2948,28 +2998,25 @@ const CustomerOrders = (() => {
     });
     renderWizardTotalsBar();
   }
-  function billEditMatchesHtml() {
-    const q = billEditSearch.trim().toLowerCase();
-    const matches = q ? billEditProducts.slice(0, 8) : [];
-    if (matches.length) {
-      return `<div style="display:flex;flex-direction:column;gap:4px;">${matches.map(p => `
-        <button type="button" class="btn btn-secondary btn-sm" style="justify-content:flex-start;" onclick="CustomerOrders.addBillEditProduct(${p.catalog_product_id})">
-          ${ctx.esc(p.our_product_id)}${p.marking ? ` <span class="marking-flag">${ctx.esc(p.marking)}</span>` : ""}${p.vendor_product_id ? " · " + ctx.esc(p.vendor_product_id) : ""} · ${fmtPrice(p.selling_price)} · stock ${signedStock(p.quantity_on_hand)}
-        </button>`).join("")}</div>`;
-    }
-    if (q) return `<p style="font-size:12px;color:var(--muted);">${billEditSearchPending ? "Searching…" : "No matches"}</p>`;
-    return `<p style="font-size:12px;color:var(--muted);">Type a product number</p>`;
-  }
-  function paintBillEditMatches() {
-    const box = document.getElementById("co-bill-edit-matches");
-    if (box) box.innerHTML = billEditMatchesHtml();
-  }
   function setBillEditSearch(v) {
     billEditSearch = v || "";
     const q = billEditSearch.trim().toLowerCase();
-    billEditProducts = q ? filterEntryItems(q).slice(0, 8) : [];
+    billEditProducts = q ? filterEntryItems(q) : [];
     billEditSearchPending = false;
-    paintBillEditMatches();
+  }
+  function addBillSearchEnter(event) {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    const q = billEditSearch.trim().toLowerCase();
+    if (!q) return;
+    const matches = billEditProducts.length ? billEditProducts : filterEntryItems(q);
+    const exact = matches.filter(p => String(p.our_product_id || "").toLowerCase() === q);
+    const pick = exact[0] || (matches.length === 1 ? matches[0] : null);
+    if (!pick) {
+      ctx.toast(matches.length ? "Type the full item number" : "No item", "error");
+      return;
+    }
+    addBillEditProduct(pick.catalog_product_id);
   }
   function defaultFreightAgentId() {
     const hit = freightAgents.find(a => String(a.name || "").trim().toLowerCase() === "vishnu parcel");
@@ -4287,12 +4334,12 @@ const CustomerOrders = (() => {
     goToDispatch, goCollectPayment, setDispatchStatus, setDispatchAgent, setParcelAgent, setParcelHandler, pickParcel, askDispatchNarration, saveDispatchNarration, markDispatchPicked, setDispatchMode, addDispatchCharge, togglePickedStory, reassignParcel, submitParcelReassign,
     showCreateMenu, showCreateMenuFromCustomer, openCloseBatch,
     processOrder, processFromHub, billNow, billBookedOrder, closeProcessWizard, renderProcessWizard,
-    openEditBill, editLatestBill, promptEditBillNumber, saveBillNumber, enableDiscount, clearDiscount, setBillEditSearch, addBillEditProduct, removeProcessLine, cancelProcessLine,
+    openEditBill, editLatestBill, promptEditBillNumber, saveBillNumber, enableDiscount, clearDiscount, setBillEditSearch, addBillSearchEnter, addBillEditProduct, removeProcessLine, cancelProcessLine,
     openEditFromOpen,
     _detailCustomerId,
     setShipQty, setLineDisc, setLineNetRate, setDiscToggle, setOverallDisc, skipBillAddon,
     setFreightAgent, setFreightHandler, setFreightCharges, setTransportMode, setTransportReceipt, setPackagingCharges,
-    setGst, setGstRate, setBillSeries, setNarration, setEditBillNumber, setBillDate, setAddCharge, addChargeRow, openCatalogPicker, addPickedCatalog, toggleBillCatalog, setBillCatalogPrice, focusNextBillItem,
+    setGst, setGstRate, setBillSeries, setNarration, setEditBillNumber, setBillDate, setAddCharge, addChargeRow, openCatalogPicker, addPickedCatalog, toggleBillCatalog, setBillCatalogPrice, setCatalogsComplete, focusNextBillItem,
     setOfflinePlacedOn,
     setForceCredit, setBillOnAgent, printDayDuplicates,
     processNext, processBack, submitProcess, backFromBillDuplicate, proceedBillDuplicate, toggleBillOrder, toggleAllBillOrders,

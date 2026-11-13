@@ -269,6 +269,7 @@ def ar_statement_pdf(
     day: Optional[date] = Query(None),
     from_date: Optional[date] = Query(None),
     to_date: Optional[date] = Query(None),
+    include_agent: bool = Query(False),
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("ar.read")),
 ):
@@ -279,7 +280,7 @@ def ar_statement_pdf(
     entries = build_ar_ledger(db, customer_id)
     name = statement_pdf_filename(cust.business_name, entries)
     return _pdf_response(
-        render_ar_statement_pdf(db, customer_id, details=details, day=day, from_date=from_date, to_date=to_date),
+        render_ar_statement_pdf(db, customer_id, details=details, day=day, from_date=from_date, to_date=to_date, include_agent=include_agent),
         name,
     )
 

@@ -16,6 +16,8 @@ const CustomerOrders = (() => {
   let detailCustomerId = null;
   let dueCatalogs = [];
   let pickedCatalogs = {};
+  let catalogsComplete = false;
+  let hideCatalogList = false;
 
   let dispatchParcels = [];
   let dispatchAgents = [];

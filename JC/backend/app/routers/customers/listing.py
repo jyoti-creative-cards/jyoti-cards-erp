@@ -357,4 +357,10 @@ def get_customer_ledger(
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="customer not found")
     items = build_customer_ledger(db, customer_id, show_actor=auth.is_admin)
-    return EntityLedgerResponse(items=items, total=len(items))
+    agent_name = None
+    if row.commission_agent_id:
+        from app.models.commission_agent import CommissionAgent
+        agent = db.get(CommissionAgent, row.commission_agent_id)
+        if agent and not agent.deleted_at:
+            agent_name = agent.name
+    return EntityLedgerResponse(items=items, total=len(items), commission_agent_name=agent_name)

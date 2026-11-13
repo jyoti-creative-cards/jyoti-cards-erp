@@ -153,7 +153,10 @@ const OrderDeskLogic = (() => {
       force_credit_override: !!s.forceCreditOverride,
       confirm_duplicate: !!s.confirmDuplicate,
     };
-    if (!s.editBillId) body.bill_series_id = Number(s.billSeriesId);
+    if (!s.editBillId) {
+      body.bill_series_id = Number(s.billSeriesId);
+      body.catalogs_complete = !!s.catalogsComplete;
+    }
     if (discOn && s.useOverallDiscount && String(s.overallDiscount || "").trim()) {
       body.overall_discount_percent = Number(s.overallDiscount);
     }

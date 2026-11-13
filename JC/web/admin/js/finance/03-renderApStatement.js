@@ -400,6 +400,7 @@
       if (!sameParty) {
         arFromDate = "";
         arToDate = "";
+        includeAgentEntries = false;
       }
       currentCustomer = customerId;
       arTab = opts?.tab === "statement" || opts?.tab === "payments" ? opts.tab : "ledger";
@@ -483,7 +484,7 @@
         ${ctx.reviewRow("Credit notes", fmtPrice(arDetail.credit_total || 0))}
       </div>
       <div style="margin-bottom:12px;">${tabs}</div>
-      ${realEntriesBar()}
+      ${realEntriesBar("ar")}
       ${content}`;
   }
 
@@ -511,6 +512,7 @@
     if (arExpandAll) parts.push("details=1");
     if (arFromDate) parts.push("from_date=" + encodeURIComponent(arFromDate));
     if (arToDate) parts.push("to_date=" + encodeURIComponent(arToDate));
+    if (includeAgentEntries) parts.push("include_agent=1");
     return parts.length ? `?${parts.join("&")}` : "";
   }
 

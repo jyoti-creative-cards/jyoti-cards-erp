@@ -275,6 +275,7 @@ def agent_detail(agent_id: int, db: Session = Depends(get_db), auth: AuthContext
             "party_name": party_name or "",
             "bill_number": bill_number or "",
             "bill_id": entry.customer_bill_id,
+            "payment_mode": entry.payment_mode or "",
             "amount": _money(Decimal(str(entry.amount or 0))),
             "balance": _money(balance),
         })

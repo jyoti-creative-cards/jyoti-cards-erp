@@ -49,6 +49,7 @@ const App = (() => {
   let shortcutSearchSeq = 0;
   let customerRealOnly = true;
   let includeAgentEntries = false;
+  let partyAgentName = "";
   let customerAr = null;
   let viewStack = [];
   let currentViewName = null;
@@ -112,6 +113,7 @@ const App = (() => {
     document.getElementById("nav-money")?.classList.toggle("hidden", desk || lookup || taker || !(isAdmin() || can("finance.write") || canRead("ar") || canRead("ap")));
     document.getElementById("nav-quick")?.classList.toggle("hidden", desk || lookup || taker || !(isAdmin() || can("finance.write") || canRead("ar") || canRead("ap")));
     document.getElementById("nav-party-ledger")?.classList.toggle("hidden", desk || lookup || taker || !(isAdmin() || canRead("customers")));
+    document.getElementById("nav-analytics")?.classList.toggle("hidden", desk || lookup || taker || !isAdmin());
     document.getElementById("nav-more")?.classList.toggle("hidden", lookup || taker);
     document.getElementById("more-tile-buying")?.classList.toggle("hidden", !showBuying);
     document.getElementById("more-tile-selling")?.classList.toggle("hidden", !showSelling);
@@ -870,6 +872,14 @@ const App = (() => {
       markMore();
       document.getElementById("view-returns")?.classList.remove("hidden");
       Returns.showHub();
+    } else if (name === "analytics") {
+      if (!isAdmin()) {
+        showView("today", { replace: true });
+        return;
+      }
+      document.getElementById("view-analytics")?.classList.remove("hidden");
+      document.getElementById("nav-analytics")?.classList.add("active");
+      Analytics?.open?.();
     } else if (name === "reports") {
       if (!isAdmin()) {
         showView("today", { replace: true });
@@ -1901,6 +1911,7 @@ const App = (() => {
         api(`/customers/${id}`, {}, 0).catch(() => null),
       ]);
       customerLedger = ledgerRes.items || [];
+      partyAgentName = ledgerRes.commission_agent_name || "";
       customerAr = ar;
       if (sumWrap) {
         if (ar) {
@@ -1972,6 +1983,7 @@ const App = (() => {
   }
 
   function agentLedgerName() {
+    if (partyAgentName) return partyAgentName;
     const hit = (customerLedger || []).find(isAgentLedgerEntry);
     return (hit && hit.details.commission_agent_name) || "";
   }
@@ -2214,19 +2226,13 @@ const App = (() => {
   }
 
   function agentSheetRows(data) {
-    const goods = data.goods || [];
-    const rows = [["Date", "Bill", "Party", "Item", "Qty", "Amount", "Balance"]];
+    const rows = [["Date", "Type", "Party", "Bill", "Detail", "Amount", "Balance"]];
     for (const entry of data.ledger || []) {
-      const lines = entry.bill_number
-        ? goods.filter(g => g.bill_number === entry.bill_number && g.party_name === entry.party_name)
-        : [];
-      if (!lines.length) {
-        rows.push([entry.date || "", entry.bill_number || entry.entry_type || "", entry.party_name || "", entry.description || "", "", entry.amount || "", entry.balance || ""]);
-        continue;
-      }
-      lines.forEach((g, i) => {
-        rows.push([i ? "" : (entry.date || ""), i ? "" : (entry.bill_number || ""), i ? "" : (entry.party_name || ""), g.item || "", g.qty ?? "", g.amount || "", i ? "" : (entry.balance || "")]);
-      });
+      const kind = entry.entry_type === "payment" ? "Payment" : entry.entry_type === "bill" ? "Bill" : entry.entry_type === "opening_balance" ? "Opening" : (entry.entry_type || "");
+      const detail = entry.entry_type === "payment"
+        ? [entry.payment_mode, entry.description].filter(Boolean).join(" · ")
+        : (entry.description || "");
+      rows.push([entry.date || "", kind, entry.party_name || "", entry.bill_number || "", detail, entry.amount || "", entry.balance || ""]);
     }
     return rows;
   }
@@ -2234,10 +2240,12 @@ const App = (() => {
   function renderAgentLedger(data) {
     agentLedgerRows = agentSheetRows(data);
     const body = agentLedgerRows.slice(1).map(cols => `<tr>${cols.map(col => `<td>${esc(col)}</td>`).join("")}</tr>`).join("");
+    const payments = (data.ledger || []).filter(row => row.entry_type === "payment").length;
+    const bills = (data.ledger || []).filter(row => row.entry_type === "bill").length;
     return `<div class="detail-section">
       <h4>${esc(data.name || "Agent")} · due ${esc(data.outstanding || "0")}</h4>
-      <p style="color:var(--muted);font-size:13px;margin:0 0 10px;">${(data.parties || []).length} parties. Print and Excel use this ledger.</p>
-      ${body ? `<div class="card table-wrap"><table class="data"><thead><tr><th>Date</th><th>Bill</th><th>Party</th><th>Item</th><th>Qty</th><th>Amount</th><th>Balance</th></tr></thead><tbody>${body}</tbody></table></div>` : `<p style="color:var(--muted);">No entries yet.</p>`}
+      <p style="color:var(--muted);font-size:13px;margin:0 0 10px;">${bills} bills · ${payments} payments · ${(data.parties || []).length} parties. A payment is money already received. Print and Excel use this ledger.</p>
+      ${body ? `<div class="card table-wrap"><table class="data"><thead><tr><th>Date</th><th>Type</th><th>Party</th><th>Bill</th><th>Detail</th><th>Amount</th><th>Balance</th></tr></thead><tbody>${body}</tbody></table></div>` : `<p style="color:var(--muted);">No entries yet.</p>`}
     </div>`;
   }
 
@@ -2265,6 +2273,7 @@ const App = (() => {
     try {
       const ledgerRes = await api(`/customers/${id}/ledger`, {}, 0);
       customerLedger = ledgerRes.items || [];
+      partyAgentName = ledgerRes.commission_agent_name || "";
       if (page) page.innerHTML = renderCustomerStatement(id);
     } catch (e) {
       if (page) page.innerHTML = `<p style="color:var(--danger);">${esc(e.message)}</p>`;
@@ -2275,6 +2284,7 @@ const App = (() => {
     partyLedgerMode = "agent";
     partyLedgerCustomerId = Number(id);
     includeAgentEntries = false;
+    partyAgentName = "";
     customerLedger = [];
     const picked = document.getElementById("party-ledger-picked");
     if (picked) picked.textContent = row ? `Agent · ${row.business_name || ""}` : "Agent";

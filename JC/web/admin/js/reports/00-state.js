@@ -22,6 +22,7 @@ const Reports = (() => {
   let journalReportKind = "all";
   let includeDcu = false;
   let confirmedOn = today();
+  let hideConfirmedCatalogs = false;
   let vendorOrderRows = [];
   let stockYear = "";
   let stockYears = null;

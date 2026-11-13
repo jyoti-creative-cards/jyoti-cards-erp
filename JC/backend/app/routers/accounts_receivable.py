@@ -68,6 +68,16 @@ def _customer_label(db: Session, customer_id: int) -> str:
     return format_party_label(c.business_name, city_name, c.marker_1, c.marker_2)
 
 
+def _agent_name(db: Session, customer: Customer) -> str | None:
+    if not customer.commission_agent_id:
+        return None
+    from app.models.commission_agent import CommissionAgent
+    agent = db.get(CommissionAgent, customer.commission_agent_id)
+    if not agent or agent.deleted_at:
+        return None
+    return agent.name
+
+
 @router.get("", response_model=List[ArCustomerSummary])
 def list_accounts_receivable(db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("ar.read"))):
     return [ArCustomerSummary(**row) for row in list_ar_customers(db)]
@@ -99,6 +109,7 @@ def get_customer_ar(customer_id: int, db: Session = Depends(get_db), auth: AuthC
         credit_left=credit.get("left"),
         credit_override=bool(credit.get("credit_override")),
         credit_unlimited=bool(credit.get("unlimited")),
+        commission_agent_name=_agent_name(db, customer),
         entries=[ArLedgerEntryOut(**e) for e in entries],
     )
 

@@ -233,6 +233,7 @@ class ProcessBillIn(BaseModel):
     on_commission_agent: Optional[bool] = None
     confirm_duplicate: bool = False
     catalogs: List[BillCatalogIn] = []
+    catalogs_complete: Optional[bool] = None
 
 
 class EditBillLineIn(BaseModel):
@@ -310,6 +311,7 @@ class ProcessContextOut(BaseModel):
     orders: List[BillableOrderOut] = []
     commission_agent_id: Optional[int] = None
     commission_agent_name: Optional[str] = None
+    catalogs_complete: bool = False
 
 
 class OfflineLineIn(BaseModel):

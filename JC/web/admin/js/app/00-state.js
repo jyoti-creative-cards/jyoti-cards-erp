@@ -48,6 +48,7 @@ const App = (() => {
   let shortcutSearchSeq = 0;
   let customerRealOnly = true;
   let includeAgentEntries = false;
+  let partyAgentName = "";
   let customerAr = null;
   let viewStack = [];
   let currentViewName = null;

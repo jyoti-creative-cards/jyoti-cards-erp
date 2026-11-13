@@ -185,10 +185,10 @@ const OrderDesk = (() => {
       const ship = Number(ln.quantity_to_ship);
       const short = Number.isFinite(stock) && Number.isFinite(ship) && ship > stock;
       return `<tr style="${short ? "background:#fef2f2;" : ""}">
-        <td><strong>${esc(ln.our_product_id)}</strong>${ln.marking ? ` <span class="marking-flag">${esc(ln.marking)}</span>` : ""}${ln.direct ? ` <span style="font-size:12px;color:var(--muted);">direct</span>` : ""}${addonHtml(key, ln, "bill")}${short ? `<div style="color:#b91c1c;font-weight:800;font-size:12px;">Only ${stock} in stock</div>` : ""}</td>
+        <td><strong>${esc(ln.our_product_id)}</strong>${ln.marking ? ` <span class="marking-flag">${esc(ln.marking)}</span>` : ""}${ln.direct ? ` <span style="font-size:12px;color:var(--muted);">direct</span>` : ""}${addonHtml(key, ln, "bill")}${short ? `<div class="stock-short" style="color:#b91c1c;font-weight:800;font-size:12px;">Only ${stock} in stock</div>` : ""}</td>
         <td style="${short ? "color:#b91c1c;font-weight:800;" : ""}">${ln.quantity_on_hand ?? "—"}</td>
         <td>${money(ln.unit_price)}</td>
-        <td><input data-field="bqty" data-i="${i}" type="number" class="input" style="width:72px;${short ? "border-color:#dc2626;background:#fff1f2;" : ""}" min="0" value="${ln.quantity_to_ship ?? ""}"></td>
+        <td><input data-field="bqty" data-i="${i}" data-stock="${ln.quantity_on_hand ?? ""}" type="number" class="input" style="width:72px;${short ? "border-color:#dc2626;background:#fff1f2;" : ""}" min="0" value="${ln.quantity_to_ship ?? ""}" oninput="OrderDesk.paintBillStock(this)"></td>
         <td><input data-field="bdisc" data-i="${i}" type="number" class="input" style="width:72px;" min="0" max="100" step="0.1" ${ro} value="${esc(shownDisc)}"></td>
         <td><input data-field="bnet" data-i="${i}" type="number" class="input" style="width:88px;" min="0" step="0.01" ${ro} value="${esc(shownNet || "")}"></td>
         <td>${(f.editBillId || ln.direct) ? `<button type="button" class="btn btn-ghost btn-sm" onclick="OrderDesk.removeBillLine('${key}', ${i})">Remove</button>` : ""}</td>
@@ -218,18 +218,19 @@ const OrderDesk = (() => {
       <label class="label">Receipt number</label>
       <input class="input" data-field="receipt" value="${esc(f.transportReceiptNumber || "")}">`
       : f.transportMode === "self_pickup" ? `<p style="margin:8px 0 0;font-size:13px;color:var(--muted);">Customer picks up.</p>` : "";
-    const hits = findItem(f.search || "").map(p =>
-      `<button type="button" class="btn btn-secondary btn-sm" style="display:block;width:100%;text-align:left;margin-top:4px;" onclick="OrderDesk.addBillItem('${key}', ${p.catalog_product_id})">${esc(p.our_product_id)} · stock ${p.quantity_on_hand ?? 0}</button>`
-    ).join("");
-    const catalogs = (!f.editBillId && (f.dueCatalogs || []).length) ? `<div style="margin:12px 0;">
+    const allSent = `<label style="display:flex;gap:8px;align-items:center;margin-top:8px;font-weight:700;"><input type="checkbox" ${f.catalogsComplete ? "checked" : ""} onchange="OrderDesk.setCatalogsComplete('${key}', this.checked)"> All sent</label>
+      <p style="margin:4px 0 0;font-size:12px;color:var(--muted);">Tick this when every catalogue is already with this party. The list stays off on the next bill.</p>`;
+    const catalogRows = (f.dueCatalogs || []).map(c => {
+      const on = Object.prototype.hasOwnProperty.call(f.pickedCatalogs || {}, String(c.id));
+      const price = on ? f.pickedCatalogs[String(c.id)] : "0";
+      const again = Number(c.received) > 0 ? ` · already ${c.received}` : "";
+      return `<label style="display:flex;gap:8px;align-items:center;margin-top:6px;"><input type="checkbox" ${on ? "checked" : ""} onchange="OrderDesk.toggleCatalog('${key}', ${c.id}, this.checked)"> ${esc(c.name)} · ${c.copies_left} left${again} <input class="input" style="width:90px;" data-cat="${c.id}" value="${esc(price)}" ${on ? "" : "disabled"}></label>`;
+    }).join("");
+    const catalogs = f.editBillId ? "" : `<div style="margin:12px 0;">
       <label class="label">Add a catalogue</label>
-      ${(f.dueCatalogs || []).map(c => {
-        const on = Object.prototype.hasOwnProperty.call(f.pickedCatalogs || {}, String(c.id));
-        const price = on ? f.pickedCatalogs[String(c.id)] : "0";
-        const again = Number(c.received) > 0 ? ` · already ${c.received}` : "";
-        return `<label style="display:flex;gap:8px;align-items:center;margin-top:6px;"><input type="checkbox" ${on ? "checked" : ""} onchange="OrderDesk.toggleCatalog('${key}', ${c.id}, this.checked)"> ${esc(c.name)} · ${c.copies_left} left${again} <input class="input" style="width:90px;" data-cat="${c.id}" value="${esc(price)}" ${on ? "" : "disabled"}></label>`;
-      }).join("")}
-    </div>` : "";
+      ${f.hideCatalogList ? "" : catalogRows}
+      ${allSent}
+    </div>`;
     const charges = (f.additionalCharges || []).map((c, i) => `
       <div style="display:flex;gap:8px;margin-bottom:6px;">
         <input class="input" data-field="cname" data-i="${i}" placeholder="Name" value="${esc(c.name)}">
@@ -255,8 +256,7 @@ const OrderDesk = (() => {
       <table class="data"><thead><tr><th>Item</th><th>Stock</th><th>Rate</th><th>Qty</th><th>Disc %</th><th>Net</th><th></th></tr></thead>
       <tbody>${lines || `<tr><td colspan="7">No items. Add a product below.</td></tr>`}</tbody></table>
       <label class="label">Add products</label>
-      <input class="input" data-field="bsearch" value="${esc(f.search || "")}" placeholder="Item number" oninput="OrderDesk.setBillSearch('${key}', this.value)">
-      <div>${hits}</div>
+      <input class="input" data-field="bsearch" value="${esc(f.search || "")}" placeholder="Item number, then Enter" autocomplete="off" oninput="OrderDesk.setBillSearch('${key}', this.value)" onkeydown="OrderDesk.addBillSearchEnter('${key}', event)">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;">
         <div>
           <label class="label">Send by</label>
@@ -507,7 +507,55 @@ const OrderDesk = (() => {
   }
 
   function setConfirmSearch(key, v) { if (forms[key]) { pull(key); forms[key].search = v; render(); } }
-  function setBillSearch(key, v) { if (forms[key]) { pull(key); forms[key].search = v; render(); } }
+  function setBillSearch(key, v) { if (forms[key]) forms[key].search = v; }
+  function addBillSearchEnter(key, event) {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    pull(key);
+    const f = forms[key];
+    if (!f) return;
+    const q = String(f.search || "").trim().toLowerCase();
+    if (!q) return;
+    const matches = findItem(q);
+    const exact = matches.filter(p => String(p.our_product_id || "").toLowerCase() === q);
+    const pick = exact[0] || (matches.length === 1 ? matches[0] : null);
+    if (!pick) return toast(matches.length ? "Type the full item number" : "No item", "error");
+    addBillItem(key, pick.catalog_product_id);
+  }
+  function paintBillStock(input) {
+    const stock = Number(input.dataset.stock);
+    const qty = Number(input.value);
+    const short = Number.isFinite(stock) && Number.isFinite(qty) && String(input.value) !== "" && qty > stock;
+    const tr = input.closest("tr");
+    if (!tr) return;
+    tr.style.background = short ? "#fef2f2" : "";
+    input.style.borderColor = short ? "#dc2626" : "";
+    input.style.background = short ? "#fff1f2" : "";
+    const name = tr.cells[0];
+    let note = name?.querySelector(".stock-short");
+    if (short) {
+      if (!note && name) {
+        note = document.createElement("div");
+        note.className = "stock-short";
+        note.style.cssText = "color:#b91c1c;font-weight:800;font-size:12px;";
+        name.appendChild(note);
+      }
+      if (note) note.textContent = `Only ${stock} in stock`;
+    } else if (note) note.remove();
+    const stockCell = tr.cells[1];
+    if (stockCell) {
+      stockCell.style.color = short ? "#b91c1c" : "";
+      stockCell.style.fontWeight = short ? "800" : "";
+    }
+  }
+  function setCatalogsComplete(key, on) {
+    pull(key);
+    const f = forms[key];
+    if (!f) return;
+    f.catalogsComplete = !!on;
+    if (!on) f.hideCatalogList = false;
+    render();
+  }
   function setMode(key, v) { pull(key); if (forms[key]) forms[key].transportMode = v; render(); }
   function setTransportBit(key) { pull(key); render(); }
   function setHandler(key, name) { pull(key); if (forms[key]) forms[key].freightHandler = name; render(); }
@@ -701,6 +749,8 @@ const OrderDesk = (() => {
       billDate: today(),
       pickedCatalogs: {},
       dueCatalogs: [],
+      catalogsComplete: !!pctx.catalogs_complete,
+      hideCatalogList: !!pctx.catalogs_complete,
       commissionAgentId: pctx.commission_agent_id || null,
       commissionAgentName: pctx.commission_agent_name || "",
       billOnAgent: true,
@@ -1011,7 +1061,7 @@ const OrderDesk = (() => {
 
   return {
     open, setFilter, setFrom, setTo, toggle, selectAll, newOrder, act, pull,
-    setConfirmSearch, setBillSearch, setMode, setTransportBit, setHandler, setDisc, setGst, setBillAgent,
+    setConfirmSearch, setBillSearch, addBillSearchEnter, paintBillStock, setCatalogsComplete, setMode, setTransportBit, setHandler, setDisc, setGst, setBillAgent,
     addCharge, toggleCatalog, togglePlacement, toggleConfirmAddon, toggleBillAddon,
     removeConfirmLine, removeBillLine, addConfirmItem, addBillItem,
   };

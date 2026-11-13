@@ -66,6 +66,29 @@ def test_confirmed_report_skips_orders_already_billed():
     assert data["rows"][0]["qty"] == 5
     assert data["rows"][0]["marking"] == "Rush"
     assert data["orders"][0]["confirmed_on"] == "2026-08-01"
+
+    album_party = Customer(business_name="Album Party", phone="9998887774", password_hash="x")
+    album = CatalogProduct(
+        our_product_id="2027 ALBUM NO. 03", vendor_id=vendor.id, vendor_product_id="ALB",
+        buying_price=Decimal("0"), selling_price=Decimal("0"),
+    )
+    db.add_all([album_party, album])
+    db.flush()
+    album_order = CustomerOrder(customer_id=album_party.id, bucket="open", status="open", is_open=True)
+    db.add(album_order)
+    db.flush()
+    album_place = CustomerOrderPlacement(customer_order_id=album_order.id, status="open", placed_at=WHEN)
+    db.add(album_place)
+    db.flush()
+    db.add(CustomerOpenLine(
+        customer_id=album_party.id, catalog_product_id=album.id, our_product_id="2027 ALBUM NO. 03",
+        quantity_open=1, unit_price=Decimal("0"), status="open",
+    ))
+    db.commit()
+    hidden = confirmed_order_report(db, hide_catalogs=True)
+    assert [row["party"] for row in hidden["orders"]] == ["Still"]
+    shown = confirmed_order_report(db, hide_catalogs=False)
+    assert "Album Party" in [row["party"] for row in shown["orders"]]
     db.close()
 
 

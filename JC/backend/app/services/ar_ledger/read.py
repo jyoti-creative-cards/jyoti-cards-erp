@@ -115,6 +115,7 @@ def build_ar_ledger(db: Session, customer_id: int) -> list[dict]:
                 "reverses_entry_id": None,
                 "created_by_name": bill.created_by_name or "",
                 "created_at": bill.created_at,
+                "on_agent": True,
                 "memo": True,
             }
         )

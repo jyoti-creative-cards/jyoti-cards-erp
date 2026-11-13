@@ -31,6 +31,8 @@ class CatalogProduct(Base):
     marking: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     buying_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 2), nullable=True)
     selling_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 2), nullable=True)
+    # Blank means 20. Closing stock below this percent of all-time inward is an alert.
+    stock_alert_percent: Mapped[Optional[Decimal]] = mapped_column(Numeric(6, 2), nullable=True)
     image_keys: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=sql_true())
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

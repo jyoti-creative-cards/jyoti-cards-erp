@@ -31,6 +31,8 @@ class Customer(Base):
     commission_agent_id: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("jc_commission_agents.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # True once billing is told every catalogue is already with this party.
+    catalogs_complete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     gst_number: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     credit_limit: Mapped[Optional[Decimal]] = mapped_column(Numeric(14, 4), nullable=True)
     credit_override: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")

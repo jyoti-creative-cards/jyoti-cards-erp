@@ -128,6 +128,7 @@ def get_process_context(
         orders=[BillableOrderOut(**row) for row in ctx.get("orders") or []],
         commission_agent_id=agent.id if agent else None,
         commission_agent_name=agent.name if agent else None,
+        catalogs_complete=bool(customer.catalogs_complete),
     )
 
 @router.post("/customer/{customer_id}/process/preview")
@@ -255,6 +256,8 @@ def submit_process_bill(
         on_commission_agent=body.on_commission_agent,
         confirm_duplicate=bool(body.confirm_duplicate),
     )
+    if body.catalogs_complete is not None:
+        customer.catalogs_complete = bool(body.catalogs_complete)
     save_bill_catalogs(
         db,
         bill_id=bill.id,

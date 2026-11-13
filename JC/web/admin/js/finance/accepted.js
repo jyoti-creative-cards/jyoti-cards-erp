@@ -33,6 +33,7 @@ const Finance = (() => {
   let hubSearch = "";
   let showSettled = false;
   let realEntriesOnly = true;
+  let includeAgentEntries = false;
   let expenseFilters = { from_date: "", to_date: "", category: "" };
   let journals = [];
   let journalHits = { from: [], to: [], line: [] };
@@ -1544,6 +1545,7 @@ const Finance = (() => {
       if (!sameParty) {
         arFromDate = "";
         arToDate = "";
+        includeAgentEntries = false;
       }
       currentCustomer = customerId;
       arTab = opts?.tab === "statement" || opts?.tab === "payments" ? opts.tab : "ledger";
@@ -1627,7 +1629,7 @@ const Finance = (() => {
         ${ctx.reviewRow("Credit notes", fmtPrice(arDetail.credit_total || 0))}
       </div>
       <div style="margin-bottom:12px;">${tabs}</div>
-      ${realEntriesBar()}
+      ${realEntriesBar("ar")}
       ${content}`;
   }
 
@@ -1655,6 +1657,7 @@ const Finance = (() => {
     if (arExpandAll) parts.push("details=1");
     if (arFromDate) parts.push("from_date=" + encodeURIComponent(arFromDate));
     if (arToDate) parts.push("to_date=" + encodeURIComponent(arToDate));
+    if (includeAgentEntries) parts.push("include_agent=1");
     return parts.length ? `?${parts.join("&")}` : "";
   }
 
@@ -1795,11 +1798,23 @@ const Finance = (() => {
     renderApDetail?.();
   }
 
-  function realEntriesBar() {
+  function setIncludeAgentEntries(on) {
+    includeAgentEntries = !!on;
+    renderArDetail?.();
+  }
+
+  function realEntriesBar(kind) {
+    const agent = kind === "ar" ? (arDetail?.commission_agent_name || "") : "";
+    const agentBox = agent
+      ? `<label style="display:inline-flex;gap:6px;align-items:center;margin:0 0 12px 16px;font-size:13px;">
+      <input type="checkbox" ${includeAgentEntries ? "checked" : ""} onchange="Finance.setIncludeAgentEntries(this.checked)" />
+      Include ${ctx.esc(agent)} entries
+    </label>`
+      : "";
     return `<label style="display:inline-flex;gap:6px;align-items:center;margin:0 0 12px;font-size:13px;">
       <input type="checkbox" ${realEntriesOnly ? "checked" : ""} onchange="Finance.setRealEntriesOnly(this.checked)" />
       Real entries only
-    </label>`;
+    </label>${agentBox}`;
   }
 
   function moneyEntryIsVoid(e) {
@@ -1814,7 +1829,8 @@ const Finance = (() => {
   }
 
   function visibleMoneyEntries(entries) {
-    const list = entries || [];
+    let list = entries || [];
+    if (!includeAgentEntries) list = list.filter(e => !e.on_agent);
     if (!realEntriesOnly) return list;
     const reversed = new Set();
     for (const e of list) {
@@ -2442,16 +2458,16 @@ const Finance = (() => {
     return [...cats].sort((a, b) => a.localeCompare(b));
   }
 
-  function expenseSubOptions(selectedId) {
-    const rows = [];
-    for (const head of expenseHeadCache) {
-      rows.push({ id: `h:${head.id}`, name: head.name });
-      for (const sub of head.subheads || []) {
-        rows.push({ id: String(sub.id), name: `${head.name} / ${sub.name}` });
-      }
-    }
-    rows.sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
-    return `<option value="">— Select head —</option>` + rows.map(s =>
+  function expenseHeadOptions(selectedId) {
+    return `<option value="">— Select category —</option>` + expenseHeadCache.map(h =>
+      `<option value="${h.id}" ${String(selectedId) === String(h.id) ? "selected" : ""}>${ctx.esc(h.name)}</option>`
+    ).join("");
+  }
+
+  function expenseSubheadOptions(headId, selectedId) {
+    const head = expenseHeadCache.find(h => String(h.id) === String(headId));
+    const subs = head?.subheads || [];
+    return `<option value="">— Subcategory —</option>` + subs.map(s =>
       `<option value="${s.id}" ${String(selectedId) === String(s.id) ? "selected" : ""}>${ctx.esc(s.name)}</option>`
     ).join("");
   }
@@ -2493,18 +2509,21 @@ const Finance = (() => {
         if ((s.category || "").toLowerCase() === cat) { headId = h.id; subId = String(s.id); }
       });
     });
-    const picked = subId || headId;
+    const pickedHead = String(headId).startsWith("h:") ? String(headId).slice(2) : (headId || "");
     const day = existing ? (docDateIso(existing.display_date || existing.expense_date) || localToday()) : localToday();
-    const note = existing && !picked
-      ? `<p style="margin:0 0 12px;font-size:12px;color:var(--muted);">Filed under ${ctx.esc(existing.category || "—")}. Pick a sub-head to move it. Heads are set under Reports → Ledgers → Expense.</p>`
+    const note = existing && !pickedHead && !subId
+      ? `<p style="margin:0 0 12px;font-size:12px;color:var(--muted);">Filed under ${ctx.esc(existing.category || "—")}. Pick a category to move it.</p>`
       : "";
     document.getElementById("expense-body").innerHTML = `
       ${note}
       <label class="label">Date</label>
       <input type="date" class="input" id="exp-date" value="${ctx.esc(day)}" style="margin-bottom:12px;" />
-      <label class="label">Head</label>
-      <select class="input" id="exp-sub" style="margin-bottom:12px;">${expenseSubOptions(picked)}</select>
-      <p style="margin:-6px 0 12px;font-size:12px;color:var(--muted);">New heads: More → Reports → Ledgers → Expense → New head.</p>
+      <label class="label">Category</label>
+      <select class="input" id="exp-head" style="margin-bottom:12px;" onchange="Finance.onExpenseHeadChange()">${expenseHeadOptions(pickedHead)}</select>
+      <label class="label">Subcategory</label>
+      <select class="input" id="exp-sub" style="margin-bottom:8px;">${expenseSubheadOptions(pickedHead, subId)}</select>
+      <button type="button" class="btn btn-secondary btn-sm" style="margin-bottom:12px;" onclick="Finance.addExpenseSubhead()">Add subcategory</button>
+      <p style="margin:-6px 0 12px;font-size:12px;color:var(--muted);">Pick the category, then a subcategory inside it. New categories: More → Reports → Ledgers → Expense → New head.</p>
       <label class="label">Paid from</label>
       <select class="input" id="exp-source" style="margin-bottom:8px;">${sourceOptions(existing?.source_id || "")}</select>
       ${sourceManager()}
@@ -2564,8 +2583,9 @@ const Finance = (() => {
   }
 
   function onExpenseHeadChange() {
+    const headId = document.getElementById("exp-head")?.value || "";
     const sub = document.getElementById("exp-sub");
-    if (sub) sub.innerHTML = expenseSubOptions("");
+    if (sub) sub.innerHTML = expenseSubheadOptions(headId, "");
   }
 
   async function addExpenseHead() {
@@ -2614,6 +2634,8 @@ const Finance = (() => {
         reference: document.getElementById("exp-ref")?.value || "",
         source_id: document.getElementById("exp-source")?.value || "",
         category: "",
+        head_id: document.getElementById("exp-head")?.value || "",
+        subhead_id: document.getElementById("exp-sub")?.value || "",
       },
     };
   }
@@ -2629,21 +2651,29 @@ const Finance = (() => {
     if (ref) ref.value = keep.existing.reference || "";
     const source = document.getElementById("exp-source");
     if (source && keep.existing.source_id) source.value = String(keep.existing.source_id);
+    const head = document.getElementById("exp-head");
+    if (head && keep.existing.head_id) {
+      head.value = String(keep.existing.head_id);
+      onExpenseHeadChange();
+    }
+    const sub = document.getElementById("exp-sub");
+    if (sub && keep.existing.subhead_id) sub.value = String(keep.existing.subhead_id);
   }
 
   function expensePayload() {
     const expense_date = document.getElementById("exp-date")?.value;
-    const raw = document.getElementById("exp-sub")?.value || "";
+    const headId = document.getElementById("exp-head")?.value || "";
+    const subId = document.getElementById("exp-sub")?.value || "";
     const description = (document.getElementById("exp-desc")?.value || "").trim() || null;
     const amount = parseFloat(document.getElementById("exp-amount")?.value || "0");
     const reference = (document.getElementById("exp-ref")?.value || "").trim() || null;
     const source_id = Number(document.getElementById("exp-source")?.value || 0);
     if (!expense_date || !amount || amount <= 0) { ctx.toast("Enter date and amount", "error"); return null; }
-    if (!raw) { ctx.toast("Pick a head", "error"); return null; }
+    if (!headId) { ctx.toast("Pick a category", "error"); return null; }
     if (!source_id) { ctx.toast("Pick where the money came from", "error"); return null; }
     const payload = { expense_date, description, amount, reference, source_id };
-    if (String(raw).startsWith("h:")) payload.head_id = Number(String(raw).slice(2));
-    else payload.subhead_id = Number(raw);
+    if (subId) payload.subhead_id = Number(subId);
+    else payload.head_id = Number(headId);
     return payload;
   }
 
@@ -4030,7 +4060,7 @@ const Finance = (() => {
     setApTab, toggleBill, addDebitNote, editDebitNote, voidDebitNote,
     openCustomerAr, refreshOpenAr, setArTab, toggleArDetails, openArSettle, closeArSettle, submitArSettle, onArSettleAmount,
     toggleCollectDateLock, onCollectDateInput,
-    undoArPayment, undoApPayment, setRealEntriesOnly, viewCustomerBill,
+    undoArPayment, undoApPayment, setRealEntriesOnly, setIncludeAgentEntries, viewCustomerBill,
     shareArStatement, setArFrom, setArTo, printCustomerLedger, downloadCustomerLedger, excelCustomerLedger, shareApStatement,
     setArOpeningBalance, setApOpeningBalance, saveArOpeningBalance, saveApOpeningBalance,
     openExpenseForm, onExpenseHeadChange, addExpenseHead, addExpenseSubhead, addExpenseSource, renameExpenseSource, deleteExpenseSource, editExpense, saveExpenseEdit, closeExpenseForm, submitExpense, deleteExpense, onExpenseFilterChange, clearExpenseFilters,

@@ -40,11 +40,23 @@
     renderApDetail?.();
   }
 
-  function realEntriesBar() {
+  function setIncludeAgentEntries(on) {
+    includeAgentEntries = !!on;
+    renderArDetail?.();
+  }
+
+  function realEntriesBar(kind) {
+    const agent = kind === "ar" ? (arDetail?.commission_agent_name || "") : "";
+    const agentBox = agent
+      ? `<label style="display:inline-flex;gap:6px;align-items:center;margin:0 0 12px 16px;font-size:13px;">
+      <input type="checkbox" ${includeAgentEntries ? "checked" : ""} onchange="Finance.setIncludeAgentEntries(this.checked)" />
+      Include ${ctx.esc(agent)} entries
+    </label>`
+      : "";
     return `<label style="display:inline-flex;gap:6px;align-items:center;margin:0 0 12px;font-size:13px;">
       <input type="checkbox" ${realEntriesOnly ? "checked" : ""} onchange="Finance.setRealEntriesOnly(this.checked)" />
       Real entries only
-    </label>`;
+    </label>${agentBox}`;
   }
 
   function moneyEntryIsVoid(e) {
@@ -59,7 +71,8 @@
   }
 
   function visibleMoneyEntries(entries) {
-    const list = entries || [];
+    let list = entries || [];
+    if (!includeAgentEntries) list = list.filter(e => !e.on_agent);
     if (!realEntriesOnly) return list;
     const reversed = new Set();
     for (const e of list) {

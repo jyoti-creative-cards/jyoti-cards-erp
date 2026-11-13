@@ -14,12 +14,22 @@ from reportlab.lib.units import mm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from sqlalchemy.orm import Session
 
+from app.models.catalog_product import CatalogProduct
 from app.models.city import City
 from app.models.customer import Customer
 from app.models.customer_order import CustomerOpenLine, CustomerOrder, CustomerOrderPlacement
 from app.services.biz_date import ist_day_bounds_utc
 from app.services.customer_selling.marking import single_mark
+from app.services.our_catalogs.core import catalog_name_for_bill_sku
 from app.services.pdf_documents import add_page_number
+
+
+def is_catalogue_item(sku: str, category: str | None = None) -> bool:
+    """A catalogue handed to a party, not a card from inside an album."""
+    if catalog_name_for_bill_sku(sku or ""):
+        return True
+    text = (category or "").strip().upper()
+    return text in {"CATELOGUE", "CATALOGUE", "CATALOG"}
 
 
 def _report_bounds(on: Optional[date], from_date: Optional[date], to_date: Optional[date]):
@@ -49,6 +59,7 @@ def confirmed_order_report(
     on: Optional[date] = None,
     from_date: Optional[date] = None,
     to_date: Optional[date] = None,
+    hide_catalogs: bool = False,
 ) -> dict:
     """Still-confirmed orders only. A bill that already took the qty is not listed."""
     start, end = _report_bounds(on, from_date, to_date)
@@ -79,6 +90,11 @@ def confirmed_order_report(
             bucket["touched"] = line.updated_at
         bucket["lines"].append(line)
 
+    product_ids = {int(line.catalog_product_id) for bucket in by_customer.values() for line in bucket["lines"]}
+    categories = {
+        int(pid): cat or ""
+        for pid, cat in db.query(CatalogProduct.id, CatalogProduct.category).filter(CatalogProduct.id.in_(product_ids)).all()
+    } if product_ids else {}
     customer_ids = list(by_customer)
     latest: dict[int, tuple] = {}
     placed_rows = (
@@ -123,13 +139,17 @@ def confirmed_order_report(
             placement_id = placed[1]
             marking = single_mark(placed[2], placed[3]) or ""
         item_lines = []
+        flat_rows = []
+        has_catalogue = False
         for line in bucket["lines"]:
             qty = int(line.quantity_open or 0)
             if qty <= 0:
                 continue
+            if is_catalogue_item(line.our_product_id, categories.get(int(line.catalog_product_id))):
+                has_catalogue = True
             rate = format(line.unit_price or 0, "f")
             item_lines.append({"item_no": line.our_product_id, "qty": qty, "rate": rate})
-            flat.append({
+            flat_rows.append({
                 "party_number": customer.party_number,
                 "party": customer.business_name,
                 "city": bucket["city"],
@@ -140,8 +160,11 @@ def confirmed_order_report(
                 "qty": qty,
                 "rate": rate,
             })
+        if hide_catalogs and has_catalogue:
+            continue
         if not item_lines:
             continue
+        flat.extend(flat_rows)
         orders.append({
             "placement_id": placement_id,
             "customer_id": cid,
@@ -162,8 +185,9 @@ def render_confirmed_orders_pdf(
     on: Optional[date] = None,
     from_date: Optional[date] = None,
     to_date: Optional[date] = None,
+    hide_catalogs: bool = False,
 ) -> bytes:
-    data = confirmed_order_report(db, on=on, from_date=from_date, to_date=to_date)
+    data = confirmed_order_report(db, on=on, from_date=from_date, to_date=to_date, hide_catalogs=hide_catalogs)
     buf = BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=A4, leftMargin=12 * mm, rightMargin=12 * mm, topMargin=12 * mm, bottomMargin=14 * mm

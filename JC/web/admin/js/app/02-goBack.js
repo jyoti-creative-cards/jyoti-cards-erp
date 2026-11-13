@@ -149,6 +149,14 @@
       markMore();
       document.getElementById("view-returns")?.classList.remove("hidden");
       Returns.showHub();
+    } else if (name === "analytics") {
+      if (!isAdmin()) {
+        showView("today", { replace: true });
+        return;
+      }
+      document.getElementById("view-analytics")?.classList.remove("hidden");
+      document.getElementById("nav-analytics")?.classList.add("active");
+      Analytics?.open?.();
     } else if (name === "reports") {
       if (!isAdmin()) {
         showView("today", { replace: true });

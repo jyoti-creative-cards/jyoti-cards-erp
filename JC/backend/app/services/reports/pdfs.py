@@ -90,10 +90,13 @@ def render_ar_statement_pdf(
     day: Optional[date] = None,
     from_date: Optional[date] = None,
     to_date: Optional[date] = None,
+    include_agent: bool = False,
 ) -> bytes:
     doc, buf, styles = _doc()
     totals = customer_ar_totals(db, customer_id)
     entries = build_ar_ledger(db, customer_id)
+    if not include_agent:
+        entries = [e for e in entries if not e.get("on_agent")]
     start = from_date if from_date is not None else day
     end = to_date if to_date is not None else day
     if start is not None or end is not None:

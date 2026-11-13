@@ -33,6 +33,7 @@ class EntityLedgerEntry(BaseModel):
 class EntityLedgerResponse(BaseModel):
     items: List[EntityLedgerEntry]
     total: int
+    commission_agent_name: Optional[str] = None
 
 
 class StockLedgerDetail(BaseModel):

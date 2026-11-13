@@ -934,7 +934,14 @@
       if (fromDate) params.set("from_date", fromDate);
       if (toDate) params.set("to_date", toDate);
     }
+    if (hideConfirmedCatalogs) params.set("hide_catalogs", "true");
     return params.toString();
+  }
+
+  function setHideConfirmedCatalogs(on) {
+    hideConfirmedCatalogs = !!on;
+    const body = document.getElementById("reports-body");
+    if (body) renderConfirmedOrders(body);
   }
 
   async function downloadConfirmedPdf() {
@@ -978,6 +985,10 @@
     body.innerHTML = `
       <h2 class="report-print-title" style="position:absolute;left:-9999px;">Confirmed orders · ${ctx.esc(period)}</h2>
       <div style="display:flex;gap:12px;align-items:end;flex-wrap:wrap;margin:0 0 12px;">
+        <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;">
+          <input type="checkbox" ${hideConfirmedCatalogs ? "checked" : ""} onchange="Reports.setHideConfirmedCatalogs(this.checked)" />
+          Hide parties with a catalogue in confirmed
+        </label>
         <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.downloadConfirmedPdf()">PDF</button>
         <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.printCurrent()">Print</button>
         <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.exportCurrentExcel()">Excel</button>

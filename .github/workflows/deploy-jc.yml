@@ -75,14 +75,14 @@ jobs:
       - name: Deploy JC/backend when RAILWAY_TOKEN is set
         working-directory: JC/backend
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_TOKEN: ${{ secrets.JC_RAILWAY_TOKEN }}
           RAILWAY_PROJECT_ID: 67686327-50f6-4b28-be4e-72c4b63a399f
           RAILWAY_ENVIRONMENT_ID: b4c642c3-9eb1-4ff5-99ee-37a4e4f6cac5
           RAILWAY_SERVICE_ID: 9325331a-8d7f-437f-bbee-f566bdb00fbd
         run: |
           set -euo pipefail
           if [ -z "${RAILWAY_TOKEN}" ]; then
-            echo "RAILWAY_TOKEN is not on this repo. The jc-api sync still starts the Railway build."
+            echo "JC_RAILWAY_TOKEN is not set. The jc-api sync still starts the Railway build."
             exit 0
           fi
           npm install -g @railway/cli

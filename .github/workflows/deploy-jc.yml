@@ -1,5 +1,8 @@
-# Sync JC/ → GitHub deploy repos. Each repo's own Actions deploy to Railway/Vercel.
-name: JC → Deploy Repos
+# Push to main updates the live JC API (Railway) and admin (Vercel).
+# The sync step is what those hosts watch. The direct steps run when the
+# matching tokens are stored on this repo. The last step waits until the
+# public URLs are actually serving this push.
+name: Deploy JC
 
 on:
   push:
@@ -10,8 +13,13 @@ on:
       - ".github/workflows/deploy-jc.yml"
   workflow_dispatch:
 
+concurrency:
+  group: deploy-jc
+  cancel-in-progress: false
+
 jobs:
   sync:
+    name: Sync ${{ matrix.name }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -32,13 +40,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Sync ${{ matrix.name }}
+      - name: Push ${{ matrix.name }} so Railway or Vercel builds it
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: |
           set -euo pipefail
+          if [ -z "${GH_PAT}" ]; then
+            echo "GH_PAT is missing. Add a GitHub token that can push jyoti-creative-cards/${{ matrix.name }}."
+            exit 1
+          fi
           git clone "https://oauth2:${GH_PAT}@github.com/jyoti-creative-cards/${{ matrix.name }}.git" /tmp/target
-          # Preserve target .github workflows
           rsync -a --delete ${{ matrix.excludes }} \
             --exclude='.git' \
             --exclude='.github' \
@@ -46,13 +57,89 @@ jobs:
             --exclude='.DS_Store' \
             "${{ matrix.src }}" /tmp/target/
           cd /tmp/target
-          # Must match Vercel team owner email or deploy emails/fails membership check
           git config user.email "sourabh18agrawal@gmail.com"
           git config user.name "JC Deploy"
           git add -A
           if git diff --cached --quiet; then
             echo "No changes for ${{ matrix.name }}"
           else
-            git commit -m "Deploy sync from monorepo ${{ github.sha }}"
+            git commit -m "Deploy ${{ github.sha }}"
             git push "https://oauth2:${GH_PAT}@github.com/jyoti-creative-cards/${{ matrix.name }}.git" HEAD:main
           fi
+
+  railway:
+    name: Railway API
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy JC/backend when RAILWAY_TOKEN is set
+        working-directory: JC/backend
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: 67686327-50f6-4b28-be4e-72c4b63a399f
+          RAILWAY_ENVIRONMENT_ID: b4c642c3-9eb1-4ff5-99ee-37a4e4f6cac5
+          RAILWAY_SERVICE_ID: 9325331a-8d7f-437f-bbee-f566bdb00fbd
+        run: |
+          set -euo pipefail
+          if [ -z "${RAILWAY_TOKEN}" ]; then
+            echo "RAILWAY_TOKEN is not on this repo. The jc-api sync still starts the Railway build."
+            exit 0
+          fi
+          npm install -g @railway/cli
+          railway up --detach --ci
+
+  vercel:
+    name: Vercel admin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Deploy JC/web/admin when the admin project id is set
+        working-directory: JC/web/admin
+        env:
+          VERCEL_TOKEN: ${{ secrets.JC_VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.JC_VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.JC_ADMIN_VERCEL_PROJECT_ID }}
+          CI: "1"
+        run: |
+          set -euo pipefail
+          if [ -z "${VERCEL_TOKEN}" ] || [ -z "${VERCEL_ORG_ID}" ] || [ -z "${VERCEL_PROJECT_ID}" ]; then
+            echo "JC admin Vercel secrets are not set. The jc-admin sync still starts the Vercel build."
+            echo "Set JC_VERCEL_TOKEN, JC_VERCEL_ORG_ID, and JC_ADMIN_VERCEL_PROJECT_ID to deploy from this repo."
+            exit 0
+          fi
+          npm install -g vercel@latest
+          vercel deploy --prod --yes --token="$VERCEL_TOKEN"
+
+  verify:
+    name: Confirm the live site
+    needs: [sync, railway, vercel]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Wait until API and admin match this push
+        run: |
+          set -euo pipefail
+          mapfile -t keys < <(grep -oE '(app|customer-orders|finance|sticker|order-desk)\.js\?v=ui[0-9]+' JC/web/admin/index.html)
+          echo "Admin files this push serves:"
+          printf '  %s\n' "${keys[@]}"
+          for i in $(seq 1 24); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" https://jc-api-production.up.railway.app/health || true)
+            html=$(curl -fsS https://jc-admin-two.vercel.app/ || true)
+            missing=0
+            for key in "${keys[@]}"; do
+              if ! printf '%s' "$html" | grep -q "$key"; then
+                missing=1
+              fi
+            done
+            echo "try $i health=$code admin_missing=$missing"
+            if [ "$code" = "200" ] && [ "$missing" = "0" ]; then
+              echo "Live."
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "Production did not match this push in time."
+          exit 1

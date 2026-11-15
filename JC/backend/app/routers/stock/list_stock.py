@@ -247,6 +247,70 @@ def list_stock(
     return out
 
 
+_DESK_RATE_NAMES = {"jeevan", "sudhir"}
+
+
+def _desk_sees_rates(auth: AuthContext) -> bool:
+    return (getattr(auth, "actor_name", None) or "").strip().lower() in _DESK_RATE_NAMES
+
+
+def _money_text(value) -> Optional[str]:
+    if value is None:
+        return None
+    return format(Decimal(str(value)), "f")
+
+
+def _first_image_url(product: CatalogProduct) -> Optional[str]:
+    keys = [key for key in (product.image_keys or []) if key][:1]
+    if not keys:
+        return None
+    from app.services.storage import presigned_urls
+
+    urls = presigned_urls(keys)
+    return urls[0] or None
+
+
+def _short_stock_alternatives(db: Session, product_ids: list[int]) -> dict[int, list[dict]]:
+    """Other items to offer when the searched item has no free stock."""
+    if not product_ids:
+        return {}
+    links = (
+        db.query(CatalogAlternative)
+        .filter(CatalogAlternative.product_id.in_(product_ids))
+        .order_by(CatalogAlternative.id.asc())
+        .all()
+    )
+    alt_ids = [int(row.alternative_product_id) for row in links]
+    if not alt_ids:
+        return {}
+    products = {
+        product.id: product
+        for product in db.query(CatalogProduct)
+        .filter(CatalogProduct.id.in_(alt_ids), CatalogProduct.deleted_at.is_(None))
+        .all()
+    }
+    balances = {
+        row.catalog_product_id: int(row.quantity_on_hand or 0)
+        for row in db.query(StockBalance).filter(StockBalance.catalog_product_id.in_(alt_ids)).all()
+    }
+    marks = marking_labels(db, alt_ids)
+    grouped: dict[int, list[dict]] = {}
+    for link in links:
+        alt = products.get(int(link.alternative_product_id))
+        if not alt or not alt.is_active:
+            continue
+        grouped.setdefault(int(link.product_id), []).append({
+            "catalog_product_id": alt.id,
+            "our_product_id": alt.our_product_id,
+            "vendor_product_id": alt.vendor_product_id,
+            "quantity_on_hand": balances.get(alt.id, 0),
+            "marking": marks.get(alt.id) or ((alt.marking or "").strip() or None),
+            "product_marking": (alt.marking or "").strip() or None,
+            "image_url": _first_image_url(alt),
+        })
+    return grouped
+
+
 @router.get("/entry-items")
 def entry_items(
     q: Optional[str] = Query(None),
@@ -286,21 +350,38 @@ def entry_items(
         reserved = reserved_qty_by_product(db, ids)
         from app.services.product_markings import marking_labels
         marks = marking_labels(db, ids)
+        short_ids = []
+        for product, qty in rows:
+            on_hand = int(qty or 0)
+            held = int(reserved.get(product.id, 0))
+            if on_hand <= 0 or on_hand - held <= 0:
+                short_ids.append(product.id)
+        alternatives = _short_stock_alternatives(db, short_ids)
+        show_rates = _desk_sees_rates(auth)
         out = []
         for product, qty in rows:
             price = effective_selling_price(product.buying_price, product.selling_price)
-            out.append({
+            on_hand = int(qty or 0)
+            item = {
                 "catalog_product_id": product.id,
                 "our_product_id": product.our_product_id,
                 "vendor_product_id": product.vendor_product_id,
                 "marking": marks.get(product.id),
+                "product_marking": (product.marking or "").strip() or None,
+                "image_url": _first_image_url(product),
                 "year_group": product.year_group,
                 "selling_price": format(price, "f") if price is not None else None,
-                "quantity_on_hand": int(qty or 0),
+                "quantity_on_hand": on_hand,
                 "reserved_qty": int(reserved.get(product.id, 0)),
                 "addons": [],
                 "priced_addons": [],
-            })
+                "alternatives": alternatives.get(product.id, []),
+            }
+            if show_rates:
+                item["show_rates"] = True
+                item["purchase_rate"] = _money_text(product.buying_price)
+                item["sale_rate"] = _money_text(product.selling_price)
+            out.append(item)
         return out
     cached = response_cache.get("stock:entry-items:v2")
     if cached is not None:

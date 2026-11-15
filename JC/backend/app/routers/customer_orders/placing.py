@@ -464,8 +464,15 @@ def update_customer_marking(
         if len(bills) != len(set(body.bill_ids)):
             raise HTTPException(404, "bill not found")
         value = clean_mark(body.text)
+        from sqlalchemy.orm.attributes import flag_modified
+
         for bill in bills:
             bill.narration = value
+            bill.document_key = None
+            totals = dict(bill.totals_json or {})
+            totals.pop("printed_narration", None)
+            bill.totals_json = totals
+            flag_modified(bill, "totals_json")
             remember(db, kind="bill", subject=str(bill.id), body=value or "", actor=auth.actor_name)
     else:
         set_live_marking(db, customer_id, kind=body.kind, text=body.text)

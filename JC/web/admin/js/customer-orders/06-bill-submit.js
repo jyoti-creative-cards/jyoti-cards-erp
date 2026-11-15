@@ -107,8 +107,9 @@
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button type="button" class="btn btn-primary" ${res.pending ? "disabled" : ""} onclick="CustomerOrders.openBillDoc(${Number(res.bill_id) || 0}, true)">Print</button>
           <button type="button" class="btn btn-secondary" ${res.pending ? "disabled" : ""} onclick="CustomerOrders.openBillDoc(${Number(res.bill_id) || 0}, false)">Download</button>
+          <button type="button" class="btn btn-secondary" ${res.pending ? "disabled" : ""} onclick="CustomerOrders.openBillOnWhatsApp(${Number(res.bill_id) || 0})">WhatsApp</button>
         </div>
-        <p style="margin:12px 0 0;font-size:13px;color:var(--muted);">Print is the original and the duplicate. Download is the original only.</p>`;
+        <p style="margin:12px 0 0;font-size:13px;color:var(--muted);">Print is the original and the duplicate. Download is the original only. WhatsApp opens the chat with the message typed. Attach the downloaded PDF, then send.</p>`;
     }
     if (footer) {
       const backLedger = window.__jcLedgerReturn
@@ -185,11 +186,6 @@
   async function printStoredBill(billId) {
     ctx.showLoading?.();
     try {
-      const blob = await fetchStoredBill(billId);
-      if (blob) {
-        printPdfHere(URL.createObjectURL(blob));
-        return;
-      }
       await DocShare.openPdf(`/share/bills/${billId}/pdf?layout=print`, { print: true, filename: "bill.pdf" });
     } catch (e) {
       ctx.toast(e.message || "Could not print", "error");
@@ -226,8 +222,45 @@
         const d = await ctx.api(`/customer-orders/bills/${billId}/document`, {}, 0);
         if (!d.document_url) throw e;
         if (print) printPdfHere(d.document_url);
-        else window.open(d.document_url, "_blank");
+        else ctx.toast("Could not download the bill", "error");
       } catch (e2) { ctx.toast(e2.message || e.message, "error"); }
+    } finally {
+      ctx.hideLoading?.();
+    }
+  }
+
+  function waWebPhone(raw) {
+    const digits = String(raw || "").replace(/\D/g, "");
+    if (digits.length < 10) return "";
+    if (digits.length === 10) return "91" + digits;
+    if (digits.startsWith("0") && digits.length === 11) return "91" + digits.slice(1);
+    return digits;
+  }
+
+  async function openBillOnWhatsApp(billId) {
+    const tab = window.open("about:blank", "_blank");
+    ctx.showLoading?.();
+    try {
+      const bill = await ctx.api(`/customer-orders/bills/${billId}`, {}, 0);
+      const phone = waWebPhone(bill.customer_phone);
+      if (!phone) {
+        tab?.close();
+        ctx.toast("This party has no phone number", "error");
+        return;
+      }
+      const total = bill.grand_total ? ` Total ₹${bill.grand_total}.` : "";
+      const text = `Bill ${bill.bill_number || ""}.${total} Please find the bill PDF attached.`;
+      const url = `https://web.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(text)}`;
+      if (tab) tab.location = url;
+      else window.open(url, "_blank");
+      await DocShare.openPdf(`/share/bills/${billId}/pdf?layout=file`, {
+        print: false,
+        filename: `${bill.bill_number || "bill"}.pdf`,
+      });
+      ctx.toast("WhatsApp is open with the message. Attach the downloaded PDF, then send.", "info");
+    } catch (e) {
+      tab?.close();
+      ctx.toast(e.message || "Could not open WhatsApp", "error");
     } finally {
       ctx.hideLoading?.();
     }

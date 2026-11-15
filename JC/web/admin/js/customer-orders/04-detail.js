@@ -138,7 +138,7 @@
         </tbody></table>`;
         const more = [
           { label: "Download PDF", onclick: `CustomerOrders.openBillDoc(${b.id}, false)` },
-          { label: "WhatsApp", onclick: `CustomerOrders.shareBillWhatsApp(${b.id})` },
+          { label: "WhatsApp", onclick: `CustomerOrders.openBillOnWhatsApp(${b.id})` },
         ];
         if (canWrite && billEditableToday(b.created_at)) {
           more.push({ label: "Edit bill number", onclick: `CustomerOrders.promptEditBillNumber(${b.id}, ${JSON.stringify(b.bill_number || "")})` });

@@ -431,6 +431,7 @@ def generate_customer_bill_document(
         stamped = dict(bill.totals_json or {})
         stamped["print_copies"] = 1
         stamped["header_narration"] = 1
+        stamped["printed_narration"] = (bill.narration or "").strip()
         bill.totals_json = stamped
         flag_modified(bill, "totals_json")
     if not persist:

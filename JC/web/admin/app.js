@@ -2371,12 +2371,24 @@ const App = (() => {
     const rows = partyLedgerMode === "agent" ? agentRowsForDay(day) : partyLedgerRows(day);
     const body = rows.map((cols, i) => `<tr>${cols.map(col => `<${i ? "td" : "th"}>${esc(col)}</${i ? "td" : "th"}>`).join("")}</tr>`).join("");
     const title = document.getElementById("party-ledger-picked")?.textContent || "Party ledger";
-    const w = window.open("", "_blank");
-    if (!w) return toast("Allow pop-ups to print", "error");
-    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>body{font-family:sans-serif;font-size:12px} table{border-collapse:collapse;width:100%} td,th{border:1px solid #ccc;padding:4px 6px;text-align:left}</style></head><body><h1>${esc(title)}</h1><table>${body}</table></body></html>`);
-    w.document.close();
-    w.focus();
-    setTimeout(() => { try { w.print(); } catch (_) {} }, 200);
+    const frame = document.createElement("iframe");
+    frame.setAttribute("title", "Print");
+    frame.style.cssText = "position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483646;background:#fff;";
+    document.body.appendChild(frame);
+    const doc = frame.contentDocument;
+    doc.open();
+    doc.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>body{font-family:sans-serif;font-size:12px} table{border-collapse:collapse;width:100%} td,th{border:1px solid #ccc;padding:4px 6px;text-align:left}</style></head><body><h1>${esc(title)}</h1><table>${body}</table></body></html>`);
+    doc.close();
+    const cleanup = () => { try { frame.remove(); } catch (_) {} };
+    const go = () => {
+      try {
+        frame.contentWindow.addEventListener("afterprint", () => setTimeout(cleanup, 300), { once: true });
+        frame.contentWindow.focus();
+        frame.contentWindow.print();
+      } catch (_) { cleanup(); }
+    };
+    setTimeout(go, 200);
+    setTimeout(cleanup, 120000);
   }
 
   function openSelling(customerId, bucket = "open") {
@@ -3030,6 +3042,44 @@ const App = (() => {
     renderOrderDesk();
   }
 
+  function deskStockPhoto(url, size) {
+    if (!url) {
+      return `<div style="width:${size}px;height:${size}px;display:flex;align-items:center;justify-content:center;background:#f8fafc;border-radius:8px;color:#64748b;font-size:14px;">No photo</div>`;
+    }
+    return `<img src="${esc(url)}" alt="" style="width:${size}px;height:${size}px;object-fit:contain;background:#f8fafc;border-radius:8px;" />`;
+  }
+
+  function deskStockCard(p) {
+    const onHand = Number(p.quantity_on_hand || 0);
+    const free = onHand - Number(p.reserved_qty || 0);
+    const mark = p.product_marking || p.marking || "";
+    const rates = p.show_rates
+      ? `<div style="margin-top:8px;font-size:18px;">Purchase ${esc(p.purchase_rate != null ? p.purchase_rate : "—")} · Sale ${esc(p.sale_rate != null ? p.sale_rate : "—")}</div>`
+      : "";
+    const alts = free > 0 ? "" : (p.alternatives || []).map(a => {
+      const altMark = a.product_marking || a.marking || "";
+      return `<div style="display:flex;gap:10px;align-items:center;margin-top:8px;">
+        ${deskStockPhoto(a.image_url, 72)}
+        <div>
+          <strong>${esc(a.our_product_id || "")}</strong>
+          <div>${Number(a.quantity_on_hand || 0)} in stock</div>
+          ${altMark ? `<div style="color:#b91c1c;font-weight:800;">${esc(altMark)}</div>` : ""}
+        </div>
+      </div>`;
+    }).join("");
+    return `<div style="display:flex;gap:16px;padding:16px 4px;border-bottom:1px solid #e2e8f0;">
+      ${deskStockPhoto(p.image_url, 140)}
+      <div>
+        <div style="font-size:22px;font-weight:800;">${esc(p.our_product_id || "")}</div>
+        ${mark ? `<div style="margin-top:6px;color:#b91c1c;font-weight:800;">${esc(mark)}</div>` : ""}
+        <div style="font-size:18px;color:#64748b;margin-top:6px;">Stock</div>
+        <div style="font-size:48px;font-weight:800;line-height:1.1;">${onHand}</div>
+        ${rates}
+        ${alts ? `<div style="margin-top:10px;font-size:16px;font-weight:700;">Alternatives</div>${alts}` : ""}
+      </div>
+    </div>`;
+  }
+
   function onDeskStock(val) {
     const box = document.getElementById("desk-stock-hits");
     if (!box) return;
@@ -3040,14 +3090,7 @@ const App = (() => {
       try {
         const rows = await api(`/stock/entry-items?q=${encodeURIComponent(q)}`, {}, 0) || [];
         if ((document.getElementById("desk-stock")?.value || "").trim() !== q) return;
-        box.innerHTML = rows.slice(0, 8).map(p => {
-          const free = Math.max(0, Number(p.quantity_on_hand || 0) - Number(p.reserved_qty || 0));
-          return `<div style="padding:18px 4px;border-bottom:1px solid #e2e8f0;">
-            <div style="font-size:22px;font-weight:800;">${esc(p.our_product_id || "")}</div>
-            <div style="font-size:18px;color:#64748b;">Stock</div>
-            <div style="font-size:48px;font-weight:800;line-height:1.1;">${free}</div>
-          </div>`;
-        }).join("") || `<p style="font-size:20px;color:var(--muted);">No item</p>`;
+        box.innerHTML = rows.slice(0, 8).map(p => deskStockCard(p)).join("") || `<p style="font-size:20px;color:var(--muted);">No item</p>`;
       } catch (e) { box.innerHTML = `<p style="color:var(--danger);font-size:18px;">${esc(e.message)}</p>`; }
     }, 250);
   }

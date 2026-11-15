@@ -764,7 +764,8 @@
     }).join("");
     const addProd = `
       <label class="label">Add products</label>
-      <input id="co-bill-edit-search" class="input" placeholder="Item number, then Enter" autocomplete="off" oninput="CustomerOrders.setBillEditSearch(this.value)" onkeydown="CustomerOrders.addBillSearchEnter(event)" />`;
+      <input id="co-bill-edit-search" class="input" placeholder="Type the item number" autocomplete="off" oninput="CustomerOrders.setBillEditSearch(this.value)" onkeydown="CustomerOrders.addBillSearchEnter(event)" />
+      <div id="co-bill-item-matches"></div>`;
     bodyEl.innerHTML = `
       ${partyHeadingHtml(processContext)}
       ${processContext?.commission_agent_name && !editBillId ? `<div style="margin:0 0 12px;padding:12px;background:#fef3c7;border:2px solid #d97706;border-radius:12px;">
@@ -905,11 +906,40 @@
     });
     renderWizardTotalsBar();
   }
+  function paintBillItemMatches() {
+    const box = document.getElementById("co-bill-item-matches");
+    if (!box) return;
+    const q = (billEditSearch || "").trim();
+    const rows = billEditProducts || [];
+    box.innerHTML = rows.map(p =>
+      `<button type="button" class="btn btn-secondary btn-sm" style="display:block;width:100%;text-align:left;margin-top:4px;" onclick="CustomerOrders.addBillEditProduct(${p.catalog_product_id})">${ctx.esc(p.our_product_id)}${p.vendor_product_id ? " · " + ctx.esc(p.vendor_product_id) : ""} · stock ${p.quantity_on_hand ?? 0}${p.selling_price ? " · " + fmtPrice(p.selling_price) : ""}</button>`
+    ).join("") || (q ? `<p style="font-size:13px;color:var(--muted);margin:6px 0 0;">${billEditSearchPending ? "Searching…" : "No match"}</p>` : "");
+  }
+
   function setBillEditSearch(v) {
     billEditSearch = v || "";
-    const q = billEditSearch.trim().toLowerCase();
-    billEditProducts = q ? filterEntryItems(q) : [];
-    billEditSearchPending = false;
+    const q = billEditSearch.trim();
+    clearTimeout(billEditTimer);
+    const local = q && (entryItems || []).length ? filterEntryItems(q) : [];
+    if (!q || local.length || (entryItems || []).length) {
+      billEditProducts = local;
+      billEditSearchPending = false;
+      paintBillItemMatches();
+      return;
+    }
+    billEditSearchPending = true;
+    billEditProducts = [];
+    paintBillItemMatches();
+    billEditTimer = setTimeout(async () => {
+      try {
+        billEditProducts = await ctx.api(`/stock/entry-items?q=${encodeURIComponent(q)}`, {}, 0) || [];
+      } catch (_) {
+        billEditProducts = [];
+      }
+      if ((billEditSearch || "").trim() !== q) return;
+      billEditSearchPending = false;
+      paintBillItemMatches();
+    }, 180);
   }
   function addBillSearchEnter(event) {
     if (event.key !== "Enter") return;

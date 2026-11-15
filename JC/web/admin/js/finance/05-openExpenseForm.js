@@ -13,12 +13,22 @@
     ).join("");
   }
 
-  function expenseSubheadOptions(headId, selectedId) {
-    const head = expenseHeadCache.find(h => String(h.id) === String(headId));
-    const subs = head?.subheads || [];
-    return `<option value="">— Subcategory —</option>` + subs.map(s =>
-      `<option value="${s.id}" ${String(selectedId) === String(s.id) ? "selected" : ""}>${ctx.esc(s.name)}</option>`
-    ).join("");
+  function expenseSubheadOptions(_headId, selectedId) {
+    const rows = [];
+    for (const head of expenseHeadCache) {
+      for (const sub of head.subheads || []) rows.push({ sub, head });
+    }
+    rows.sort((a, b) => String(a.sub.name || "").localeCompare(String(b.sub.name || ""), undefined, { sensitivity: "base" }));
+    const counts = new Map();
+    for (const row of rows) {
+      const key = String(row.sub.name || "").toLowerCase();
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    return `<option value="">— Subcategory —</option>` + rows.map(({ sub, head }) => {
+      const dup = (counts.get(String(sub.name || "").toLowerCase()) || 0) > 1;
+      const label = dup ? `${sub.name} (${head.name})` : sub.name;
+      return `<option value="${sub.id}" ${String(selectedId) === String(sub.id) ? "selected" : ""}>${ctx.esc(label)}</option>`;
+    }).join("");
   }
 
   function sourceOptions(selectedId) {
@@ -60,19 +70,12 @@
     });
     const pickedHead = String(headId).startsWith("h:") ? String(headId).slice(2) : (headId || "");
     const day = existing ? (docDateIso(existing.display_date || existing.expense_date) || localToday()) : localToday();
-    const note = existing && !pickedHead && !subId
-      ? `<p style="margin:0 0 12px;font-size:12px;color:var(--muted);">Filed under ${ctx.esc(existing.category || "—")}. Pick a category to move it.</p>`
-      : "";
     document.getElementById("expense-body").innerHTML = `
-      ${note}
       <label class="label">Date</label>
       <input type="date" class="input" id="exp-date" value="${ctx.esc(day)}" style="margin-bottom:12px;" />
-      <label class="label">Category</label>
-      <select class="input" id="exp-head" style="margin-bottom:12px;" onchange="Finance.onExpenseHeadChange()">${expenseHeadOptions(pickedHead)}</select>
       <label class="label">Subcategory</label>
-      <select class="input" id="exp-sub" style="margin-bottom:8px;">${expenseSubheadOptions(pickedHead, subId)}</select>
+      <select class="input" id="exp-sub" style="margin-bottom:8px;">${expenseSubheadOptions("", subId)}</select>
       <button type="button" class="btn btn-secondary btn-sm" style="margin-bottom:12px;" onclick="Finance.addExpenseSubhead()">Add subcategory</button>
-      <p style="margin:-6px 0 12px;font-size:12px;color:var(--muted);">Pick the category, then a subcategory inside it. New categories: More → Reports → Ledgers → Expense → New head.</p>
       <label class="label">Paid from</label>
       <select class="input" id="exp-source" style="margin-bottom:8px;">${sourceOptions(existing?.source_id || "")}</select>
       ${sourceManager()}
@@ -153,19 +156,23 @@
   }
 
   async function addExpenseSubhead() {
-    const headId = document.getElementById("exp-head")?.value;
-    if (!headId) return ctx.toast("Pick a head first", "error");
-    const name = prompt("Sub-head name:");
+    const headName = prompt("Category for this subcategory:");
+    if (headName == null || !headName.trim()) return;
+    const name = prompt("Subcategory name:");
     if (name == null || !name.trim()) return;
     const keep = expenseDraft();
     try {
-      const created = await ctx.api(`/expenses/heads/${headId}/subheads`, { method: "POST", body: JSON.stringify({ name: name.trim() }) });
-      ctx.toast("Sub-head saved", "success");
+      let head = expenseHeadCache.find(h => (h.name || "").toLowerCase() === headName.trim().toLowerCase());
+      if (!head) {
+        await ctx.api("/expenses/heads", { method: "POST", body: JSON.stringify({ name: headName.trim() }) });
+        expenseHeadCache = await ctx.api("/expenses/heads", {}, 0) || [];
+        head = expenseHeadCache.find(h => (h.name || "").toLowerCase() === headName.trim().toLowerCase());
+      }
+      if (!head) return ctx.toast("Category was not saved", "error");
+      const created = await ctx.api(`/expenses/heads/${head.id}/subheads`, { method: "POST", body: JSON.stringify({ name: name.trim() }) });
+      ctx.toast("Subcategory saved", "success");
+      keep.existing.subhead_id = created?.id || keep.existing.subhead_id;
       await fillExpenseForm(keep.existing, keep.editId);
-      const sel = document.getElementById("exp-head");
-      if (sel) { sel.value = String(headId); onExpenseHeadChange(); }
-      const sub = document.getElementById("exp-sub");
-      if (sub && created?.id) sub.value = String(created.id);
       restoreExpenseDraft(keep);
     } catch (e) { ctx.toast(e.message, "error"); }
   }
@@ -183,7 +190,6 @@
         reference: document.getElementById("exp-ref")?.value || "",
         source_id: document.getElementById("exp-source")?.value || "",
         category: "",
-        head_id: document.getElementById("exp-head")?.value || "",
         subhead_id: document.getElementById("exp-sub")?.value || "",
       },
     };
@@ -200,30 +206,21 @@
     if (ref) ref.value = keep.existing.reference || "";
     const source = document.getElementById("exp-source");
     if (source && keep.existing.source_id) source.value = String(keep.existing.source_id);
-    const head = document.getElementById("exp-head");
-    if (head && keep.existing.head_id) {
-      head.value = String(keep.existing.head_id);
-      onExpenseHeadChange();
-    }
     const sub = document.getElementById("exp-sub");
     if (sub && keep.existing.subhead_id) sub.value = String(keep.existing.subhead_id);
   }
 
   function expensePayload() {
     const expense_date = document.getElementById("exp-date")?.value;
-    const headId = document.getElementById("exp-head")?.value || "";
     const subId = document.getElementById("exp-sub")?.value || "";
     const description = (document.getElementById("exp-desc")?.value || "").trim() || null;
     const amount = parseFloat(document.getElementById("exp-amount")?.value || "0");
     const reference = (document.getElementById("exp-ref")?.value || "").trim() || null;
     const source_id = Number(document.getElementById("exp-source")?.value || 0);
     if (!expense_date || !amount || amount <= 0) { ctx.toast("Enter date and amount", "error"); return null; }
-    if (!headId) { ctx.toast("Pick a category", "error"); return null; }
+    if (!subId) { ctx.toast("Pick a subcategory", "error"); return null; }
     if (!source_id) { ctx.toast("Pick where the money came from", "error"); return null; }
-    const payload = { expense_date, description, amount, reference, source_id };
-    if (subId) payload.subhead_id = Number(subId);
-    else payload.head_id = Number(headId);
-    return payload;
+    return { expense_date, description, amount, reference, source_id, subhead_id: Number(subId) };
   }
 
   function closeExpenseForm() { document.getElementById("expense-modal")?.classList.add("hidden"); }

@@ -96,7 +96,15 @@ def test_print_keeps_pdf_when_storage_refuses_payment(db, monkeypatch):
 
 def test_print_reads_the_stored_pdf(db, monkeypatch):
     bill, _prod, _addon = _setup(db)
+    bill.narration = "BOOK TRANSPORT KAL"
+    bill.grand_total = Decimal("0")
     bill.document_key = "customers/cust/bill.pdf"
+    totals = dict(bill.totals_json or {})
+    totals["print_copies"] = 1
+    totals["header_narration"] = 1
+    totals["printed_narration"] = "BOOK TRANSPORT KAL"
+    totals["grand_total"] = "0.00"
+    bill.totals_json = totals
     db.commit()
     calls = {"n": 0}
 
@@ -110,6 +118,31 @@ def test_print_reads_the_stored_pdf(db, monkeypatch):
 
     assert bill_pdf_bytes(db, bill.id) == b"%PDF-stored%"
     assert calls["n"] == 0
+
+
+def test_print_rebuilds_when_marking_changes(db, monkeypatch):
+    bill, _prod, _addon = _setup(db)
+    bill.narration = "BOOK TRANSPORT KAL"
+    bill.grand_total = Decimal("0")
+    bill.document_key = "customers/cust/bill.pdf"
+    totals = dict(bill.totals_json or {})
+    totals["print_copies"] = 1
+    totals["header_narration"] = 1
+    totals["printed_narration"] = "STOCK LOT BILL (NET RATE AS PER JEEVAN BHAIYA)"
+    totals["grand_total"] = "0.00"
+    bill.totals_json = totals
+    db.commit()
+
+    def generate(session, bill_id, **_kw):
+        row = session.get(CustomerBill, bill_id)
+        row._pdf_bytes = b"%PDF-fresh%"
+        return None
+
+    monkeypatch.setattr("app.services.doc_jobs.generate_customer_bill_document", generate)
+    monkeypatch.setattr("app.services.doc_jobs.download_bytes", lambda _key: b"%PDF-stored%")
+    from app.services.doc_jobs import bill_pdf_bytes
+
+    assert bill_pdf_bytes(db, bill.id) == b"%PDF-fresh%"
 
 
 def test_bill_pdf_is_text_only(db, monkeypatch):

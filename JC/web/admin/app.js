@@ -1328,13 +1328,16 @@ const App = (() => {
   document.addEventListener("keydown", (e) => {
     if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || e.code !== "KeyR") return;
     const el = e.target;
-    if (!el || (el.id !== "co-bill-mark" && el.getAttribute?.("data-field") !== "bmark")) return;
+    const field = el && el.getAttribute ? (el.getAttribute("data-field") || "") : "";
+    const marking = el && (el.id === "co-bill-mark" || field === "bmark" || field === "cmark");
+    if (!marking) return;
+    e.preventDefault();
+    e.stopPropagation();
     const latest = el.getAttribute("data-latest") || "";
     if (!latest) return;
-    e.preventDefault();
     el.value = latest;
     el.dispatchEvent(new Event("input", { bubbles: true }));
-  });
+  }, true);
 
   // ── Data ──────────────────────────────────────────────────────────
 // @slice 03-refreshAll

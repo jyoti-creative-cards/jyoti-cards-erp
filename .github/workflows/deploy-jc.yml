@@ -50,7 +50,7 @@ jobs:
             exit 1
           fi
           git clone "https://oauth2:${GH_PAT}@github.com/jyoti-creative-cards/${{ matrix.name }}.git" /tmp/target
-          rsync -a --delete ${{ matrix.excludes }} \
+          rsync -a --checksum --delete ${{ matrix.excludes }} \
             --exclude='.git' \
             --exclude='.github' \
             --exclude='.vercel' \

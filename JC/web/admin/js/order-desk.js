@@ -170,7 +170,7 @@ const OrderDesk = (() => {
       <label class="label">Date</label>
       <input type="date" class="input" data-field="cdate" value="${esc(f.placedOn || "")}">
       <label class="label">Marking</label>
-      <textarea class="input" data-field="cmark" rows="3" style="background:#fee2e2;border:1px solid #dc2626;font-weight:800;color:#b91c1c;">${esc(f.narration || "")}</textarea>
+      <textarea class="input" data-field="cmark" data-latest="${esc(f.latestMark || "")}" rows="3" style="background:#fee2e2;border:1px solid #dc2626;font-weight:800;color:#b91c1c;">${esc(f.narration || "")}</textarea>
       ${f.error ? `<p style="color:#b91c1c;font-weight:700;">${esc(f.error)}</p>` : ""}
       ${f.duplicateHtml || ""}`;
   }
@@ -704,6 +704,7 @@ const OrderDesk = (() => {
       placementId: placement.id,
       lines,
       narration: ownMark(row.marking) || ownMark(placement.customer_notes) || "",
+      latestMark: (detail && detail.latest_marking) || ownMark(row.marking) || "",
       placedOn: String(placement.placed_at || row.display_date || today()).slice(0, 10),
       party: detail,
       otherCount: ((detail.placements || []).filter(p => p.status === "received").length > 1),

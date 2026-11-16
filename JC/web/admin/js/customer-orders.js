@@ -2576,7 +2576,7 @@ const CustomerOrders = (() => {
     processLines.push({
       catalog_product_id: p.catalog_product_id,
       our_product_id: p.our_product_id,
-      marking: p.marking || "",
+      marking: p.marking || p.product_marking || "",
       unit_price: p.selling_price,
       quantity_open: direct ? signedStock(p.quantity_on_hand) : 999999,
       quantity_on_hand: signedStock(p.quantity_on_hand),
@@ -2843,7 +2843,7 @@ const CustomerOrders = (() => {
       const ship = signedStock(ln.quantity_to_ship);
       const short = ship > stock;
       return `<tr style="${short ? "background:#fef2f2;" : ""}">
-        <td><strong>${ctx.esc(ln.our_product_id)}</strong>${ln.marking ? ` <span class="marking-flag">${ctx.esc(ln.marking)}</span>` : ""}${ln.direct ? ` <span style="font-size:12px;color:var(--muted);">direct</span>` : ""}${billAddonHtml(ln)}${short ? `<div class="stock-short" style="color:#b91c1c;font-weight:800;font-size:12px;">Only ${stock} in stock</div>` : ""}</td>
+        <td><strong>${ctx.esc(ln.our_product_id)}</strong>${(ln.marking || ln.product_marking) ? ` <span class="marking-flag" style="background:#fee2e2;color:#b91c1c;font-weight:800;">${ctx.esc(ln.marking || ln.product_marking)}</span>` : ""}${ln.direct ? ` <span style="font-size:12px;color:var(--muted);">direct</span>` : ""}${billAddonHtml(ln)}${short ? `<div class="stock-short" style="color:#b91c1c;font-weight:800;font-size:12px;">Only ${stock} in stock</div>` : ""}</td>
         <td style="${short ? "color:#b91c1c;font-weight:800;" : ""}">${stock}</td>
         <td>${fmtPrice(ln.unit_price)}</td>
         <td><input data-ship-for="${i}" type="number" class="input" style="width:72px;${short ? "border-color:#dc2626;background:#fff1f2;" : ""}" min="0" value="${ln.quantity_to_ship ?? ""}" oninput="CustomerOrders.setShipQty(${i}, this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();CustomerOrders.focusNextBillItem();}" /></td>
@@ -3004,9 +3004,10 @@ const CustomerOrders = (() => {
     if (!box) return;
     const q = (billEditSearch || "").trim();
     const rows = billEditProducts || [];
-    box.innerHTML = rows.map(p =>
-      `<button type="button" class="btn btn-secondary btn-sm" style="display:block;width:100%;text-align:left;margin-top:4px;" onclick="CustomerOrders.addBillEditProduct(${p.catalog_product_id})">${ctx.esc(p.our_product_id)}${p.vendor_product_id ? " · " + ctx.esc(p.vendor_product_id) : ""}${p.marking ? ` <span class="marking-flag">${ctx.esc(p.marking)}</span>` : ""} · stock ${p.quantity_on_hand ?? 0}${p.selling_price ? " · " + fmtPrice(p.selling_price) : ""}</button>`
-    ).join("") || (q ? `<p style="font-size:13px;color:var(--muted);margin:6px 0 0;">${billEditSearchPending ? "Searching…" : "No match"}</p>` : "");
+    box.innerHTML = rows.map(p => {
+      const mark = p.marking || p.product_marking || "";
+      return `<button type="button" class="btn btn-secondary btn-sm" style="display:block;width:100%;text-align:left;margin-top:4px;" onclick="CustomerOrders.addBillEditProduct(${p.catalog_product_id})">${ctx.esc(p.our_product_id)}${p.vendor_product_id ? " · " + ctx.esc(p.vendor_product_id) : ""}${mark ? ` <span class="marking-flag" style="background:#fee2e2;color:#b91c1c;font-weight:800;">${ctx.esc(mark)}</span>` : ""} · stock ${p.quantity_on_hand ?? 0}${p.selling_price ? " · " + fmtPrice(p.selling_price) : ""}</button>`;
+    }).join("") || (q ? `<p style="font-size:13px;color:var(--muted);margin:6px 0 0;">${billEditSearchPending ? "Searching…" : "No match"}</p>` : "");
   }
 
   function setBillEditSearch(v) {
@@ -3490,9 +3491,7 @@ const CustomerOrders = (() => {
     const input = document.getElementById("co-print-day");
     const day = input && input.value;
     if (!day) return ctx.toast("Enter the invoice date", "error");
-    const win = window.open("", "_blank");
-    if (!win) return ctx.toast("Allow pop-ups to print the invoices", "error");
-    sayInPrintWindow(win, "Preparing invoices…");
+    ctx.showLoading?.();
     try {
       const start = await ctx.api(`/share/bills/duplicates/start?day=${encodeURIComponent(day)}`, { method: "POST" });
       const jobId = start.job_id;
@@ -3501,7 +3500,6 @@ const CustomerOrders = (() => {
       while (status.state !== "ready") {
         if (status.state === "error") throw new Error(status.error || "Could not print the invoices");
         if (Date.now() - started > 180000) throw new Error("Preparing the invoices took too long");
-        sayInPrintWindow(win, `Preparing invoices… ${status.done || 0} of ${status.total || ""}`);
         await new Promise(resolve => setTimeout(resolve, 800));
         status = await ctx.api(`/share/bills/duplicates/jobs/${jobId}`);
       }
@@ -3510,17 +3508,13 @@ const CustomerOrders = (() => {
       const res = await fetch(`${(ctx.apiBase?.() || "").replace(/\/$/, "")}/share/bills/duplicates/jobs/${jobId}/file`, { headers });
       if (!res.ok) throw new Error("Could not open the invoices");
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      win.location = url;
-      setTimeout(() => {
-        try { win.focus(); win.print(); } catch (_) {}
-      }, 900);
+      if (window.DocShare && DocShare.printPdfUrl) DocShare.printPdfUrl(URL.createObjectURL(blob));
+      else throw new Error("Print is not ready");
       const skipped = (status.failed || []).length;
       if (skipped) ctx.toast(`Printed the invoices. ${skipped} could not be included.`, "error");
     } catch (e) {
-      sayInPrintWindow(win, ctx.esc ? ctx.esc(e.message || "Could not print the invoices") : "Could not print the invoices");
       ctx.toast(e.message || "Could not print the invoices", "error");
-    }
+    } finally { ctx.hideLoading?.(); }
   }
 
   async function fetchStoredBill(billId) {

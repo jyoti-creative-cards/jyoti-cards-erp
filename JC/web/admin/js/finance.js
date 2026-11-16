@@ -2483,7 +2483,7 @@ const Finance = (() => {
     }
     return `<option value="">— Subcategory —</option>` + rows.map(({ sub, head }) => {
       const dup = (counts.get(String(sub.name || "").toLowerCase()) || 0) > 1;
-      const label = dup ? `${sub.name} (${head.name})` : sub.name;
+      const label = `${sub.name} — ${head.name}`;
       return `<option value="${sub.id}" ${String(selectedId) === String(sub.id) ? "selected" : ""}>${ctx.esc(label)}</option>`;
     }).join("");
   }

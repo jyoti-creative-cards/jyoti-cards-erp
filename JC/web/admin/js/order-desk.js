@@ -149,16 +149,17 @@ const OrderDesk = (() => {
       const qty = Number(ln.quantity);
       const short = Number.isFinite(stock) && Number.isFinite(qty) && qty > stock;
       return `<tr style="${short ? "background:#fef2f2;" : ""}">
-      <td><strong>${esc(ln.our_product_id)}</strong>${addonHtml(key, ln, "confirm")}${short ? `<div style="color:#b91c1c;font-weight:800;font-size:12px;">Only ${stock} in stock</div>` : ""}</td>
+      <td><strong>${esc(ln.our_product_id)}</strong>${(ln.marking || ln.product_marking) ? ` <span class="marking-flag" style="background:#fee2e2;color:#b91c1c;font-weight:800;">${esc(ln.marking || ln.product_marking)}</span>` : ""}${addonHtml(key, ln, "confirm")}${short ? `<div style="color:#b91c1c;font-weight:800;font-size:12px;">Only ${stock} in stock</div>` : ""}</td>
       <td style="${short ? "color:#b91c1c;font-weight:800;" : ""}">${ln.stock ?? "—"}</td>
       <td>${money(ln.unit_price)}</td>
       <td><input data-field="cqty" data-i="${i}" type="number" class="input" style="width:72px;${short ? "border-color:#dc2626;background:#fff1f2;" : ""}" min="${ln.min_qty || 0}" value="${ln.quantity}"></td>
       <td><button type="button" class="btn btn-ghost btn-sm" onclick="OrderDesk.removeConfirmLine('${key}', ${i})">Remove</button></td>
     </tr>`;
     }).join("");
-    const hits = findItem(f.search || "").map(p =>
-      `<button type="button" class="btn btn-secondary btn-sm" style="display:block;width:100%;text-align:left;margin-top:4px;" onclick="OrderDesk.addConfirmItem('${key}', ${p.catalog_product_id})">${esc(p.our_product_id)} · stock ${p.quantity_on_hand ?? 0}</button>`
-    ).join("");
+    const hits = findItem(f.search || "").map(p => {
+      const mark = p.marking || p.product_marking || "";
+      return `<button type="button" class="btn btn-secondary btn-sm" style="display:block;width:100%;text-align:left;margin-top:4px;" onclick="OrderDesk.addConfirmItem('${key}', ${p.catalog_product_id})">${esc(p.our_product_id)}${p.vendor_product_id ? " · " + esc(p.vendor_product_id) : ""}${mark ? ` <span class="marking-flag" style="background:#fee2e2;color:#b91c1c;font-weight:800;">${esc(mark)}</span>` : ""} · stock ${p.quantity_on_hand ?? 0}</button>`;
+    }).join("");
     return `${partyHtml(f.party)}
       ${f.otherCount ? `<p style="margin:0 0 8px;font-size:13px;color:var(--muted);">Other new orders for this party confirm with this one.</p>` : ""}
       <table class="data"><thead><tr><th>Item</th><th>Stock</th><th>Rate</th><th>Qty</th><th></th></tr></thead>
@@ -629,6 +630,7 @@ const OrderDesk = (() => {
     else f.lines.push({
       catalog_product_id: p.catalog_product_id,
       our_product_id: p.our_product_id,
+      marking: p.marking || p.product_marking || "",
       quantity: 1,
       min_qty: 0,
       unit_price: p.selling_price,

@@ -3835,6 +3835,7 @@ const CustomerOrders = (() => {
         offlineLines.push({
           catalog_product_id: p.catalog_product_id,
           our_product_id: p.our_product_id,
+          marking: p.marking || p.product_marking || "",
           quantity: 1,
           min_qty: 0,
           selling_price: p.selling_price,
@@ -4085,7 +4086,7 @@ const CustomerOrders = (() => {
         const qty = signedStock(l.quantity);
         const short = qty > stock;
         return `<tr style="${short ? "background:#fef2f2;" : ""}">
-        <td><strong>${ctx.esc(l.our_product_id)}</strong>${pricedAddonHtml({ catalog_product_id: l.catalog_product_id }, l)}${short ? `<div style="color:#b91c1c;font-weight:800;font-size:12px;">Only ${stock} in stock</div>` : ""}</td>
+        <td><strong>${ctx.esc(l.our_product_id)}</strong>${(l.marking || l.product_marking) ? ` <span class="marking-flag" style="background:#fee2e2;color:#b91c1c;font-weight:800;">${ctx.esc(l.marking || l.product_marking)}</span>` : ""}${pricedAddonHtml({ catalog_product_id: l.catalog_product_id }, l)}${short ? `<div style="color:#b91c1c;font-weight:800;font-size:12px;">Only ${stock} in stock</div>` : ""}</td>
         <td style="${short ? "color:#b91c1c;font-weight:800;" : ""}">${l.quantity_on_hand ?? "—"}${!short && stock <= 0 ? ` <span style="color:#b45309;">in transit</span>` : ""}</td>
         <td>${fmtPrice(l.selling_price)}</td>
         <td><input data-qty-for="${l.catalog_product_id}" type="number" class="input" style="width:72px;${short ? "border-color:#dc2626;background:#fff1f2;" : ""}" min="${Number(l.min_qty) || 1}" value="${l.quantity}" oninput="CustomerOrders.setOfflineQty(${l.catalog_product_id}, this.value)" onkeydown="CustomerOrders.onOfflineQtyKey(event)" /></td>
@@ -4105,9 +4106,10 @@ const CustomerOrders = (() => {
     if (!box) return;
     const rows = filterEntryItems(offlineSearchQuery);
     offlineSearchResults = rows;
-    box.innerHTML = rows.map(p =>
-      `<button type="button" class="btn btn-secondary btn-sm" style="display:block;width:100%;text-align:left;margin-top:4px;" onclick="CustomerOrders.pickOfflineProduct(${p.catalog_product_id})">${ctx.esc(p.our_product_id)}${p.vendor_product_id ? " · " + ctx.esc(p.vendor_product_id) : ""} · stock ${p.quantity_on_hand ?? 0}${p.selling_price ? " · " + fmtPrice(p.selling_price) : ""}</button>`
-    ).join("") || (String(offlineSearchQuery || "").trim() ? `<p style="font-size:13px;color:var(--muted);margin:6px 0 0;">No match</p>` : "");
+    box.innerHTML = rows.map(p => {
+      const mark = p.marking || p.product_marking || "";
+      return `<button type="button" class="btn btn-secondary btn-sm" style="display:block;width:100%;text-align:left;margin-top:4px;" onclick="CustomerOrders.pickOfflineProduct(${p.catalog_product_id})">${ctx.esc(p.our_product_id)}${p.vendor_product_id ? " · " + ctx.esc(p.vendor_product_id) : ""}${mark ? ` <span class="marking-flag" style="background:#fee2e2;color:#b91c1c;font-weight:800;">${ctx.esc(mark)}</span>` : ""} · stock ${p.quantity_on_hand ?? 0}${p.selling_price ? " · " + fmtPrice(p.selling_price) : ""}</button>`;
+    }).join("") || (String(offlineSearchQuery || "").trim() ? `<p style="font-size:13px;color:var(--muted);margin:6px 0 0;">No match</p>` : "");
   }
 
   async function loadOfflineProductSearch(q) {
@@ -4179,6 +4181,7 @@ const CustomerOrders = (() => {
         offlineLines.push({
           catalog_product_id: p.catalog_product_id,
           our_product_id: p.our_product_id,
+          marking: p.marking || p.product_marking || "",
           quantity: 1,
           min_qty: 0,
           selling_price: p.selling_price,
@@ -4235,6 +4238,7 @@ const CustomerOrders = (() => {
       if (p) offlineLines.push({
         catalog_product_id: p.catalog_product_id,
         our_product_id: p.our_product_id,
+        marking: p.marking || p.product_marking || "",
         quantity: qty,
         min_qty: 0,
         selling_price: p.selling_price,

@@ -708,3 +708,62 @@ def ledger_cash_detail(
     auth: AuthContext = Depends(require_admin),
 ):
     return ext.cash_ledger_detail(db, from_date, to_date)
+
+
+@router.get("/ledgers/city")
+def ledger_city(
+    city: str = Query("", max_length=200),
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    from app.services.reports.city_ledger import parties_in_city
+
+    return parties_in_city(db, city)
+
+
+@router.get("/ledgers/city/pdf")
+def ledger_city_pdf(
+    city_id: int,
+    from_date: Optional[date] = Query(None),
+    to_date: Optional[date] = Query(None),
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    from fastapi.responses import Response
+
+    from app.services.reports.city_ledger import city_ledgers_pdf
+
+    try:
+        data, name = city_ledgers_pdf(db, city_id, from_date, to_date)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    filename = f"{name.lower().replace(' ', '-')}-ledgers.pdf"
+    return Response(
+        content=data,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/ledgers/city/excel")
+def ledger_city_excel(
+    city_id: int,
+    from_date: Optional[date] = Query(None),
+    to_date: Optional[date] = Query(None),
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    from fastapi.responses import Response
+
+    from app.services.reports.city_ledger import city_ledgers_xlsx
+
+    try:
+        data, name = city_ledgers_xlsx(db, city_id, from_date, to_date)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    filename = f"{name.lower().replace(' ', '-')}-ledgers.xlsx"
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

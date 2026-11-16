@@ -5,6 +5,9 @@ const Reports = (() => {
   let mode = "today"; // today | books | stock | tax
   let chip = "daybook";
   let ledgerKind = "customers";
+  let cityQuery = "";
+  let cityId = null;
+  let cityTimer = null;
   // toISOString() is always UTC — for the first 5h30m of every IST calendar day
   // (00:00-05:29 IST = 18:30-23:59 UTC the previous day) this returned yesterday's
   // date, silently mislabeling "Today"/date-preset chips with the wrong day for
@@ -99,6 +102,7 @@ const Reports = (() => {
 
   const LEDGER_KINDS = [
     { id: "customers", label: "Customers" },
+    { id: "city", label: "City" },
     { id: "agents", label: "Agents" },
     { id: "vendors", label: "Vendors" },
     { id: "products", label: "Products" },
@@ -216,6 +220,7 @@ const Reports = (() => {
   function setLedgerKind(k) {
     ledgerKind = k;
     hubSearch = "";
+    if (k === "city") applyDatePreset("all", false);
     renderChrome();
     loadChip();
   }
@@ -354,6 +359,8 @@ const Reports = (() => {
       ? `<button type="button" class="btn btn-secondary btn-sm" onclick="Reports.downloadSalesPdf()">PDF</button>`
       : (chip === "payments")
       ? `<button type="button" class="btn btn-secondary btn-sm" onclick="Reports.downloadPaymentsPdf()">PDF</button>`
+      : (chip === "ledgers" && ledgerKind === "city")
+      ? `<button type="button" class="btn btn-secondary btn-sm" onclick="Reports.downloadCityPdf()">PDF</button>`
       : "";
     return `<div class="rep-presets" style="margin-left:auto;">
       <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.printCurrent()">Print</button>
@@ -384,6 +391,7 @@ const Reports = (() => {
   }
 
   function printCurrent() {
+    if (chip === "ledgers" && ledgerKind === "city") return printCityAll();
     if (chip === "item-outward") return shareStockSummary(true);
     if (chip === "no-album") return shareNoAlbum(true);
     const root = reportPrintRoot();
@@ -422,6 +430,7 @@ const Reports = (() => {
   }
 
   function exportCurrentExcel() {
+    if (chip === "ledgers" && ledgerKind === "city") return downloadCityExcel();
     const root = reportPrintRoot();
     const tables = reportTables(root);
     if (!tables.length) return ctx.toast?.("Nothing to export", "error");
@@ -1533,7 +1542,106 @@ const Reports = (() => {
     <p class="fin-panel-sub" style="margin-top:12px;">Net profit = net sales (ex-GST, net of returns) − net COGS (purchases, net of vendor debit notes) − expenses − manual losses. Still a management approximation, not true inventory-costed accounting.${data.note ? ` ${ctx.esc(data.note)}` : ""}</p>`;
   }
 
+  function setCityQuery(value) {
+    cityQuery = value || "";
+    cityId = null;
+    clearTimeout(cityTimer);
+    cityTimer = setTimeout(loadCityResults, 250);
+  }
+
+  function pickCityName(name) {
+    cityQuery = name;
+    const input = document.getElementById("rep-city");
+    if (input) input.value = name;
+    loadCityResults();
+  }
+
+  async function loadCityResults() {
+    const box = document.getElementById("rep-city-body");
+    if (!box) return;
+    const q = cityQuery.trim();
+    if (!q) {
+      cityId = null;
+      box.innerHTML = `<p style="color:var(--muted);margin:8px 0 0;">Type a city.</p>`;
+      return;
+    }
+    let data;
+    try {
+      data = await ctx.api(`/reports/ledgers/city?city=${encodeURIComponent(q)}`, {}, 0);
+    } catch (e) {
+      box.innerHTML = `<p style="color:#b91c1c;">${ctx.esc(e.message || "Could not load the city")}</p>`;
+      return;
+    }
+    if ((data.cities || []).length && !data.city) {
+      cityId = null;
+      box.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+        ${data.cities.map(c => `<button type="button" class="btn btn-secondary btn-sm" onclick="Reports.pickCityName(decodeURIComponent('${encodeURIComponent(c.name || "")}'))">${ctx.esc(c.name)}</button>`).join("")}
+      </div>` || `<p style="color:var(--muted);">No city matches.</p>`;
+      return;
+    }
+    cityId = data.city ? data.city.id : null;
+    const parties = data.parties || [];
+    box.innerHTML = data.city ? `
+      <div style="display:flex;gap:8px;align-items:center;margin:8px 0 12px;">
+        <strong>${ctx.esc(data.city.name)}</strong>
+        <span style="color:var(--muted);">${parties.length} parties</span>
+        <button type="button" class="btn btn-primary btn-sm" onclick="Reports.printCityAll()">Print all</button>
+      </div>
+      ${parties.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
+        <th>Party</th><th>Phone</th><th>Balance</th><th></th>
+      </tr></thead><tbody>
+        ${parties.map(p => `<tr class="clickable" onclick="Reports.openCityParty(${p.id})">
+          <td><strong>${ctx.esc(p.business_name)}</strong>${p.party_number ? ` <span style="color:var(--muted);">#${p.party_number}</span>` : ""}</td>
+          <td>${ctx.esc(p.phone || "—")}</td>
+          <td><strong>${fmtPrice(p.outstanding)}</strong></td>
+          <td><button type="button" class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); Reports.printCityParty(${p.id})">Print</button></td>
+        </tr>`).join("")}
+      </tbody></table></div>` : `<p style="color:var(--muted);">No active party in this city.</p>`}` : `<p style="color:var(--muted);">No city matches.</p>`;
+  }
+
+  function openCityParty(id) {
+    App.showView?.("money");
+    Finance.openCustomerAr?.(id, { tab: "ledger" });
+  }
+
+  function printCityParty(id) {
+    const qs = datePreset === "all" ? "" : rangeQs();
+    DocShare.openPdf(`/share/statements/ar/${id}/pdf${qs}`, { print: true, filename: "ledger.pdf" })
+      .catch(e => ctx.toast(e.message || "Could not print", "error"));
+  }
+
+  function printCityAll() {
+    if (!cityId) return ctx.toast("Pick a city first", "error");
+    const qs = datePreset === "all" ? `?city_id=${cityId}` : rangeQs({ city_id: cityId });
+    ctx.showLoading?.();
+    DocShare.openPdf(`/reports/ledgers/city/pdf${qs}`, { print: true, filename: "city-ledgers.pdf" })
+      .catch(e => ctx.toast(e.message || "Could not print", "error"))
+      .finally(() => ctx.hideLoading?.());
+  }
+
+  function downloadCityPdf() {
+    if (!cityId) return ctx.toast("Pick a city first", "error");
+    const qs = datePreset === "all" ? `?city_id=${cityId}` : rangeQs({ city_id: cityId });
+    DocShare.openPdf(`/reports/ledgers/city/pdf${qs}`, { print: false, filename: "city-ledgers.pdf" })
+      .catch(e => ctx.toast(e.message || "Could not download", "error"));
+  }
+
+  function downloadCityExcel() {
+    if (!cityId) return ctx.toast("Pick a city first", "error");
+    const qs = datePreset === "all" ? `?city_id=${cityId}` : rangeQs({ city_id: cityId });
+    DocShare.openPdf(`/reports/ledgers/city/excel${qs}`, { print: false, filename: "city-ledgers.xlsx" })
+      .catch(e => ctx.toast(e.message || "Could not download", "error"));
+  }
+
   async function renderLedgers(body) {
+    if (ledgerKind === "city") {
+      body.innerHTML = `<label class="label">City</label>
+        <input id="rep-city" class="input" value="${ctx.esc(cityQuery)}" placeholder="Type the city" oninput="Reports.setCityQuery(this.value)" style="max-width:360px;" />
+        <p style="margin:6px 0 0;font-size:13px;color:var(--muted);">All dates prints the full ledger. Pick a date range to limit print, PDF, and Excel.</p>
+        <div id="rep-city-body"></div>`;
+      loadCityResults();
+      return;
+    }
     if (ledgerKind === "agents") {
       let rows = [];
       try { rows = await ctx.api("/commission-agents", {}, 0) || []; }
@@ -2131,6 +2239,7 @@ const Reports = (() => {
     init, showHub, setMode, setChip, setLedgerKind, setAgeingSide, setHubSearch, pickQuestion,
     setDatePreset, onRangeChange, onDayBillChange, setDayBillToday, onThresholdChange,
     openLedger, openAgentLedger, openStaffLedger, openExpenseLedger, addExpenseHead, addExpenseSubhead, renameExpenseSubhead, addExpenseSource, renameExpenseSource, deleteExpenseSource, openCashLedger, backFromLedger, openDoc,
+    setCityQuery, pickCityName, openCityParty, printCityParty, printCityAll, downloadCityPdf, downloadCityExcel,
     shareDaybook, waDaybook, shareStockSummary, shareNoAlbum, shareAgeing, waAgeing, exportExcel,
     printCurrent, exportCurrentExcel, downloadSalesPdf, downloadPaymentsPdf, setHideVoids, setJournalReportKind, setStockYear, setPrintCarry, togglePrintGroup, toggleStockAlbum,
     toggleVendorDcu, downloadVendorOrderCsv, downloadConfirmedPdf, setHideConfirmedCatalogs,

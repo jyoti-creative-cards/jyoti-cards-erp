@@ -1546,7 +1546,10 @@ const Finance = (() => {
     ctx.showLoading?.();
     try {
       arDetail = await ctx.api(`/accounts-receivable/customer/${customerId}`, {}, 0);
-      if (!sameParty) {
+      if (opts && (opts.from != null || opts.to != null)) {
+        arFromDate = opts.from || "";
+        arToDate = opts.to || "";
+      } else if (!sameParty) {
         arFromDate = "";
         arToDate = "";
         includeAgentEntries = false;

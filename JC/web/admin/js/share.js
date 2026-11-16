@@ -30,33 +30,17 @@ const DocShare = (() => {
   }
 
   async function openPdf(path, { print = false, filename = "document.pdf" } = {}) {
-    const tab = print ? window.open("", "_blank") : null;
-    if (print && !tab) throw new Error("Allow pop-ups to print");
-    try {
-      const res = await fetch(`${apiBase()}${path}`, { headers: authHeaders() });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        const msg = typeof err.detail === "string" ? err.detail : `HTTP ${res.status}`;
-        throw new Error(msg);
-      }
-      const blob = await res.blob();
-      const headerName = filenameFromDisposition(res.headers.get("Content-Disposition"));
-      const saveName = headerName || filename;
-      if (print) {
-        const url = URL.createObjectURL(blob);
-        tab.location = url;
-        const go = () => {
-          try { tab.focus(); tab.print(); } catch (_) {}
-        };
-        tab.addEventListener("load", () => setTimeout(go, 300));
-        setTimeout(go, 900);
-      } else {
-        saveBlob(blob, saveName);
-      }
-    } catch (err) {
-      try { tab && tab.close(); } catch (_) {}
-      throw err;
+    const res = await fetch(`${apiBase()}${path}`, { headers: authHeaders() });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      const msg = typeof err.detail === "string" ? err.detail : `HTTP ${res.status}`;
+      throw new Error(msg);
     }
+    const blob = await res.blob();
+    const headerName = filenameFromDisposition(res.headers.get("Content-Disposition"));
+    const saveName = headerName || filename;
+    if (print) printPdfUrl(URL.createObjectURL(blob));
+    else saveBlob(blob, saveName);
   }
 
   function printPdfUrl(url) {

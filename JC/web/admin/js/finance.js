@@ -2531,8 +2531,12 @@ const Finance = (() => {
       <label class="label">Date</label>
       <input type="date" class="input" id="exp-date" value="${ctx.esc(day)}" style="margin-bottom:12px;" />
       <label class="label">Subcategory</label>
-      <select class="input" id="exp-sub" style="margin-bottom:8px;">${expenseSubheadOptions("", subId)}</select>
-      <button type="button" class="btn btn-secondary btn-sm" style="margin-bottom:12px;" onclick="Finance.addExpenseSubhead()">Add subcategory</button>
+      <select class="input" id="exp-sub" style="margin-bottom:4px;" onchange="Finance.showExpenseHead()">${expenseSubheadOptions("", subId)}</select>
+      <p id="exp-head-label" style="margin:0 0 8px;font-weight:700;"></p>
+      <div style="display:flex;gap:8px;margin-bottom:12px;">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.addExpenseSubhead()">Add subcategory</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="Finance.renameSelectedSubhead()">Edit subcategory</button>
+      </div>
       <label class="label">Paid from</label>
       <select class="input" id="exp-source" style="margin-bottom:8px;">${sourceOptions(existing?.source_id || "")}</select>
       ${sourceManager()}
@@ -2549,6 +2553,19 @@ const Finance = (() => {
       saveBtn.textContent = editId ? "Save" : "Save expense";
       saveBtn.setAttribute("onclick", editId ? `Finance.saveExpenseEdit(${editId})` : "Finance.submitExpense()");
     }
+    showExpenseHead();
+  }
+
+  function showExpenseHead() {
+    const subId = document.getElementById("exp-sub")?.value || "";
+    const el = document.getElementById("exp-head-label");
+    if (!el) return;
+    let headName = "";
+    for (const head of expenseHeadCache) {
+      const sub = (head.subheads || []).find(s => String(s.id) === String(subId));
+      if (sub) { headName = head.name || ""; break; }
+    }
+    el.textContent = headName ? `Category: ${headName}` : "";
   }
 
   async function addExpenseSource() {
@@ -2609,6 +2626,29 @@ const Finance = (() => {
       const sel = document.getElementById("exp-head");
       if (head && sel) { sel.value = String(head.id); onExpenseHeadChange(); }
       restoreExpenseDraft(keep);
+    } catch (e) { ctx.toast(e.message, "error"); }
+  }
+
+  async function renameSelectedSubhead() {
+    const subId = document.getElementById("exp-sub")?.value || "";
+    if (!subId) return ctx.toast("Pick a subcategory", "error");
+    let head = null;
+    let sub = null;
+    for (const h of expenseHeadCache) {
+      const found = (h.subheads || []).find(s => String(s.id) === String(subId));
+      if (found) { head = h; sub = found; break; }
+    }
+    if (!head || !sub) return ctx.toast("Pick a subcategory", "error");
+    const name = prompt("Subcategory name:", sub.name || "");
+    if (name == null || !name.trim() || name.trim() === sub.name) return;
+    const keep = expenseDraft();
+    try {
+      await ctx.api(`/expenses/heads/${head.id}/subheads/${sub.id}`, { method: "PATCH", body: JSON.stringify({ name: name.trim() }) });
+      ctx.toast("Subcategory renamed", "success");
+      await fillExpenseForm(keep.existing, keep.editId);
+      const box = document.getElementById("exp-sub");
+      if (box) box.value = String(sub.id);
+      showExpenseHead();
     } catch (e) { ctx.toast(e.message, "error"); }
   }
 
@@ -4068,7 +4108,7 @@ const Finance = (() => {
     undoArPayment, undoApPayment, setRealEntriesOnly, setIncludeAgentEntries, viewCustomerBill,
     shareArStatement, setArFrom, setArTo, printCustomerLedger, downloadCustomerLedger, excelCustomerLedger, shareApStatement,
     setArOpeningBalance, setApOpeningBalance, saveArOpeningBalance, saveApOpeningBalance,
-    openExpenseForm, onExpenseHeadChange, addExpenseHead, addExpenseSubhead, addExpenseSource, renameExpenseSource, deleteExpenseSource, editExpense, saveExpenseEdit, closeExpenseForm, submitExpense, deleteExpense, onExpenseFilterChange, clearExpenseFilters,
+    openExpenseForm, onExpenseHeadChange, showExpenseHead, addExpenseHead, addExpenseSubhead, renameSelectedSubhead, addExpenseSource, renameExpenseSource, deleteExpenseSource, editExpense, saveExpenseEdit, closeExpenseForm, submitExpense, deleteExpense, onExpenseFilterChange, clearExpenseFilters,
     setJournalKind, setJournalLedger, setJournalMode, setJournalField, setJournalLine, removeJournalLine, searchJournalProduct,
     loadAlbumLines, applyJournalQtyAll,
     pickJournalProduct, previewJournal, printJournalPreview, exportJournalExcel, saveJournal, voidJournal,

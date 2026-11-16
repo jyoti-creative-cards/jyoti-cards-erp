@@ -170,6 +170,10 @@ def serialize_customer_bill(
         bill_status = "open"
     entries = _price_entries(bill)
     commission_agent = db.get(CommissionAgent, bill.commission_agent_id) if bill.commission_agent_id else None
+    party = db.get(Customer, bill.customer_id)
+    phone = ""
+    if party:
+        phone = (party.phone or "").strip() or (party.secondary_phone or "").strip()
     return CustomerBillOut(
         id=bill.id,
         bill_number=bill.bill_number,
@@ -200,6 +204,7 @@ def serialize_customer_bill(
         hide_discount_column=_hide_discount_column(bill, entries),
         commission_agent_id=bill.commission_agent_id,
         commission_agent_name=commission_agent.name if commission_agent else None,
+        customer_phone=phone or None,
         created_by_name=bill.created_by_name or "",
         has_custom_qr=bool(bill.payment_qr_key),
         lines=[

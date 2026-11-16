@@ -1267,7 +1267,7 @@ const App = (() => {
       await ensurePartyLedgerParties();
       const rows = filterPartyLedger(q);
       hits.innerHTML = rows.map(c =>
-        `<button type="button" class="btn btn-secondary" style="display:block;width:100%;text-align:left;margin-top:6px;" onclick="App.pickShortcut(${c.id})">${esc(c.business_name || "")}${c.city_name ? " · " + esc(c.city_name) : ""}${c.party_number ? " · #" + c.party_number : ""}</button>`
+        `<button type="button" class="btn btn-secondary" style="display:block;width:100%;text-align:left;margin-top:6px;" onclick="App.pickShortcut(${c.id}, '${c.kind || "customer"}')">${c.kind === "agent" ? "Agent · " : ""}${esc(c.business_name || "")}${c.city_name ? " · " + esc(c.city_name) : ""}${c.party_number ? " · #" + c.party_number : ""}</button>`
       ).join("") || `<p style="color:var(--muted);">No match</p>`;
       return;
     }
@@ -1291,13 +1291,18 @@ const App = (() => {
     }).join("") || `<p style="color:var(--muted);">No match</p>`;
   }
 
-  function pickShortcut(id) {
+  function pickShortcut(id, kind) {
     const mode = shortcutMode;
     closeShortcut();
     if (mode === "bill") billCustomer(id);
     else if (mode === "ledger") {
-      showView("money");
-      Finance.openCustomerAr?.(id, { tab: "ledger" });
+      if (kind === "agent") {
+        showView("party-ledger");
+        pickAgentLedger(id);
+      } else {
+        showView("money");
+        Finance.openCustomerAr?.(id, { tab: "ledger" });
+      }
     } else {
       showView("products");
       Products.openProductDetail?.(id);

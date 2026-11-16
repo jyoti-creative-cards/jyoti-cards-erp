@@ -3005,7 +3005,7 @@ const CustomerOrders = (() => {
     const q = (billEditSearch || "").trim();
     const rows = billEditProducts || [];
     box.innerHTML = rows.map(p =>
-      `<button type="button" class="btn btn-secondary btn-sm" style="display:block;width:100%;text-align:left;margin-top:4px;" onclick="CustomerOrders.addBillEditProduct(${p.catalog_product_id})">${ctx.esc(p.our_product_id)}${p.vendor_product_id ? " · " + ctx.esc(p.vendor_product_id) : ""} · stock ${p.quantity_on_hand ?? 0}${p.selling_price ? " · " + fmtPrice(p.selling_price) : ""}</button>`
+      `<button type="button" class="btn btn-secondary btn-sm" style="display:block;width:100%;text-align:left;margin-top:4px;" onclick="CustomerOrders.addBillEditProduct(${p.catalog_product_id})">${ctx.esc(p.our_product_id)}${p.vendor_product_id ? " · " + ctx.esc(p.vendor_product_id) : ""}${p.marking ? ` <span class="marking-flag">${ctx.esc(p.marking)}</span>` : ""} · stock ${p.quantity_on_hand ?? 0}${p.selling_price ? " · " + fmtPrice(p.selling_price) : ""}</button>`
     ).join("") || (q ? `<p style="font-size:13px;color:var(--muted);margin:6px 0 0;">${billEditSearchPending ? "Searching…" : "No match"}</p>` : "");
   }
 
@@ -3584,11 +3584,10 @@ const CustomerOrders = (() => {
   }
 
   function waWebPhone(raw) {
-    const digits = String(raw || "").replace(/\D/g, "");
+    let digits = String(raw || "").replace(/\D/g, "");
+    if (digits.length > 10) digits = digits.slice(-10);
     if (digits.length < 10) return "";
-    if (digits.length === 10) return "91" + digits;
-    if (digits.startsWith("0") && digits.length === 11) return "91" + digits.slice(1);
-    return digits;
+    return "91" + digits;
   }
 
   async function openBillOnWhatsApp(billId) {
@@ -3596,7 +3595,14 @@ const CustomerOrders = (() => {
     ctx.showLoading?.();
     try {
       const bill = await ctx.api(`/customer-orders/bills/${billId}`, {}, 0);
-      const phone = waWebPhone(bill.customer_phone);
+      let rawPhone = bill.customer_phone;
+      if (!waWebPhone(rawPhone) && bill.customer_id) {
+        try {
+          const party = await ctx.api(`/customers/${bill.customer_id}`, {}, 0);
+          rawPhone = party.phone || party.secondary_phone || rawPhone;
+        } catch (_) {}
+      }
+      const phone = waWebPhone(rawPhone);
       if (!phone) {
         tab?.close();
         ctx.toast("This party has no phone number", "error");

@@ -1606,7 +1606,7 @@ const Reports = (() => {
             <td>${ctx.esc(s.name)}</td>
             <td>${s.count || 0}</td>
             <td>${fmtPrice(s.total)}</td>
-            <td></td>
+            <td><button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); Reports.renameExpenseSubhead(${h.id}, ${s.id}, '${encodeURIComponent(s.name || "")}')">Edit</button></td>
           </tr>`).join("")}`).join("");
       const oldRows = earlier.map(it => `<tr class="clickable" onclick="Reports.openExpenseLedger('${ctx.esc(it.category || it.label)}')">
           <td><strong>${ctx.esc(it.label)}</strong></td>
@@ -1727,6 +1727,17 @@ const Reports = (() => {
     try {
       await ctx.api("/expenses/heads", { method: "POST", body: JSON.stringify({ name: name.trim() }) });
       ctx.toast("Head saved", "success");
+      setLedgerKind("expenses");
+    } catch (e) { ctx.toast(e.message, "error"); }
+  }
+
+  async function renameExpenseSubhead(headId, subId, current) {
+    current = decodeURIComponent(current || "");
+    const name = prompt("Subcategory name:", current || "");
+    if (name == null || !name.trim() || name.trim() === current) return;
+    try {
+      await ctx.api(`/expenses/heads/${headId}/subheads/${subId}`, { method: "PATCH", body: JSON.stringify({ name: name.trim() }) });
+      ctx.toast("Subcategory renamed", "success");
       setLedgerKind("expenses");
     } catch (e) { ctx.toast(e.message, "error"); }
   }
@@ -2119,7 +2130,7 @@ const Reports = (() => {
   return {
     init, showHub, setMode, setChip, setLedgerKind, setAgeingSide, setHubSearch, pickQuestion,
     setDatePreset, onRangeChange, onDayBillChange, setDayBillToday, onThresholdChange,
-    openLedger, openAgentLedger, openStaffLedger, openExpenseLedger, addExpenseHead, addExpenseSubhead, addExpenseSource, renameExpenseSource, deleteExpenseSource, openCashLedger, backFromLedger, openDoc,
+    openLedger, openAgentLedger, openStaffLedger, openExpenseLedger, addExpenseHead, addExpenseSubhead, renameExpenseSubhead, addExpenseSource, renameExpenseSource, deleteExpenseSource, openCashLedger, backFromLedger, openDoc,
     shareDaybook, waDaybook, shareStockSummary, shareNoAlbum, shareAgeing, waAgeing, exportExcel,
     printCurrent, exportCurrentExcel, downloadSalesPdf, downloadPaymentsPdf, setHideVoids, setJournalReportKind, setStockYear, setPrintCarry, togglePrintGroup, toggleStockAlbum,
     toggleVendorDcu, downloadVendorOrderCsv, downloadConfirmedPdf, setHideConfirmedCatalogs,

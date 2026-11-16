@@ -304,6 +304,45 @@ def create_expense_subhead(
     return {"id": row.id, "name": row.name, "category": f"{head.name} / {row.name}".lower()}
 
 
+@router.patch("/heads/{head_id}/subheads/{sub_id}")
+def rename_expense_subhead(
+    head_id: int,
+    sub_id: int,
+    body: HeadIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    head = db.get(ExpenseHead, head_id)
+    row = db.get(ExpenseSubhead, sub_id)
+    if not head or not row or row.head_id != head.id:
+        raise HTTPException(404, "sub-head not found")
+    name = _clean_head_name(body.name)
+    taken = (
+        db.query(ExpenseSubhead)
+        .filter(
+            ExpenseSubhead.head_id == head.id,
+            ExpenseSubhead.id != row.id,
+            func.lower(ExpenseSubhead.name) == name.lower(),
+        )
+        .first()
+    )
+    if taken:
+        raise HTTPException(400, "That sub-head already exists")
+    old_category = f"{head.name} / {row.name}".lower()
+    row.name = name
+    new_category = f"{head.name} / {name}".lower()
+    if old_category != new_category:
+        db.query(Expense).filter(Expense.category == old_category).update(
+            {Expense.category: new_category}, synchronize_session=False
+        )
+    log_from_auth(
+        db, auth, action="update", entity_type="expense_subhead", entity_id=row.id,
+        entity_label=f"{head.name} / {name}",
+    )
+    db.commit()
+    return {"id": row.id, "name": row.name, "category": new_category}
+
+
 @router.get("", response_model=List[ExpensePublic])
 def list_expenses(
     from_date: Optional[date] = Query(None),

@@ -1296,9 +1296,13 @@ const App = (() => {
     closeShortcut();
     if (mode === "bill") billCustomer(id);
     else if (mode === "ledger") {
-      showView("party-ledger");
-      if (kind === "agent") pickAgentLedger(id);
-      else pickPartyLedger(id, "customer");
+      if (kind === "agent") {
+        showView("party-ledger");
+        pickAgentLedger(id);
+      } else {
+        showView("money");
+        Finance.openCustomerAr?.(id, { tab: "ledger" });
+      }
     } else {
       showView("products");
       Products.openProductDetail?.(id);

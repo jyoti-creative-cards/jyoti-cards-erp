@@ -1326,7 +1326,7 @@ const App = (() => {
   });
 
   document.addEventListener("keydown", (e) => {
-    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || e.code !== "KeyR") return;
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || e.code !== "KeyZ") return;
     const el = e.target;
     const field = el && el.getAttribute ? (el.getAttribute("data-field") || "") : "";
     const marking = el && (el.id === "co-bill-mark" || field === "bmark" || field === "cmark");

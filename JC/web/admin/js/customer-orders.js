@@ -2916,7 +2916,7 @@ const CustomerOrders = (() => {
       </label>
       <label class="label">Marking</label>
       <textarea id="co-bill-mark" class="input" rows="3" data-latest="${ctx.esc(processContext?.latest_marking || "")}" style="background:#fee2e2;border:1px solid #dc2626;font-weight:800;color:#b91c1c;" oninput="CustomerOrders.setNarration(this.value)">${ctx.esc(narration)}</textarea>
-      <p style="margin:4px 0 0;font-size:12px;color:var(--muted);">Ctrl+R repeats the latest marking.</p>
+      <p style="margin:4px 0 0;font-size:12px;color:var(--muted);">Ctrl+Z repeats the latest marking.</p>
     `;
     footerEl.innerHTML = `
       <button class="btn btn-secondary" onclick="CustomerOrders.closeProcessWizard()">Cancel</button>

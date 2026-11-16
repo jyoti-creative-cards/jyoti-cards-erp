@@ -156,6 +156,9 @@ class CustomerBillOut(BaseModel):
     has_custom_qr: bool = False
     commission_agent_id: Optional[int] = None
     commission_agent_name: Optional[str] = None
+    customer_phone: Optional[str] = None
+    customer_name: Optional[str] = None
+    city_name: Optional[str] = None
     created_by_name: Optional[str] = None
     lines: List[CustomerBillLineOut] = []
 

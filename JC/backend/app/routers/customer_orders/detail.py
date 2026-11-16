@@ -172,8 +172,14 @@ def serialize_customer_bill(
     commission_agent = db.get(CommissionAgent, bill.commission_agent_id) if bill.commission_agent_id else None
     party = db.get(Customer, bill.customer_id)
     phone = ""
+    customer_name = None
+    city_name = None
     if party:
         phone = (party.phone or "").strip() or (party.secondary_phone or "").strip()
+        customer_name = party.business_name or None
+        if party.city_id:
+            city = db.get(City, party.city_id)
+            city_name = city.name if city else None
     return CustomerBillOut(
         id=bill.id,
         bill_number=bill.bill_number,
@@ -205,6 +211,8 @@ def serialize_customer_bill(
         commission_agent_id=bill.commission_agent_id,
         commission_agent_name=commission_agent.name if commission_agent else None,
         customer_phone=phone or None,
+        customer_name=customer_name,
+        city_name=city_name,
         created_by_name=bill.created_by_name or "",
         has_custom_qr=bool(bill.payment_qr_key),
         lines=[

@@ -3590,10 +3590,14 @@ const CustomerOrders = (() => {
     try {
       const bill = await ctx.api(`/customer-orders/bills/${billId}`, {}, 0);
       let rawPhone = bill.customer_phone;
-      if (!waWebPhone(rawPhone) && bill.customer_id) {
+      let partyName = bill.customer_name || "";
+      let cityName = bill.city_name || "";
+      if (bill.customer_id && (!waWebPhone(rawPhone) || !partyName)) {
         try {
           const party = await ctx.api(`/customers/${bill.customer_id}`, {}, 0);
           rawPhone = party.phone || party.secondary_phone || rawPhone;
+          partyName = partyName || party.business_name || "";
+          cityName = cityName || party.city_name || "";
         } catch (_) {}
       }
       const phone = waWebPhone(rawPhone);
@@ -3603,7 +3607,8 @@ const CustomerOrders = (() => {
         return;
       }
       const total = bill.grand_total ? ` Total ₹${bill.grand_total}.` : "";
-      const text = `Bill ${bill.bill_number || ""}.${total} Please find the bill PDF attached.`;
+      const who = [partyName, cityName].filter(Boolean).join(", ");
+      const text = `Bill ${bill.bill_number || ""}.${total}${who ? " " + who : ""}`;
       const url = `https://web.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(text)}`;
       if (tab) tab.location = url;
       else window.open(url, "_blank");

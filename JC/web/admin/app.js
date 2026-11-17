@@ -1313,7 +1313,7 @@ const App = (() => {
     if (!e.altKey || e.ctrlKey || e.metaKey) return;
     if (document.getElementById("app")?.classList.contains("hidden")) return;
     const code = e.code;
-    if (code !== "KeyC" && code !== "KeyB" && code !== "KeyS" && code !== "KeyL" && code !== "KeyN") return;
+    if (code !== "KeyC" && code !== "KeyB" && code !== "KeyS" && code !== "KeyL" && code !== "KeyN" && code !== "KeyP") return;
     e.preventDefault();
     if (code === "KeyC") CustomerOrders.openOfflineWizard?.();
     else if (code === "KeyN") {
@@ -1323,6 +1323,10 @@ const App = (() => {
     else if (code === "KeyB") openShortcut("bill");
     else if (code === "KeyS") openShortcut("item");
     else if (code === "KeyL") openShortcut("ledger");
+    else if (code === "KeyP") {
+      showView("reports");
+      Reports.openReport?.("prints", "sticker-prints");
+    }
   });
 
   document.addEventListener("keydown", (e) => {

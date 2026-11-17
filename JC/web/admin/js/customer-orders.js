@@ -3606,9 +3606,9 @@ const CustomerOrders = (() => {
         ctx.toast("This party has no phone number", "error");
         return;
       }
-      const total = bill.grand_total ? ` Total ₹${bill.grand_total}.` : "";
       const who = [partyName, cityName].filter(Boolean).join(", ");
-      const text = `Bill ${bill.bill_number || ""}.${total}${who ? " " + who : ""}`;
+      const amount = bill.grand_total ? `₹${bill.grand_total}` : "";
+      const text = [who, bill.bill_number ? `Bill ${bill.bill_number}` : "", amount].filter(Boolean).join(", ");
       const url = `https://web.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(text)}`;
       if (tab) tab.location = url;
       else window.open(url, "_blank");

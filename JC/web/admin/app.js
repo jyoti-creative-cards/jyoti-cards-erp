@@ -173,10 +173,12 @@ const App = (() => {
     document.querySelector(".big-tile-vendors")?.classList.toggle("hidden", !canRead("vendors"));
     const badge = document.getElementById("user-badge");
     if (badge) {
-      if (isAdmin()) badge.textContent = "Admin";
+      if (authMode === "admin") badge.textContent = "Admin";
       else if (staffUser) badge.textContent = staffUser.name;
       else badge.textContent = "";
     }
+    const brand = document.getElementById("brand-title");
+    if (brand) brand.textContent = authMode === "staff" && staffUser && staffUser.name ? staffUser.name : "JC Admin";
     document.querySelectorAll("[data-require-write]").forEach(el => {
       const res = el.getAttribute("data-require-write");
       el.classList.toggle("hidden", !canWrite(res));

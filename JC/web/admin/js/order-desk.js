@@ -2,6 +2,7 @@
 const OrderDesk = (() => {
   const L = () => OrderDeskLogic;
   let filter = "new";
+  let hideCatalogues = false;
   let dateFrom = "";
   let dateTo = "";
   let raw = [];
@@ -44,7 +45,11 @@ const OrderDesk = (() => {
   }
 
   function visibleRows() {
-    return (raw || []).filter(row => L().inDateRange(L().orderDay(row), dateFrom, dateTo));
+    return (raw || []).filter(row => {
+      if (!L().inDateRange(L().orderDay(row), dateFrom, dateTo)) return false;
+      if (filter === "confirmed" && hideCatalogues && row.has_catalogue) return false;
+      return true;
+    });
   }
   function keyOf(row) {
     if (filter === "billed" || filter === "dispatched") return "b" + row.bill_id;
@@ -389,6 +394,10 @@ const OrderDesk = (() => {
         ${filter === "dispatched" ? "" : `<button type="button" class="btn btn-secondary" onclick="OrderDesk.selectAll()">Select all</button>`}
         ${bar}
       </div>
+      ${filter === "confirmed" ? `<label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;margin:0 0 12px;">
+        <input type="checkbox" ${hideCatalogues ? "checked" : ""} onchange="OrderDesk.setHideCatalogues(this.checked)" />
+        Hide parties with a catalogue in confirmed
+      </label>` : ""}
       <p style="margin:0 0 12px;color:var(--muted);font-size:13px;">${hints[filter] || ""}</p>
       ${list || `<p style="color:var(--muted);">Nothing in this list.</p>`}`;
   }
@@ -425,6 +434,10 @@ const OrderDesk = (() => {
   function setFilter(next) {
     filter = next;
     load().catch(e => toast(e.message || "Could not load orders"));
+  }
+  function setHideCatalogues(on) {
+    hideCatalogues = !!on;
+    render();
   }
   function setFrom(v) { dateFrom = v || ""; render(); }
   function setTo(v) { dateTo = v || ""; render(); }
@@ -1084,7 +1097,7 @@ const OrderDesk = (() => {
   }
 
   return {
-    open, openFresh, setFilter, setFrom, setTo, toggle, selectAll, newOrder, act, pull,
+    open, openFresh, setFilter, setHideCatalogues, setFrom, setTo, toggle, selectAll, newOrder, act, pull,
     setConfirmSearch, setBillSearch, addBillSearchEnter, paintBillStock, setCatalogsComplete, setMode, setTransportBit, setHandler, setDisc, setGst, setBillAgent,
     addCharge, toggleCatalog, togglePlacement, toggleConfirmAddon, toggleBillAddon,
     removeConfirmLine, removeBillLine, addConfirmItem, addBillItem,

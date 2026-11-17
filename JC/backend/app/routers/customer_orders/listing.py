@@ -17,6 +17,7 @@ from app.models.customer import Customer
 from app.models.customer_bill import CustomerBill, CustomerBillLine
 from app.models.customer_order import CustomerOpenLine, CustomerOrder, CustomerOrderLine, CustomerOrderPlacement
 from app.services.customer_selling.marking import mark_list as _mark_list, single_mark
+from app.services.reports.confirmed_orders import is_catalogue_item
 from app.schemas.customer_order import (
     CancelRequest,
     EditBillIn,
@@ -651,12 +652,15 @@ def list_customer_orders(
             .all()
         )
         lines_by_cid: dict[int, list[dict]] = defaultdict(list)
+        catalogue_cids: set[int] = set()
         for cid, pid, our, vendor, cat, second, third, price in search_rows:
             text = " ".join(str(x).strip() for x in (pid, our, vendor, cat, second, third) if x)
             lines_by_cid[int(cid)].append({
                 "text": text,
                 "price": format(price, "f") if price is not None else "",
             })
+            if is_catalogue_item(our or "", cat):
+                catalogue_cids.add(int(cid))
         touched_by_cid = {int(r[0]): r[3] for r in rows}
         creators_by_cid, marks_by_cid = _confirmed_tile(db, cids)
         placed_by_cid: dict[int, object] = {}
@@ -707,6 +711,7 @@ def list_customer_orders(
                     search_lines=lines_by_cid.get(cid, []),
                     search_text=" ".join(ln["text"] for ln in lines_by_cid.get(cid, [])),
                     prices=[ln["price"] for ln in lines_by_cid.get(cid, []) if ln["price"]],
+                    has_catalogue=cid in catalogue_cids,
                 )
             )
         out.sort(key=lambda x: _sort_business_date(x.display_date), reverse=True)

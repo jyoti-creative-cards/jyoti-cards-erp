@@ -104,6 +104,7 @@ class CustomerOrderSummary(BaseModel):
     search_text: str = ""
     prices: List[str] = []
     search_lines: List[HubSearchLine] = []
+    has_catalogue: bool = False
 
 
 class CustomerBillLineOut(BaseModel):

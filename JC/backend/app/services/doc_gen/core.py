@@ -398,6 +398,9 @@ def generate_customer_bill_document(
         if agent and not agent.deleted_at:
             agent_name = agent.name
             agent_phone = agent.phone
+    from app.services.product_markings import party_bill_narration
+
+    party_narration = party_bill_narration(db, bill)
     pdf = render_customer_bill_pdf(
         bill_id=bill.id,
         order_id=bill.placement_id or bill.id,
@@ -415,7 +418,7 @@ def generate_customer_bill_document(
         generated_at=bill.created_at or datetime.now(timezone.utc),
         invoice_date=bill_invoice_date(bill),
         customer_notes=placement.customer_notes if placement else None,
-        narration=bill.narration,
+        narration=party_narration,
         item_image_urls=None,
         order_created_at=order_at,
         order_by=order_by,
@@ -431,7 +434,7 @@ def generate_customer_bill_document(
         stamped = dict(bill.totals_json or {})
         stamped["print_copies"] = 1
         stamped["header_narration"] = 1
-        stamped["printed_narration"] = (bill.narration or "").strip()
+        stamped["printed_narration"] = party_narration
         bill.totals_json = stamped
         flag_modified(bill, "totals_json")
     if not persist:

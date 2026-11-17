@@ -567,6 +567,7 @@ def ledger_route_detail(route_id: int, db: Session = Depends(get_db), auth: Auth
 class MarkingApplyIn(BaseModel):
     marking: str = ""
     product_ids: list[int] = Field(default_factory=list)
+    show_to_party: bool = False
 
 
 class MarkingAssignIn(BaseModel):
@@ -674,7 +675,7 @@ def product_markings_apply(
     from app.services.product_markings import apply_marking
 
     try:
-        count = apply_marking(db, body.product_ids, body.marking)
+        count = apply_marking(db, body.product_ids, body.marking, show_to_party=body.show_to_party)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from None
     response_cache.invalidate("catalog:")

@@ -103,7 +103,8 @@ const OrderDesk = (() => {
     if (p.marker_1) badges += ` <span class="badge badge-blue" style="font-size:11px;">${esc(p.marker_1)}</span>`;
     if (p.marker_2) badges += ` <span class="badge badge-amber" style="font-size:11px;">${esc(p.marker_2)}</span>`;
     if (String(p.payment_type || "").toUpperCase() === "CASH") badges += ` <span class="badge badge-amber" style="font-size:11px;">CASH</span>`;
-    return `<p style="margin:0 0 8px;"><strong>${esc(num)}${esc(name)}${city}</strong>${badges}</p>`;
+    const phone = filter === "confirmed" && (p.phone || p.customer_phone) ? ` · ${esc(p.phone || p.customer_phone)}` : "";
+    return `<p style="margin:0 0 8px;"><strong>${esc(num)}${esc(name)}${city}${phone}</strong>${badges}</p>`;
   }
 
   function rowTitle(row) {
@@ -113,7 +114,8 @@ const OrderDesk = (() => {
     }
     const num = row.party_number ? "#" + row.party_number + " " : "";
     const city = row.city_name ? ` · ${esc(row.city_name)}` : "";
-    return `${esc(num)}${esc(row.customer_name || "")}${city}`;
+    const phone = filter === "confirmed" && row.customer_phone ? ` · ${esc(row.customer_phone)}` : "";
+    return `${esc(num)}${esc(row.customer_name || "")}${city}${phone}`;
   }
   function stageWhen(row) {
     if (filter === "dispatched") return row.picked_at || row.created_at;

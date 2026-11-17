@@ -246,6 +246,7 @@ def _party_fields(db: Session, customer: Customer) -> dict:
         "marker_2": customer.marker_2,
         "payment_type": customer.payment_type,
         "city_name": city.name if city else None,
+        "phone": (customer.phone or "").strip() or (customer.secondary_phone or "").strip() or None,
     }
 
 

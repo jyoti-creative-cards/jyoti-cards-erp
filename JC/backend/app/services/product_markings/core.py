@@ -1,6 +1,7 @@
 """Staff markings on catalog products. Each one has a start and an end date."""
 from __future__ import annotations
 
+import re
 from datetime import date
 
 from sqlalchemy import or_
@@ -63,6 +64,63 @@ def marking_labels(db: Session, product_ids: list[int]) -> dict[int, str | None]
         names.sort(key=str.casefold)
         out[pid] = ", ".join(names) or None
     return out
+
+
+def narration_for_party(narration: str | None, markings: list[tuple[str, bool]]) -> str:
+    """Customer bill copy. A product marking is included only when show to party is on."""
+    hidden = []
+    shown = []
+    seen = set()
+    for text, show in markings:
+        cleaned = " ".join(str(text or "").split())
+        if not cleaned:
+            continue
+        if show:
+            if cleaned.casefold() not in seen:
+                seen.add(cleaned.casefold())
+                shown.append(cleaned)
+        else:
+            hidden.append(cleaned)
+    text = narration or ""
+    for secret in sorted(hidden, key=len, reverse=True):
+        text = re.sub(re.escape(secret), " ", text, flags=re.IGNORECASE)
+    parts = []
+    for piece in re.split(r"[·\n]+", text):
+        bit = " ".join(piece.split()).strip(" -·")
+        if bit:
+            parts.append(bit)
+    have = {part.casefold() for part in parts}
+    for mark in shown:
+        if mark.casefold() not in have:
+            parts.append(mark)
+            have.add(mark.casefold())
+    return " · ".join(parts)
+
+
+def party_bill_narration(db: Session, bill) -> str:
+    from app.models.customer_bill import CustomerBillLine
+
+    ids = [
+        int(row[0])
+        for row in db.query(CustomerBillLine.catalog_product_id)
+        .filter(CustomerBillLine.bill_id == bill.id, CustomerBillLine.catalog_product_id.isnot(None))
+        .all()
+        if row[0]
+    ]
+    markings: list[tuple[str, bool]] = []
+    if ids:
+        today = today_ist()
+        rows = (
+            db.query(ProductMarking)
+            .filter(
+                ProductMarking.catalog_product_id.in_(ids),
+                ProductMarking.starts_on <= today,
+                ProductMarking.ends_on >= today,
+            )
+            .all()
+        )
+        markings = [(row.text, bool(row.show_to_party)) for row in rows]
+    return narration_for_party(bill.narration, markings)
 
 
 def display_marking(db: Session, product: CatalogProduct | None) -> str | None:
@@ -227,6 +285,7 @@ def list_product_markings(db: Session, *, q: str | None, marked: str) -> dict:
     )
     markings = sorted({(name or "").strip() for (name,) in names if (name or "").strip()}, key=str.casefold)
     labels = marking_labels(db, [product.id for product, _vendor in rows])
+    party_on = _party_flags(db, list(labels))
     items = []
     for product, vendor in rows:
         if product.id in labels:
@@ -248,11 +307,33 @@ def list_product_markings(db: Session, *, q: str | None, marked: str) -> dict:
             "category_3": product.category_3 or "",
             "year_group": product.year_group or "",
             "marking": text,
+            "show_to_party": bool(party_on.get(product.id)),
         })
     return {"items": items, "markings": markings, "shown": len(items)}
 
 
-def apply_marking(db: Session, product_ids: list[int], marking: str | None) -> int:
+def _party_flags(db: Session, product_ids: list[int]) -> dict[int, bool]:
+    ids = [int(pid) for pid in product_ids if pid]
+    if not ids:
+        return {}
+    today = today_ist()
+    rows = (
+        db.query(ProductMarking.catalog_product_id, ProductMarking.show_to_party)
+        .filter(
+            ProductMarking.catalog_product_id.in_(ids),
+            ProductMarking.starts_on <= today,
+            ProductMarking.ends_on >= today,
+        )
+        .all()
+    )
+    out = {pid: False for pid in ids}
+    for pid, show in rows:
+        if show:
+            out[int(pid)] = True
+    return out
+
+
+def apply_marking(db: Session, product_ids: list[int], marking: str | None, show_to_party: bool = False) -> int:
     cleaned = clean_marking(marking)
     rows = _products(db, product_ids)
     for product in rows:
@@ -261,6 +342,7 @@ def apply_marking(db: Session, product_ids: list[int], marking: str | None) -> i
             db.add(ProductMarking(
                 catalog_product_id=product.id,
                 text=cleaned,
+                show_to_party=bool(show_to_party),
                 starts_on=today_ist(),
                 ends_on=OPEN_END,
             ))

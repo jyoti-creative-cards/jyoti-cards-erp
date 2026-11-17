@@ -129,6 +129,7 @@ def get_process_context(
         commission_agent_id=agent.id if agent else None,
         commission_agent_name=agent.name if agent else None,
         catalogs_complete=bool(customer.catalogs_complete),
+        phone=(customer.phone or "").strip() or (customer.secondary_phone or "").strip() or None,
     )
 
 @router.post("/customer/{customer_id}/process/preview")

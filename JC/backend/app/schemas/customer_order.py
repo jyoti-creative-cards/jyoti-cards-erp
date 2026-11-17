@@ -105,6 +105,7 @@ class CustomerOrderSummary(BaseModel):
     prices: List[str] = []
     search_lines: List[HubSearchLine] = []
     has_catalogue: bool = False
+    customer_phone: Optional[str] = None
 
 
 class CustomerBillLineOut(BaseModel):
@@ -177,6 +178,7 @@ class CustomerOrderDetail(BaseModel):
     marker_2: Optional[str] = None
     payment_type: Optional[str] = None
     city_name: Optional[str] = None
+    phone: Optional[str] = None
 
 
 class TileMarkIn(BaseModel):
@@ -316,6 +318,7 @@ class ProcessContextOut(BaseModel):
     commission_agent_id: Optional[int] = None
     commission_agent_name: Optional[str] = None
     catalogs_complete: bool = False
+    phone: Optional[str] = None
 
 
 class OfflineLineIn(BaseModel):

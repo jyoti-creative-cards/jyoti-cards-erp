@@ -101,6 +101,7 @@ def render_ar_statement_pdf(
     end = to_date if to_date is not None else day
     if start is not None or end is not None:
         entries = [e for e in entries if _entry_in_span(e, start, end)]
+    entries = [e for e in entries if str(e.get("status") or "").lower() not in {"cancelled", "voided"}]
     if start and end and start != end:
         heading = f"Customer ledger · {start.isoformat()} to {end.isoformat()}"
     elif start or end:

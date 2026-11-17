@@ -712,6 +712,7 @@ def list_customer_orders(
                     search_text=" ".join(ln["text"] for ln in lines_by_cid.get(cid, [])),
                     prices=[ln["price"] for ln in lines_by_cid.get(cid, []) if ln["price"]],
                     has_catalogue=cid in catalogue_cids,
+                    customer_phone=((getattr(cust_obj, "phone", None) or "").strip() or (getattr(cust_obj, "secondary_phone", None) or "").strip() or None) if cust_obj else None,
                 )
             )
         out.sort(key=lambda x: _sort_business_date(x.display_date), reverse=True)

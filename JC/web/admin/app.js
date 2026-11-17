@@ -2326,14 +2326,15 @@ const App = (() => {
     if (box) includeAgentEntries = !!box.checked;
   }
 
-  function partyLedgerRows(day) {
+  function partyLedgerRows(day, opts) {
     const lines = [];
     lines.push(["When", "Type", "Title", "Detail", "Product", "Qty", "Rate", "Amount"]);
     const wanted = String(day || "").slice(0, 10);
+    const hideCancelled = !!(opts && opts.hideCancelled) || customerRealOnly;
     const visible = customerLedger.filter(e => {
       if (wanted && String(e.occurred_at || e.value_date || "").slice(0, 10) !== wanted) return false;
       if (!includeAgentEntries && isAgentLedgerEntry(e)) return false;
-      if (!customerRealOnly) return true;
+      if (!hideCancelled) return true;
       if (e.event_type === "order_cancelled") return false;
       if (e.event_type === "customer_bill" && String(e.title || "").toLowerCase().startsWith("cancelled")) return false;
       if (e.event_type === "ar_payment" && e.details?.reversed) return false;
@@ -2384,7 +2385,7 @@ const App = (() => {
     if (!partyLedgerCustomerId) return toast("Select a party first", "error");
     readAgentInclude();
     const day = document.getElementById("party-ledger-day")?.value || "";
-    const rows = partyLedgerMode === "agent" ? agentRowsForDay(day) : partyLedgerRows(day);
+    const rows = partyLedgerMode === "agent" ? agentRowsForDay(day) : partyLedgerRows(day, { hideCancelled: true });
     const body = rows.map((cols, i) => `<tr>${cols.map(col => `<${i ? "td" : "th"}>${esc(col)}</${i ? "td" : "th"}>`).join("")}</tr>`).join("");
     const title = document.getElementById("party-ledger-picked")?.textContent || "Party ledger";
     const frame = document.createElement("iframe");

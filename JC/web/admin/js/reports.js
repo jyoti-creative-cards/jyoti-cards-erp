@@ -736,9 +736,10 @@ const Reports = (() => {
     const input = document.getElementById(`mark-one-${id}`);
     const marking = input ? input.value : "";
     try {
+      const show = !!document.getElementById(`mark-party-${id}`)?.checked;
       await ctx.api("/reports/product-markings/apply", {
         method: "POST",
-        body: JSON.stringify({ marking, product_ids: [id] }),
+        body: JSON.stringify({ marking, product_ids: [id], show_to_party: show }),
       });
       ctx.toast("Marking saved", "success");
       loadChip();
@@ -751,10 +752,11 @@ const Reports = (() => {
     const ids = Object.keys(markingPicked).map(Number).filter(Boolean);
     if (!ids.length) return ctx.toast("Pick the products first", "error");
     const marking = document.getElementById("mark-apply")?.value || "";
+    const show = !!document.getElementById("mark-party-apply")?.checked;
     try {
       const res = await ctx.api("/reports/product-markings/apply", {
         method: "POST",
-        body: JSON.stringify({ marking, product_ids: ids }),
+        body: JSON.stringify({ marking, product_ids: ids, show_to_party: show }),
       });
       markingPicked = {};
       ctx.toast(`Updated ${res.updated} product${res.updated === 1 ? "" : "s"}`, "success");
@@ -802,6 +804,10 @@ const Reports = (() => {
         </label>
         <div class="mark-edit">
           <input class="input" id="mark-one-${it.id}" value="${ctx.esc(it.marking || "")}" placeholder="Marking" />
+          <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;">
+            <input type="checkbox" id="mark-party-${it.id}" ${it.show_to_party ? "checked" : ""} />
+            Show to party also
+          </label>
           <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.saveProductMarking(${it.id})">Save</button>
         </div>
       </article>`;
@@ -817,6 +823,10 @@ const Reports = (() => {
       <div class="mark-tools">
         <label class="label">New or existing marking
           <input class="input" id="mark-apply" placeholder="Fragile" />
+        </label>
+        <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;">
+          <input type="checkbox" id="mark-party-apply" />
+          Show to party also
         </label>
         <button type="button" class="btn btn-primary btn-sm" onclick="Reports.applyMarkingToPicked()">Apply to selected (<span id="mark-picked-count">${Object.keys(markingPicked).length}</span>)</button>
         <label class="label">Rename

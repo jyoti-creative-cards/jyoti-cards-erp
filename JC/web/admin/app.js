@@ -115,6 +115,7 @@ const App = (() => {
     document.getElementById("nav-party-ledger")?.classList.toggle("hidden", desk || lookup || taker || !(isAdmin() || canRead("customers")));
     document.getElementById("nav-analytics")?.classList.toggle("hidden", desk || lookup || taker || !isAdmin());
     document.getElementById("nav-more")?.classList.toggle("hidden", lookup || taker);
+    document.getElementById("nav-reports")?.classList.toggle("hidden", desk || lookup || taker || !isAdmin());
     document.getElementById("more-tile-buying")?.classList.toggle("hidden", !showBuying);
     document.getElementById("more-tile-selling")?.classList.toggle("hidden", !showSelling);
     document.getElementById("more-tile-returns")?.classList.toggle("hidden", !showReturns);
@@ -144,7 +145,6 @@ const App = (() => {
     document.getElementById("nav-selling")?.classList.add("hidden");
     document.getElementById("nav-returns")?.classList.add("hidden");
     document.getElementById("nav-finance")?.classList.add("hidden");
-    document.getElementById("nav-reports")?.classList.add("hidden");
     document.getElementById("nav-setup")?.classList.add("hidden");
     document.getElementById("nav-recycle")?.classList.add("hidden");
     document.getElementById("nav-home")?.classList.add("hidden");
@@ -885,7 +885,7 @@ const App = (() => {
         showView("today", { replace: true });
         return;
       }
-      markMore();
+      document.getElementById("nav-reports")?.classList.add("active");
       document.getElementById("view-reports")?.classList.remove("hidden");
       Reports.showHub();
     } else if (name === "setup") {

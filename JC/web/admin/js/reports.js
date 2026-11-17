@@ -145,20 +145,129 @@ const Reports = (() => {
   }
 
   let showQuestions = true;
+  let reportScreen = "home";
+  let reportGroup = "";
+
+  const GROUP_META = {
+    today: { letter: "T", title: "Today", desc: "What moved today" },
+    ledgers: { letter: "L", title: "Ledgers", desc: "Who owes, and the books" },
+    stock: { letter: "S", title: "Stock", desc: "What is on hand" },
+    tax: { letter: "X", title: "Tax", desc: "GST, cash, and profit" },
+  };
+
+  const REPORT_TILES = {
+    today: [
+      { mode: "today", chip: "daybook", title: "Daybook", desc: "Money in and out for the day" },
+      { mode: "today", chip: "confirmed-orders", title: "Confirmed orders", desc: "Orders waiting to be billed" },
+      { mode: "today", chip: "day-bills", title: "Day bills", desc: "Bills for one date" },
+      { mode: "today", chip: "sales-book", title: "Sales book", desc: "Bills in the date range" },
+      { mode: "today", chip: "receipt-book", title: "Receipt book", desc: "Money received" },
+      { mode: "today", chip: "transport", title: "Transport", desc: "Who is going by transport" },
+      { mode: "today", chip: "item-outward", title: "Daily stock", desc: "Stock that moved" },
+      { mode: "today", chip: "payments", title: "Payment accounts", desc: "Where money was collected" },
+      { mode: "today", chip: "purchases", title: "Purchase bills", desc: "Vendor bills" },
+      { mode: "prints", chip: "sticker-prints", title: "Sticker prints", desc: "Labels printed" },
+    ],
+    ledgers: [
+      { mode: "books", chip: "ledgers", kind: "customers", title: "Customers", desc: "Party balances" },
+      { mode: "books", chip: "ledgers", kind: "city", title: "City", desc: "Parties in one city" },
+      { mode: "books", chip: "ledgers", kind: "agents", title: "Agents", desc: "Commission agents" },
+      { mode: "books", chip: "ledgers", kind: "vendors", title: "Vendors", desc: "What we owe" },
+      { mode: "books", chip: "ageing", title: "Due age", desc: "How old the dues are" },
+      { mode: "books", chip: "ledgers", kind: "freight", title: "Freight", desc: "Transport agents" },
+      { mode: "books", chip: "ledgers", kind: "cash", title: "Cash", desc: "Cash book with balance" },
+      { mode: "books", chip: "ledgers", kind: "expenses", title: "Expenses", desc: "Heads and subcategories" },
+      { mode: "books", chip: "ledgers", kind: "routes", title: "Routes", desc: "Due by route" },
+      { mode: "books", chip: "ledgers", kind: "products", title: "Products", desc: "Stock on each item" },
+      { mode: "books", chip: "ledgers", kind: "staff", title: "Staff", desc: "Who did what" },
+    ],
+    stock: [
+      { mode: "stock", chip: "stock-wise", title: "Stock wise", desc: "Quantity on hand" },
+      { mode: "stock", chip: "valuation", title: "Valuation", desc: "Value of stock" },
+      { mode: "stock", chip: "low", title: "Low stock", desc: "Below the alert" },
+      { mode: "stock", chip: "movers", title: "Fast / slow", desc: "What moves, what sits" },
+      { mode: "stock", chip: "no-album", title: "Items without album", desc: "Not in a catalogue" },
+      { mode: "stock", chip: "stock-journal", title: "Stock journal", desc: "Samples and transfers" },
+      { mode: "stock", chip: "markings", title: "Markings", desc: "Dates on products" },
+      { mode: "stock", chip: "vendor-orders", title: "Vendor order report", desc: "Orders placed with vendors" },
+      { mode: "stock", chip: "returns", title: "Returns", desc: "Customer returns" },
+      { mode: "stock", chip: "debit-notes", title: "Debit notes", desc: "Vendor adjustments" },
+    ],
+    tax: [
+      { mode: "tax", chip: "gst-sales", title: "GST sales", desc: "Tax on bills" },
+      { mode: "tax", chip: "gst-purchases", title: "GST purchase", desc: "Tax on vendor bills" },
+      { mode: "tax", chip: "cashbook", title: "Cash book", desc: "Cash in and out" },
+      { mode: "tax", chip: "expense-cat", title: "Expense by category", desc: "Where money was spent" },
+      { mode: "tax", chip: "pnl", title: "Profit and loss", desc: "Sales minus costs" },
+      { mode: "books", chip: "customer-sales", title: "Customer sales", desc: "Sales by party" },
+      { mode: "books", chip: "vendor-purchases", title: "Vendor purchase", desc: "Purchases by vendor" },
+      { mode: "books", chip: "item-sales", title: "Item sales", desc: "Sales by item" },
+      { mode: "books", chip: "item-purchases", title: "Item purchase", desc: "Purchases by item" },
+    ],
+  };
 
   function showHub() {
     ledgerDetail = null;
-    showQuestions = true;
+    showQuestions = false;
+    reportScreen = "home";
+    reportGroup = "";
     if (!ctx.esc) ctx.esc = (v) => String(v ?? "");
     document.getElementById("reports-hub")?.classList.remove("hidden");
     document.getElementById("reports-ledger-detail")?.classList.add("hidden");
-    try { renderChrome(); }
-    catch (e) { console.error(e); }
-    try { renderQuestionsOrChip(); }
-    catch (e) {
-      const body = document.getElementById("reports-body");
-      if (body) body.innerHTML = `<p style="color:#b91c1c;">${ctx.esc(e.message || "Could not open reports")}</p>`;
+    renderReportHome();
+  }
+
+  function reportsBack() {
+    if (reportScreen === "report") {
+      reportScreen = "group";
+      renderReportHome();
+      return;
     }
+    reportScreen = "home";
+    reportGroup = "";
+    renderReportHome();
+  }
+
+  function openGroup(id) {
+    reportScreen = "group";
+    reportGroup = id;
+    renderReportHome();
+  }
+
+  function openReport(modeId, chipId, kind) {
+    reportScreen = "report";
+    showQuestions = false;
+    mode = modeId;
+    chip = chipId;
+    hubSearch = "";
+    if (kind) ledgerKind = kind;
+    if (modeId === "today" || chipId === "sticker-prints") applyDatePreset("today", false);
+    else if (kind === "city") applyDatePreset("all", false);
+    else if (datePreset === "today") applyDatePreset("month", false);
+    renderChrome();
+    loadChip();
+  }
+
+  function renderReportHome() {
+    renderChrome();
+    const body = document.getElementById("reports-body");
+    if (!body || typeof HubUI === "undefined") return;
+    if (reportScreen === "group") {
+      const tiles = (REPORT_TILES[reportGroup] || []).map(item => ({
+        letter: item.title.slice(0, 1),
+        title: item.title,
+        desc: item.desc,
+        onclick: `Reports.openReport('${item.mode}','${item.chip}'${item.kind ? ",'" + item.kind + "'" : ""})`,
+      }));
+      body.innerHTML = HubUI.tileGrid(tiles, { style: "margin-top:8px;" });
+      return;
+    }
+    body.innerHTML = HubUI.tileGrid(Object.keys(GROUP_META).map(id => ({
+      letter: GROUP_META[id].letter,
+      title: GROUP_META[id].title,
+      desc: GROUP_META[id].desc,
+      onclick: `Reports.openGroup('${id}')`,
+    })), { style: "margin-top:8px;" });
   }
 
   function pickQuestion(modeId, chipId) {
@@ -251,6 +360,24 @@ const Reports = (() => {
   }
 
   function renderChrome() {
+    const browsing = reportScreen !== "report";
+    document.getElementById("reports-mode-bar")?.classList.add("hidden");
+    document.getElementById("reports-chips-host")?.classList.add("hidden");
+    document.getElementById("reports-subchips")?.classList.add("hidden");
+    document.querySelector("#reports-hub .fin-toolbar")?.classList.toggle("hidden", browsing);
+    document.getElementById("reports-back")?.classList.toggle("hidden", reportScreen === "home");
+    if (browsing) {
+      const title = document.querySelector("#reports-hub .ui-hub-title");
+      const sub = document.getElementById("reports-hero-sub");
+      const group = GROUP_META[reportGroup];
+      if (title) title.textContent = reportScreen === "group" && group ? group.title : "Reports";
+      if (sub) sub.textContent = reportScreen === "group" && group ? group.desc : "Pick a group.";
+      const dateBar = document.getElementById("reports-date-bar");
+      if (dateBar) dateBar.innerHTML = "";
+      const slot = document.getElementById("reports-search-slot");
+      if (slot) slot.innerHTML = "";
+      return;
+    }
     const bar = document.getElementById("reports-mode-bar");
     if (bar) {
       bar.innerHTML = MODES.map(m =>
@@ -286,16 +413,12 @@ const Reports = (() => {
         sub.innerHTML = "";
       }
     }
+    document.getElementById("reports-subchips")?.classList.add("hidden");
+    const openItem = (REPORT_TILES[reportGroup] || []).find(item => item.mode === mode && item.chip === chip && (item.kind || "") === (chip === "ledgers" ? ledgerKind : (item.kind || "")));
+    const titleEl = document.querySelector("#reports-hub .ui-hub-title");
+    if (titleEl && openItem) titleEl.textContent = openItem.title;
     const heroSub = document.getElementById("reports-hero-sub");
-    if (heroSub) {
-      const copy = {
-        today: "Daily stock for the dates you pick. Same start and end date is one day.",
-        books: "Ledgers, who owes whom, sales & purchase by party or item",
-        stock: "Stock wise, value on hand, movers, returns",
-        tax: "GST registers, cash book, expenses, profit",
-      };
-      heroSub.textContent = copy[mode] || "Look up books, bills, and who did what";
-    }
+    if (heroSub) heroSub.textContent = openItem ? openItem.desc : "Look up books, bills, and who did what";
     renderDateBar();
     renderSearch();
   }
@@ -2241,7 +2364,7 @@ const Reports = (() => {
     openLedger, openAgentLedger, openStaffLedger, openExpenseLedger, addExpenseHead, addExpenseSubhead, renameExpenseSubhead, addExpenseSource, renameExpenseSource, deleteExpenseSource, openCashLedger, backFromLedger, openDoc,
     setCityQuery, pickCityName, openCityParty, printCityParty, printCityAll, downloadCityPdf, downloadCityExcel,
     shareDaybook, waDaybook, shareStockSummary, shareNoAlbum, shareAgeing, waAgeing, exportExcel,
-    printCurrent, exportCurrentExcel, downloadSalesPdf, downloadPaymentsPdf, setHideVoids, setJournalReportKind, setStockYear, setPrintCarry, togglePrintGroup, toggleStockAlbum,
+    printCurrent, exportCurrentExcel, downloadSalesPdf, downloadPaymentsPdf, reportsBack, openGroup, openReport, setHideVoids, setJournalReportKind, setStockYear, setPrintCarry, togglePrintGroup, toggleStockAlbum,
     toggleVendorDcu, downloadVendorOrderCsv, downloadConfirmedPdf, setHideConfirmedCatalogs,
     setMarkingScope, toggleMarkingPick, saveProductMarking, applyMarkingToPicked, renameMarking,
     setPayMode, applyPayFilters,

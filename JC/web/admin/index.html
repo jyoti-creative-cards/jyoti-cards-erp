@@ -56,6 +56,7 @@
         <button class="nav-item" id="nav-quick" onclick="App.showView('money');Finance.openQuickEntry()"><span class="nav-letter">Q</span><span class="nav-text">Quick entry</span></button>
         <button class="nav-item" id="nav-party-ledger" onclick="App.showView('party-ledger')"><span class="nav-letter">Ld</span><span class="nav-text">Party ledger</span></button>
         <button class="nav-item hidden" id="nav-analytics" onclick="App.showView('analytics')"><span class="nav-letter">A</span><span class="nav-text">Analytics</span></button>
+        <button class="nav-item" id="nav-reports" onclick="App.showView('reports')"><span class="nav-letter">Rp</span><span class="nav-text">Reports</span></button>
         <button class="nav-item" id="nav-more" onclick="App.showView('more')"><span class="nav-letter">···</span><span class="nav-text">More</span></button>
         <!-- Kept for deep-links / permissions; hidden from primary nav -->
         <button class="nav-item hidden" id="nav-home" onclick="App.showView('today')" aria-hidden="true"></button>
@@ -63,7 +64,6 @@
         <button class="nav-item hidden" id="nav-selling" onclick="App.showView('selling')" aria-hidden="true"></button>
         <button class="nav-item hidden" id="nav-returns" onclick="App.showView('returns')" aria-hidden="true"></button>
         <button class="nav-item hidden" id="nav-finance" onclick="App.showView('money')" aria-hidden="true"></button>
-        <button class="nav-item hidden" id="nav-reports" onclick="App.showView('reports')" aria-hidden="true"></button>
         <button class="nav-item hidden" id="nav-setup" onclick="App.showView('setup')" aria-hidden="true"></button>
         <button class="nav-item hidden" id="nav-recycle" onclick="App.showView('recycle')" aria-hidden="true"></button>
         <button class="nav-item hidden" id="nav-whatsapp" onclick="WhatsAppInbox.open()" aria-hidden="true"></button>
@@ -648,8 +648,9 @@
       <div id="view-reports" class="view hidden">
         <div id="reports-hub">
           <div class="ui-hub-intro">
+            <button type="button" class="btn btn-secondary btn-sm hidden" id="reports-back" onclick="Reports.reportsBack()">← Back</button>
             <h2 class="ui-hub-title">Reports</h2>
-            <p class="ui-hub-sub" id="reports-hero-sub">Look up books, bills, and who did what</p>
+            <p class="ui-hub-sub" id="reports-hero-sub">Pick a group.</p>
           </div>
           <div class="ui-toolbar fin-toolbar">
             <div id="reports-mode-bar" class="ord-mode-toggle" role="tablist"></div>
@@ -1307,7 +1308,7 @@
   <script src="js/debit-notes.js?v=ui76"></script>
   <script src="js/stock.js?v=ui99"></script>
   <script src="js/finance.js?v=ui137"></script>
-  <script src="js/reports.js?v=ui128"></script>
+  <script src="js/reports.js?v=ui129"></script>
   <script src="js/analytics.js?v=ui1"></script>
   <script src="js/sticker.js?v=ui13"></script>
   <script src="js/dashboard.js?v=ui66"></script>
@@ -1316,7 +1317,7 @@
   <script src="js/payment-modes.js?v=ui62"></script>
   <script src="js/freight-agents.js?v=ui66"></script>
   <script src="js/calculator.js?v=ui2"></script>
-  <script src="app.js?v=ui134"></script>
+  <script src="app.js?v=ui135"></script>
   <!-- reload 133 -->
   <script src="js/commission-agents.js?v=ui6"></script>
   <script src="js/whatsapp-inbox.js?v=ui3"></script>

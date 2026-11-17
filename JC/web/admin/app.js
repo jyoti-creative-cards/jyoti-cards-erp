@@ -107,6 +107,8 @@ const App = (() => {
     if (moreTitle) moreTitle.textContent = desk ? "Print sticker" : "More";
     if (moreSub) moreSub.textContent = desk ? "Search a party number and print." : "History, reports, setup, and safety — when you need them.";
     document.getElementById("nav-order-desk")?.classList.toggle("hidden", lookup || desk || !showSelling);
+    document.getElementById("nav-new-orders")?.classList.toggle("hidden", lookup || desk || !showSelling);
+    refreshNewCount();
     document.getElementById("nav-today")?.classList.toggle("hidden", desk || lookup || taker || bookDesk);
     document.getElementById("nav-people")?.classList.toggle("hidden", desk || lookup || taker || !showPeople);
     document.getElementById("nav-products")?.classList.toggle("hidden", desk || lookup || taker || !showProducts);
@@ -4307,9 +4309,29 @@ const App = (() => {
     await api(`/sticky-notes/${id}`, { method: "DELETE" });
     await loadSticky();
   }
+
+  let newCountTimer = 0;
+  function setNewCount(n) {
+    const el = document.getElementById("nav-new-count");
+    if (!el) return;
+    const count = Number(n) || 0;
+    el.textContent = count > 99 ? "99+" : String(count);
+    el.classList.toggle("hidden", count < 1);
+  }
+  function refreshNewCount() {
+    const btn = document.getElementById("nav-new-orders");
+    if (!btn || btn.classList.contains("hidden")) return;
+    if (!newCountTimer) newCountTimer = setInterval(refreshNewCount, 60000);
+    api("/customer-orders/new-count", {}, 0).then((data) => setNewCount(data && data.count)).catch(() => {});
+  }
+  function openNewOrders() {
+    try { OrderDesk.openFresh("new"); } catch (e) { /* desk script */ }
+    showView("order-desk");
+  }
 // @slice 07-public
   return {
     api, toast, login, staffLogin, setLoginTab, logout, toggleSidebar, showView, goBack, updateGlobalBack,
+    openNewOrders, refreshNewCount, setNewCount,
     showPeopleHub, showPeopleTab, renderPeopleCustomerSearch, renderPeopleVendorSearch, showSetupHub, showSetupTab,
     showMoreHub, showMoreSafety,
     setOrdersType,

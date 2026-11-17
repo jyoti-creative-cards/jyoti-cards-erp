@@ -853,6 +853,32 @@ const CustomerOrders = (() => {
       || `<tr><td colspan="3">—</td></tr>`;
   }
 
+  function stampIst(value) {
+    if (value == null || value === "") return "";
+    const s = String(value);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+      const parts = s.slice(0, 10).split("-");
+      return parts[2] + "/" + parts[1];
+    }
+    const d = new Date(s);
+    if (Number.isNaN(d.getTime())) return "";
+    const bits = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Asia/Kolkata",
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(d);
+    const pick = (type) => (bits.find((p) => p.type === type) || {}).value || "";
+    const day = pick("day");
+    const month = pick("month");
+    const hour = pick("hour");
+    const minute = pick("minute");
+    if (!day || !hour) return "";
+    return day + "/" + month + " - " + hour + ":" + minute;
+  }
+
   function storyBlock(title, row) {
     if (!row) return "";
     const when = row.at ? (ctx.fmtDate?.(row.at) || String(row.at).slice(0, 16).replace("T", " ")) : "";
@@ -903,7 +929,10 @@ const CustomerOrders = (() => {
       ].join("") : "";
       return `<div class="ord-card" style="padding:14px 16px;" ${pickedTab ? `onclick="CustomerOrders.togglePickedStory(${p.bill_id})"` : ""}>
         <div style="min-width:0;">
-          <strong class="ord-card-title" style="font-size:16px;">${ctx.esc(p.customer_label || "Customer")}</strong>
+          <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;">
+            <strong class="ord-card-title" style="font-size:16px;">${ctx.esc(p.customer_label || "Customer")}</strong>
+            ${stampIst(pickedTab ? p.picked_at : p.created_at) ? `<span style="flex:none;font-size:12px;font-weight:800;color:var(--muted);">${ctx.esc(stampIst(pickedTab ? p.picked_at : p.created_at))}</span>` : ""}
+          </div>
           ${p.created_by ? `<div style="display:block;margin-top:8px;padding:8px 10px;border-radius:10px;background:#dcfce7;color:#166534;font-weight:800;font-size:16px;">Created by ${ctx.esc(p.created_by)}</div>` : ""}
           ${parcelMarkHtml(p)}
           <div data-tile-note="${noteKey}" onclick="event.stopPropagation()">
@@ -1194,8 +1223,12 @@ const CustomerOrders = (() => {
       + (o.marker_2 ? ` <span class="badge badge-amber" style="font-size:9px;padding:1px 4px;">${ctx.esc(o.marker_2)}</span>` : "")
       + (o.payment_type === "CASH" && !_m1Upper.includes("CASH") ? ` <span class="badge badge-amber" style="font-size:9px;padding:1px 4px;">CASH</span>` : "");
 
-    const when = o.display_date || o.updated_at;
-    const timeStr = when ? (ctx.fmtDay?.(when) || "") : "";
+    const when = currentBucket === "billed"
+      ? (o.sort_at || o.created_at || o.display_date || o.updated_at)
+      : currentBucket === "received"
+      ? (o.display_date || o.sort_at || o.updated_at)
+      : (o.sort_at || o.display_date || o.updated_at);
+    const timeStr = when ? stampIst(when) : "";
     const bucketCls = { received: "ord-order-card--received", open: "ord-order-card--open", billed: "ord-order-card--billed", closed: "ord-order-card--closed", cancelled: "ord-order-card--cancelled" }[currentBucket] || "";
 
     const avatarLetter = ctx.esc((o.customer_name || "?").slice(0, 1).toUpperCase());

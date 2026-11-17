@@ -542,6 +542,28 @@ def _summary(db: Session, order: CustomerOrder) -> CustomerOrderSummary:
         markings=[shown] if shown else [],
     )
 
+@router.get("/new-count")
+def new_order_count(
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("customer_orders.read")),
+):
+    """Unconfirmed orders still waiting on the New list."""
+    n = (
+        db.query(func.count(func.distinct(CustomerOrder.id)))
+        .join(CustomerOrderPlacement, CustomerOrderPlacement.customer_order_id == CustomerOrder.id)
+        .join(CustomerOrderLine, CustomerOrderLine.placement_id == CustomerOrderPlacement.id)
+        .filter(
+            CustomerOrder.is_open.is_(True),
+            CustomerOrder.bucket == "received",
+            CustomerOrderPlacement.deleted_at.is_(None),
+            CustomerOrderLine.status == "active",
+            CustomerOrderLine.quantity > CustomerOrderLine.quantity_billed,
+        )
+        .scalar()
+    )
+    return {"count": int(n or 0)}
+
+
 @router.get("", response_model=List[CustomerOrderSummary])
 def list_customer_orders(
     bucket: str = Query("open", pattern="^(summary|received|open|billed|cancelled|closed)$"),

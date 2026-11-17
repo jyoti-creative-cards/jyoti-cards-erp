@@ -110,6 +110,12 @@ const OrderDesk = (() => {
     const city = row.city_name ? ` · ${esc(row.city_name)}` : "";
     return `${esc(num)}${esc(row.customer_name || "")}${city}`;
   }
+  function stageWhen(row) {
+    if (filter === "dispatched") return row.picked_at || row.created_at;
+    if (filter === "billed") return row.created_at || row.bill_date;
+    if (filter === "confirmed") return row.sort_at || row.updated_at || row.display_date;
+    return row.display_date || row.sort_at || row.updated_at;
+  }
   function rowMeta(row) {
     if (filter === "billed" || filter === "dispatched") {
       const bits = [
@@ -117,12 +123,11 @@ const OrderDesk = (() => {
         row.transport_mode || "",
         row.freight_agent_name || "",
         row.total_pcs ? `${row.total_pcs} pcs` : "",
-        L().orderDay(row),
       ].filter(Boolean);
       const lines = (row.lines || []).slice(0, 6).map(l => `${l.our_product_id} × ${l.quantity}`).join(" · ");
       return `${esc(bits.join(" · "))}${lines ? `<div>${esc(lines)}</div>` : ""}`;
     }
-    const bits = [L().orderDay(row), row.total_quantity ? `${row.total_quantity} pcs` : "", row.amount ? money(row.amount) : ""].filter(Boolean);
+    const bits = [row.total_quantity ? `${row.total_quantity} pcs` : "", row.amount ? money(row.amount) : ""].filter(Boolean);
     let badges = "";
     if (row.marker_1) badges += ` <span class="badge badge-blue" style="font-size:11px;">${esc(row.marker_1)}</span>`;
     if (row.marker_2) badges += ` <span class="badge badge-amber" style="font-size:11px;">${esc(row.marker_2)}</span>`;
@@ -358,11 +363,15 @@ const OrderDesk = (() => {
       const on = !!selected[key];
       const open = on && forms[key] && (forms[key].ready || forms[key].error);
       const tick = filter === "dispatched" ? "" : `<input type="checkbox" ${on ? "checked" : ""} onchange="OrderDesk.toggle('${key}', this.checked)">`;
+      const when = L().stamp(stageWhen(row));
       return `<div class="ord-card" style="padding:14px 16px;margin-bottom:10px;" data-desk="${key}">
         <div style="display:flex;gap:10px;align-items:flex-start;">
           ${tick}
           <div style="flex:1;min-width:0;">
-            <strong>${rowTitle(row)}</strong>
+            <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;">
+              <strong>${rowTitle(row)}</strong>
+              ${when ? `<span style="flex:none;font-size:12px;font-weight:800;color:var(--muted);">${esc(when)}</span>` : ""}
+            </div>
             <div class="ord-card-meta">${rowMeta(row)}</div>
             ${open ? `<div style="margin-top:12px;">${formHtml(key)}</div>` : ""}
           </div>
@@ -393,12 +402,24 @@ const OrderDesk = (() => {
     selected = {};
     forms = {};
     render();
+    if (filter === "new") App.setNewCount?.(raw.length);
+    else App.refreshNewCount?.();
   }
 
+  let keepRange = false;
+  function openFresh(next) {
+    filter = next || "new";
+    dateFrom = "";
+    dateTo = "";
+    keepRange = true;
+  }
   function open() {
-    const day = listDay();
-    dateFrom = day;
-    dateTo = day;
+    if (!keepRange) {
+      const day = listDay();
+      dateFrom = day;
+      dateTo = day;
+    }
+    keepRange = false;
     load().catch(e => toast(e.message || "Could not load orders"));
   }
   function setFilter(next) {
@@ -1063,7 +1084,7 @@ const OrderDesk = (() => {
   }
 
   return {
-    open, setFilter, setFrom, setTo, toggle, selectAll, newOrder, act, pull,
+    open, openFresh, setFilter, setFrom, setTo, toggle, selectAll, newOrder, act, pull,
     setConfirmSearch, setBillSearch, addBillSearchEnter, paintBillStock, setCatalogsComplete, setMode, setTransportBit, setHandler, setDisc, setGst, setBillAgent,
     addCharge, toggleCatalog, togglePlacement, toggleConfirmAddon, toggleBillAddon,
     removeConfirmLine, removeBillLine, addConfirmItem, addBillItem,

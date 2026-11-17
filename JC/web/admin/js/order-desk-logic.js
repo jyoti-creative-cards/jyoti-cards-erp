@@ -38,6 +38,32 @@ const OrderDeskLogic = (() => {
     return toDay(row && (row.display_date || row.bill_date || row.placed_at || row.created_at || row.updated_at));
   }
 
+  function stamp(value) {
+    if (value == null || value === "") return "";
+    const s = String(value);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+      const parts = s.slice(0, 10).split("-");
+      return parts[2] + "/" + parts[1];
+    }
+    const d = new Date(s);
+    if (Number.isNaN(d.getTime())) return "";
+    const bits = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Asia/Kolkata",
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(d);
+    const pick = (type) => (bits.find((p) => p.type === type) || {}).value || "";
+    const day = pick("day");
+    const month = pick("month");
+    const hour = pick("hour");
+    const minute = pick("minute");
+    if (!day || !hour) return "";
+    return day + "/" + month + " - " + hour + ":" + minute;
+  }
+
   function buttonsFor(filter) {
     if (filter === "new") return ["confirm", "bill", "dispatch"];
     if (filter === "confirmed") return ["bill"];
@@ -210,7 +236,7 @@ const OrderDeskLogic = (() => {
   }
 
   return {
-    calcNetFromDisc, toDay, inDateRange, orderDay, buttonsFor,
+    calcNetFromDisc, toDay, inDateRange, orderDay, stamp, buttonsFor,
     defaultBillSeriesId, nextBillNumber, billEditable, applySelectedOrders,
     billBody, billError, offlineBody, offlineError,
   };

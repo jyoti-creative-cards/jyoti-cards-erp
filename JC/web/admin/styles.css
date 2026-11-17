@@ -1193,6 +1193,7 @@ table.data .actions { display: flex; gap: 4px; }
 #main.shift-collapsed { margin-left: 64px; }
 
 .nav-item { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 14px; border: none; background: none; border-radius: var(--radius); font-size: 14px; font-weight: 500; color: var(--muted); cursor: pointer; text-align: left; }
+.nav-count { margin-left: auto; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: #16a34a; color: #fff; font-size: 11px; font-weight: 800; line-height: 20px; text-align: center; }
 .nav-item:hover { background: var(--bg); color: var(--text); }
 .nav-item.active { background: #eff6ff; color: var(--brand); }
 

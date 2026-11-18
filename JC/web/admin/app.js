@@ -4118,12 +4118,20 @@ const App = (() => {
   let stickyMin = false;
   let stickyDrag = null;
 
+  function noteRec(key) {
+    const raw = tileNoteCache[key];
+    if (raw && typeof raw === "object") return { body: raw.body || "", by: raw.by || "" };
+    return { body: raw || "", by: "" };
+  }
+
   function tileNoteHtml(key) {
-    const note = tileNoteCache[key] || "";
-    const banner = note
-      ? `<div style="display:block;margin:0;padding:8px 14px;background:#fef9c3;color:#854d0e;font-weight:800;font-size:15px;">Note: ${esc(note)}</div>`
-      : "";
-    return `${banner}<button type="button" class="btn btn-ghost btn-sm" style="margin:4px 14px 6px;" onclick="event.stopPropagation();App.editTileNote('${key}')">Add note</button>`;
+    const rec = noteRec(key);
+    const open = `event.stopPropagation();App.editTileNote('${key}')`;
+    if (!rec.body) {
+      return `<button type="button" class="btn btn-secondary btn-sm" style="margin:6px 14px;" onclick="${open}">Add note</button>`;
+    }
+    const who = rec.by ? `<div style="font-size:12px;font-weight:700;margin-top:4px;">by ${esc(rec.by)}</div>` : "";
+    return `<button type="button" style="display:block;width:calc(100% - 28px);margin:8px 14px;padding:10px 12px;background:#fef9c3;border:1px solid #ca8a04;border-radius:8px;font-weight:800;font-size:16px;color:#854d0e;text-align:left;cursor:pointer;" onclick="${open}">Note: ${esc(rec.body)}${who}</button>`;
   }
 
   function paintTileNotes(root) {
@@ -4139,9 +4147,42 @@ const App = (() => {
     const wanted = [...new Set(keys.filter(Boolean))];
     if (!wanted.length) return;
     const serial = tileNoteSerial;
-    const data = await api(`/tile-notes?keys=${encodeURIComponent(wanted.join(","))}`, {}, 0);
+    const data = await api(`/tile-notes?keys=${encodeURIComponent(wanted.join(","))}&detail=1`, {}, 0);
     if (serial !== tileNoteSerial) return;
-    wanted.forEach(key => { tileNoteCache[key] = (data && data[key]) || ""; });
+    wanted.forEach(key => {
+      const raw = data && data[key];
+      if (raw && typeof raw === "object") tileNoteCache[key] = { body: raw.body || "", by: raw.by || "" };
+      else tileNoteCache[key] = { body: raw || "", by: "" };
+    });
+  }
+
+  let markAuthorToken = 0;
+  async function paintMarkAuthors() {
+    const nodes = [...document.querySelectorAll("[data-mark-who]")];
+    const items = [...new Set(nodes.map(el => el.getAttribute("data-mark-who")).filter(Boolean))];
+    if (!items.length) return;
+    const token = ++markAuthorToken;
+    const data = {};
+    try {
+      for (let i = 0; i < items.length; i += 80) {
+        const chunk = items.slice(i, i + 80);
+        const part = await api(`/text-events/latest?items=${encodeURIComponent(chunk.join(","))}`, {}, 0);
+        Object.assign(data, part || {});
+      }
+    } catch (e) { return; }
+    if (token !== markAuthorToken) return;
+    nodes.forEach(el => {
+      const hit = data[el.getAttribute("data-mark-who")] || {};
+      const name = String(hit.actor_name || "").trim();
+      let slot = el.querySelector("[data-mark-by]");
+      if (!slot) {
+        slot = document.createElement("div");
+        slot.setAttribute("data-mark-by", "");
+        slot.style.cssText = "font-size:12px;font-weight:700;margin-top:4px;";
+        el.appendChild(slot);
+      }
+      slot.textContent = name ? `by ${name}` : "";
+    });
   }
 
   function scheduleTileNotes() {
@@ -4175,7 +4216,7 @@ const App = (() => {
     let rows = [];
     try { rows = await api(`/text-events?kind=note&subject=${encodeURIComponent(key)}`, {}, 0) || []; }
     catch (e) { rows = []; }
-    const current = tileNoteCache[key] || "";
+    const current = noteRec(key).body;
     openDetail(
       "Note",
       `<textarea id="jc-note-box" class="input" rows="4" style="width:100%;">${esc(current)}</textarea>
@@ -4203,7 +4244,7 @@ const App = (() => {
         method: "PUT",
         body: JSON.stringify({ body: text }),
       });
-      tileNoteCache[key] = (saved && saved.body) || "";
+      tileNoteCache[key] = { body: (saved && saved.body) || "", by: (saved && saved.by) || "" };
       tileNoteSerial += 1;
       paintTileNotes(document);
       toast(remove ? "Note deleted" : "Note saved", "success");
@@ -4357,7 +4398,7 @@ const App = (() => {
     addLookup, submitLookup, submitCatalogCategory, editLookup, deleteLookup, openCustomerLedgerEntry, createCustomerOrder,
     setOrderTakerMode, onOrderTakerStock, onOrderTakerCustomer, pickOrderTakerCustomer, clearOrderTakerCustomer, onOrderTakerItem, addOrderTakerItem, removeOrderTakerLine, saveOrderTakerOrder,
     deskShow, onDeskCustomer, onDeskItem, onDeskStock, deskPickCustomer, deskPickProduct, deskAddMore, deskRemoveLine, deskPlace, deskSetMark, deskClearCustomer, deskClearProduct, openDeskParcel, saveDeskPick, openFromMore, deskBack,
-    editTileNote, saveTileNote, toggleSticky, closeSticky, minimizeSticky, addSticky, deleteSticky,
+    editTileNote, saveTileNote, paintMarkAuthors, toggleSticky, closeSticky, minimizeSticky, addSticky, deleteSticky,
     closeModal, init, searchItemLookup, setWhatsappSends,
     downloadExportKind, downloadBackupZip,
     debouncedLoadCustomers, debouncedVendorSearch, debouncedCatalogSearch, debouncedAddonSearch, debouncedStockSearch,

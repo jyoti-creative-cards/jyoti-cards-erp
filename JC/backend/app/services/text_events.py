@@ -27,6 +27,34 @@ def remember(db: Session, *, kind: str, subject: str, body: str | None, actor: s
     ))
 
 
+def latest_map(db: Session, pairs: list[tuple[str, str]]) -> dict[str, dict]:
+    """Latest saved text for each kind and subject. The key is ``kind:subject``."""
+    grouped: dict[str, set[str]] = {}
+    for kind, subject in pairs:
+        kind = (kind or "").strip()
+        subject = (subject or "").strip()[:160]
+        if kind not in {"order", "bill", "note"} or not subject:
+            continue
+        grouped.setdefault(kind, set()).add(subject)
+    out: dict[str, dict] = {}
+    for kind, subjects in grouped.items():
+        rows = (
+            db.query(TextEvent)
+            .filter(TextEvent.kind == kind, TextEvent.subject.in_(subjects))
+            .order_by(TextEvent.id.desc())
+            .all()
+        )
+        for row in rows:
+            key = f"{kind}:{row.subject}"
+            if key in out:
+                continue
+            out[key] = {
+                "actor_name": (row.actor_name or "").strip(),
+                "body": row.body or "",
+            }
+    return out
+
+
 def history(db: Session, *, kind: str, subject: str) -> list[dict]:
     rows = (
         db.query(TextEvent)

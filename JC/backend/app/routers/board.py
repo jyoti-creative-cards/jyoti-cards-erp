@@ -31,6 +31,7 @@ def _clean_key(tile_key: str) -> str:
 @router.get("/tile-notes")
 def list_tile_notes(
     keys: str = "",
+    detail: bool = False,
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(get_auth_context),
 ):
@@ -47,8 +48,40 @@ def list_tile_notes(
             break
     if not wanted:
         return {}
+    return tile_note_payload(db, wanted, detail=detail)
+
+
+def tile_note_payload(db: Session, wanted: list[str], *, detail: bool) -> dict:
     rows = db.query(TileNote).filter(TileNote.tile_key.in_(wanted)).all()
-    return {row.tile_key: row.body for row in rows}
+    bodies = {row.tile_key: row.body for row in rows}
+    if not detail:
+        return bodies
+    by_name = {}
+    missing = []
+    for row in rows:
+        name = (row.updated_by_name or "").strip()
+        if name:
+            by_name[row.tile_key] = name
+        else:
+            missing.append(row.tile_key)
+    if missing:
+        from app.models.board import TextEvent
+        events = (
+            db.query(TextEvent)
+            .filter(TextEvent.kind == "note", TextEvent.subject.in_(missing))
+            .order_by(TextEvent.id.desc())
+            .all()
+        )
+        for event in events:
+            if event.subject in by_name:
+                continue
+            name = (event.actor_name or "").strip()
+            if name and (event.body or "").strip():
+                by_name[event.subject] = name
+    return {
+        key: {"body": bodies[key], "by": by_name.get(key, "")}
+        for key in bodies
+    }
 
 
 @router.put("/tile-notes/{tile_key}")
@@ -67,7 +100,7 @@ def save_tile_note(
         from app.services.text_events import remember
         remember(db, kind="note", subject=key, body="", actor=_who(auth))
         db.commit()
-        return {"tile_key": key, "body": ""}
+        return {"tile_key": key, "body": "", "by": ""}
     if row is None:
         row = TileNote(tile_key=key, body=text, updated_by_name=_who(auth))
         db.add(row)
@@ -77,7 +110,26 @@ def save_tile_note(
     from app.services.text_events import remember
     remember(db, kind="note", subject=key, body=text, actor=_who(auth))
     db.commit()
-    return {"tile_key": key, "body": text}
+    return {"tile_key": key, "body": text, "by": _who(auth) if text else ""}
+
+
+@router.get("/text-events/latest")
+def latest_text_events(
+    items: str = "",
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(get_auth_context),
+):
+    pairs = []
+    for part in (items or "").split(","):
+        part = part.strip()
+        if ":" not in part:
+            continue
+        kind, subject = part.split(":", 1)
+        pairs.append((kind, subject))
+        if len(pairs) >= 300:
+            break
+    from app.services.text_events import latest_map
+    return latest_map(db, pairs)
 
 
 @router.get("/text-events")

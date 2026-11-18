@@ -542,12 +542,16 @@ const CustomerOrders = (() => {
       const row = (orders || []).find(o => Number(o.customer_id) === cid);
       text = (row && row.marking) || "";
     }
-    if (!text && window.OrderDesk?.markingFor) text = OrderDesk.markingFor(cid, bills) || "";
+    if (!text && typeof OrderDesk !== "undefined" && OrderDesk.markingFor) text = OrderDesk.markingFor(cid, bills) || "";
     const kind = billList.length === 1 ? "bill" : "order";
     const subject = billList.length === 1 ? String(billList[0]) : String(cid);
     let rows = [];
     try { rows = await ctx.api(`/text-events?kind=${kind}&subject=${encodeURIComponent(subject)}`, {}, 0) || []; }
     catch (e) { rows = []; }
+    if (!text) {
+      const latest = rows.find(r => String(r.body || "").trim());
+      if (latest) text = latest.body;
+    }
     markEdit = {
       kind: "marking",
       customerId: cid,
@@ -609,10 +613,11 @@ const CustomerOrders = (() => {
     const bills = billIds || "";
     const box = "display:block;width:calc(100% - 28px);margin:8px 14px;padding:10px 12px;background:#fee2e2;border:1px solid #dc2626;border-radius:8px;font-weight:800;font-size:16px;color:#b91c1c;text-align:left;cursor:pointer;";
     const shown = label || (text ? `Marking: ${text}` : "Add marking");
+    const who = bills ? `bill:${bills}` : `order:${customerId}`;
     if (!text) {
       return `<button type="button" class="btn btn-secondary btn-sm" style="margin:8px 14px;" onclick="event.stopPropagation();CustomerOrders.openTileMark('marking',${customerId},'${bills}')">Add marking</button>`;
     }
-    return `<button type="button" style="${box}" onclick="event.stopPropagation();CustomerOrders.openTileMark('marking',${customerId},'${bills}')">${ctx.esc(shown)}</button>`;
+    return `<button type="button" data-mark-who="${who}" style="${box}" onclick="event.stopPropagation();CustomerOrders.openTileMark('marking',${customerId},'${bills}')">${ctx.esc(shown)}</button>`;
   }
 
   function tileMarkHtml(o) {
@@ -1362,6 +1367,7 @@ const CustomerOrders = (() => {
       return;
     }
     el.innerHTML = list.map(o => renderOrderCard(o, canWrite)).join("");
+    App.paintMarkAuthors?.();
     // Close card more menus on outside click
     document.removeEventListener("click", closeAllCardMore);
     document.addEventListener("click", closeAllCardMore);

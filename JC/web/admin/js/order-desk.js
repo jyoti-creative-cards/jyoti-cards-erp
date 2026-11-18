@@ -371,11 +371,12 @@ const OrderDesk = (() => {
     const parcel = filter === "billed" || filter === "dispatched";
     const bills = parcel && row.bill_id ? String(row.bill_id) : "";
     const text = onlyMark(row.marking);
+    const who = bills ? `bill:${bills}` : `order:${Number(row.customer_id)}`;
     const open = `event.stopPropagation();CustomerOrders.openTileMark('marking',${Number(row.customer_id)},'${bills}')`;
     if (!text) {
       return `<button type="button" class="btn btn-secondary btn-sm" style="margin:8px 14px;" onclick="${open}">Add marking</button>`;
     }
-    return `<button type="button" style="display:block;width:calc(100% - 28px);margin:8px 14px;padding:10px 12px;background:#fee2e2;border:1px solid #dc2626;border-radius:8px;font-weight:800;font-size:16px;color:#b91c1c;text-align:left;cursor:pointer;" onclick="${open}">Marking: ${esc(text)}</button>`;
+    return `<button type="button" data-mark-who="${who}" style="display:block;width:calc(100% - 28px);margin:8px 14px;padding:10px 12px;background:#fee2e2;border:1px solid #dc2626;border-radius:8px;font-weight:800;font-size:16px;color:#b91c1c;text-align:left;cursor:pointer;" onclick="${open}">Marking: ${esc(text)}</button>`;
   }
 
   function tileHtml(row) {
@@ -482,6 +483,7 @@ const OrderDesk = (() => {
       <p style="margin:0 0 12px;color:var(--muted);font-size:13px;">${hints[filter] || ""}</p>
       ${list ? `<div class="ord-order-grid">${list}</div>` : `<p style="color:var(--muted);">Nothing in this list.</p>`}
       ${formsBlock ? `<div style="margin-top:16px;">${formsBlock}</div>` : ""}`;
+    App.paintMarkAuthors?.();
   }
 
   async function load() {

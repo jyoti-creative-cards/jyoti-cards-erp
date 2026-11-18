@@ -50,7 +50,7 @@
       <nav style="flex:1;padding:8px;">
         <button class="nav-item" id="nav-today" onclick="App.showView('today')"><span class="nav-letter">T</span><span class="nav-text">Today</span></button>
         <button class="nav-item" id="nav-new-orders" onclick="App.openNewOrders()"><span class="nav-letter">N</span><span class="nav-text">New</span><span id="nav-new-count" class="nav-count hidden">0</span></button>
-        <button class="nav-item" id="nav-order-desk" onclick="App.showView('selling')"><span class="nav-letter">O</span><span class="nav-text">Orders</span></button>
+        <button class="nav-item" id="nav-order-desk" onclick="App.showView('order-desk')"><span class="nav-letter">O</span><span class="nav-text">Orders</span></button>
         <button class="nav-item" id="nav-people" onclick="App.showView('people')"><span class="nav-letter">P</span><span class="nav-text">People</span></button>
         <button class="nav-item" id="nav-products" onclick="App.showView('products')"><span class="nav-letter">R</span><span class="nav-text">Products</span></button>
         <button class="nav-item" id="nav-money" onclick="App.showView('money')"><span class="nav-letter">M</span><span class="nav-text">Money</span></button>
@@ -546,20 +546,6 @@
             <div id="co-hub-search-slot"></div>
           </div>
           <div class="ord-order-grid" id="customer-orders-list"></div>
-        </div>
-
-        <!-- Slide-over detail panel -->
-        <div id="co-slide-backdrop" class="co-slide-backdrop" onclick="CustomerOrders.closeSlidePanel()"></div>
-        <div id="co-slide-panel" class="co-slide-panel">
-          <div class="co-slide-header">
-            <div class="co-slide-header-text">
-              <div class="vo-detail-kicker" id="co-detail-sub">Customer</div>
-              <div class="co-slide-title" id="co-detail-title"></div>
-            </div>
-            <button type="button" class="co-slide-close" onclick="CustomerOrders.closeSlidePanel()" aria-label="Close">×</button>
-          </div>
-          <div id="co-detail-bucket-bar" class="ord-stage-chips co-slide-bucket-bar"></div>
-          <div id="co-detail-body" class="co-slide-body"></div>
         </div>
       </div>
 
@@ -1243,6 +1229,19 @@
     </div>
   </div>
 
+  <div id="co-slide-backdrop" class="co-slide-backdrop" onclick="CustomerOrders.closeSlidePanel()"></div>
+  <div id="co-slide-panel" class="co-slide-panel">
+    <div class="co-slide-header">
+      <div class="co-slide-header-text">
+        <div class="vo-detail-kicker" id="co-detail-sub">Customer</div>
+        <div class="co-slide-title" id="co-detail-title"></div>
+      </div>
+      <button type="button" class="co-slide-close" onclick="CustomerOrders.closeSlidePanel()" aria-label="Close">×</button>
+    </div>
+    <div id="co-detail-bucket-bar" class="ord-stage-chips co-slide-bucket-bar"></div>
+    <div id="co-detail-body" class="co-slide-body"></div>
+  </div>
+
   <!-- Image lightbox -->
   <div id="img-lightbox" class="img-lightbox hidden" onclick="Products.closeLightbox()">
     <button type="button" class="img-lightbox-close" onclick="Products.closeLightbox()">✕</button>
@@ -1266,7 +1265,7 @@
   <script src="js/share.js?v=ui68"></script>
   <script src="js/customer-orders.js?v=ui183"></script>
   <script src="js/order-desk-logic.js?v=ui6"></script>
-  <script src="js/order-desk.js?v=ui18"></script>
+  <script src="js/order-desk.js?v=ui19"></script>
   <script src="js/returns.js?v=ui76"></script>
   <script src="js/debit-notes.js?v=ui76"></script>
   <script src="js/stock.js?v=ui99"></script>
@@ -1280,7 +1279,7 @@
   <script src="js/payment-modes.js?v=ui62"></script>
   <script src="js/freight-agents.js?v=ui66"></script>
   <script src="js/calculator.js?v=ui2"></script>
-  <script src="app.js?v=ui142"></script>
+  <script src="app.js?v=ui143"></script>
   <!-- reload 133 -->
   <script src="js/commission-agents.js?v=ui6"></script>
   <script src="js/whatsapp-inbox.js?v=ui3"></script>

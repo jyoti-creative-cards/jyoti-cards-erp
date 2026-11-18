@@ -351,6 +351,67 @@ const OrderDesk = (() => {
     }
   }
 
+  function creatorLine(row) {
+    const raw = row && row.created_by;
+    const list = Array.isArray(raw) ? raw : (raw ? [raw] : []);
+    return list.map(x => String(x || "").trim()).filter(Boolean);
+  }
+
+  function tileHtml(row) {
+    const key = keyOf(row);
+    const on = !!selected[key];
+    const parcel = filter === "billed" || filter === "dispatched";
+    const name = parcel ? (row.customer_label || "Customer") : (row.customer_name || "Customer");
+    const city = parcel ? (row.customer_city || "") : (row.city_name || "");
+    const phone = row.customer_phone || "";
+    const when = L().stamp(stageWhen(row));
+    const letter = esc(String(name || "?").slice(0, 1).toUpperCase());
+    const num = !parcel && row.party_number ? `<span style="color:var(--muted);font-size:11px;font-weight:600;">#${esc(row.party_number)}</span> ` : "";
+    const cash = !parcel && String(row.payment_type || "").toUpperCase() === "CASH"
+      ? ` <span class="badge badge-amber" style="font-size:9px;padding:1px 4px;">CASH</span>` : "";
+    const makers = creatorLine(row);
+    const created = makers.length
+      ? `<div style="display:block;margin:0;padding:8px 14px;background:#dcfce7;color:#166534;font-weight:800;font-size:16px;line-height:1.3;">Created by ${esc(makers.join(" · "))}</div>`
+      : "";
+    const mark = row.marking
+      ? `<div style="margin:8px 14px;padding:10px 12px;background:#fee2e2;border:1px solid #dc2626;border-radius:8px;font-weight:800;color:#b91c1c;">${esc(row.marking)}</div>`
+      : "";
+    const meta = parcel
+      ? [row.bill_number ? `Bill ${row.bill_number}` : "", row.total_pcs ? `${row.total_pcs} pcs` : ""].filter(Boolean).join(" · ")
+      : [row.line_count ? `${row.line_count} lines` : "", row.total_quantity ? `${row.total_quantity} pcs` : ""].filter(Boolean).join(" · ");
+    const tick = filter === "dispatched" ? "" : `<label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" ${on ? "checked" : ""} onchange="OrderDesk.toggle('${key}', this.checked)"> Select</label>`;
+    return `<div class="ord-order-card" onclick="OrderDesk.openTile('${key}')">
+      <div class="ord-order-card-head">
+        <div class="ord-order-card-avatar">${letter}</div>
+        <div class="ord-order-card-party">
+          <div class="ord-order-card-name">${num}${esc(name)}${cash}</div>
+          <div class="ord-order-card-city">${esc([city, phone].filter(Boolean).join(" · "))}</div>
+        </div>
+        ${when ? `<div class="ord-order-card-time">${esc(when)}</div>` : ""}
+      </div>
+      ${created}
+      ${mark}
+      <div class="ord-order-card-body">${meta ? `<div class="ord-order-card-stat">${esc(meta)}</div>` : ""}</div>
+      ${tick ? `<div class="ord-order-card-foot" onclick="event.stopPropagation()">${tick}</div>` : ""}
+    </div>`;
+  }
+
+  function openFormsHtml() {
+    return visibleRows().map(row => {
+      const key = keyOf(row);
+      const open = !!selected[key] && forms[key] && (forms[key].ready || forms[key].error);
+      if (!open) return "";
+      return `<div data-desk="${key}" style="margin:0 0 16px;padding:12px;border:1px solid #e2e8f0;border-radius:12px;background:#fff;">${formHtml(key)}</div>`;
+    }).join("");
+  }
+
+  function openTile(key) {
+    const row = (raw || []).find(r => keyOf(r) === key);
+    if (!row || !row.customer_id) return;
+    const bucket = filter === "new" ? "received" : filter === "confirmed" ? "open" : "billed";
+    CustomerOrders.openDetail?.(row.customer_id, bucket);
+  }
+
   function render() {
     assignNumbers();
     const root = document.getElementById("order-desk-root");
@@ -365,26 +426,8 @@ const OrderDesk = (() => {
       dispatched: "Already dispatched. This is a list only.",
     };
     const bar = buttons.map(b => `<button type="button" class="btn btn-primary" ${saving ? "disabled" : ""} onclick="OrderDesk.act('${b}')">${labels[b]}</button>`).join("");
-    const list = rows.map(row => {
-      const key = keyOf(row);
-      const on = !!selected[key];
-      const open = on && forms[key] && (forms[key].ready || forms[key].error);
-      const tick = filter === "dispatched" ? "" : `<input type="checkbox" ${on ? "checked" : ""} onchange="OrderDesk.toggle('${key}', this.checked)">`;
-      const when = L().stamp(stageWhen(row));
-      return `<div class="ord-card" style="padding:14px 16px;margin-bottom:10px;" data-desk="${key}">
-        <div style="display:flex;gap:10px;align-items:flex-start;">
-          ${tick}
-          <div style="flex:1;min-width:0;">
-            <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;">
-              <strong>${rowTitle(row)}</strong>
-              ${when ? `<span style="flex:none;font-size:12px;font-weight:800;color:var(--muted);">${esc(when)}</span>` : ""}
-            </div>
-            <div class="ord-card-meta">${rowMeta(row)}</div>
-            ${open ? `<div style="margin-top:12px;">${formHtml(key)}</div>` : ""}
-          </div>
-        </div>
-      </div>`;
-    }).join("");
+    const list = rows.map(tileHtml).join("");
+    const formsBlock = openFormsHtml();
     root.innerHTML = `
       <div class="ui-toolbar" style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin-bottom:12px;">
         <button type="button" class="btn btn-secondary" onclick="OrderDesk.newOrder()">New order</button>
@@ -401,7 +444,8 @@ const OrderDesk = (() => {
         Hide parties with a catalogue in confirmed
       </label>` : ""}
       <p style="margin:0 0 12px;color:var(--muted);font-size:13px;">${hints[filter] || ""}</p>
-      ${list || `<p style="color:var(--muted);">Nothing in this list.</p>`}`;
+      ${list ? `<div class="ord-order-grid">${list}</div>` : `<p style="color:var(--muted);">Nothing in this list.</p>`}
+      ${formsBlock ? `<div style="margin-top:16px;">${formsBlock}</div>` : ""}`;
   }
 
   async function load() {
@@ -1099,7 +1143,7 @@ const OrderDesk = (() => {
   }
 
   return {
-    open, openFresh, setFilter, setHideCatalogues, setFrom, setTo, toggle, selectAll, newOrder, act, pull,
+    open, openFresh, setFilter, setHideCatalogues, setFrom, setTo, toggle, selectAll, newOrder, openTile, act, pull,
     setConfirmSearch, setBillSearch, addBillSearchEnter, paintBillStock, setCatalogsComplete, setMode, setTransportBit, setHandler, setDisc, setGst, setBillAgent,
     addCharge, toggleCatalog, togglePlacement, toggleConfirmAddon, toggleBillAddon,
     removeConfirmLine, removeBillLine, addConfirmItem, addBillItem,

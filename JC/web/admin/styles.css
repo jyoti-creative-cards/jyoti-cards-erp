@@ -3220,13 +3220,11 @@ table.data tr.filter-row th { padding: 6px 8px; background: #fff; border-bottom:
 /* ── Order card grid ─────────────────────────────────── */
 .ord-order-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fill, 300px);
   gap: 12px;
   width: 100%;
   align-items: start;
-}
-@media (max-width: 640px) {
-  .ord-order-grid { grid-template-columns: 1fr; }
+  justify-content: start;
 }
 
 .ord-order-card {

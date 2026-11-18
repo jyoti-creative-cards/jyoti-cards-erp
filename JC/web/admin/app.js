@@ -860,13 +860,14 @@ const App = (() => {
       document.getElementById("nav-more")?.classList.add("active");
       showMoreHub();
     } else if (name === "buying" || name === "selling") {
-      markMore();
       if (name === "selling") {
         ordersType = "customer";
         document.getElementById("view-selling")?.classList.remove("hidden");
         document.getElementById("view-buying")?.classList.add("hidden");
+        document.getElementById("nav-order-desk")?.classList.add("active");
         CustomerOrders.showHub();
       } else {
+        markMore();
         ordersType = "vendor";
         document.getElementById("view-buying")?.classList.remove("hidden");
         document.getElementById("view-selling")?.classList.add("hidden");

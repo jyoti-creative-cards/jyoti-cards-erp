@@ -542,6 +542,7 @@ const CustomerOrders = (() => {
       const row = (orders || []).find(o => Number(o.customer_id) === cid);
       text = (row && row.marking) || "";
     }
+    if (!text && window.OrderDesk?.markingFor) text = OrderDesk.markingFor(cid, bills) || "";
     const kind = billList.length === 1 ? "bill" : "order";
     const subject = billList.length === 1 ? String(billList[0]) : String(cid);
     let rows = [];
@@ -591,6 +592,9 @@ const CustomerOrders = (() => {
       ctx.toast(remove ? "Marking deleted" : "Marking saved", "success");
       if (currentBucket === "dispatch") await loadDispatch();
       else await loadList(true);
+      if (!document.getElementById("view-order-desk")?.classList.contains("hidden")) {
+        await OrderDesk.reload?.();
+      }
     } catch (e) { ctx.toast(e.message, "error"); }
     finally { ctx.hideLoading?.(); }
   }

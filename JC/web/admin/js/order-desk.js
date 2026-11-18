@@ -357,6 +357,27 @@ const OrderDesk = (() => {
     return list.map(x => String(x || "").trim()).filter(Boolean);
   }
 
+  function onlyMark(text) {
+    const parts = String(text || "").split("·").map(part => part.trim()).filter(Boolean);
+    return parts.length ? parts[parts.length - 1] : "";
+  }
+
+  function noteKey(row) {
+    const bucket = filter === "new" ? "received" : filter === "confirmed" ? "open" : filter === "billed" ? "billed" : "picked";
+    return `co:${bucket}:${row.customer_id}`;
+  }
+
+  function markButton(row) {
+    const parcel = filter === "billed" || filter === "dispatched";
+    const bills = parcel && row.bill_id ? String(row.bill_id) : "";
+    const text = onlyMark(row.marking);
+    const open = `event.stopPropagation();CustomerOrders.openTileMark('marking',${Number(row.customer_id)},'${bills}')`;
+    if (!text) {
+      return `<button type="button" class="btn btn-secondary btn-sm" style="margin:8px 14px;" onclick="${open}">Add marking</button>`;
+    }
+    return `<button type="button" style="display:block;width:calc(100% - 28px);margin:8px 14px;padding:10px 12px;background:#fee2e2;border:1px solid #dc2626;border-radius:8px;font-weight:800;font-size:16px;color:#b91c1c;text-align:left;cursor:pointer;" onclick="${open}">Marking: ${esc(text)}</button>`;
+  }
+
   function tileHtml(row) {
     const key = keyOf(row);
     const on = !!selected[key];
@@ -373,13 +394,11 @@ const OrderDesk = (() => {
     const created = makers.length
       ? `<div style="display:block;margin:0;padding:8px 14px;background:#dcfce7;color:#166534;font-weight:800;font-size:16px;line-height:1.3;">Created by ${esc(makers.join(" · "))}</div>`
       : "";
-    const mark = row.marking
-      ? `<div style="margin:8px 14px;padding:10px 12px;background:#fee2e2;border:1px solid #dc2626;border-radius:8px;font-weight:800;color:#b91c1c;">${esc(row.marking)}</div>`
-      : "";
     const meta = parcel
       ? [row.bill_number ? `Bill ${row.bill_number}` : "", row.total_pcs ? `${row.total_pcs} pcs` : ""].filter(Boolean).join(" · ")
       : [row.line_count ? `${row.line_count} lines` : "", row.total_quantity ? `${row.total_quantity} pcs` : ""].filter(Boolean).join(" · ");
     const tick = filter === "dispatched" ? "" : `<label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" ${on ? "checked" : ""} onchange="OrderDesk.toggle('${key}', this.checked)"> Select</label>`;
+    const savedNote = noteKey(row);
     return `<div class="ord-order-card" onclick="OrderDesk.openTile('${key}')">
       <div class="ord-order-card-head">
         <div class="ord-order-card-avatar">${letter}</div>
@@ -390,7 +409,10 @@ const OrderDesk = (() => {
         ${when ? `<div class="ord-order-card-time">${esc(when)}</div>` : ""}
       </div>
       ${created}
-      ${mark}
+      ${markButton(row)}
+      <div data-tile-note="${savedNote}" onclick="event.stopPropagation()">
+        <button type="button" class="btn btn-secondary btn-sm" style="margin:6px 14px;" onclick="event.stopPropagation();App.editTileNote('${savedNote}')">Add note</button>
+      </div>
       <div class="ord-order-card-body">${meta ? `<div class="ord-order-card-stat">${esc(meta)}</div>` : ""}</div>
       ${tick ? `<div class="ord-order-card-foot" onclick="event.stopPropagation()">${tick}</div>` : ""}
     </div>`;
@@ -403,6 +425,20 @@ const OrderDesk = (() => {
       if (!open) return "";
       return `<div data-desk="${key}" style="margin:0 0 16px;padding:12px;border:1px solid #e2e8f0;border-radius:12px;background:#fff;">${formHtml(key)}</div>`;
     }).join("");
+  }
+
+  function markingFor(customerId, billIds) {
+    const bills = String(billIds || "").split(",").filter(Boolean);
+    const row = (raw || []).find(r => {
+      if (Number(r.customer_id) !== Number(customerId)) return false;
+      if (bills.length === 1 && r.bill_id) return String(r.bill_id) === bills[0];
+      return !r.bill_id || bills.length !== 1;
+    });
+    return (row && row.marking) || "";
+  }
+
+  function reload() {
+    return load().catch(e => toast(e.message || "Could not load orders"));
   }
 
   function openTile(key) {
@@ -1143,7 +1179,7 @@ const OrderDesk = (() => {
   }
 
   return {
-    open, openFresh, setFilter, setHideCatalogues, setFrom, setTo, toggle, selectAll, newOrder, openTile, act, pull,
+    open, openFresh, reload, setFilter, setHideCatalogues, setFrom, setTo, toggle, selectAll, newOrder, openTile, markingFor, act, pull,
     setConfirmSearch, setBillSearch, addBillSearchEnter, paintBillStock, setCatalogsComplete, setMode, setTransportBit, setHandler, setDisc, setGst, setBillAgent,
     addCharge, toggleCatalog, togglePlacement, toggleConfirmAddon, toggleBillAddon,
     removeConfirmLine, removeBillLine, addConfirmItem, addBillItem,

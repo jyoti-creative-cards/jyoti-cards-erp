@@ -226,7 +226,7 @@ const CustomerOrders = (() => {
       const agentOpts = [
         `<option value="">All agents</option>`,
         ...dispatchAgents.map(a =>
-          `<option value="${a.id}" ${String(dispatchAgentId) === String(a.id) ? "selected" : ""}>${ctx.esc(a.name)}</option>`
+          `<option value="${a.id}" ${String(dispatchAgentId) === String(a.id) ? "selected" : ""}>${HubUI.esc(a.name)}</option>`
         ),
       ].join("");
       searchSlot.innerHTML = dispatch
@@ -908,10 +908,11 @@ const CustomerOrders = (() => {
     </div>`;
   }
 
+  let openParcelId = null;
+
   function renderDispatchList() {
     const el = document.getElementById("customer-orders-list");
     if (!el) return;
-    const canWrite = !!ctx.canWrite?.("customer_orders");
     const list = filterDispatchParcels(dispatchParcels);
     const pickedTab = currentBucket === "picked";
     if (!list.length) {
@@ -922,41 +923,65 @@ const CustomerOrders = (() => {
       return;
     }
     el.innerHTML = list.map(p => {
-      const lines = (p.lines || []).map(l => `${ctx.esc(l.our_product_id)} × ${l.quantity}`).join(" · ");
-      const meta = [
-        p.bill_number ? `Bill ${p.bill_number}` : null,
-        p.freight_handler ? `Person ${p.freight_handler}` : null,
-        p.customer_city || null,
-        `${p.total_pcs || 0} pcs`,
-      ].filter(Boolean).join(" · ");
-      const noteKey = `dispatch:${p.bill_id}`;
-      const open = pickedTab && String(pickedOpenId) === String(p.bill_id);
-      const story = pickedStories[p.bill_id];
-      const storyHtml = open && story ? [
-        storyBlock("Order created", story.created),
-        storyBlock("Billed", story.billed),
-        storyBlock("Dispatched", story.dispatched),
-        storyBlock("Marked as picked", story.picked),
-      ].join("") : "";
-      return `<div class="ord-card" style="padding:14px 16px;" ${pickedTab ? `onclick="CustomerOrders.togglePickedStory(${p.bill_id})"` : ""}>
-        <div style="min-width:0;">
-          <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;">
-            <strong class="ord-card-title" style="font-size:16px;">${ctx.esc(p.customer_label || "Customer")}</strong>
-            ${stampIst(pickedTab ? p.picked_at : p.created_at) ? `<span style="flex:none;font-size:12px;font-weight:800;color:var(--muted);">${ctx.esc(stampIst(pickedTab ? p.picked_at : p.created_at))}</span>` : ""}
+      const letter = ctx.esc((p.customer_label || "?").slice(0, 1).toUpperCase());
+      const when = stampIst(pickedTab ? p.picked_at : p.created_at);
+      const bill = p.bill_number ? `Bill ${p.bill_number}` : "";
+      return `<div class="ord-order-card" onclick="CustomerOrders.openParcel(${p.bill_id})">
+        <div class="ord-order-card-head">
+          <div class="ord-order-card-avatar">${letter}</div>
+          <div class="ord-order-card-party">
+            <div class="ord-order-card-name">${ctx.esc(p.customer_label || "Customer")}</div>
+            <div class="ord-order-card-city">${[p.customer_city, bill, `${p.total_pcs || 0} pcs`].filter(Boolean).map(bit => ctx.esc(bit)).join(" · ")}</div>
           </div>
-          ${p.created_by ? `<div style="display:block;margin-top:8px;padding:8px 10px;border-radius:10px;background:#dcfce7;color:#166534;font-weight:800;font-size:16px;">Created by ${ctx.esc(p.created_by)}</div>` : ""}
-          ${parcelMarkHtml(p)}
-          <div data-tile-note="${noteKey}" onclick="event.stopPropagation()">
-            <button type="button" class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="event.stopPropagation();App.editTileNote('${noteKey}')">Add note</button>
-          </div>
-          ${p.dispatch_narration ? `<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:#e0f2fe;color:#0c4a6e;font-weight:700;">Dispatch: ${ctx.esc(p.dispatch_narration)}</div>` : ""}
-          ${pickedTab && p.pick_narration ? `<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:#fef3c7;color:#92400e;font-weight:700;">Picked: ${ctx.esc(p.pick_narration)}</div>` : ""}
-          <div class="ord-card-meta" style="margin-top:4px;">${ctx.esc(meta)}</div>
-          <div style="font-size:13px;margin-top:8px;">${lines || "—"}</div>
-          ${pickedTab ? storyHtml : (canWrite ? dispatchFormHtml(p) : "")}
+          ${when ? `<div class="ord-order-card-time">${ctx.esc(when)}</div>` : ""}
         </div>
+        ${p.created_by ? `<div style="margin:0 14px 8px;padding:8px 10px;border-radius:10px;background:#dcfce7;color:#166534;font-weight:800;">Created by ${ctx.esc(p.created_by)}</div>` : ""}
       </div>`;
     }).join("");
+    if (openParcelId) renderOpenParcel();
+  }
+
+  function openParcel(billId) {
+    openParcelId = billId;
+    const pickedTab = currentBucket === "picked";
+    if (pickedTab && !pickedStories[billId]) {
+      ctx.api(`/freight-agents/parcels/${billId}/story`, {}, 0).then(story => {
+        pickedStories[billId] = story;
+        if (String(openParcelId) === String(billId)) renderOpenParcel();
+      }).catch(e => ctx.toast(e.message, "error"));
+    }
+    renderOpenParcel();
+    openSlidePanel();
+  }
+
+  function renderOpenParcel() {
+    const p = (dispatchParcels || []).find(row => String(row.bill_id) === String(openParcelId));
+    const title = document.getElementById("co-detail-title");
+    const sub = document.getElementById("co-detail-sub");
+    const body = document.getElementById("co-detail-body");
+    if (!p || !body) return;
+    const pickedTab = currentBucket === "picked";
+    const phone = p.customer_phone ? `<div style="margin-top:4px;font-size:15px;font-weight:800;">${ctx.esc(p.customer_phone)}</div>` : "";
+    if (title) {
+      title.innerHTML = `${ctx.esc(p.customer_label || "Customer")}${p.customer_city ? ` <span style="color:var(--muted);font-weight:600;">· ${ctx.esc(p.customer_city)}</span>` : ""}${phone}`;
+    }
+    if (sub) sub.textContent = pickedTab ? "Picked" : "Dispatch";
+    const lines = (p.lines || []).map(l => `${ctx.esc(l.our_product_id)} × ${l.quantity}`).join(" · ");
+    const story = pickedStories[p.bill_id];
+    const storyHtml = story ? [
+      storyBlock("Order created", story.created),
+      storyBlock("Billed", story.billed),
+      storyBlock("Dispatched", story.dispatched),
+      storyBlock("Marked as picked", story.picked),
+    ].join("") : `<p style="color:var(--muted);">Loading the story…</p>`;
+    const canWrite = !!ctx.canWrite?.("customer_orders");
+    body.innerHTML = `
+      <div style="font-size:13px;margin-bottom:8px;">${p.bill_number ? `Bill ${ctx.esc(p.bill_number)} · ` : ""}${p.total_pcs || 0} pcs</div>
+      <div style="margin-bottom:10px;">${lines || "—"}</div>
+      ${parcelMarkHtml(p)}
+      ${p.dispatch_narration ? `<div style="margin:8px 0;padding:8px 10px;border-radius:8px;background:#e0f2fe;color:#0c4a6e;font-weight:700;">Dispatch: ${ctx.esc(p.dispatch_narration)}</div>` : ""}
+      ${pickedTab && p.pick_narration ? `<div style="margin:8px 0;padding:8px 10px;border-radius:8px;background:#fef3c7;color:#92400e;font-weight:700;">Picked: ${ctx.esc(p.pick_narration)}</div>` : ""}
+      ${pickedTab ? storyHtml : (canWrite ? dispatchFormHtml(p) : "")}`;
   }
 
   async function togglePickedStory(billId) {
@@ -1243,7 +1268,6 @@ const CustomerOrders = (() => {
     const _m1Upper = (o.marker_1 || "").toUpperCase();
     const nameHtml = (o.party_number ? `<span style="color:var(--muted);font-size:11px;font-weight:600;">#${o.party_number}</span> ` : "")
       + ctx.esc(o.customer_name)
-      + (timeStr ? ` <span style="float:right;font-size:12px;font-weight:800;color:#0f172a;">${ctx.esc(timeStr)}</span>` : "")
       + (o.marker_1 ? ` <span class="badge badge-blue" style="font-size:9px;padding:1px 4px;">${ctx.esc(o.marker_1)}</span>` : "")
       + (o.marker_2 ? ` <span class="badge badge-amber" style="font-size:9px;padding:1px 4px;">${ctx.esc(o.marker_2)}</span>` : "")
       + (o.payment_type === "CASH" && !_m1Upper.includes("CASH") ? ` <span class="badge badge-amber" style="font-size:9px;padding:1px 4px;">CASH</span>` : "");
@@ -1268,8 +1292,9 @@ const CustomerOrders = (() => {
         <div class="ord-order-card-avatar">${avatarLetter}</div>
         <div class="ord-order-card-party">
           <div class="ord-order-card-name">${nameHtml}</div>
-          <div class="ord-order-card-city">${o.city_name ? ctx.esc(o.city_name) : ""}${o.city_name && timeStr ? " · " : ""}${timeStr ? `<span class="ord-order-card-time">${ctx.esc(timeStr)}</span>` : ""}</div>
+          <div class="ord-order-card-city">${o.city_name ? ctx.esc(o.city_name) : ""}</div>
         </div>
+        ${timeStr ? `<div class="ord-order-card-time">${ctx.esc(timeStr)}</div>` : ""}
       </div>
       ${createdByHtml(o)}
       ${markHtml}
@@ -1361,6 +1386,7 @@ const CustomerOrders = (() => {
     }
     detailCustomerId = null;
     currentOrder = null;
+    openParcelId = null;
     App.updateGlobalBack?.();
   }
 
@@ -1374,6 +1400,7 @@ const CustomerOrders = (() => {
       const detailBuckets = ["received", "open", "billed", "cancelled", "closed"];
       if (!detailBuckets.includes(b)) b = "open";
       currentBucket = b;
+      openParcelId = null;
       detailCustomerId = customerId;
       coExpandedId = null;
       currentOrder = await ctx.api(`/customer-orders/customer/${customerId}?bucket=${b}`, {}, 0);
@@ -4454,7 +4481,7 @@ const CustomerOrders = (() => {
   }
 
   return {
-    init, loadList, setBucket, setHubMode, setPrintDay, setQueueFilter, setHubSearch, setHubPrice, setHubSort, toggleCreatedBy, showHub, openNewTiles, setHideConfirmedCatalogues, openDetail, openCustomer, switchBucket, toggleDetailExpand,
+    init, loadList, setBucket, setHubMode, setPrintDay, setQueueFilter, setHubSearch, setHubPrice, setHubSort, toggleCreatedBy, showHub, openNewTiles, setHideConfirmedCatalogues, openDetail, openParcel, openCustomer, switchBucket, toggleDetailExpand,
     openSlidePanel, closeSlidePanel, toggleCardMore, closeAllCardMore,
     goToDispatch, goCollectPayment, setDispatchStatus, setDispatchAgent, setParcelAgent, setParcelHandler, pickParcel, askDispatchNarration, saveDispatchNarration, markDispatchPicked, setDispatchMode, addDispatchCharge, togglePickedStory, reassignParcel, submitParcelReassign,
     showCreateMenu, showCreateMenuFromCustomer, openCloseBatch,

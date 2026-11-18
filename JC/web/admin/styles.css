@@ -3220,9 +3220,10 @@ table.data tr.filter-row th { padding: 6px 8px; background: #fff; border-bottom:
 /* ── Order card grid ─────────────────────────────────── */
 .ord-order-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 12px;
   width: 100%;
+  align-items: start;
 }
 @media (max-width: 640px) {
   .ord-order-grid { grid-template-columns: 1fr; }
@@ -3231,6 +3232,7 @@ table.data tr.filter-row th { padding: 6px 8px; background: #fff; border-bottom:
 .ord-order-card {
   display: flex;
   flex-direction: column;
+  min-width: 0;
   background: #fff;
   border: 1px solid #e2e8f0;
   border-top: 3px solid #e2e8f0;
@@ -3286,6 +3288,11 @@ table.data tr.filter-row th { padding: 6px 8px; background: #fff; border-bottom:
   flex-wrap: wrap;
   align-items: center;
   gap: 4px;
+  min-width: 0;
+}
+.ord-order-card-name > span:first-child,
+.ord-order-card-clock {
+  white-space: nowrap;
 }
 .ord-order-card-city {
   font-size: 12px;
@@ -3293,12 +3300,14 @@ table.data tr.filter-row th { padding: 6px 8px; background: #fff; border-bottom:
   margin-top: 2px;
 }
 .ord-order-card-time {
-  font-size: 11px;
-  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  color: #0f172a;
   margin-left: auto;
   white-space: nowrap;
   align-self: flex-start;
-  padding-top: 1px;
+  padding-top: 2px;
+  flex: none;
 }
 .ord-order-card-body {
   padding: 4px 14px 10px;

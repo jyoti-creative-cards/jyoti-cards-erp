@@ -37,12 +37,13 @@ const Markings = (() => {
       box.innerHTML = `<p style="color:var(--danger);">${esc(e.message)}</p>`;
       return;
     }
-    const list = rows.map(r => `<tr>
-      <td>${esc(r.our_product_id)}</td>
+    const list = rows.map(r => `<tr style="cursor:pointer;" onclick="if (event.target.closest('input,button,label')) return; Markings.openProduct(${r.product_id})">
+      <td><button type="button" class="btn btn-ghost btn-sm" onclick="event.stopPropagation();Markings.openProduct(${r.product_id})">${esc(r.our_product_id)}</button></td>
       <td><input class="input" id="mk-text-${r.id}" value="${esc(r.text)}" /></td>
       <td><input class="input" type="date" id="mk-from-${r.id}" value="${esc(r.starts_on)}" /></td>
       <td><input class="input" type="date" id="mk-until-${r.id}" value="${esc(r.ends_on)}" /></td>
-      <td>${r.active ? "Showing" : "Ended"}</td>
+      <td>${r.active ? "On product" : "Ended"}</td>
+      <td><label style="display:inline-flex;align-items:center;gap:6px;"><input type="checkbox" id="mk-party-${r.id}" ${r.show_to_party ? "checked" : ""} onchange="Markings.setParty(${r.id}, this.checked)" /> Show to customer</label></td>
       <td>
         <button type="button" class="btn btn-secondary btn-sm" onclick="Markings.save(${r.id})">Save</button>
         <button type="button" class="btn btn-secondary btn-sm" onclick="Markings.remove(${r.id})">Delete</button>
@@ -61,15 +62,17 @@ const Markings = (() => {
           <input id="mk-new-text" class="input" maxlength="200" placeholder="Monday" />
           <input id="mk-new-from" class="input" type="date" value="${today()}" />
           <input id="mk-new-until" class="input" type="date" value="2099-12-31" />
+          <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="mk-new-party" /> Show to customer</label>
           <button type="button" class="btn btn-primary" onclick="Markings.assign()">Add</button>
         </div>
       </div>
+      <div id="mk-history"></div>
       <div style="display:flex;gap:8px;margin-bottom:8px;">
         <input id="mk-q" class="input" placeholder="Search existing markings" value="${esc(q)}" />
         <button type="button" class="btn btn-secondary" onclick="Markings.load()">Search</button>
       </div>
-      <table class="data"><thead><tr><th>Item</th><th>Marking</th><th>From</th><th>Until</th><th></th><th></th></tr></thead>
-      <tbody>${list || `<tr><td colspan="6">None yet</td></tr>`}</tbody></table>`;
+      <table class="data"><thead><tr><th>Item</th><th>Marking</th><th>From</th><th>Until</th><th>On product</th><th>Customer bill</th><th></th></tr></thead>
+      <tbody>${list || `<tr><td colspan="7">None yet</td></tr>`}</tbody></table>`;
   }
 
   let picked = {};
@@ -100,7 +103,10 @@ const Markings = (() => {
     try {
       await App.api("/reports/product-markings/assign", {
         method: "POST",
-        body: JSON.stringify({ marking, product_ids, starts_on, ends_on }),
+        body: JSON.stringify({
+          marking, product_ids, starts_on, ends_on,
+          show_to_party: !!document.getElementById("mk-new-party")?.checked,
+        }),
       });
       picked = {};
       App.toast?.("Marking added", "success");
@@ -115,7 +121,10 @@ const Markings = (() => {
     try {
       await App.api(`/reports/product-markings/${id}`, {
         method: "PATCH",
-        body: JSON.stringify({ marking, starts_on, ends_on }),
+        body: JSON.stringify({
+          marking, starts_on, ends_on,
+          show_to_party: !!document.getElementById(`mk-party-${id}`)?.checked,
+        }),
       });
       App.toast?.("Saved", "success");
       await load();
@@ -130,5 +139,48 @@ const Markings = (() => {
     } catch (e) { App.toast?.(e.message, "error"); }
   }
 
-  return { open, close, load, search, pick, assign, save, remove };
+  async function setParty(id, on) {
+    const row = rows.find(r => Number(r.id) === Number(id));
+    const marking = document.getElementById(`mk-text-${id}`)?.value.trim() || row?.text || "";
+    const starts_on = document.getElementById(`mk-from-${id}`)?.value || row?.starts_on;
+    const ends_on = document.getElementById(`mk-until-${id}`)?.value || row?.ends_on;
+    try {
+      await App.api(`/reports/product-markings/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ marking, starts_on, ends_on, show_to_party: !!on }),
+      });
+      App.toast?.(on ? "Customer bills will show this marking" : "Customer bills will hide this marking", "success");
+    } catch (e) { App.toast?.(e.message, "error"); }
+  }
+
+  async function openProduct(productId) {
+    const box = document.getElementById("mk-history");
+    if (!box) return;
+    const name = (rows.find(r => Number(r.product_id) === Number(productId)) || {}).our_product_id || "Product";
+    let items = [];
+    try {
+      const data = await App.api(`/reports/product-markings/product/${productId}`, {}, 0);
+      items = data.items || [];
+    } catch (e) {
+      box.innerHTML = `<p style="color:var(--danger);">${esc(e.message)}</p>`;
+      return;
+    }
+    const lines = items.map(r => `<tr onclick="event.stopPropagation()">
+      <td>${esc(r.text)}</td>
+      <td>${esc(r.starts_on)}</td>
+      <td>${esc(r.ends_on)}</td>
+      <td><label style="display:inline-flex;align-items:center;gap:6px;"><input type="checkbox" ${r.show_to_party ? "checked" : ""} onchange="Markings.setParty(${r.id}, this.checked)" /> Show to customer</label></td>
+    </tr>`).join("");
+    box.innerHTML = `<div class="card" style="padding:12px;margin-bottom:12px;">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">
+        <h3 style="margin:0;">${esc(name)} · marking history</h3>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('mk-history').innerHTML=''">Close</button>
+      </div>
+      <table class="data" style="margin-top:8px;"><thead><tr><th>Marking</th><th>From</th><th>Until</th><th>Customer bill</th></tr></thead>
+      <tbody>${lines || `<tr><td colspan="4">No markings.</td></tr>`}</tbody></table>
+    </div>`;
+    box.scrollIntoView({ block: "nearest" });
+  }
+
+  return { open, close, load, search, pick, assign, save, remove, setParty, openProduct };
 })();

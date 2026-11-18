@@ -1047,6 +1047,10 @@ const Products = (() => {
         <span class="label" style="margin:0;">Marking</span>
         ${flag || `<span style="color:var(--muted);">None</span>`}
         ${actions}
+        ${canEdit && marking ? `<label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;">
+          <input type="checkbox" id="prod-mark-party" ${showToParty ? "checked" : ""} onchange="Products.savePartyFlag(${id})" />
+          Show to customer
+        </label>` : ""}
       </div>
       <div id="prod-mark-form" class="${marking ? "hidden" : ""}" style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin-top:8px;">
         <div><label class="label" style="margin:0;">Text</label>
@@ -1055,10 +1059,6 @@ const Products = (() => {
           <input id="prod-mark-from" class="input" type="date" value="${today}" /></div>
         <div><label class="label" style="margin:0;">Until</label>
           <input id="prod-mark-until" class="input" type="date" value="2099-12-31" /></div>
-        <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;margin-bottom:6px;">
-          <input type="checkbox" id="prod-mark-party" ${showToParty ? "checked" : ""} onchange="Products.savePartyFlag(${id})" />
-          Show to customer
-        </label>
         <button type="button" class="btn btn-secondary btn-sm" onclick="Products.saveMarking(${id}, '${section}')">Save</button>
         <button type="button" class="btn btn-danger btn-sm" onclick="Products.clearMarking(${id}, '${section}')">Clear</button>
       </div>

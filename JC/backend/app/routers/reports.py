@@ -585,7 +585,7 @@ class MarkingEditIn(BaseModel):
     marking: str
     starts_on: date
     ends_on: date
-    show_to_party: bool = False
+    show_to_party: Optional[bool] = None
 
 
 class MarkingPartyIn(BaseModel):

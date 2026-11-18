@@ -301,6 +301,7 @@ def list_assignments(db: Session, *, q: str | None = None) -> list[dict]:
             "starts_on": mark.starts_on.isoformat(),
             "ends_on": mark.ends_on.isoformat(),
             "active": mark.starts_on <= today <= mark.ends_on,
+            "show_to_party": bool(mark.show_to_party),
         })
     return out
 

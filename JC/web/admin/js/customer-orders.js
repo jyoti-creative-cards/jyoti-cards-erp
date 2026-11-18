@@ -1118,23 +1118,29 @@ const CustomerOrders = (() => {
   }
 
 // @slice 03-list
+  let listToken = 0;
   async function loadList(silent) {
     if (isDispatchBucket()) {
       await loadDispatch();
       return;
     }
+    const token = ++listToken;
     if (!silent) ctx.showLoading?.();
     try {
       if (!PAST_BUCKETS.includes(currentBucket) || currentBucket === "dispatch") {
         currentBucket = "open";
       }
+      const bucket = currentBucket;
       const day = dayParam();
-      orders = await ctx.api(`/customer-orders?bucket=${currentBucket}&day=${day}`, {}, 0);
-      if (!Array.isArray(orders)) orders = [];
+      const rows = await ctx.api(`/customer-orders?bucket=${bucket}&day=${day}`, {}, 0);
+      if (token !== listToken) return;
+      orders = Array.isArray(rows) ? rows : [];
+      currentBucket = bucket;
+      if (bucket === "received") App.setNewCount?.(orders.length);
       syncHubChrome();
       renderList();
-    } catch (e) { if (!silent) ctx.toast(e.message, "error"); }
-    finally { if (!silent) ctx.hideLoading?.(); }
+    } catch (e) { if (!silent && token === listToken) ctx.toast(e.message, "error"); }
+    finally { if (!silent && token === listToken) ctx.hideLoading?.(); }
   }
 
   function openNewTiles() {

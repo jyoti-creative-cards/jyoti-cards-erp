@@ -4373,8 +4373,8 @@ const App = (() => {
     api("/customer-orders/new-count", {}, 0).then((data) => setNewCount(data && data.count)).catch(() => {});
   }
   function openNewOrders() {
-    showView("selling");
     try { CustomerOrders.openNewTiles?.(); } catch (e) { toast(e.message || "Could not open new orders", "error"); }
+    showView("selling");
     document.querySelectorAll(".nav-item").forEach(b => b.classList.remove("active"));
     document.getElementById("nav-new-orders")?.classList.add("active");
   }

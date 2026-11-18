@@ -254,8 +254,8 @@ const CustomerOrders = (() => {
               <input type="checkbox" ${hideConfirmedCatalogues ? "checked" : ""} onchange="CustomerOrders.setHideConfirmedCatalogues(this.checked)" />
               Hide parties with a catalogue in confirmed
             </label>
-            <input class="input" style="width:110px;" inputmode="decimal" placeholder="Min price" value="${ctx.esc(hubPriceMin)}" oninput="CustomerOrders.setHubPrice('min', this.value)" />
-            <input class="input" style="width:110px;" inputmode="decimal" placeholder="Max price" value="${ctx.esc(hubPriceMax)}" oninput="CustomerOrders.setHubPrice('max', this.value)" />` : ""}
+            <input class="input" style="width:110px;" inputmode="decimal" placeholder="Min price" value="${HubUI.esc(hubPriceMin)}" oninput="CustomerOrders.setHubPrice('min', this.value)" />
+            <input class="input" style="width:110px;" inputmode="decimal" placeholder="Max price" value="${HubUI.esc(hubPriceMax)}" oninput="CustomerOrders.setHubPrice('max', this.value)" />` : ""}
             <div class="ord-mode-toggle" style="flex:0 0 auto;" role="tablist" aria-label="Sort order">
               <button type="button" class="ord-mode-btn${hubSort === "latest" ? " active" : ""}" onclick="CustomerOrders.setHubSort('latest')">Latest first</button>
               <button type="button" class="ord-mode-btn${hubSort === "oldest" ? " active" : ""}" onclick="CustomerOrders.setHubSort('oldest')">Oldest first</button>

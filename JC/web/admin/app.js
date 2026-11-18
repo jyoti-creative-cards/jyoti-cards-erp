@@ -4326,8 +4326,10 @@ const App = (() => {
     api("/customer-orders/new-count", {}, 0).then((data) => setNewCount(data && data.count)).catch(() => {});
   }
   function openNewOrders() {
-    try { OrderDesk.openFresh("new"); } catch (e) { /* desk script */ }
-    showView("order-desk");
+    showView("selling");
+    try { CustomerOrders.openNewTiles?.(); } catch (e) { toast(e.message || "Could not open new orders", "error"); }
+    document.querySelectorAll(".nav-item").forEach(b => b.classList.remove("active"));
+    document.getElementById("nav-new-orders")?.classList.add("active");
   }
 // @slice 07-public
   return {

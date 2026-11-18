@@ -19,6 +19,7 @@ const CustomerOrders = (() => {
   let pickedCatalogs = {};
   let catalogsComplete = false;
   let hideCatalogList = false;
+  let hideConfirmedCatalogues = false;
 
   let dispatchParcels = [];
   let dispatchAgents = [];
@@ -249,7 +250,11 @@ const CustomerOrders = (() => {
               placeholder: currentBucket === "open" ? "Customer, item, vendor item, category…" : currentBucket === "billed" ? "Search customer, bill no…" : "Search customer…",
               oninput: "CustomerOrders.setHubSearch(this.value)",
             })}
-            ${currentBucket === "open" ? `<input class="input" style="width:110px;" inputmode="decimal" placeholder="Min price" value="${ctx.esc(hubPriceMin)}" oninput="CustomerOrders.setHubPrice('min', this.value)" />
+            ${currentBucket === "open" ? `<label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;">
+              <input type="checkbox" ${hideConfirmedCatalogues ? "checked" : ""} onchange="CustomerOrders.setHideConfirmedCatalogues(this.checked)" />
+              Hide parties with a catalogue in confirmed
+            </label>
+            <input class="input" style="width:110px;" inputmode="decimal" placeholder="Min price" value="${ctx.esc(hubPriceMin)}" oninput="CustomerOrders.setHubPrice('min', this.value)" />
             <input class="input" style="width:110px;" inputmode="decimal" placeholder="Max price" value="${ctx.esc(hubPriceMax)}" oninput="CustomerOrders.setHubPrice('max', this.value)" />` : ""}
             <div class="ord-mode-toggle" style="flex:0 0 auto;" role="tablist" aria-label="Sort order">
               <button type="button" class="ord-mode-btn${hubSort === "latest" ? " active" : ""}" onclick="CustomerOrders.setHubSort('latest')">Latest first</button>
@@ -424,8 +429,14 @@ const CustomerOrders = (() => {
     </details>`;
   }
 
+  function setHideConfirmedCatalogues(on) {
+    hideConfirmedCatalogues = !!on;
+    renderList();
+  }
+
   function filterHubOrders(list) {
     let rows = (list || []).filter(rowMatchesCreators);
+    if (currentBucket === "open" && hideConfirmedCatalogues) rows = rows.filter(o => !o.has_catalogue);
     const tokens = hubSearch.trim() ? OrdersUI.partySearchTokens(hubSearch) : [];
     const hasPrice = currentBucket === "open" && (hubPriceMin !== "" || hubPriceMax !== "");
     if (currentBucket === "open" && (tokens.length || hasPrice)) {
@@ -1092,6 +1103,14 @@ const CustomerOrders = (() => {
     finally { if (!silent) ctx.hideLoading?.(); }
   }
 
+  function openNewTiles() {
+    currentBucket = "received";
+    hubMode = "past";
+    const printDay = document.getElementById("co-print-day");
+    if (printDay) printDay.value = "";
+    showHub();
+  }
+
   function showHub() {
     closeSlidePanel();
     hubExpandedCustomerId = null;
@@ -1215,20 +1234,19 @@ const CustomerOrders = (() => {
       more.push({ label: "Cancel entire order", onclick: `CustomerOrders.cancelEntireReceived(${o.customer_id})`, danger: true });
     }
 
-    // Party name HTML
-    const _m1Upper = (o.marker_1 || "").toUpperCase();
-    const nameHtml = (o.party_number ? `<span style="color:var(--muted);font-size:11px;font-weight:600;">#${o.party_number}</span> ` : "")
-      + ctx.esc(o.customer_name)
-      + (o.marker_1 ? ` <span class="badge badge-blue" style="font-size:9px;padding:1px 4px;">${ctx.esc(o.marker_1)}</span>` : "")
-      + (o.marker_2 ? ` <span class="badge badge-amber" style="font-size:9px;padding:1px 4px;">${ctx.esc(o.marker_2)}</span>` : "")
-      + (o.payment_type === "CASH" && !_m1Upper.includes("CASH") ? ` <span class="badge badge-amber" style="font-size:9px;padding:1px 4px;">CASH</span>` : "");
-
     const when = currentBucket === "billed"
       ? (o.sort_at || o.created_at || o.display_date || o.updated_at)
       : currentBucket === "received"
       ? (o.display_date || o.sort_at || o.updated_at)
       : (o.sort_at || o.display_date || o.updated_at);
     const timeStr = when ? stampIst(when) : "";
+    const _m1Upper = (o.marker_1 || "").toUpperCase();
+    const nameHtml = (o.party_number ? `<span style="color:var(--muted);font-size:11px;font-weight:600;">#${o.party_number}</span> ` : "")
+      + ctx.esc(o.customer_name)
+      + (timeStr ? ` <span style="float:right;font-size:12px;font-weight:800;color:#0f172a;">${ctx.esc(timeStr)}</span>` : "")
+      + (o.marker_1 ? ` <span class="badge badge-blue" style="font-size:9px;padding:1px 4px;">${ctx.esc(o.marker_1)}</span>` : "")
+      + (o.marker_2 ? ` <span class="badge badge-amber" style="font-size:9px;padding:1px 4px;">${ctx.esc(o.marker_2)}</span>` : "")
+      + (o.payment_type === "CASH" && !_m1Upper.includes("CASH") ? ` <span class="badge badge-amber" style="font-size:9px;padding:1px 4px;">CASH</span>` : "");
     const bucketCls = { received: "ord-order-card--received", open: "ord-order-card--open", billed: "ord-order-card--billed", closed: "ord-order-card--closed", cancelled: "ord-order-card--cancelled" }[currentBucket] || "";
 
     const avatarLetter = ctx.esc((o.customer_name || "?").slice(0, 1).toUpperCase());
@@ -1393,7 +1411,9 @@ const CustomerOrders = (() => {
       const m2 = o.marker_2 ? ` <span class="badge badge-amber" style="font-size:10px;vertical-align:middle;">${ctx.esc(o.marker_2)}</span>` : "";
       const pt = (o.payment_type === "CASH" && !_m1u.includes("CASH")) ? ` <span class="badge badge-amber" style="font-size:10px;vertical-align:middle;">CASH</span>` : "";
       const city = o.city_name ? ` <span style="color:var(--muted);font-weight:600;">· ${ctx.esc(o.city_name)}</span>` : "";
-      title.innerHTML = pn + ctx.esc(o.customer_name) + city + m1 + m2 + pt;
+      const phone = o.phone || o.customer_phone;
+      const phoneHtml = phone ? `<div style="margin-top:4px;font-size:15px;font-weight:800;">${ctx.esc(phone)}</div>` : "";
+      title.innerHTML = pn + ctx.esc(o.customer_name) + city + m1 + m2 + pt + phoneHtml;
     }
     if (sub) {
       sub.textContent = currentBucket === "received" ? "Review order, edit if needed, then Confirm →"
@@ -4434,7 +4454,7 @@ const CustomerOrders = (() => {
   }
 
   return {
-    init, loadList, setBucket, setHubMode, setPrintDay, setQueueFilter, setHubSearch, setHubPrice, setHubSort, toggleCreatedBy, showHub, openDetail, openCustomer, switchBucket, toggleDetailExpand,
+    init, loadList, setBucket, setHubMode, setPrintDay, setQueueFilter, setHubSearch, setHubPrice, setHubSort, toggleCreatedBy, showHub, openNewTiles, setHideConfirmedCatalogues, openDetail, openCustomer, switchBucket, toggleDetailExpand,
     openSlidePanel, closeSlidePanel, toggleCardMore, closeAllCardMore,
     goToDispatch, goCollectPayment, setDispatchStatus, setDispatchAgent, setParcelAgent, setParcelHandler, pickParcel, askDispatchNarration, saveDispatchNarration, markDispatchPicked, setDispatchMode, addDispatchCharge, togglePickedStory, reassignParcel, submitParcelReassign,
     showCreateMenu, showCreateMenuFromCustomer, openCloseBatch,

@@ -31,10 +31,16 @@ const Reports = (() => {
   let stockYear = "";
   let stockYears = null;
   let printCarry = "";
+  let printRemaining = false;
+  let printToken = 0;
   let printOpen = {};
   let stockAlbums = [];
   let markingScope = "all";
   let markingPicked = {};
+  let markingView = "list";
+  let markingOpenId = null;
+  let markingItems = [];
+  let markingNames = [];
   let payMode = "";
   let payParty = "";
   let payProduct = "";
@@ -657,6 +663,10 @@ const Reports = (() => {
     printCarry = mode === "bus" || mode === "transport" || mode === "self_pickup" ? mode : "";
     loadChip();
   }
+  function setPrintRemaining(on) {
+    printRemaining = !!on;
+    loadChip();
+  }
 
   function togglePrintGroup(key) {
     printOpen[key] = !printOpen[key];
@@ -664,12 +674,15 @@ const Reports = (() => {
   }
 
   async function renderPrintReport(body) {
+    const token = ++printToken;
     const params = new URLSearchParams();
     if (fromDate) params.set("from_date", fromDate);
     if (toDate) params.set("to_date", toDate);
     if (hubSearch.trim()) params.set("q", hubSearch.trim());
     if (printCarry) params.set("carry", printCarry);
+    if (printRemaining) params.set("remaining", "true");
     const data = await ctx.api(`/reports/sticker-prints?${params.toString()}`, {}, 0);
+    if (token !== printToken) return;
     const items = data.items || [];
     const groups = new Map();
     items.forEach((it) => {
@@ -710,13 +723,14 @@ const Reports = (() => {
         ${chipBtn("bus", "Bus")}
         ${chipBtn("transport", "Transport")}
         ${chipBtn("self_pickup", "Self pickup")}
+        <button type="button" class="btn btn-sm ${printRemaining ? "btn-primary" : "btn-secondary"}" onclick="Reports.setPrintRemaining(${printRemaining ? "false" : "true"})">Remaining</button>
       </div>
       <div class="fin-hub-strip" style="margin-bottom:16px;">
         <div class="fin-stat"><span class="fin-stat-label">Prints</span><strong>${items.length}</strong></div>
         <div class="fin-stat"><span class="fin-stat-label">Parties</span><strong>${groups.size}</strong></div>
       </div>
       <div class="print-party-grid">${cards}</div>
-      ${cards ? "" : empty("No prints", "No sticker was printed in these dates.")}`;
+      ${cards ? "" : empty(printRemaining ? "Nothing left to print" : "No prints", printRemaining ? "Every packed bill in these dates already has a sticker." : "No sticker was printed in these dates.")}`;
   }
 
   function setMarkingScope(scope) {
@@ -783,61 +797,161 @@ const Reports = (() => {
     }
   }
 
+  function setMarkingView(view) {
+    markingView = view === "create" || view === "rename" || view === "history" ? view : "list";
+    if (markingView !== "history") markingOpenId = null;
+    loadChip();
+  }
+
+  function openMarkingHistory(id) {
+    markingOpenId = Number(id);
+    markingView = "history";
+    loadChip();
+  }
+
+  async function renderMarkingHistory(body) {
+    const product = markingItems.find(it => Number(it.id) === Number(markingOpenId));
+    const data = await ctx.api(`/reports/product-markings/product/${markingOpenId}`, {}, 0);
+    const rows = data.items || [];
+    const lines = rows.map(row => `<div style="border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:8px;">
+      <input class="input" id="mh-text-${row.id}" value="${ctx.esc(row.text)}" />
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;align-items:end;">
+        <label class="label" style="margin:0;">From <input type="date" class="input" id="mh-from-${row.id}" value="${ctx.esc(row.starts_on)}"></label>
+        <label class="label" style="margin:0;">Until <input type="date" class="input" id="mh-until-${row.id}" value="${ctx.esc(row.ends_on)}"></label>
+        <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;">
+          <input type="checkbox" id="mh-party-${row.id}" ${row.show_to_party ? "checked" : ""} />
+          Show to customer
+        </label>
+        <button type="button" class="btn btn-primary btn-sm" onclick="Reports.saveMarkingHistory(${row.id})">Save</button>
+      </div>
+    </div>`).join("");
+    body.innerHTML = `
+      <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.setMarkingView('list')">Back</button>
+      <h3 style="margin:12px 0;">${ctx.esc(product ? product.our_product_id : "Product")}</h3>
+      <p class="fin-panel-sub">Each marking, its dates, and whether the customer bill shows it.</p>
+      ${lines || `<p style="color:var(--muted);">No markings yet.</p>`}`;
+  }
+
+  async function saveMarkingHistory(id) {
+    const text = document.getElementById(`mh-text-${id}`)?.value || "";
+    const starts = document.getElementById(`mh-from-${id}`)?.value || "";
+    const ends = document.getElementById(`mh-until-${id}`)?.value || "";
+    const show = !!document.getElementById(`mh-party-${id}`)?.checked;
+    if (!text.trim() || !starts || !ends) return ctx.toast("Enter the marking and both dates", "error");
+    try {
+      await ctx.api(`/reports/product-markings/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ marking: text, starts_on: starts, ends_on: ends, show_to_party: show }),
+      });
+      ctx.toast("Marking saved", "success");
+      loadChip();
+    } catch (e) { ctx.toast(e.message || "Could not save the marking", "error"); }
+  }
+
+  async function createMarking() {
+    const text = document.getElementById("mark-create-text")?.value || "";
+    const starts = document.getElementById("mark-create-from")?.value || "";
+    const ends = document.getElementById("mark-create-until")?.value || "2099-12-31";
+    const show = !!document.getElementById("mark-create-party")?.checked;
+    const ids = Object.keys(markingPicked).map(Number).filter(Boolean);
+    if (!text.trim()) return ctx.toast("Type the marking", "error");
+    if (!starts) return ctx.toast("Pick the date", "error");
+    if (!ids.length) return ctx.toast("Select at least one product", "error");
+    try {
+      await ctx.api("/reports/product-markings/assign", {
+        method: "POST",
+        body: JSON.stringify({ marking: text, product_ids: ids, starts_on: starts, ends_on: ends, show_to_party: show }),
+      });
+      markingPicked = {};
+      markingView = "list";
+      ctx.toast("Marking saved", "success");
+      loadChip();
+    } catch (e) { ctx.toast(e.message || "Could not save the marking", "error"); }
+  }
+
+  function previewRename(name) {
+    const box = document.getElementById("mark-rename-products");
+    if (!box) return;
+    const rows = markingItems.filter(it => String(it.marking || "").trim() === name);
+    box.innerHTML = rows.length
+      ? rows.map(it => `<div>${ctx.esc(it.our_product_id)}</div>`).join("")
+      : `<span style="color:var(--muted);">No product uses this marking.</span>`;
+  }
+
   async function renderMarkings(body) {
     const params = new URLSearchParams();
     if (hubSearch.trim()) params.set("q", hubSearch.trim());
-    params.set("marked", markingScope);
+    params.set("marked", markingView === "create" ? "all" : markingScope);
     const data = await ctx.api(`/reports/product-markings?${params.toString()}`, {}, 0);
-    const items = data.items || [];
-    const markings = data.markings || [];
+    markingItems = data.items || [];
+    markingNames = data.markings || [];
+    if (markingView === "history" && markingOpenId) {
+      await renderMarkingHistory(body);
+      return;
+    }
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+    if (markingView === "create") {
+      const picks = markingItems.map(it => {
+        const on = !!markingPicked[it.id];
+        return `<label style="display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);">
+          <input type="checkbox" ${on ? "checked" : ""} onchange="Reports.toggleMarkingPick(${it.id}, this.checked)" />
+          <span>${ctx.esc(it.our_product_id)}${it.marking ? ` · ${ctx.esc(it.marking)}` : ""}</span>
+        </label>`;
+      }).join("");
+      body.innerHTML = `
+        <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.setMarkingView('list')">Back</button>
+        <h3 style="margin:12px 0 8px;">Create marking</h3>
+        <label class="label">Marking <input class="input" id="mark-create-text" placeholder="18 nov 1200 ayga" /></label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <label class="label">From <input type="date" class="input" id="mark-create-from" value="${today}" /></label>
+          <label class="label">Until <input type="date" class="input" id="mark-create-until" value="2099-12-31" /></label>
+        </div>
+        <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;margin:8px 0;">
+          <input type="checkbox" id="mark-create-party" /> Show to customer
+        </label>
+        <p class="fin-panel-sub">Tick the products. Search above still filters this list.</p>
+        <div style="max-height:360px;overflow:auto;">${picks || "No products."}</div>
+        <button type="button" class="btn btn-primary" style="margin-top:12px;" onclick="Reports.createMarking()">Save marking</button>`;
+      return;
+    }
+    if (markingView === "rename") {
+      const options = markingNames.map(name => `<option value="${ctx.esc(name)}">${ctx.esc(name)}</option>`).join("");
+      body.innerHTML = `
+        <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.setMarkingView('list')">Back</button>
+        <h3 style="margin:12px 0 8px;">Rename a marking</h3>
+        <label class="label">Old name
+          <select class="input" id="mark-old" onchange="Reports.previewRename(this.value)"><option value="">Pick a marking</option>${options}</select>
+        </label>
+        <div id="mark-rename-products" style="margin:8px 0 12px;font-size:13px;"></div>
+        <label class="label">New name <input class="input" id="mark-new" placeholder="New marking" /></label>
+        <button type="button" class="btn btn-primary" onclick="Reports.renameMarking()">Apply</button>`;
+      return;
+    }
     const scopeBtn = (id, label) => `<button type="button" class="btn btn-sm ${markingScope === id ? "btn-primary" : "btn-secondary"}" onclick="Reports.setMarkingScope('${id}')">${label}</button>`;
-    const cards = items.map(it => {
+    const cards = markingItems.map(it => {
       const cats = [it.category, it.second_category, it.category_3].filter(Boolean).join(" · ");
       const picked = !!markingPicked[it.id];
-      return `<article class="print-party-card">
-        <label class="mark-card">
-          <input type="checkbox" ${picked ? "checked" : ""} onchange="Reports.toggleMarkingPick(${it.id}, this.checked)" />
+      return `<article class="print-party-card" style="display:flex;gap:8px;align-items:flex-start;">
+        <input type="checkbox" ${picked ? "checked" : ""} onclick="event.stopPropagation()" onchange="Reports.toggleMarkingPick(${it.id}, this.checked)" />
+        <button type="button" class="print-party-hit" style="flex:1;text-align:left;background:none;border:0;padding:0;cursor:pointer;" onclick="Reports.openMarkingHistory(${it.id})">
           <strong class="print-party-name">${ctx.esc(it.our_product_id)}</strong>
           <span class="print-mode-flag">${it.marking ? ctx.esc(it.marking) : "NO MARKING"}</span>
-          <span class="print-party-meta">${ctx.esc(it.vendor_product_id || "—")}${it.vendor_alias ? ` · ${ctx.esc(it.vendor_alias)}` : ""}${it.vendor_name ? ` · ${ctx.esc(it.vendor_name)}` : ""}</span>
-          <span class="print-party-meta">${ctx.esc(cats || "No category")}${it.year_group ? ` · ${ctx.esc(it.year_group)}` : ""}</span>
-        </label>
-        <div class="mark-edit">
-          <input class="input" id="mark-one-${it.id}" value="${ctx.esc(it.marking || "")}" placeholder="Marking" />
-          <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;">
-            <input type="checkbox" id="mark-party-${it.id}" ${it.show_to_party ? "checked" : ""} />
-            Show to party also
-          </label>
-          <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.saveProductMarking(${it.id})">Save</button>
-        </div>
+          ${it.show_to_party ? `<span class="print-party-meta">Shown to customer</span>` : ""}
+          <span class="print-party-meta">${ctx.esc(it.vendor_product_id || "—")}${it.vendor_name ? ` · ${ctx.esc(it.vendor_name)}` : ""}</span>
+          <span class="print-party-meta">${ctx.esc(cats || "No category")}</span>
+        </button>
       </article>`;
     }).join("");
-    const options = markings.map(name => `<option value="${ctx.esc(name)}">${ctx.esc(name)}</option>`).join("");
     body.innerHTML = `
-      <p class="fin-panel-sub" style="margin:0 0 12px;">Every live product. Red text is the marking. Search by marking, item, vendor item, alias, or category.</p>
+      <p class="fin-panel-sub" style="margin:0 0 12px;">Click a product to see its markings. The box only selects it.</p>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+        <button type="button" class="btn btn-primary btn-sm" onclick="Reports.setMarkingView('create')">Create marking</button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.setMarkingView('rename')">Rename a marking</button>
         ${scopeBtn("all", "All")}
         ${scopeBtn("marked", "With marking")}
         ${scopeBtn("unmarked", "Without marking")}
       </div>
-      <div class="mark-tools">
-        <label class="label">New or existing marking
-          <input class="input" id="mark-apply" placeholder="Fragile" />
-        </label>
-        <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;">
-          <input type="checkbox" id="mark-party-apply" />
-          Show to party also
-        </label>
-        <button type="button" class="btn btn-primary btn-sm" onclick="Reports.applyMarkingToPicked()">Apply to selected (<span id="mark-picked-count">${Object.keys(markingPicked).length}</span>)</button>
-        <label class="label">Rename
-          <select class="input" id="mark-old"><option value="">Pick a marking</option>${options}</select>
-        </label>
-        <label class="label">New name
-          <input class="input" id="mark-new" placeholder="Handle with care" />
-        </label>
-        <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.renameMarking()">Rename</button>
-      </div>
-      <p class="print-party-meta" style="margin:0 0 12px;">Showing ${items.length}</p>
+      <p class="print-party-meta" style="margin:0 0 12px;">Showing ${markingItems.length}</p>
       <div class="print-party-grid">${cards}</div>
       ${cards ? "" : empty("No products", "Nothing matches this search.")}`;
   }
@@ -2374,7 +2488,8 @@ const Reports = (() => {
     openLedger, openAgentLedger, openStaffLedger, openExpenseLedger, addExpenseHead, addExpenseSubhead, renameExpenseSubhead, addExpenseSource, renameExpenseSource, deleteExpenseSource, openCashLedger, backFromLedger, openDoc,
     setCityQuery, pickCityName, openCityParty, printCityParty, printCityAll, downloadCityPdf, downloadCityExcel,
     shareDaybook, waDaybook, shareStockSummary, shareNoAlbum, shareAgeing, waAgeing, exportExcel,
-    printCurrent, exportCurrentExcel, downloadSalesPdf, downloadPaymentsPdf, reportsBack, openGroup, openReport, setHideVoids, setJournalReportKind, setStockYear, setPrintCarry, togglePrintGroup, toggleStockAlbum,
+    printCurrent, exportCurrentExcel, downloadSalesPdf, downloadPaymentsPdf, reportsBack, openGroup, openReport, setHideVoids, setJournalReportKind, setStockYear, setPrintCarry, setPrintRemaining, togglePrintGroup, toggleStockAlbum,
+    setMarkingView, openMarkingHistory, saveMarkingHistory, createMarking, previewRename,
     toggleVendorDcu, downloadVendorOrderCsv, downloadConfirmedPdf, setHideConfirmedCatalogs,
     setMarkingScope, toggleMarkingPick, saveProductMarking, applyMarkingToPicked, renameMarking,
     setPayMode, applyPayFilters,

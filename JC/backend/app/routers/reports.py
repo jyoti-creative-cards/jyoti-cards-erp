@@ -21,15 +21,18 @@ router = APIRouter(prefix="/reports", tags=["reports"])
 def sticker_prints_report(
     q: str = Query("", max_length=120),
     carry: str = Query("", max_length=20),
+    remaining: bool = Query(False),
     from_date: Optional[date] = Query(None),
     to_date: Optional[date] = Query(None),
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_admin),
 ):
     from app.services.biz_date import ist_range_bounds_utc
-    from app.services.sticker_labels import list_print_report, print_payload
+    from app.services.sticker_labels import list_print_report, list_unprinted_packed, print_payload
 
     start, end = ist_range_bounds_utc(from_date, to_date)
+    if remaining:
+        return {"items": list_unprinted_packed(db, q=q, carry=carry, start=start, end=end)}
     rows = list_print_report(db, q=q, carry=carry, start=start, end=end)
     return {"items": [print_payload(row) for row in rows]}
 
@@ -575,12 +578,19 @@ class MarkingAssignIn(BaseModel):
     product_ids: list[int] = Field(default_factory=list)
     starts_on: date
     ends_on: date
+    show_to_party: bool = False
 
 
 class MarkingEditIn(BaseModel):
     marking: str
     starts_on: date
     ends_on: date
+    show_to_party: bool = False
+
+
+class MarkingPartyIn(BaseModel):
+    product_id: int
+    show_to_party: bool = False
 
 
 class MarkingRenameIn(BaseModel):
@@ -607,7 +617,9 @@ def product_markings_assign(
     from app.services import response_cache
     from app.services.product_markings import assign_marking
     try:
-        count = assign_marking(db, body.product_ids, body.marking, body.starts_on, body.ends_on)
+        count = assign_marking(
+            db, body.product_ids, body.marking, body.starts_on, body.ends_on, show_to_party=body.show_to_party,
+        )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from None
     db.commit()
@@ -626,7 +638,10 @@ def product_marking_edit(
     from app.services import response_cache
     from app.services.product_markings import update_marking
     try:
-        update_marking(db, marking_id, text=body.marking, starts_on=body.starts_on, ends_on=body.ends_on)
+        update_marking(
+            db, marking_id, text=body.marking, starts_on=body.starts_on, ends_on=body.ends_on,
+            show_to_party=body.show_to_party,
+        )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from None
     db.commit()
@@ -651,6 +666,36 @@ def product_marking_delete(
     response_cache.invalidate("catalog:")
     response_cache.invalidate("stock:")
     return {"ok": True}
+
+
+@router.get("/product-markings/product/{product_id}")
+def product_marking_history(
+    product_id: int,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("catalog.read")),
+):
+    from app.services.product_markings import marking_history
+
+    return {"items": marking_history(db, product_id)}
+
+
+@router.post("/product-markings/party")
+def product_marking_party(
+    body: MarkingPartyIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("catalog.write")),
+):
+    from app.services import response_cache
+    from app.services.product_markings import set_show_to_party
+
+    try:
+        count = set_show_to_party(db, body.product_id, body.show_to_party)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    db.commit()
+    response_cache.invalidate("catalog:")
+    response_cache.invalidate("stock:")
+    return {"updated": count}
 
 
 @router.get("/product-markings")

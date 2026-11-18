@@ -16,7 +16,7 @@ from app.models.catalog_product import CatalogProduct
 from app.models.city import City
 from app.models.stock import StockBalance, StockLedger, StockReceipt, StockReceiptLine
 from app.models.vendor import Vendor
-from app.services.product_markings import display_marking
+from app.services.product_markings import active_party_flag, display_marking
 from app.schemas.stock import (
     BillPreviewIn,
     BillPreviewOut,
@@ -192,6 +192,8 @@ def _product_public(
         "series": row.series,
         "year_group": row.year_group,
         "marking": display_marking(db, row),
+        "marking_id": (party_mark := active_party_flag(db, row.id))["marking_id"],
+        "show_to_party": party_mark["show_to_party"],
         "quantity_on_hand": balance,
         "low_stock_threshold": threshold,
         "stock_status": admin_stock_status_label(balance, threshold),

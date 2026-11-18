@@ -7,6 +7,8 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import String, cast, or_
 from sqlalchemy.orm import Session
 
+from app.models.city import City
+from app.models.customer import Customer
 from app.models.customer_bill import CustomerBill
 from app.models.sticker_label import StickerLabel
 from app.models.sticker_print import StickerPrint
@@ -176,3 +178,81 @@ def list_sticker_prints(db: Session, q: str | None, limit: int = 40) -> list[Sti
             cast(StickerPrint.party_number, String).ilike(like),
         ))
     return query.limit(max(1, min(limit, 100))).all()
+
+
+def _carry_mode(bill: CustomerBill) -> str:
+    mode = (bill.transport_mode or "").strip().lower()
+    if mode in ("bus", "transport", "self_pickup"):
+        return mode
+    return "bus" if bill.freight_agent_id else "self_pickup"
+
+
+def list_unprinted_packed(db: Session, *, q: str | None = None, carry: str | None = None, start=None, end=None) -> list[dict]:
+    """Bills still in dispatch (packed) with no sticker printed after the bill."""
+    bills = (
+        db.query(CustomerBill)
+        .filter(
+            CustomerBill.deleted_at.is_(None),
+            CustomerBill.cancelled_at.is_(None),
+            CustomerBill.freight_picked_at.is_(None),
+        )
+        .order_by(CustomerBill.created_at.desc(), CustomerBill.id.desc())
+        .all()
+    )
+    if start is not None:
+        bills = [bill for bill in bills if bill.created_at and bill.created_at >= start]
+    if end is not None:
+        bills = [bill for bill in bills if bill.created_at and bill.created_at <= end]
+    mode = (carry or "").strip().lower()
+    if mode in ("bus", "transport", "self_pickup"):
+        bills = [bill for bill in bills if _carry_mode(bill) == mode]
+    customer_ids = {int(bill.customer_id) for bill in bills}
+    prints = (
+        db.query(StickerPrint)
+        .filter(StickerPrint.customer_id.in_(customer_ids))
+        .all()
+    ) if customer_ids else []
+    printed_at = {}
+    for row in prints:
+        if row.customer_id is None or row.printed_at is None:
+            continue
+        prev = printed_at.get(int(row.customer_id))
+        if prev is None or row.printed_at > prev:
+            printed_at[int(row.customer_id)] = row.printed_at
+    customers = {
+        c.id: c for c in db.query(Customer).filter(Customer.id.in_(customer_ids)).all()
+    } if customer_ids else {}
+    city_ids = {c.city_id for c in customers.values() if c.city_id}
+    cities = {c.id: c.name for c in db.query(City).filter(City.id.in_(city_ids)).all()} if city_ids else {}
+    needle = " ".join((q or "").split()).lower()
+    out = []
+    for bill in bills:
+        customer = customers.get(bill.customer_id)
+        if customer is None:
+            continue
+        last = printed_at.get(int(bill.customer_id))
+        if last is not None and bill.created_at is not None and last >= bill.created_at:
+            continue
+        city = cities.get(customer.city_id) if customer.city_id else ""
+        if needle and needle not in " ".join([
+            customer.business_name or "",
+            city or "",
+            str(customer.party_number or ""),
+            bill.bill_number or "",
+        ]).lower():
+            continue
+        carry_mode = _carry_mode(bill)
+        out.append({
+            "id": bill.id,
+            "customer_id": customer.id,
+            "party_number": customer.party_number,
+            "business_name": customer.business_name or "",
+            "city_name": city or "",
+            "phone": customer.phone or "",
+            "printed_by": "Not printed",
+            "printed_at": None,
+            "printed_label": f"Bill {bill.bill_number}" if bill.bill_number else "Not printed",
+            "carry": carry_mode if carry_mode != "self_pickup" else "",
+            "remaining": True,
+        })
+    return out[:500]

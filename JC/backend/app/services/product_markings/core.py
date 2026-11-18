@@ -165,7 +165,14 @@ def _check_dates(starts_on: date, ends_on: date) -> None:
         raise ValueError("the end date is before the start date")
 
 
-def assign_marking(db: Session, product_ids: list[int], marking: str, starts_on: date, ends_on: date) -> int:
+def assign_marking(
+    db: Session,
+    product_ids: list[int],
+    marking: str,
+    starts_on: date,
+    ends_on: date,
+    show_to_party: bool = False,
+) -> int:
     cleaned = clean_marking(marking)
     if not cleaned:
         raise ValueError("type the marking")
@@ -175,6 +182,7 @@ def assign_marking(db: Session, product_ids: list[int], marking: str, starts_on:
         db.add(ProductMarking(
             catalog_product_id=product.id,
             text=cleaned,
+            show_to_party=bool(show_to_party),
             starts_on=starts_on,
             ends_on=ends_on,
         ))
@@ -184,7 +192,15 @@ def assign_marking(db: Session, product_ids: list[int], marking: str, starts_on:
     return len(rows)
 
 
-def update_marking(db: Session, marking_id: int, *, text: str, starts_on: date, ends_on: date) -> ProductMarking:
+def update_marking(
+    db: Session,
+    marking_id: int,
+    *,
+    text: str,
+    starts_on: date,
+    ends_on: date,
+    show_to_party: bool | None = None,
+) -> ProductMarking:
     row = db.get(ProductMarking, marking_id)
     if not row:
         raise ValueError("marking not found")
@@ -195,11 +211,53 @@ def update_marking(db: Session, marking_id: int, *, text: str, starts_on: date, 
     row.text = cleaned
     row.starts_on = starts_on
     row.ends_on = ends_on
+    if show_to_party is not None:
+        row.show_to_party = bool(show_to_party)
     db.flush()
     product = db.get(CatalogProduct, row.catalog_product_id)
     if product:
         refresh_product_marking(db, product)
     return row
+
+
+def marking_history(db: Session, product_id: int) -> list[dict]:
+    rows = (
+        db.query(ProductMarking)
+        .filter(ProductMarking.catalog_product_id == product_id)
+        .order_by(ProductMarking.starts_on.desc(), ProductMarking.id.desc())
+        .all()
+    )
+    return [
+        {
+            "id": row.id,
+            "text": row.text,
+            "starts_on": row.starts_on.isoformat(),
+            "ends_on": row.ends_on.isoformat(),
+            "show_to_party": bool(row.show_to_party),
+        }
+        for row in rows
+    ]
+
+
+def set_show_to_party(db: Session, product_id: int, show: bool) -> int:
+    rows = _active_rows(db, product_id)
+    if not rows:
+        raise ValueError("this product has no marking")
+    for row in rows:
+        row.show_to_party = bool(show)
+    db.flush()
+    product = db.get(CatalogProduct, product_id)
+    if product:
+        refresh_product_marking(db, product)
+    return len(rows)
+
+
+def active_party_flag(db: Session, product_id: int) -> dict:
+    rows = _active_rows(db, product_id)
+    if not rows:
+        return {"marking_id": None, "show_to_party": False}
+    chosen = next((row for row in rows if row.show_to_party), rows[0])
+    return {"marking_id": chosen.id, "show_to_party": bool(chosen.show_to_party)}
 
 
 def delete_marking(db: Session, marking_id: int) -> None:

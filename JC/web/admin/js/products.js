@@ -1031,7 +1031,7 @@ const Products = (() => {
     ctx.toast("Order form is not open", "error");
   }
 
-  function markingEditor(id, section, marking) {
+  function markingEditor(id, section, marking, showToParty) {
     const canEdit = ctx.canWrite?.("catalog") || ctx.isAdmin?.();
     const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
     const flag = marking
@@ -1055,6 +1055,10 @@ const Products = (() => {
           <input id="prod-mark-from" class="input" type="date" value="${today}" /></div>
         <div><label class="label" style="margin:0;">Until</label>
           <input id="prod-mark-until" class="input" type="date" value="2099-12-31" /></div>
+        <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;margin-bottom:6px;">
+          <input type="checkbox" id="prod-mark-party" ${showToParty ? "checked" : ""} onchange="Products.savePartyFlag(${id})" />
+          Show to customer
+        </label>
         <button type="button" class="btn btn-secondary btn-sm" onclick="Products.saveMarking(${id}, '${section}')">Save</button>
         <button type="button" class="btn btn-danger btn-sm" onclick="Products.clearMarking(${id}, '${section}')">Clear</button>
       </div>
@@ -1077,6 +1081,17 @@ const Products = (() => {
     } catch (e) { ctx.toast(e.message, "error"); }
   }
 
+  async function savePartyFlag(id) {
+    const show = !!document.getElementById("prod-mark-party")?.checked;
+    try {
+      await ctx.api("/reports/product-markings/party", {
+        method: "POST",
+        body: JSON.stringify({ product_id: id, show_to_party: show }),
+      });
+      ctx.toast(show ? "Bill copies will show this marking" : "Bill copies will hide this marking", "success");
+    } catch (e) { ctx.toast(e.message || "Could not save", "error"); }
+  }
+
   async function saveMarking(id, section) {
     const marking = document.getElementById("prod-marking")?.value.trim() || "";
     if (!marking) {
@@ -1086,7 +1101,7 @@ const Products = (() => {
     try {
       await ctx.api("/reports/product-markings/apply", {
         method: "POST",
-        body: JSON.stringify({ marking, product_ids: [id] }),
+        body: JSON.stringify({ marking, product_ids: [id], show_to_party: !!document.getElementById("prod-mark-party")?.checked }),
       });
       ctx.toast("Marking saved", "success");
       await openProductDetail(id, section || "stock");
@@ -1260,7 +1275,7 @@ const Products = (() => {
           </div>
           ${images}
         </div>
-        ${markingEditor(id, sec, cat?.marking || stock?.marking || "")}
+        ${markingEditor(id, sec, cat?.marking || stock?.marking || "", !!(stock?.show_to_party))}
         <div class="prod-detail-tabs" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           ${tabBtn("stock", "Stock / Ledger")}
           ${tabBtn("catalog", "Catalog")}

@@ -1140,7 +1140,7 @@ const CustomerOrders = (() => {
       syncHubChrome();
       renderList();
     } catch (e) { if (!silent && token === listToken) ctx.toast(e.message, "error"); }
-    finally { if (!silent && token === listToken) ctx.hideLoading?.(); }
+    finally { if (!silent) ctx.hideLoading?.(); }
   }
 
   function openNewTiles() {
@@ -1148,7 +1148,6 @@ const CustomerOrders = (() => {
     hubMode = "past";
     const printDay = document.getElementById("co-print-day");
     if (printDay) printDay.value = "";
-    showHub();
   }
 
   function showHub() {

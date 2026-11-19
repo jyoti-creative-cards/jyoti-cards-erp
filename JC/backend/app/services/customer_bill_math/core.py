@@ -1,6 +1,7 @@
 """Inclusive selling prices → optional invoice discount → optional GST split per line."""
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Dict, List
 
@@ -112,6 +113,7 @@ def compute_bill_totals(
     packaging_charges: Decimal | None = None,
     item_overrides: list[dict] | None = None,
     additional_charges: list[dict] | None = None,
+    bill_date: date | None = None,
 ) -> Dict[str, Any]:
     """
     Order line unit_price is GST-inclusive (list / catalogue rate).
@@ -320,8 +322,11 @@ def compute_bill_totals(
     if packaging < 0:
         packaging = Decimal("0")
 
+    from app.services.price_increase import with_increase
+
     extra_charges_out: list[dict] = []
     extra_total = Decimal("0")
+    additional_charges = with_increase(additional_charges, after_discount_inclusive, bill_date)
     if additional_charges:
         for ac in additional_charges:
             if not isinstance(ac, dict):

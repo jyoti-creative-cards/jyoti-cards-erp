@@ -149,6 +149,15 @@ def render_copies_pdf(
     note = _txt(customer_notes, 90)
     narr = _txt(narration, 180)
     remarks = "" if not note or note == narr else note
+    from app.services.price_increase import NAME, NOTE
+
+    increase_on = any(
+        isinstance(row, dict) and str(row.get("name") or "").strip().lower() == NAME.lower()
+        for row in (totals.get("additional_charges") or [])
+    )
+    if increase_on:
+        remarks = NOTE if not remarks else f"{NOTE}. {remarks}"
+        remarks = remarks[:90]
     invoice_no = _txt(bill_number, 20) or str(bill_id)
 
     # Header height depends on which party lines we have. Measure it once.

@@ -176,6 +176,9 @@ def process_customer_bill(
     )
     additional_charges = merge_priced_addon_charges(additional_charges, addon_map, bill_items)
 
+    from app.services.biz_date import resolve_invoice_date
+
+    invoice_day = resolve_invoice_date(bill_date)
     totals = compute_bill_totals(
         bill_items,
         gst_enabled=gst_enabled,
@@ -185,15 +188,16 @@ def process_customer_bill(
         packaging_charges=packaging_charges,
         item_overrides=item_overrides if not use_overall else None,
         additional_charges=additional_charges,
+        bill_date=invoice_day,
     )
+    additional_charges = totals.get("additional_charges") or additional_charges
     totals = stamp_transport_on_totals(totals, t, agent_name=agent_name)
     totals = apply_billing_addons_to_totals(totals, addon_map, bill_items)
     grand_check = Decimal(str(totals.get("rounded_grand_total") or totals["grand_total"]))
     assert_credit_allows_bill(db, customer_id, grand_check, force=force_credit_override)
 
-    from app.services.biz_date import resolve_biz_dt, resolve_invoice_date
+    from app.services.biz_date import resolve_biz_dt
 
-    invoice_day = resolve_invoice_date(bill_date)
     if not confirm_duplicate:
         from app.services.bill_duplicates import same_day_bill_clashes
 

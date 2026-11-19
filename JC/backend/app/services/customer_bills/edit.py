@@ -55,6 +55,7 @@ def _prepare_edit_bill_totals(
     transport_mode: Optional[str] = None,
     transport_receipt_number: Optional[str] = None,
     freight_charges_raw: object = None,
+    bill_date: date | None = None,
 ) -> dict:
     """Read-only: validate + compute totals for an edit-bill request. Shared by the real
     edit (which then persists) and the preview endpoint (which just returns this dict) so
@@ -152,6 +153,9 @@ def _prepare_edit_bill_totals(
     )
     additional_charges = merge_priced_addon_charges(additional_charges, addon_for_bill, bill_items)
 
+    from app.services.biz_date import bill_invoice_date, resolve_invoice_date
+
+    priced_on = resolve_invoice_date(bill_date) if bill_date is not None else bill_invoice_date(bill)
     totals = compute_bill_totals(
         bill_items,
         gst_enabled=gst_enabled,
@@ -161,7 +165,9 @@ def _prepare_edit_bill_totals(
         packaging_charges=packaging_charges,
         item_overrides=item_overrides if not use_overall else None,
         additional_charges=additional_charges,
+        bill_date=priced_on,
     )
+    additional_charges = totals.get("additional_charges") or additional_charges
     totals = stamp_transport_on_totals(totals, t, agent_name=agent_name)
     totals = apply_billing_addons_to_totals(totals, addon_for_bill, bill_items)
     return {
@@ -196,6 +202,7 @@ def preview_edit_customer_bill(
     transport_mode: Optional[str] = None,
     transport_receipt_number: Optional[str] = None,
     freight_charges_raw: object = None,
+    bill_date: date | None = None,
 ) -> dict:
     """Read-only preview of what edit_customer_bill would save — same totals math, no
     writes. Lets the edit-bill review screen show the real server-computed grand total
@@ -214,6 +221,7 @@ def preview_edit_customer_bill(
         transport_mode=transport_mode,
         transport_receipt_number=transport_receipt_number,
         freight_charges_raw=freight_charges_raw,
+        bill_date=bill_date,
     )
     return prep["totals"]
 
@@ -255,6 +263,7 @@ def edit_customer_bill(
         transport_mode=transport_mode,
         transport_receipt_number=transport_receipt_number,
         freight_charges_raw=freight_charges_raw,
+        bill_date=bill_date,
     )
     bill = prep["bill"]
     customer_id = prep["customer_id"]

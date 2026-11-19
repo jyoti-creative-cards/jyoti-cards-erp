@@ -200,6 +200,8 @@ def preview_process_bill(
     if t["freight_agent_id"]:
         agent = db.get(FreightAgent, t["freight_agent_id"])
         agent_name = agent.name if agent else None
+    from app.services.biz_date import resolve_invoice_date
+
     totals = compute_bill_totals(
         bill_items,
         gst_enabled=body.gst_enabled,
@@ -209,6 +211,7 @@ def preview_process_bill(
         packaging_charges=Decimal(body.packaging_charges) if body.packaging_charges else None,
         item_overrides=item_overrides if not use_overall else None,
         additional_charges=extra,
+        bill_date=resolve_invoice_date(body.bill_date),
     )
     totals = stamp_transport_on_totals(totals, t, agent_name=agent_name)
     from app.services.credit_limit import credit_status
@@ -450,6 +453,7 @@ def preview_edit_bill_endpoint(
         transport_mode=body.transport_mode,
         transport_receipt_number=body.transport_receipt_number,
         freight_charges_raw=body.freight_charges,
+        bill_date=body.bill_date,
     )
     db.rollback()  # this endpoint must never persist — _prepare_edit_bill_totals only reads
     return totals

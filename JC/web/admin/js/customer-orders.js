@@ -2815,8 +2815,15 @@ const CustomerOrders = (() => {
   /** Running qty/amount from the line items alone (pre-GST/pre-freight/pre-charges) —
    * kept visible on every wizard step (not just Review) since staff use it to judge
    * additional charges while still on the Transport/Charges steps. */
+  function priceIncrease(goods, day) {
+    if (!day || day < "2026-11-20") return 0;
+    const n = Number(goods) || 0;
+    if (n <= 0) return 0;
+    return Math.round((n * 0.07 + Number.EPSILON) * 100) / 100;
+  }
+
   function wizardLinesTotals() {
-    let qty = 0, amount = 0;
+    let qty = 0, goods = 0, addons = 0;
     for (const ln of processLines) {
       const q = Number(ln.quantity_to_ship) || 0;
       if (q <= 0) continue;
@@ -2824,13 +2831,13 @@ const CustomerOrders = (() => {
       const rate = useOverallDiscount && overallDiscount
         ? Number(calcNetFromDisc(ln.unit_price, overallDiscount)) || 0
         : (Number(ln.net_rate) || Number(calcNetFromDisc(ln.unit_price, ln.discount_percent || 0)) || 0);
-      amount += q * rate;
+      goods += q * rate;
       const skipped = new Set((ln.skip_addon_ids || []).map(Number));
       for (const a of ln.addons || []) {
         if (skipped.has(Number(a.addon_product_id))) continue;
         const price = addonEachPrice(a);
         if (!(price > 0)) continue;
-        amount += price * (Number(a.quantity) || 1) * q;
+        addons += price * (Number(a.quantity) || 1) * q;
       }
     }
     let extra = 0;
@@ -2840,7 +2847,8 @@ const CustomerOrders = (() => {
     if (String(packagingCharges || "").trim() !== "") extra += Number(packagingCharges) || 0;
     for (const c of additionalCharges || []) extra += Number(c.amount) || 0;
     for (const price of Object.values(pickedCatalogs)) extra += Number(price) || 0;
-    return { qty, amount: amount + extra };
+    const increase = priceIncrease(goods, billDate || localToday());
+    return { qty, amount: goods + addons + extra + increase, increase };
   }
 
   function reviewChargeRows(tot, chargeLabel) {
@@ -2867,9 +2875,12 @@ const CustomerOrders = (() => {
   function renderWizardTotalsBar() {
     const bar = document.getElementById("co-wizard-totals");
     if (!bar) return;
-    const { qty, amount } = wizardLinesTotals();
+    const { qty, amount, increase } = wizardLinesTotals();
+    const note = increase > 0
+      ? `<span><span class="wtb-muted">Increased charges</span>${fmtPrice(increase)}</span><span>7% increase price due to new rule</span>`
+      : "";
     bar.innerHTML = qty > 0
-      ? `<span><span class="wtb-muted">Total qty</span>${qty}</span><span><span class="wtb-muted">Total amount</span>${fmtPrice(amount)}</span>`
+      ? `<span><span class="wtb-muted">Total qty</span>${qty}</span><span><span class="wtb-muted">Total amount</span>${fmtPrice(amount)}</span>${note}`
       : "";
   }
 
@@ -3323,7 +3334,7 @@ const CustomerOrders = (() => {
 
   function setNarration(v) { narration = v; }
   function setEditBillNumber(v) { editBillNumber = v || ""; }
-  function setBillDate(v) { billDate = v || localToday(); }
+  function setBillDate(v) { billDate = v || localToday(); renderWizardTotalsBar(); }
   function setAddCharge(i, field, val) { if (additionalCharges[i]) additionalCharges[i][field] = val; renderWizardTotalsBar(); }
   function addChargeRow() { additionalCharges.push({ name: "", amount: "" }); renderProcessWizard(); }
 

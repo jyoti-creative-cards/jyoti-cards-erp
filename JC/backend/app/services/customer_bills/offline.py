@@ -85,6 +85,9 @@ def process_offline_customer_order(
             if "override_price" in ov or "discount_percent" in ov:
                 item_overrides.append(ov)
 
+    from app.services.biz_date import today_ist
+
+    invoice_day = today_ist()
     totals = compute_bill_totals(
         bill_items,
         gst_enabled=gst_enabled,
@@ -92,9 +95,9 @@ def process_offline_customer_order(
         discount_percent=overall_discount_percent if use_overall else None,
         item_overrides=item_overrides if not use_overall else None,
         additional_charges=additional_charges,
+        bill_date=invoice_day,
     )
-
-    from app.services.biz_date import today_ist
+    additional_charges = totals.get("additional_charges") or additional_charges
 
     bill_number = allocate_bill_number(db, bill_series_id)
     now = datetime.now(timezone.utc)
@@ -131,7 +134,7 @@ def process_offline_customer_order(
         created_by_type=actor_type,
         created_by_id=actor_id,
         created_by_name=actor_name,
-        bill_date=today_ist(),
+        bill_date=invoice_day,
         created_at=now,
     )
     db.add(bill)

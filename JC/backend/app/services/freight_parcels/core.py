@@ -425,13 +425,16 @@ def save_dispatch_and_pick(
         freight = Decimal("0")
 
     old_extra = _charge_sum(bill.freight_charges, bill.packaging_charges, bill.additional_charges)
-    new_extra = _charge_sum(freight, packing, extras)
     totals = dict(bill.totals_json or {})
     base = totals.get("after_discount_inclusive")
     if base is None:
         base = Decimal(str(bill.grand_total or 0)) - old_extra
     else:
         base = Decimal(str(base))
+    from app.services.price_increase import with_increase
+
+    extras = with_increase(extras, base, getattr(bill, "bill_date", None))
+    new_extra = _charge_sum(freight, packing, extras)
     raw = (base + new_extra).quantize(Decimal("0.01"))
     rounded = raw.quantize(Decimal("1"))
     bill.transport_mode = mode

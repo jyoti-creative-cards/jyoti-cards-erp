@@ -2877,7 +2877,7 @@ const CustomerOrders = (() => {
     if (!bar) return;
     const { qty, amount, increase } = wizardLinesTotals();
     const note = increase > 0
-      ? `<span><span class="wtb-muted">Increased charges</span>${fmtPrice(increase)}</span><span>7% increase price due to new rule</span>`
+      ? `<span><span class="wtb-muted">7% increased charges</span>${fmtPrice(increase)}</span><span>7% increase price due to new rule</span>`
       : "";
     bar.innerHTML = qty > 0
       ? `<span><span class="wtb-muted">Total qty</span>${qty}</span><span><span class="wtb-muted">Total amount</span>${fmtPrice(amount)}</span>${note}`

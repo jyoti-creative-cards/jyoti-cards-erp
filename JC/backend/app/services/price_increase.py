@@ -12,8 +12,9 @@ from decimal import ROUND_HALF_UP, Decimal
 
 START = date(2026, 11, 20)
 RATE = Decimal("7")
-NAME = "Increased charges"
+NAME = "7% increased charges"
 NOTE = "7% increase price due to new rule"
+_OLD_NAMES = {NAME.lower(), "increased charges"}
 
 
 def applies(bill_date: date | None) -> bool:
@@ -30,7 +31,7 @@ def without_increase(charges: list | None) -> list:
     for row in charges or []:
         if not isinstance(row, dict):
             continue
-        if str(row.get("name") or "").strip().lower() == NAME.lower():
+        if str(row.get("name") or "").strip().lower() in _OLD_NAMES:
             continue
         kept.append(row)
     return kept

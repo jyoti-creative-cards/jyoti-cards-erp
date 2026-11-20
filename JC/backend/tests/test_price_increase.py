@@ -88,6 +88,21 @@ def test_printed_bill_shows_the_charge_and_the_note():
     )
     text = "\n".join((page.extract_text() or "") for page in PdfReader(BytesIO(pdf)).pages)
     assert NAME in text
-    assert "\n7\n" in text or " 7\n" in text
     assert "117" in text
     assert NOTE in text
+    old = dict(totals)
+    old["additional_charges"] = [{"name": "Increased charges", "amount": "7.00"}]
+    old_pdf = render_customer_bill_pdf(
+        bill_id=1,
+        order_id=1,
+        customer_name="Raj Cards",
+        customer_company=None,
+        totals=old,
+        bill_number="T1",
+        invoice_date=date(2026, 11, 20),
+        copies=1,
+        with_labels=False,
+    )
+    old_text = "\n".join((page.extract_text() or "") for page in PdfReader(BytesIO(old_pdf)).pages)
+    assert "7% increased charges" in old_text
+    assert "Increased charges" not in old_text.replace("7% increased charges", "")

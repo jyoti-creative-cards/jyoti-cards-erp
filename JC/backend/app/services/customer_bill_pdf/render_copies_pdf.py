@@ -275,9 +275,12 @@ def _running_and_closing(
     if isinstance(additional, list):
         for ac in additional:
             if isinstance(ac, dict) and ac.get("name") and _dec(ac.get("amount")) > 0:
+                label = _txt(ac["name"], 40) or "Charge"
+                if label.lower() in ("increased charges", "7% increased charges"):
+                    label = "7% increased charges"
                 charges.append({
                     "kind": "charge",
-                    "label": _txt(ac["name"], 40) or "Charge",
+                    "label": label,
                     "amount": _dec(ac["amount"]),
                 })
     for cat in totals.get("catalogs") or []:

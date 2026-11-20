@@ -304,3 +304,69 @@ def test_direct_bill_can_take_stock_below_zero(db):
     prod = _product(db, "P-DIRECT", 1)
     _bill(db, customer, [{"catalog_product_id": prod.id, "quantity_to_ship": 4, "direct": True}])
     assert db.query(StockBalance).filter(StockBalance.catalog_product_id == prod.id).one().quantity_on_hand == -3
+
+
+def test_keep_order_on_a_direct_bill_returns_the_sale_and_keeps_the_booking(db):
+    from app.models.customer_order import CustomerOrder, CustomerOrderPlacement
+    from app.services.customer_bills.cancel import cancel_customer_bill
+
+    customer = _customer(db)
+    prod = _product(db, "5646", 10)
+    bill = _bill(db, customer, [{"catalog_product_id": prod.id, "quantity_to_ship": 3, "direct": True}])
+    db.flush()
+
+    cancel_customer_bill(db, bill_id=bill.id, reason="wrong bill", actor_name="Test", keep_order=True)
+    db.flush()
+    db.refresh(bill)
+
+    assert bill.cancelled_at is not None
+    assert db.query(StockBalance).filter(StockBalance.catalog_product_id == prod.id).one().quantity_on_hand == 7
+    rows = db.query(StockLedger).filter(StockLedger.catalog_product_id == prod.id).order_by(StockLedger.id).all()
+    assert [row.entry_type for row in rows] == ["sold", "unreserved", "reserved"]
+    assert rows[1].quantity_delta == 3
+    assert rows[1].reference_type == "customer_bill"
+    assert rows[1].reference_id == bill.id
+    assert "cancelled" in (rows[1].notes or "").lower()
+    booking = (
+        db.query(CustomerOrderLine)
+        .filter(CustomerOrderLine.catalog_product_id == prod.id, CustomerOrderLine.status == "active")
+        .one()
+    )
+    assert booking.quantity == 3
+    assert int(booking.quantity_billed or 0) == 0
+    place = db.get(CustomerOrderPlacement, booking.placement_id)
+    order = db.get(CustomerOrder, place.customer_order_id)
+    assert place.status == "open"
+    assert order.bucket == "open"
+    assert order.is_open is True
+    open_row = db.query(CustomerOpenLine).filter(CustomerOpenLine.catalog_product_id == prod.id).one()
+    assert int(open_row.quantity_open or 0) == 3
+    assert int(open_row.quantity_billed or 0) == 0
+
+    _bill(
+        db, customer,
+        [{"catalog_product_id": prod.id, "quantity_to_ship": 3}],
+        placement_ids=[place.id],
+    )
+    db.flush()
+    assert db.query(StockBalance).filter(StockBalance.catalog_product_id == prod.id).one().quantity_on_hand == 7
+    sold = db.query(StockLedger).filter(
+        StockLedger.catalog_product_id == prod.id, StockLedger.entry_type == "sold"
+    ).all()
+    assert len(sold) == 1
+
+
+def test_cancelling_a_direct_bill_completely_returns_the_stock(db):
+    from app.services.customer_bills.cancel import cancel_customer_bill
+
+    customer = _customer(db)
+    prod = _product(db, "5646", 10)
+    bill = _bill(db, customer, [{"catalog_product_id": prod.id, "quantity_to_ship": 3, "direct": True}])
+    db.flush()
+    cancel_customer_bill(db, bill_id=bill.id, reason="drop it", actor_name="Test", keep_order=False)
+    db.flush()
+    assert db.query(StockBalance).filter(StockBalance.catalog_product_id == prod.id).one().quantity_on_hand == 10
+    active = db.query(CustomerOrderLine).filter(
+        CustomerOrderLine.catalog_product_id == prod.id, CustomerOrderLine.status == "active"
+    ).all()
+    assert active == []

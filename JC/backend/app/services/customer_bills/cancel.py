@@ -158,6 +158,95 @@ def _drop_sale_from_orders(db: Session, customer_id: int, catalog_product_id: in
         remaining -= take
 
 
+def _sold_on_bill(db: Session, bill_id: int, catalog_product_id: int) -> int:
+    """Units this bill itself took out of stock. A booked line has no row here."""
+    from app.models.stock import StockLedger
+
+    rows = (
+        db.query(StockLedger)
+        .filter(
+            StockLedger.catalog_product_id == catalog_product_id,
+            StockLedger.reference_type == "customer_bill",
+            StockLedger.reference_id == bill_id,
+            StockLedger.entry_type == "sold",
+        )
+        .all()
+    )
+    return max(0, -sum(int(row.quantity_delta or 0) for row in rows))
+
+
+def _rebook_direct_sale(db: Session, bill: CustomerBill, customer_name: str, line: CustomerBillLine, qty: int) -> None:
+    """A direct bill sold stock with no booking. Keep-order puts that sale back, then books it.
+
+    The return uses the bill as its reference and says cancelled, so the stock
+    screen pairs it with the sale and stops showing that bill. The new booking
+    reserves the same units, including when stock is already negative.
+    """
+    from app.services.catalog_addons import kept_addon_ids
+    from app.services.customer_order_flow import add_to_customer_open
+
+    order_line = (
+        db.query(CustomerOrderLine)
+        .filter(
+            CustomerOrderLine.placement_id == bill.placement_id,
+            CustomerOrderLine.catalog_product_id == line.catalog_product_id,
+        )
+        .first()
+    ) if bill.placement_id else None
+    addon_ids = kept_addon_ids(order_line.addons_json) if order_line is not None else None
+    restore_stock(
+        db,
+        catalog_product_id=line.catalog_product_id,
+        our_product_id=line.our_product_id,
+        quantity=qty,
+        reference_id=bill.id,
+        reference_type="customer_bill",
+        party=customer_name,
+        notes=f"Bill {bill.bill_number} cancelled — stock returned, order kept",
+        only_addon_ids=addon_ids,
+    )
+    open_order = get_or_create_customer_order(db, bill.customer_id, "open", "open")
+    placement = CustomerOrderPlacement(
+        customer_order_id=open_order.id,
+        status="open",
+        order_source="offline",
+        placed_by_name=(bill.created_by_name or "").strip() or None,
+        customer_notes=f"Kept from cancelled bill {bill.bill_number}",
+        placed_at=datetime.now(timezone.utc),
+    )
+    db.add(placement)
+    db.flush()
+    db.add(
+        CustomerOrderLine(
+            placement_id=placement.id,
+            catalog_product_id=line.catalog_product_id,
+            our_product_id=line.our_product_id,
+            quantity=qty,
+            quantity_billed=0,
+            unit_price=line.unit_price,
+            addons_json=order_line.addons_json if order_line is not None else None,
+            status="active",
+        )
+    )
+    add_to_customer_open(
+        db,
+        bill.customer_id,
+        [(int(line.catalog_product_id), int(qty), line.unit_price)],
+    )
+    reserve_stock(
+        db,
+        catalog_product_id=line.catalog_product_id,
+        our_product_id=line.our_product_id,
+        quantity=qty,
+        reference_id=placement.id,
+        party=customer_name,
+        allow_negative=True,
+        only_addon_ids=addon_ids,
+    )
+    open_order.is_open = True
+    open_order.updated_at = datetime.now(timezone.utc)
+
+
 def _return_billed_qty_to_order(
     db: Session, customer_id: int, catalog_product_id: int, qty: int, skip_placement_id: int | None
 ) -> None:
@@ -223,14 +312,12 @@ def cancel_customer_bill(
     actor_name: str,
     keep_order: bool = False,
 ) -> CustomerBill:
-    """Cancel a bill: AR cleared, freight cleared, stock released back to on-hand.
+    """Cancel a bill: AR cleared, freight cleared.
 
-    The cancelled qty is dropped from the customer's order entirely (not sent back to
-    "to bill") — it is deliberately NOT re-added to CustomerOpenLine.quantity_open,
-    because that stock is no longer actually held for this customer once released. If
-    it were silently re-opened, a later re-bill would ship it without re-reserving,
-    double-selling the same units. If the customer still wants these items, place a
-    fresh order — that reserves stock again the normal way.
+    keep_order puts the pieces back on the booking. A direct sale is returned on the
+    stock ledger and reserved again, so the bill drops off the item and stock does
+    not get sold a second time. Without keep_order the sale is released and the
+    order is dropped.
     """
     from app.services.freight_parcels import remove_charge_for_bill
     from app.services.our_catalogs import release_bill_catalogs
@@ -268,10 +355,17 @@ def cancel_customer_bill(
             continue
 
         if keep_order:
-            # Wrong bill, right order. Leave the reservation. Put the qty back to booked.
-            _return_billed_qty_to_order(
-                db, bill.customer_id, ln.catalog_product_id, qty, bill.placement_id
-            )
+            # A booked line was already reserved, so only un-bill it.
+            # A direct line was sold with no booking. Return that sale, then book it,
+            # or the stock screen keeps the bill and the next bill sells it again.
+            sold = min(qty, _sold_on_bill(db, bill.id, ln.catalog_product_id))
+            if sold > 0:
+                _rebook_direct_sale(db, bill, customer_name, ln, sold)
+            booked = qty - sold
+            if booked > 0:
+                _return_billed_qty_to_order(
+                    db, bill.customer_id, ln.catalog_product_id, booked, bill.placement_id
+                )
         else:
             # Release the stock this bill line held — whether it came from a portal
             # reservation (at order time) or an offline sale (at bill time), the deal is

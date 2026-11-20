@@ -92,6 +92,18 @@ def _draw_charge(c: canvas.Canvas, row: dict, top: float) -> None:
         return
     c.setFont("Helvetica-BoldOblique", 9)
     label = row["label"]
+    if row.get("highlight"):
+        c.setFillColorRGB(1, 0.95, 0.4)
+        c.setStrokeColorRGB(0.75, 0.45, 0)
+        c.setLineWidth(0.8)
+        c.rect(COLS[1] + 1, _y(top + CHARGE_H - 1), RIGHT - COLS[1] - 4, CHARGE_H - 2, fill=1, stroke=1)
+        c.setFillColorRGB(0.45, 0.15, 0)
+        size = _fit(c, label, "Helvetica-Bold", 10, COLS[2] - COLS[1] - 10)
+        c.setFont("Helvetica-Bold", size)
+        c.drawRightString(COLS[2] - 6, _y(top + 10), label)
+        c.setFillColorRGB(0, 0, 0)
+        _draw_amount(c, top, _money(row["amount"], whole=True))
+        return
     size = _fit(c, label, "Helvetica-BoldOblique", 9, COLS[2] - COLS[1] - 10)
     c.setFont("Helvetica-BoldOblique", size)
     c.drawRightString(COLS[2] - 6, _y(top + 10), label)

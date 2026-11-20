@@ -282,6 +282,7 @@ def _running_and_closing(
                     "kind": "charge",
                     "label": label,
                     "amount": _dec(ac["amount"]),
+                    "highlight": label.lower() == "7% increased charges",
                 })
     for cat in totals.get("catalogs") or []:
         if not isinstance(cat, dict):

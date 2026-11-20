@@ -118,7 +118,7 @@ def bill_pdf_bytes(db: Session, bill_id: int) -> bytes | None:
             bill.document_key
             and stored_totals.get("print_copies") == 1
             and stored_totals.get("header_narration") == 1
-            and stored_totals.get("pay_qr_rev") == 2
+            and stored_totals.get("pay_qr_rev") == 3
             and printed_mark == current_mark
             and bill_totals_match_columns(bill)
         ):

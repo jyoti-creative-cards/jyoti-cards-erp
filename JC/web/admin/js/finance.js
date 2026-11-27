@@ -289,7 +289,10 @@ const Finance = (() => {
     }
   }
 
+  let keepVendorPay = false;
+
   function showHub() {
+    if (!keepVendorPay) vendorPay = null;
     if (!ctx.isAdmin?.()) {
       if (ctx.can?.("ar.read") || ctx.can?.("ap.read")) { showArApHub(); return; }
       if (ctx.can?.("finance.write")) { showQuickEntry(); return; }
@@ -427,45 +430,171 @@ const Finance = (() => {
     }
   }
 
+  let vendorPay = null;
+  let vendorPayHits = [];
+  let vendorPayTimer = null;
+
+  function showVendorPayScreen() {
+    ctx.closeDetail?.();
+    ctx.showView?.("money");
+    document.getElementById("finance-hub")?.classList.remove("hidden");
+    document.getElementById("finance-ap-detail")?.classList.add("hidden");
+    document.getElementById("finance-ar-detail")?.classList.add("hidden");
+    hideAllPanels();
+  }
+
+  function readVendorPayFields() {
+    return {
+      amount: document.getElementById("vp-amount")?.value || "",
+      modeId: document.getElementById("vp-mode")?.value || "",
+      ref: document.getElementById("vp-ref")?.value || "",
+      note: document.getElementById("vp-note")?.value || "",
+    };
+  }
+
+  function renderVendorPayForm() {
+    const host = document.getElementById("finance-needs");
+    if (!host || !vendorPay) return;
+    host.classList.remove("hidden");
+    const picked = vendorPay.vendor;
+    const vendorBlock = picked
+      ? `<div class="review-block" style="margin-bottom:12px;">${ctx.reviewRow("Vendor", partyWithCity(picked))}</div>
+         <button type="button" class="btn btn-secondary" style="margin-bottom:12px;" onclick="Finance.clearVendorPay()">Change vendor</button>`
+      : `<label class="label">Vendor</label>
+         <input id="vp-q" class="input" placeholder="Name or phone" oninput="Finance.onVendorPaySearch(this.value)" style="margin-bottom:8px;" />
+         <div id="vp-hits"></div>`;
+    const modeBlock = vendorPay.modesFailed
+      ? `<p style="color:var(--danger);margin:0 0 12px;">Couldn't load payment modes.</p>`
+      : vendorPay.modes.length
+        ? `<label class="label">Payment mode</label>
+           <select class="input" id="vp-mode" style="margin-bottom:12px;width:100%;">
+             <option value="">— Select mode —</option>
+             ${vendorPay.modes.map(m => `<option value="${m.id}"${String(vendorPay.modeId) === String(m.id) ? " selected" : ""}>${ctx.esc(m.name)}</option>`).join("")}
+           </select>`
+        : "";
+    host.innerHTML = `
+      <div class="card" style="padding:20px;max-width:480px;">
+        <h3 style="margin:0 0 12px;">Record vendor payment</h3>
+        ${vendorBlock}
+        <label class="label">Amount (₹)</label>
+        <input type="number" step="0.01" class="input" id="vp-amount" value="${ctx.esc(vendorPay.amount)}" style="margin-bottom:12px;" />
+        ${modeBlock}
+        <label class="label">Reference</label>
+        <input class="input" id="vp-ref" value="${ctx.esc(vendorPay.ref)}" placeholder="Cheque no. / UTR / slip no." style="margin-bottom:12px;" />
+        <label class="label">Note (optional)</label>
+        <input class="input" id="vp-note" value="${ctx.esc(vendorPay.note)}" style="margin-bottom:16px;" />
+        <button type="button" class="btn btn-primary" onclick="Finance.reviewVendorPay()">Review</button>
+      </div>`;
+    host.scrollIntoView?.({ block: "start" });
+  }
+
   async function quickVendorPayment() {
-    const vendor = await _pickQuickParty("vendors", "vendor");
-    if (!vendor) return;
-    if (!confirm(`Record a payment for "${partyWithCity(vendor)}"?`)) return;
-    const amtRaw = prompt("Amount paid (₹):");
-    if (amtRaw == null) return;
-    const amount = Number(amtRaw);
-    if (!Number.isFinite(amount) || amount <= 0) return ctx.toast("Enter a valid amount", "error");
-
-    let paymentModeId;
-    let modeName = "";
+    keepVendorPay = true;
+    showVendorPayScreen();
+    keepVendorPay = false;
+    vendorPay = { vendor: null, modes: [], modesFailed: false, amount: "", modeId: "", ref: "", note: "", modeName: "" };
+    vendorPayHits = [];
     try {
-      const modes = await ctx.api("/payment-modes?active_only=true", {}, 0);
-      if (modes && modes.length) {
-        const listing = modes.map((m, i) => `${i + 1}. ${m.name}`).join("\n");
-        const pick = prompt(`Payment mode (Cash / Bank) — enter the number:\n${listing}`);
-        const idx = parseInt(String(pick || "").trim(), 10) - 1;
-        if (!Number.isFinite(idx) || idx < 0 || idx >= modes.length) return ctx.toast("Payment mode required", "error");
-        paymentModeId = modes[idx].id;
-        modeName = modes[idx].name || "";
-      }
-    } catch (e) { ctx.toast(e.message, "error"); return; }
+      vendorPay.modes = await ctx.api("/payment-modes?active_only=true", {}, 0) || [];
+    } catch (e) {
+      vendorPay.modes = [];
+      vendorPay.modesFailed = true;
+      ctx.toast(e.message, "error");
+    }
+    renderVendorPayForm();
+  }
 
-    const ref = prompt("Payment reference (cheque no. / UTR / slip no.) *:");
-    if (ref == null || !ref.trim()) return ctx.toast("Reference required", "error");
-    const comment = prompt("Note (optional):") || "";
+  function clearVendorPay() {
+    if (!vendorPay) return;
+    Object.assign(vendorPay, readVendorPayFields());
+    vendorPay.vendor = null;
+    renderVendorPayForm();
+  }
+
+  function onVendorPaySearch(val) {
+    const box = document.getElementById("vp-hits");
+    if (!box) return;
+    const q = String(val || "").trim();
+    clearTimeout(vendorPayTimer);
+    if (!q) { box.innerHTML = ""; vendorPayHits = []; return; }
+    vendorPayTimer = setTimeout(async () => {
+      try {
+        const rows = await ctx.api(`/vendors/quick-search?q=${encodeURIComponent(q)}`, {}, 0) || [];
+        if ((document.getElementById("vp-q")?.value || "").trim() !== q) return;
+        vendorPayHits = rows.slice(0, 8);
+        box.innerHTML = vendorPayHits.map(r =>
+          `<button type="button" class="btn btn-secondary" style="display:block;width:100%;text-align:left;margin-top:6px;" onclick="Finance.pickVendorPay(${r.id})">${ctx.esc(partyWithCity(r))}</button>`
+        ).join("") || `<p style="color:var(--muted);">No match</p>`;
+      } catch (e) { box.innerHTML = `<p style="color:var(--danger);">${ctx.esc(e.message)}</p>`; }
+    }, 250);
+  }
+
+  function pickVendorPay(id) {
+    const hit = vendorPayHits.find(r => Number(r.id) === Number(id));
+    if (!hit || !vendorPay) return;
+    Object.assign(vendorPay, readVendorPayFields());
+    vendorPay.vendor = hit;
+    renderVendorPayForm();
+  }
+
+  function reviewVendorPay() {
+    if (!vendorPay) return;
+    if (vendorPay.modesFailed) return ctx.toast("Couldn't load payment modes", "error");
+    const fields = readVendorPayFields();
+    Object.assign(vendorPay, fields);
+    if (!vendorPay.vendor) return ctx.toast("Select a vendor", "error");
+    const amount = Number(fields.amount);
+    if (!Number.isFinite(amount) || amount <= 0) return ctx.toast("Enter a valid amount", "error");
+    if (vendorPay.modes.length && !fields.modeId) return ctx.toast("Select the account", "error");
+    if (!String(fields.ref || "").trim()) return ctx.toast("Reference required", "error");
+    const mode = vendorPay.modes.find(m => String(m.id) === String(fields.modeId));
+    vendorPay.modeName = mode?.name || "";
+    vendorPay.amountNumber = amount;
+    const host = document.getElementById("finance-needs");
+    if (!host) return;
+    host.innerHTML = `
+      <div class="card" style="padding:20px;max-width:480px;">
+        <h3 style="margin:0 0 12px;">Check payment</h3>
+        <div class="review-block">
+          ${ctx.reviewRow("Vendor", partyWithCity(vendorPay.vendor))}
+          ${ctx.reviewRow("Amount", fmtPrice(amount))}
+          ${ctx.reviewRow("Payment mode", vendorPay.modeName || "—")}
+          ${ctx.reviewRow("Reference", fields.ref.trim())}
+          ${ctx.reviewRow("Note", fields.note.trim() || "—")}
+        </div>
+        <div style="display:flex;gap:8px;margin-top:16px;">
+          <button type="button" class="btn btn-secondary" style="flex:1;" onclick="Finance.backVendorPay()">Back</button>
+          <button type="button" class="btn btn-primary" style="flex:1;" onclick="Finance.submitVendorPay()">Submit</button>
+        </div>
+      </div>`;
+  }
+
+  function backVendorPay() {
+    renderVendorPayForm();
+  }
+
+  async function submitVendorPay() {
+    const pay = vendorPay;
+    if (!pay?.vendor) return;
+    const ref = String(pay.ref || "").trim();
+    const comment = String(pay.note || "").trim();
+    const paymentModeId = pay.modeId ? parseInt(pay.modeId, 10) : undefined;
     ctx.showLoading?.();
     try {
-      const res = await postPayment(`/accounts-payable/vendor/${vendor.id}/record-payment`, {
-        payment_ref: ref.trim(), payment_mode_id: paymentModeId, amount, comment: comment.trim() || undefined,
+      const res = await postPayment(`/accounts-payable/vendor/${pay.vendor.id}/record-payment`, {
+        payment_ref: ref,
+        payment_mode_id: paymentModeId,
+        amount: pay.amountNumber,
+        comment: comment || undefined,
       });
       ctx.toast(res.message || "Payment recorded", "success");
       showPaymentDone({
         title: "Paid",
-        party: partyWithCity(vendor),
-        amount,
-        receipt: ref.trim() || (res.id ? `#${res.id}` : ""),
-        comment: comment.trim(),
-        mode: res.payment_mode || modeName,
+        party: partyWithCity(pay.vendor),
+        amount: pay.amountNumber,
+        receipt: ref || (res.id ? `#${res.id}` : ""),
+        comment,
+        mode: res.payment_mode || pay.modeName,
         againFn: "Finance.quickVendorPayment()",
       });
     } catch (e) { if (!e.cancelled) ctx.toast(e.message, "error"); }
@@ -813,7 +942,7 @@ const Finance = (() => {
 
   function renderNeedsAction() {
     const el = document.getElementById("finance-needs");
-    if (!el) return;
+    if (!el || vendorPay) return;
     const apDue = rankParties(vendors.filter(v => Number(v.outstanding) > 0), "vendor_label");
     const arDue = rankParties(customers.filter(c => Number(c.outstanding) > 0), "customer_label");
     const frDue = freightAgents.filter(a => Number(a.balance_due) > 0 && matchSearch(a.name));
@@ -4100,7 +4229,7 @@ const Finance = (() => {
 
 // @slice 07-public
   return {
-    init, showHub, showQuickEntry, openQuickEntry, showArApHub, quickVendorPayment, quickCustomerPayment, closeQuickPay, submitQuickPay, quickAddExpense, loadNeedsAction,
+    init, showHub, showQuickEntry, openQuickEntry, showArApHub, quickVendorPayment, onVendorPaySearch, pickVendorPay, clearVendorPay, reviewVendorPay, backVendorPay, submitVendorPay, quickCustomerPayment, closeQuickPay, submitQuickPay, quickAddExpense, loadNeedsAction,
     setHubMode, setChip, setHubSearch, setBrowseSection, setShowSettled, setReportTab,
     showAp, showAr, showExpenses, showRevenue, showCost, showPnl, showFreight,
     showRouteCollections, openRouteCollection, openRouteCustomer, backRouteCustomers, printRouteCollection,

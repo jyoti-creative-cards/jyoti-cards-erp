@@ -141,7 +141,7 @@
 
   function renderNeedsAction() {
     const el = document.getElementById("finance-needs");
-    if (!el) return;
+    if (!el || vendorPay) return;
     const apDue = rankParties(vendors.filter(v => Number(v.outstanding) > 0), "vendor_label");
     const arDue = rankParties(customers.filter(c => Number(c.outstanding) > 0), "customer_label");
     const frDue = freightAgents.filter(a => Number(a.balance_due) > 0 && matchSearch(a.name));

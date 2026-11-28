@@ -19,6 +19,8 @@ const Reports = (() => {
   let datePreset = "month"; // today | week | month | all | custom
   let lowThreshold = 10;
   let hubSearch = "";
+  let expenseCat = "";
+  let expenseSource = "";
   let ledgerDetail = null;
   let hideVoids = true;
   let backLabel = "Back";
@@ -490,6 +492,8 @@ const Reports = (() => {
       ? `<button type="button" class="btn btn-secondary btn-sm" onclick="Reports.downloadPaymentsPdf()">PDF</button>`
       : (chip === "ledgers" && ledgerKind === "city")
       ? `<button type="button" class="btn btn-secondary btn-sm" onclick="Reports.downloadCityPdf()">PDF</button>`
+      : (chip === "expense-cat")
+      ? `<button type="button" class="btn btn-secondary btn-sm" onclick="Reports.downloadExpensePdf()">PDF</button>`
       : "";
     return `<div class="rep-presets" style="margin-left:auto;">
       <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.printCurrent()">Print</button>
@@ -1753,18 +1757,68 @@ const Reports = (() => {
       </tbody></table></div>` : empty("No cash moves", "Widen dates to build the cash book.")}`;
   }
 
+  function expenseLinesQs() {
+    return rangeQs({ category: expenseCat, source_id: expenseSource });
+  }
+
+  function setExpenseCat(v) {
+    expenseCat = v || "";
+    loadChip();
+  }
+  function setExpenseSource(v) {
+    expenseSource = v || "";
+    loadChip();
+  }
+
+  async function downloadExpensePdf() {
+    const name = fromDate && toDate ? `expenses_${fromDate}_${toDate}.pdf` : "expenses.pdf";
+    try {
+      await DocShare.openPdf(`/share/expense-lines/pdf${expenseLinesQs()}`, { print: false, filename: name });
+    } catch (e) { ctx.toast(e.message, "error"); }
+  }
+
   async function renderExpenseCat(body) {
-    const data = await ctx.api(`/reports/expense-by-category${rangeQs()}`, {}, 0);
-    const items = (data.items || []).filter(it => matchSearch(it.category));
-    body.innerHTML = items.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
-      <th>Category</th><th>Count</th><th>Amount</th>
+    const [data, heads, sources] = await Promise.all([
+      ctx.api(`/reports/expense-lines${expenseLinesQs()}`, {}, 0),
+      ctx.api("/expenses/heads", {}, 0).catch(() => []),
+      ctx.api("/expenses/sources", {}, 0).catch(() => []),
+    ]);
+    const catOpts = [];
+    (heads || []).forEach(h => (h.subheads || []).forEach(s => {
+      catOpts.push({ value: s.category, label: `${s.name} — ${h.name}` });
+    }));
+    if (expenseCat && !catOpts.some(o => o.value === expenseCat)) catOpts.push({ value: expenseCat, label: expenseCat });
+    const catLabel = new Map(catOpts.map(o => [String(o.value || "").toLowerCase(), o.label]));
+    const srcOpts = (sources || []).map(s => ({ value: String(s.id), label: s.name }));
+    if (expenseSource && !srcOpts.some(o => o.value === expenseSource)) srcOpts.push({ value: expenseSource, label: `#${expenseSource}` });
+    const optHtml = (opts, cur) => opts.map(o => `<option value="${ctx.esc(o.value)}"${String(cur) === String(o.value) ? " selected" : ""}>${ctx.esc(o.label)}</option>`).join("");
+    const filters = `<div class="rep-filters" style="margin-bottom:12px;">
+      <label class="label">Subcategory<select class="input" id="rep-exp-cat" onchange="Reports.setExpenseCat(this.value)">
+        <option value="">All</option>${optHtml(catOpts, expenseCat)}
+      </select></label>
+      <label class="label">Paid from<select class="input" id="rep-exp-source" onchange="Reports.setExpenseSource(this.value)">
+        <option value="">All</option>${optHtml(srcOpts, expenseSource)}
+      </select></label>
+    </div>`;
+    const items = (data.items || []).filter(it => matchSearch(it.category, it.source_name, it.description, it.reference));
+    const total = hubSearch.trim()
+      ? items.reduce((sum, it) => sum + (Number(it.amount) || 0), 0)
+      : data.total;
+    body.innerHTML = filters + (items.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
+      <th>Date</th><th>Subcategory</th><th>Paid from</th><th>Name</th><th>Note</th><th>Amount</th>
     </tr></thead><tbody>
-      ${items.map(it => `<tr class="clickable" onclick="Reports.openExpenseLedger('${ctx.esc(it.category)}')">
-        <td><strong>${ctx.esc(it.category)}</strong></td>
-        <td>${it.count}</td>
+      ${items.map(it => `<tr>
+        <td>${ctx.esc(it.date || "—")}</td>
+        <td>${ctx.esc(catLabel.get(String(it.category || "").toLowerCase()) || it.category || "—")}</td>
+        <td>${ctx.esc(it.source_name || "—")}</td>
+        <td>${ctx.esc(it.description || "—")}</td>
+        <td>${ctx.esc((it.reference || "").trim() || "—")}</td>
         <td>${fmtPrice(it.amount)}</td>
       </tr>`).join("")}
-    </tbody></table></div>` : empty("No expenses", "Add expenses in Finance, or widen dates.");
+    </tbody><tfoot><tr>
+      <td colspan="5"><strong>Total</strong></td>
+      <td><strong>${fmtPrice(total)}</strong></td>
+    </tr></tfoot></table></div>` : empty("No expenses", "Add expenses in Finance, or widen dates."));
   }
 
   async function renderPnl(body) {
@@ -2485,7 +2539,7 @@ const Reports = (() => {
   return {
     init, showHub, setMode, setChip, setLedgerKind, setAgeingSide, setHubSearch, pickQuestion,
     setDatePreset, onRangeChange, onDayBillChange, setDayBillToday, onThresholdChange,
-    openLedger, openAgentLedger, openStaffLedger, openExpenseLedger, addExpenseHead, addExpenseSubhead, renameExpenseSubhead, addExpenseSource, renameExpenseSource, deleteExpenseSource, openCashLedger, backFromLedger, openDoc,
+    openLedger, openAgentLedger, openStaffLedger, openExpenseLedger, setExpenseCat, setExpenseSource, downloadExpensePdf, addExpenseHead, addExpenseSubhead, renameExpenseSubhead, addExpenseSource, renameExpenseSource, deleteExpenseSource, openCashLedger, backFromLedger, openDoc,
     setCityQuery, pickCityName, openCityParty, printCityParty, printCityAll, downloadCityPdf, downloadCityExcel,
     shareDaybook, waDaybook, shareStockSummary, shareNoAlbum, shareAgeing, waAgeing, exportExcel,
     printCurrent, exportCurrentExcel, downloadSalesPdf, downloadPaymentsPdf, reportsBack, openGroup, openReport, setHideVoids, setJournalReportKind, setStockYear, setPrintCarry, setPrintRemaining, togglePrintGroup, toggleStockAlbum,

@@ -31,6 +31,19 @@ class ExpenseIn(BaseModel):
     source_id: Optional[int] = None
 
 
+class ExpenseBatchLine(BaseModel):
+    source_id: int
+    subhead_id: int
+    description: str
+    amount: Decimal
+    reference: Optional[str] = None
+
+
+class ExpenseBatchIn(BaseModel):
+    expense_date: date
+    lines: List[ExpenseBatchLine]
+
+
 DEFAULT_SOURCES = ("ICICI", "NC Saving Account", "Cash Register")
 
 
@@ -84,6 +97,39 @@ def resolve_expense_category(db: Session, body: ExpenseIn) -> str:
     if not text:
         raise HTTPException(400, "Pick a head")
     return text
+
+
+def create_expenses_batch(db: Session, body: ExpenseBatchIn, actor_name: str) -> list[Expense]:
+    if not body.lines:
+        raise HTTPException(400, "Add an expense")
+    rows: list[Expense] = []
+    for line in body.lines:
+        name = " ".join((line.description or "").split())
+        if not name:
+            raise HTTPException(400, "Enter a name")
+        if line.amount is None or line.amount <= 0:
+            raise HTTPException(400, "Enter a valid amount")
+        category = resolve_expense_category(db, ExpenseIn(
+            expense_date=body.expense_date,
+            amount=line.amount,
+            subhead_id=line.subhead_id,
+            description=name,
+            source_id=line.source_id,
+        ))
+        source = _expense_source(db, line.source_id, required=True)
+        row = Expense(
+            expense_date=body.expense_date,
+            category=category,
+            description=name,
+            amount=line.amount,
+            reference=(" ".join((line.reference or "").split()) or None),
+            source_id=source.id,
+            created_by_name=actor_name,
+        )
+        db.add(row)
+        rows.append(row)
+    db.flush()
+    return rows
 
 
 def ensure_transport_head(db: Session) -> ExpenseHead:
@@ -395,6 +441,29 @@ def create_expense(
     db.commit()
     db.refresh(row)
     return ExpensePublic.from_row(row)
+
+
+@router.post("/batch", response_model=List[ExpensePublic], status_code=201)
+def batch_create_expenses(
+    body: ExpenseBatchIn,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("finance.write")),
+):
+    rows = create_expenses_batch(db, body, auth.actor_name)
+    for row in rows:
+        log_from_auth(
+            db,
+            auth,
+            action="create",
+            entity_type="expense",
+            entity_id=row.id,
+            entity_label=row.category,
+            detail=f"₹{row.amount}",
+        )
+    db.commit()
+    for row in rows:
+        db.refresh(row)
+    return [ExpensePublic.from_row(r) for r in rows]
 
 
 @router.patch("/{expense_id}", response_model=ExpensePublic)

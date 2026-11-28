@@ -290,9 +290,11 @@ const Finance = (() => {
   }
 
   let keepVendorPay = false;
+  let keepMultiExp = false;
 
   function showHub() {
     if (!keepVendorPay) vendorPay = null;
+    if (!keepMultiExp) multiExp = null;
     if (!ctx.isAdmin?.()) {
       if (ctx.can?.("ar.read") || ctx.can?.("ap.read")) { showArApHub(); return; }
       if (ctx.can?.("finance.write")) { showQuickEntry(); return; }
@@ -342,6 +344,7 @@ const Finance = (() => {
         <button class="btn btn-primary" onclick="Finance.quickVendorPayment()">Record vendor payment</button>
         <button class="btn btn-primary" onclick="Finance.quickCustomerPayment()">Record customer payment</button>
         <button class="btn btn-primary" onclick="Finance.quickAddExpense()">+ Add expense</button>
+        <button class="btn btn-primary" onclick="Finance.quickMultipleExpenses()">Multiple expenses</button>
       </div>`;
     App.updateGlobalBack?.();
   }
@@ -379,6 +382,7 @@ const Finance = (() => {
         <button class="btn btn-primary" onclick="App.closeDetail();Finance.quickVendorPayment()">Record vendor payment</button>
         <button class="btn btn-primary" onclick="App.closeDetail();Finance.quickCustomerPayment()">Record customer payment</button>
         <button class="btn btn-primary" onclick="App.closeDetail();Finance.quickAddExpense()">+ Add expense</button>
+        <button class="btn btn-primary" onclick="App.closeDetail();Finance.quickMultipleExpenses()">Multiple expenses</button>
       </div>`,
       `<button class="btn btn-secondary" style="flex:1;" onclick="App.closeDetail()">Close</button>`,
       "sm");
@@ -714,6 +718,301 @@ const Finance = (() => {
     openExpenseForm();
   }
 
+  /* —— Multiple expenses (one date, many rows, check, then one batch post) —— */
+  let multiExp = null;
+  let multiExpSeq = 0;
+
+  function multiExpToday() {
+    // Calendar day in India, not the UTC day.
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(new Date());
+  }
+
+  function multiExpNewRow(above) {
+    const src = above ? String(above.sourceId || "") : "";
+    const sub = above ? String(above.subId || "") : "";
+    return {
+      id: ++multiExpSeq,
+      sourceId: src,
+      subId: sub,
+      name: "",
+      amount: "",
+      note: "",
+      locked: !!(above && src && sub),
+    };
+  }
+
+  function multiExpHost() {
+    const host = document.getElementById("finance-needs");
+    if (host) host.classList.remove("hidden");
+    return host;
+  }
+
+  function multiExpIsKept(r) {
+    return String(r.name || "").trim() !== "" || String(r.amount || "").trim() !== "";
+  }
+
+  function multiExpSyncForm() {
+    if (!multiExp || multiExp.stage !== "form") return;
+    const date = document.getElementById("me-date");
+    if (date) multiExp.date = date.value || "";
+    multiExp.rows.forEach(r => {
+      const src = document.getElementById(`me-src-${r.id}`);
+      const sub = document.getElementById(`me-sub-${r.id}`);
+      const name = document.getElementById(`me-name-${r.id}`);
+      const amt = document.getElementById(`me-amt-${r.id}`);
+      const note = document.getElementById(`me-note-${r.id}`);
+      if (src) r.sourceId = src.value;
+      if (sub) r.subId = sub.value;
+      if (name) r.name = name.value;
+      if (amt) r.amount = amt.value;
+      if (note) r.note = note.value;
+    });
+  }
+
+  function multiExpSourceName(id) {
+    return multiExp.sources.find(s => String(s.id) === String(id))?.name || "";
+  }
+
+  function multiExpSubLabel(id) {
+    return multiExp.subs.find(s => String(s.id) === String(id))?.label || "";
+  }
+
+  function multiExpRowHtml(r, idx) {
+    const dis = r.locked ? " disabled" : "";
+    const srcOpts = `<option value="">— Paid from —</option>` + multiExp.sources.map(s =>
+      `<option value="${s.id}"${String(r.sourceId) === String(s.id) ? " selected" : ""}>${ctx.esc(s.name)}</option>`).join("");
+    const subOpts = `<option value="">— Subcategory —</option>` + multiExp.subs.map(s =>
+      `<option value="${s.id}"${String(r.subId) === String(s.id) ? " selected" : ""}>${ctx.esc(s.label)}</option>`).join("");
+    const enter = `onkeydown="if(event.key==='Enter'){event.preventDefault();Finance.addExpenseRow(${r.id});}"`;
+    return `
+      <div class="review-block" style="margin-bottom:12px;padding:12px;display:grid;gap:8px;">
+        <div style="font-size:12px;color:var(--muted);">Expense ${idx + 1}</div>
+        <label class="label">Paid from</label>
+        <select class="input" id="me-src-${r.id}"${dis} style="width:100%;">${srcOpts}</select>
+        <label class="label">Subcategory</label>
+        <select class="input" id="me-sub-${r.id}"${dis} style="width:100%;">${subOpts}</select>
+        <label class="label">Name</label>
+        <input class="input" id="me-name-${r.id}" value="${ctx.esc(r.name)}" />
+        <label class="label">Amount (₹)</label>
+        <input type="number" step="0.01" min="0" class="input" id="me-amt-${r.id}" value="${ctx.esc(r.amount)}" ${enter} />
+        <label class="label">Note (optional)</label>
+        <input class="input" id="me-note-${r.id}" value="${ctx.esc(r.note)}" ${enter} />
+        <div style="display:flex;gap:8px;">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.changeExpenseRow(${r.id})">Change</button>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.removeExpenseRow(${r.id})">Remove</button>
+        </div>
+      </div>`;
+  }
+
+  function renderMultiExpForm(focusId) {
+    const host = multiExpHost();
+    if (!host || !multiExp) return;
+    multiExp.stage = "form";
+    host.innerHTML = `
+      <div class="card" style="padding:20px;max-width:480px;">
+        <h3 style="margin:0 0 12px;">Multiple expenses</h3>
+        <label class="label">Date</label>
+        <input type="date" class="input" id="me-date" value="${ctx.esc(multiExp.date)}" style="margin-bottom:12px;" />
+        ${multiExp.rows.map((r, i) => multiExpRowHtml(r, i)).join("")}
+        <div style="display:flex;gap:8px;margin-top:16px;">
+          <button type="button" class="btn btn-primary" style="flex:1;" onclick="Finance.reviewMultipleExpenses()">Review</button>
+        </div>
+      </div>`;
+    if (focusId) document.getElementById(`me-name-${focusId}`)?.focus();
+    else host.scrollIntoView?.({ block: "start" });
+  }
+
+  async function quickMultipleExpenses() {
+    keepMultiExp = true;
+    ctx.closeDetail?.();
+    ctx.showView?.("money");
+    document.getElementById("finance-hub")?.classList.remove("hidden");
+    document.getElementById("finance-ap-detail")?.classList.add("hidden");
+    document.getElementById("finance-ar-detail")?.classList.add("hidden");
+    hideAllPanels();
+    keepMultiExp = false;
+    const state = { stage: "loading", date: multiExpToday(), sources: [], subs: [], rows: [], checked: [], error: "", posting: false };
+    multiExp = state;
+    const host = multiExpHost();
+    let sources;
+    let heads;
+    ctx.showLoading?.();
+    try {
+      [sources, heads] = await Promise.all([
+        ctx.api("/expenses/sources", {}, 0),
+        ctx.api("/expenses/heads", {}, 0),
+      ]);
+    } catch (e) {
+      if (multiExp !== state) return;
+      state.stage = "error";
+      if (host) {
+        host.innerHTML = `
+          <div class="card" style="padding:20px;max-width:480px;">
+            <h3 style="margin:0 0 12px;">Multiple expenses</h3>
+            <p style="color:var(--danger);margin:0 0 12px;">${ctx.esc(e.message || "Couldn't load accounts and categories")}</p>
+            <button type="button" class="btn btn-secondary" onclick="Finance.showHub()">Close</button>
+          </div>`;
+      }
+      ctx.toast?.(e.message, "error");
+      return;
+    } finally { ctx.hideLoading?.(); }
+    if (multiExp !== state) return;
+    state.sources = Array.isArray(sources) ? sources : [];
+    const subs = [];
+    (Array.isArray(heads) ? heads : []).forEach(h => (h.subheads || []).forEach(s => {
+      subs.push({ id: s.id, label: `${s.name} — ${h.name}` });
+    }));
+    subs.sort((a, b) => a.label.localeCompare(b.label));
+    state.subs = subs;
+    state.rows = [multiExpNewRow(null)];
+    renderMultiExpForm();
+  }
+
+  function addExpenseRow(rowId) {
+    if (!multiExp || multiExp.stage !== "form") return;
+    multiExpSyncForm();
+    const idx = multiExp.rows.findIndex(r => r.id === rowId);
+    if (idx < 0) return;
+    if (idx < multiExp.rows.length - 1) {
+      document.getElementById(`me-name-${multiExp.rows[idx + 1].id}`)?.focus();
+      return;
+    }
+    const row = multiExpNewRow(multiExp.rows[idx]);
+    multiExp.rows.splice(idx + 1, 0, row);
+    renderMultiExpForm(row.id);
+  }
+
+  function changeExpenseRow(rowId) {
+    if (!multiExp || multiExp.stage !== "form") return;
+    multiExpSyncForm();
+    const row = multiExp.rows.find(r => r.id === rowId);
+    if (!row) return;
+    row.locked = false;
+    renderMultiExpForm();
+    document.getElementById(`me-src-${row.id}`)?.focus();
+  }
+
+  function removeExpenseRow(rowId) {
+    if (!multiExp || multiExp.stage !== "form") return;
+    multiExpSyncForm();
+    multiExp.rows = multiExp.rows.filter(r => r.id !== rowId);
+    if (!multiExp.rows.length) multiExp.rows = [multiExpNewRow(null)];
+    renderMultiExpForm();
+  }
+
+  function multiExpTotalPaise(rows) {
+    return rows.reduce((t, r) => t + Math.round(Number(r.amount) * 100), 0);
+  }
+
+  function renderMultiExpCheck() {
+    const host = multiExpHost();
+    if (!host || !multiExp) return;
+    multiExp.stage = "check";
+    const rows = multiExp.checked;
+    const total = multiExpTotalPaise(rows) / 100;
+    host.innerHTML = `
+      <div class="card" style="padding:20px;max-width:480px;">
+        <h3 style="margin:0 0 12px;">Check expenses</h3>
+        <div class="review-block" style="margin-bottom:12px;">${ctx.reviewRow("Date", fmtDocDate(multiExp.date))}</div>
+        ${rows.map(r => `
+          <div class="review-block" style="margin-bottom:12px;">
+            ${ctx.reviewRow("Paid from", multiExpSourceName(r.sourceId))}
+            ${ctx.reviewRow("Subcategory", multiExpSubLabel(r.subId))}
+            ${ctx.reviewRow("Name", r.name.trim())}
+            ${ctx.reviewRow("Amount", fmtPrice(r.amount))}
+            ${ctx.reviewRow("Note", r.note.trim() || "—")}
+          </div>`).join("")}
+        <div class="review-block">${ctx.reviewRow("Total", fmtPrice(total))}</div>
+        ${multiExp.error ? `<p style="color:var(--danger);margin:12px 0 0;">${ctx.esc(multiExp.error)}</p>` : ""}
+        <div style="display:flex;gap:8px;margin-top:16px;">
+          <button type="button" class="btn btn-secondary" style="flex:1;" onclick="Finance.backMultipleExpenses()">Back</button>
+          <button type="button" class="btn btn-primary" style="flex:1;" onclick="Finance.confirmMultipleExpenses()">Confirm</button>
+        </div>
+      </div>`;
+    host.scrollIntoView?.({ block: "start" });
+  }
+
+  function reviewMultipleExpenses() {
+    if (!multiExp || multiExp.stage !== "form") return;
+    multiExpSyncForm();
+    if (!multiExp.date) return ctx.toast?.("Pick the date", "error");
+    const kept = multiExp.rows.filter(multiExpIsKept);
+    if (!kept.length) return ctx.toast?.("Add at least one expense", "error");
+    for (let i = 0; i < kept.length; i++) {
+      const r = kept[i];
+      const n = `Expense ${multiExp.rows.indexOf(r) + 1}`;
+      if (!r.sourceId) return ctx.toast?.(`${n}: choose paid from`, "error");
+      if (!r.subId) return ctx.toast?.(`${n}: choose subcategory`, "error");
+      if (!String(r.name || "").trim()) return ctx.toast?.(`${n}: enter a name`, "error");
+      const amt = Number(String(r.amount || "").trim());
+      if (!String(r.amount || "").trim() || !Number.isFinite(amt) || amt <= 0) {
+        return ctx.toast?.(`${n}: enter an amount above zero`, "error");
+      }
+    }
+    multiExp.checked = kept.map(r => ({ ...r }));
+    multiExp.error = "";
+    renderMultiExpCheck();
+  }
+
+  function backMultipleExpenses() {
+    if (!multiExp || multiExp.stage !== "check" || multiExp.posting) return;
+    multiExp.error = "";
+    renderMultiExpForm();
+  }
+
+  async function confirmMultipleExpenses() {
+    const state = multiExp;
+    if (!state || state.stage !== "check" || state.posting) return;
+    state.posting = true;
+    const lines = state.checked.map(r => {
+      const line = {
+        source_id: Number(r.sourceId),
+        subhead_id: Number(r.subId),
+        description: r.name.trim(),
+        amount: Number(String(r.amount).trim()),
+      };
+      const ref = String(r.note || "").trim();
+      if (ref) line.reference = ref;
+      return line;
+    });
+    ctx.showLoading?.();
+    try {
+      await ctx.api("/expenses/batch", {
+        method: "POST",
+        body: JSON.stringify({ expense_date: state.date, lines }),
+      });
+    } catch (e) {
+      state.posting = false;
+      if (multiExp === state) {
+        state.error = e.message || "Could not save the expenses";
+        renderMultiExpCheck();
+      }
+      ctx.toast?.(e.message, "error");
+      return;
+    } finally { ctx.hideLoading?.(); }
+    state.posting = false;
+    if (multiExp !== state) return;
+    state.stage = "done";
+    const host = multiExpHost();
+    if (!host) return;
+    const total = multiExpTotalPaise(state.checked) / 100;
+    host.innerHTML = `
+      <div class="card" style="padding:20px;max-width:480px;">
+        <h3 style="margin:0 0 12px;">Expenses saved</h3>
+        <div class="review-block">
+          ${ctx.reviewRow("Expenses", String(state.checked.length))}
+          ${ctx.reviewRow("Total", fmtPrice(total))}
+          ${ctx.reviewRow("Date", fmtDocDate(state.date))}
+        </div>
+        <div style="display:flex;gap:8px;margin-top:16px;">
+          <button type="button" class="btn btn-primary" style="flex:1;" onclick="Finance.showHub()">Done</button>
+        </div>
+      </div>`;
+    ctx.toast?.("Expenses saved", "success");
+  }
+
   function setHubMode(mode) {
     if (mode === "browse") setChip(browseSection === "due" ? "ap" : browseSection || "ap");
     else setChip("due");
@@ -942,7 +1241,7 @@ const Finance = (() => {
 
   function renderNeedsAction() {
     const el = document.getElementById("finance-needs");
-    if (!el || vendorPay) return;
+    if (!el || vendorPay || multiExp) return;
     const apDue = rankParties(vendors.filter(v => Number(v.outstanding) > 0), "vendor_label");
     const arDue = rankParties(customers.filter(c => Number(c.outstanding) > 0), "customer_label");
     const frDue = freightAgents.filter(a => Number(a.balance_due) > 0 && matchSearch(a.name));
@@ -4229,7 +4528,7 @@ const Finance = (() => {
 
 // @slice 07-public
   return {
-    init, showHub, showQuickEntry, openQuickEntry, showArApHub, quickVendorPayment, onVendorPaySearch, pickVendorPay, clearVendorPay, reviewVendorPay, backVendorPay, submitVendorPay, quickCustomerPayment, closeQuickPay, submitQuickPay, quickAddExpense, loadNeedsAction,
+    init, showHub, showQuickEntry, openQuickEntry, showArApHub, quickVendorPayment, onVendorPaySearch, pickVendorPay, clearVendorPay, reviewVendorPay, backVendorPay, submitVendorPay, quickCustomerPayment, closeQuickPay, submitQuickPay, quickAddExpense, quickMultipleExpenses, reviewMultipleExpenses, backMultipleExpenses, confirmMultipleExpenses, addExpenseRow, changeExpenseRow, removeExpenseRow, loadNeedsAction,
     setHubMode, setChip, setHubSearch, setBrowseSection, setShowSettled, setReportTab,
     showAp, showAr, showExpenses, showRevenue, showCost, showPnl, showFreight,
     showRouteCollections, openRouteCollection, openRouteCustomer, backRouteCustomers, printRouteCollection,

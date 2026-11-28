@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date
 from io import BytesIO
 from typing import Optional
+from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -459,14 +460,22 @@ def render_expense_lines_pdf(
         Paragraph(f"Lines {len(items)} · Amount {_money(data['total'])}", styles["Normal"]),
         Spacer(1, 10),
     ]
+    cell_style = styles["Normal"].clone("expLineCell")
+    cell_style.fontName = "Helvetica"
+    cell_style.fontSize = 8
+    cell_style.leading = 10
+
+    def _exp_cell(text: str) -> Paragraph:
+        return Paragraph(escape(str(text or "")), cell_style)
+
     rows = [["Date", "Subcategory", "Paid from", "Name", "Note", "Amount"]]
     for row in items:
         rows.append([
             row["date"],
-            row["category"][:28],
-            row["source_name"][:22],
-            row["description"][:34],
-            (row["reference"] or "-")[:30],
+            _exp_cell(row["category"]),
+            _exp_cell(row["source_name"]),
+            _exp_cell(row["description"]),
+            _exp_cell(row["reference"] or "-"),
             _money(row["amount"]),
         ])
     rows.append(["", "", "", "", "Total", _money(data["total"])])
@@ -477,6 +486,7 @@ def render_expense_lines_pdf(
         ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, -1), 8),
         ("ALIGN", (-1, 0), (-1, -1), "RIGHT"),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
     ]))
     story.append(table)

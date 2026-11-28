@@ -224,6 +224,10 @@ def get_open_unbilled_placement(db: Session, customer_id: int) -> CustomerOrderP
         .filter(
             CustomerOrderPlacement.customer_order_id == received.id,
             CustomerOrderPlacement.status == "received",
+            # A voided order stays status=received. Reusing it hides the next
+            # portal add from New and from the dealer's history, while stock
+            # is still reserved against that hidden order.
+            CustomerOrderPlacement.deleted_at.is_(None),
         )
         .order_by(CustomerOrderPlacement.placed_at.desc())
         .all()

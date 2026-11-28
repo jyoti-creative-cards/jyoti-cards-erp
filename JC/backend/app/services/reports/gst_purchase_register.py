@@ -19,7 +19,7 @@ from app.models.customer import Customer
 from app.models.customer_bill import CustomerBill, CustomerBillLine
 from app.models.customer_return import CustomerReturn, CustomerReturnLine
 from app.models.debit_note import DebitNote
-from app.models.expense import Expense
+from app.models.expense import Expense, ExpenseSource
 from app.models.freight_agent import FreightAgent, FreightLedgerEntry
 from app.models.manual_loss import ManualLoss
 from app.models.route import Route
@@ -429,6 +429,49 @@ def expense_by_category(db: Session, from_date: Optional[date], to_date: Optiona
     out = [{"category": k, "count": v["count"], "amount": _fmt(v["amount"])} for k, v in agg.items()]
     out.sort(key=lambda x: Decimal(x["amount"]), reverse=True)
     return out
+
+
+def expense_lines(
+    db: Session,
+    from_date: Optional[date],
+    to_date: Optional[date],
+    category: str = "",
+    source_id: Optional[int] = None,
+) -> dict:
+    q = db.query(Expense)
+    if from_date:
+        q = q.filter(Expense.expense_date >= from_date)
+    if to_date:
+        q = q.filter(Expense.expense_date <= to_date)
+    cat = (category or "").strip()
+    if cat:
+        q = q.filter(func.lower(Expense.category) == cat.lower())
+    if source_id:
+        q = q.filter(Expense.source_id == source_id)
+    rows = q.order_by(Expense.expense_date.asc(), Expense.id.asc()).all()
+    source_ids = {r.source_id for r in rows if r.source_id}
+    names = (
+        {s.id: s.name for s in db.query(ExpenseSource).filter(ExpenseSource.id.in_(source_ids)).all()}
+        if source_ids
+        else {}
+    )
+    total = Decimal("0")
+    items = []
+    for r in rows:
+        amt = Decimal(str(r.amount))
+        total += amt
+        items.append(
+            {
+                "date": r.expense_date.isoformat(),
+                "category": r.category or "",
+                "source_name": names.get(r.source_id, "") if r.source_id else "",
+                "description": r.description or "",
+                "reference": r.reference if (r.reference or "").strip() else None,
+                "amount": _fmt(amt),
+            }
+        )
+    return {"items": items, "total": _fmt(total)}
+
 
 def list_ledger_routes(db: Session) -> list[dict]:
     routes = db.query(Route).filter(Route.deleted_at.is_(None), Route.is_active.is_(True)).order_by(Route.name.asc()).all()

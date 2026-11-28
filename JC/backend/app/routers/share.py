@@ -30,6 +30,7 @@ from app.services.reports.pdfs import (
     render_ap_statement_pdf,
     render_ar_statement_pdf,
     render_daybook_pdf,
+    render_expense_lines_pdf,
     render_freight_payment_pdf,
     render_freight_statement_pdf,
     render_payment_accounts_pdf,
@@ -313,6 +314,23 @@ def daybook_pdf(
         name = f"daybook_{(from_date or to_date).isoformat()}.pdf"
     else:
         name = "daybook.pdf"
+    return _pdf_response(pdf, name)
+
+
+@router.get("/expense-lines/pdf")
+def expense_lines_pdf(
+    from_date: Optional[date] = Query(None),
+    to_date: Optional[date] = Query(None),
+    category: str = Query(""),
+    source_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    pdf = render_expense_lines_pdf(db, from_date, to_date, category, source_id)
+    if from_date and to_date:
+        name = f"expenses_{from_date.isoformat()}_{to_date.isoformat()}.pdf"
+    else:
+        name = "expenses.pdf"
     return _pdf_response(pdf, name)
 
 

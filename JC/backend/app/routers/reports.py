@@ -396,6 +396,18 @@ def expense_by_category(
     return {"items": ext.expense_by_category(db, from_date, to_date)}
 
 
+@router.get("/expense-lines")
+def expense_lines_report(
+    from_date: Optional[date] = Query(None),
+    to_date: Optional[date] = Query(None),
+    category: str = Query(""),
+    source_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_admin),
+):
+    return ext.expense_lines(db, from_date, to_date, category, source_id)
+
+
 @router.get("/pnl")
 def pnl_report(
     from_date: Optional[date] = Query(None),

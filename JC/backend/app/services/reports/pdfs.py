@@ -436,6 +436,54 @@ def render_sales_pdf(db: Session, from_date: Optional[date] = None, to_date: Opt
     return buf.getvalue()
 
 
+def render_expense_lines_pdf(
+    db: Session,
+    from_date: Optional[date] = None,
+    to_date: Optional[date] = None,
+    category: str = "",
+    source_id: Optional[int] = None,
+) -> bytes:
+    from app.services.reports.extended import expense_lines
+
+    data = expense_lines(db, from_date, to_date, category, source_id)
+    items = data["items"]
+    if from_date and to_date and from_date != to_date:
+        title = f"Expenses — {from_date.isoformat()} to {to_date.isoformat()}"
+    elif from_date or to_date:
+        title = f"Expenses — {(from_date or to_date).isoformat()}"
+    else:
+        title = "Expenses — all dates"
+    doc, buf, styles = _doc()
+    story = [
+        Paragraph(title, styles["Heading1"]),
+        Paragraph(f"Lines {len(items)} · Amount {_money(data['total'])}", styles["Normal"]),
+        Spacer(1, 10),
+    ]
+    rows = [["Date", "Subcategory", "Paid from", "Name", "Note", "Amount"]]
+    for row in items:
+        rows.append([
+            row["date"],
+            row["category"][:28],
+            row["source_name"][:22],
+            row["description"][:34],
+            (row["reference"] or "-")[:30],
+            _money(row["amount"]),
+        ])
+    rows.append(["", "", "", "", "Total", _money(data["total"])])
+    table = Table(rows, colWidths=[56, 80, 70, 100, 80, 60], repeatRows=1)
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e2e8f0")),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("ALIGN", (-1, 0), (-1, -1), "RIGHT"),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+    ]))
+    story.append(table)
+    doc.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
+    return buf.getvalue()
+
+
 def render_payment_accounts_pdf(
     db: Session,
     from_date: Optional[date] = None,

@@ -1,5 +1,5 @@
   return {
-    init, showHub, showQuickEntry, openQuickEntry, showArApHub, quickVendorPayment, onVendorPaySearch, pickVendorPay, clearVendorPay, reviewVendorPay, backVendorPay, submitVendorPay, quickCustomerPayment, closeQuickPay, submitQuickPay, quickAddExpense, quickMultipleExpenses, reviewMultipleExpenses, backMultipleExpenses, confirmMultipleExpenses, addExpenseRow, changeExpenseRow, removeExpenseRow, loadNeedsAction,
+    init, showHub, showQuickEntry, openQuickEntry, showArApHub, quickVendorPayment, onVendorPaySearch, pickVendorPay, clearVendorPay, reviewVendorPay, backVendorPay, submitVendorPay, quickCustomerPayment, closeQuickPay, submitQuickPay, quickAddExpense, loadNeedsAction,
     setHubMode, setChip, setHubSearch, setBrowseSection, setShowSettled, setReportTab,
     showAp, showAr, showExpenses, showRevenue, showCost, showPnl, showFreight,
     showRouteCollections, openRouteCollection, openRouteCustomer, backRouteCustomers, printRouteCollection,

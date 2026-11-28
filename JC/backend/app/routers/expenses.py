@@ -102,6 +102,9 @@ def resolve_expense_category(db: Session, body: ExpenseIn) -> str:
 def create_expenses_batch(db: Session, body: ExpenseBatchIn, actor_name: str) -> list[Expense]:
     if not body.lines:
         raise HTTPException(400, "Add an expense")
+    for line in body.lines:
+        if len(" ".join((line.reference or "").split())) > 255:
+            raise HTTPException(400, "Note is too long")
     rows: list[Expense] = []
     for line in body.lines:
         name = " ".join((line.description or "").split())

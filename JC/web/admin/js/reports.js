@@ -584,7 +584,7 @@ const Reports = (() => {
     if (!slot) return;
     const caret = (typeof OrdersUI !== "undefined" && OrdersUI.captureSearchCaret)
       ? OrdersUI.captureSearchCaret("reports-hub-search") : null;
-    const searchable = ["sales", "sales-book", "day-bills", "transport", "receipt-book", "daybook", "purchases", "payments", "ledgers", "ageing", "customer-sales", "vendor-purchases", "item-sales", "item-purchases", "stock-wise", "vendor-orders", "confirmed-orders", "item-outward", "no-album", "stock-journal", "valuation", "movers", "low", "markings", "returns", "debit-notes", "gst-sales", "gst-purchases", "cashbook", "expense-cat", "sticker-prints"].includes(chip);
+    const searchable = ["sales", "sales-book", "day-bills", "transport", "receipt-book", "daybook", "purchases", "payments", "ledgers", "ageing", "customer-sales", "vendor-purchases", "item-sales", "item-purchases", "stock-wise", "vendor-orders", "confirmed-orders", "item-outward", "no-album", "stock-journal", "valuation", "movers", "low", "markings", "returns", "debit-notes", "gst-sales", "gst-purchases", "cashbook", "sticker-prints"].includes(chip);
     if (!searchable) { slot.innerHTML = ""; return; }
     const ph = chip === "sticker-prints" ? "Search party name or number…"
       : chip === "day-bills" ? "Search bill, party, city…"
@@ -1800,10 +1800,8 @@ const Reports = (() => {
         <option value="">All</option>${optHtml(srcOpts, expenseSource)}
       </select></label>
     </div>`;
-    const items = (data.items || []).filter(it => matchSearch(it.category, it.source_name, it.description, it.reference));
-    const total = hubSearch.trim()
-      ? items.reduce((sum, it) => sum + (Number(it.amount) || 0), 0)
-      : data.total;
+    const items = data.items || [];
+    const total = data.total;
     body.innerHTML = filters + (items.length ? `<div class="card table-wrap"><table class="data"><thead><tr>
       <th>Date</th><th>Subcategory</th><th>Paid from</th><th>Name</th><th>Note</th><th>Amount</th>
     </tr></thead><tbody>

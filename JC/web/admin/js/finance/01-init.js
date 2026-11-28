@@ -270,7 +270,6 @@
         <button class="btn btn-primary" onclick="Finance.quickVendorPayment()">Record vendor payment</button>
         <button class="btn btn-primary" onclick="Finance.quickCustomerPayment()">Record customer payment</button>
         <button class="btn btn-primary" onclick="Finance.quickAddExpense()">+ Add expense</button>
-        <button class="btn btn-primary" onclick="Finance.quickMultipleExpenses()">Multiple expenses</button>
       </div>`;
     App.updateGlobalBack?.();
   }
@@ -308,7 +307,6 @@
         <button class="btn btn-primary" onclick="App.closeDetail();Finance.quickVendorPayment()">Record vendor payment</button>
         <button class="btn btn-primary" onclick="App.closeDetail();Finance.quickCustomerPayment()">Record customer payment</button>
         <button class="btn btn-primary" onclick="App.closeDetail();Finance.quickAddExpense()">+ Add expense</button>
-        <button class="btn btn-primary" onclick="App.closeDetail();Finance.quickMultipleExpenses()">Multiple expenses</button>
       </div>`,
       `<button class="btn btn-secondary" style="flex:1;" onclick="App.closeDetail()">Close</button>`,
       "sm");

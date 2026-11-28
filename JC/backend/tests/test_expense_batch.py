@@ -68,3 +68,18 @@ def test_one_bad_row_saves_nothing():
     db.rollback()
     assert db.query(Expense).count() == 0
     db.close()
+
+def test_note_longer_than_255_is_rejected_before_any_row_is_written():
+    db = _db()
+    source, sub = _seed(db)
+    with pytest.raises(HTTPException) as exc:
+        create_expenses_batch(db, ExpenseBatchIn(
+            expense_date=date(2026, 1, 15),
+            lines=[
+                ExpenseBatchLine(source_id=source.id, subhead_id=sub.id, description="Milk", amount=Decimal("40")),
+                ExpenseBatchLine(source_id=source.id, subhead_id=sub.id, description="Sugar", amount=Decimal("10"), reference="x" * 256),
+            ],
+        ), "tester")
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "Note is too long"
+    assert db.query(Expense).count() == 0

@@ -258,7 +258,7 @@ const Finance = (() => {
     });
 
     const needs = document.getElementById("finance-needs");
-    if (needs) needs.classList.toggle("hidden", activeChip !== "due");
+    if (needs) needs.classList.toggle("hidden", activeChip !== "due" && !multiExp && !vendorPay);
 
     const slot = document.getElementById("finance-search-slot");
     if (slot) {
@@ -798,7 +798,7 @@ const Finance = (() => {
         <label class="label">Amount (₹)</label>
         <input type="number" step="0.01" min="0" class="input" id="me-amt-${r.id}" value="${ctx.esc(r.amount)}" ${enter} />
         <label class="label">Note (optional)</label>
-        <input class="input" id="me-note-${r.id}" value="${ctx.esc(r.note)}" ${enter} />
+        <input class="input" id="me-note-${r.id}" maxlength="255" value="${ctx.esc(r.note)}" ${enter} />
         <div style="display:flex;gap:8px;">
           <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.changeExpenseRow(${r.id})">Change</button>
           <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.removeExpenseRow(${r.id})">Remove</button>

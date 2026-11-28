@@ -443,10 +443,11 @@ def render_expense_lines_pdf(
     to_date: Optional[date] = None,
     category: str = "",
     source_id: Optional[int] = None,
+    payment_mode_id: Optional[int] = None,
 ) -> bytes:
     from app.services.reports.extended import expense_lines
 
-    data = expense_lines(db, from_date, to_date, category, source_id)
+    data = expense_lines(db, from_date, to_date, category, source_id, payment_mode_id)
     items = data["items"]
     if from_date and to_date and from_date != to_date:
         title = f"Expenses — {from_date.isoformat()} to {to_date.isoformat()}"

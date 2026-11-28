@@ -8,7 +8,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.db.session import Base
-from app.models.expense import Expense, ExpenseHead, ExpenseSource, ExpenseSubhead
+from app.models.expense import Expense, ExpenseHead, ExpenseSubhead
+from app.models.payment_mode import PaymentMode
 from app.routers.expenses import ExpenseBatchIn, ExpenseBatchLine, create_expenses_batch
 from app.services.reports.daybook import daybook
 
@@ -20,7 +21,7 @@ def _db():
 
 
 def _seed(db):
-    source = ExpenseSource(name="Cash Register")
+    source = PaymentMode(name="Cash")
     head = ExpenseHead(name="Kitchen")
     db.add_all([source, head])
     db.flush()
@@ -36,8 +37,8 @@ def test_batch_stores_the_chosen_date_and_the_day_book_uses_it():
     rows = create_expenses_batch(db, ExpenseBatchIn(
         expense_date=date(2026, 1, 15),
         lines=[
-            ExpenseBatchLine(source_id=source.id, subhead_id=sub.id, description="Milk", amount=Decimal("40"), reference="morning"),
-            ExpenseBatchLine(source_id=source.id, subhead_id=sub.id, description="Sugar", amount=Decimal("10")),
+            ExpenseBatchLine(payment_mode_id=source.id, subhead_id=sub.id, description="Milk", amount=Decimal("40"), reference="morning"),
+            ExpenseBatchLine(payment_mode_id=source.id, subhead_id=sub.id, description="Sugar", amount=Decimal("10")),
         ],
     ), "Anita")
     db.commit()
@@ -45,7 +46,7 @@ def test_batch_stores_the_chosen_date_and_the_day_book_uses_it():
     assert rows[0].description == "Milk"
     assert rows[0].reference == "morning"
     assert rows[0].category == "kitchen / tea"
-    assert rows[0].source_id == source.id
+    assert rows[0].payment_mode_id == source.id
     assert rows[1].reference is None
     book = daybook(db, from_date=date(2026, 1, 15), to_date=date(2026, 1, 15))
     labels = [r["label"] for r in book["entries"] if r["kind"] == "expense"]
@@ -61,8 +62,8 @@ def test_one_bad_row_saves_nothing():
         create_expenses_batch(db, ExpenseBatchIn(
             expense_date=date(2026, 1, 15),
             lines=[
-                ExpenseBatchLine(source_id=source.id, subhead_id=sub.id, description="Milk", amount=Decimal("40")),
-                ExpenseBatchLine(source_id=source.id, subhead_id=sub.id, description="Sugar", amount=Decimal("0")),
+                ExpenseBatchLine(payment_mode_id=source.id, subhead_id=sub.id, description="Milk", amount=Decimal("40")),
+                ExpenseBatchLine(payment_mode_id=source.id, subhead_id=sub.id, description="Sugar", amount=Decimal("0")),
             ],
         ), "Anita")
     db.rollback()
@@ -76,8 +77,8 @@ def test_note_longer_than_255_is_rejected_before_any_row_is_written():
         create_expenses_batch(db, ExpenseBatchIn(
             expense_date=date(2026, 1, 15),
             lines=[
-                ExpenseBatchLine(source_id=source.id, subhead_id=sub.id, description="Milk", amount=Decimal("40")),
-                ExpenseBatchLine(source_id=source.id, subhead_id=sub.id, description="Sugar", amount=Decimal("10"), reference="x" * 256),
+                ExpenseBatchLine(payment_mode_id=source.id, subhead_id=sub.id, description="Milk", amount=Decimal("40")),
+                ExpenseBatchLine(payment_mode_id=source.id, subhead_id=sub.id, description="Sugar", amount=Decimal("10"), reference="x" * 256),
             ],
         ), "tester")
     assert exc.value.status_code == 400

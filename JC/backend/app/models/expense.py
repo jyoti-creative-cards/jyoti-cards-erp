@@ -24,6 +24,7 @@ class Expense(Base):
     # False = stock journal / sample cost. Stays on the expense list, not in cash out.
     is_cash: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=sql_true())
     source_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    payment_mode_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     created_by_name: Mapped[str] = mapped_column(String(200), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 

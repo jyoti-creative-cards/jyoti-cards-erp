@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session, object_session
 from app.db.session import get_db
 from app.deps import AuthContext, require_admin, require_permission
 from app.models.expense import Expense, ExpenseHead, ExpenseSource, ExpenseSubhead
+from app.models.payment_mode import PaymentMode
 from app.services.activity import log_from_auth
 from app.services import response_cache
 from app.services.document_present import present
@@ -29,10 +30,11 @@ class ExpenseIn(BaseModel):
     head_id: Optional[int] = None
     subhead_id: Optional[int] = None
     source_id: Optional[int] = None
+    payment_mode_id: Optional[int] = None
 
 
 class ExpenseBatchLine(BaseModel):
-    source_id: int
+    payment_mode_id: int
     subhead_id: int
     description: str
     amount: Decimal
@@ -117,16 +119,18 @@ def create_expenses_batch(db: Session, body: ExpenseBatchIn, actor_name: str) ->
             amount=line.amount,
             subhead_id=line.subhead_id,
             description=name,
-            source_id=line.source_id,
+            payment_mode_id=line.payment_mode_id,
         ))
-        source = _expense_source(db, line.source_id, required=True)
+        mode = db.get(PaymentMode, line.payment_mode_id)
+        if not mode:
+            raise HTTPException(400, "Pick where the money came from")
         row = Expense(
             expense_date=body.expense_date,
             category=category,
             description=name,
             amount=line.amount,
             reference=(" ".join((line.reference or "").split()) or None),
-            source_id=source.id,
+            payment_mode_id=mode.id,
             created_by_name=actor_name,
         )
         db.add(row)
@@ -197,6 +201,7 @@ class ExpensePublic(BaseModel):
     addon_product_id: Optional[int] = None
     is_cash: bool = True
     source_id: Optional[int] = None
+    payment_mode_id: Optional[int] = None
     source_name: Optional[str] = None
     created_by_name: str
     display_date: Optional[date] = None
@@ -208,6 +213,14 @@ class ExpensePublic(BaseModel):
         db = object_session(row)
         view = present(db, "expense", row) if db is not None else {}
         source = db.get(ExpenseSource, row.source_id) if db is not None and row.source_id else None
+        mode = db.get(PaymentMode, row.payment_mode_id) if db is not None and row.payment_mode_id else None
+        if mode is None and source is not None and db is not None:
+            from app.services.account_balance import match_account
+            modes = db.info.get("_payment_modes")
+            if modes is None:
+                modes = db.query(PaymentMode).all()
+                db.info["_payment_modes"] = modes
+            mode = match_account(source.name, modes)
         return cls(
             id=row.id,
             expense_date=row.expense_date,
@@ -219,7 +232,8 @@ class ExpensePublic(BaseModel):
             addon_product_id=row.addon_product_id,
             is_cash=True if row.is_cash is None else bool(row.is_cash),
             source_id=row.source_id,
-            source_name=source.name if source else None,
+            payment_mode_id=row.payment_mode_id,
+            source_name=mode.name if mode else (source.name if source else None),
             created_by_name=row.created_by_name,
             display_date=view.get("display_date") or row.expense_date,
             display_name=view.get("display_name") or row.category,
@@ -421,14 +435,20 @@ def create_expense(
     auth: AuthContext = Depends(require_permission("finance.write")),
 ):
     category = resolve_expense_category(db, body)
-    source = _expense_source(db, body.source_id, required=True)
+    mode = db.get(PaymentMode, body.payment_mode_id) if body.payment_mode_id else None
+    source = None
+    if mode is None and body.source_id:
+        source = _expense_source(db, body.source_id, required=True)
+    if mode is None and source is None:
+        raise HTTPException(400, "Pick where the money came from")
     row = Expense(
         expense_date=body.expense_date,
         category=category,
         description=(body.description or "").strip() or None,
         amount=body.amount,
         reference=(body.reference or "").strip() or None,
-        source_id=source.id,
+        source_id=source.id if source else None,
+        payment_mode_id=mode.id if mode else None,
         created_by_name=auth.actor_name,
     )
     db.add(row)
@@ -486,7 +506,12 @@ def patch_expense(
     row.description = (body.description or "").strip() or None
     row.amount = body.amount
     row.reference = (body.reference or "").strip() or None
-    if body.source_id:
+    if body.payment_mode_id:
+        mode = db.get(PaymentMode, body.payment_mode_id)
+        if not mode:
+            raise HTTPException(400, "Pick where the money came from")
+        row.payment_mode_id = mode.id
+    elif body.source_id:
         row.source_id = _expense_source(db, body.source_id, required=True).id
     log_from_auth(
         db,

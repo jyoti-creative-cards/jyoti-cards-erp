@@ -80,6 +80,56 @@ const Finance = (() => {
     return prefix + Math.abs(n).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
   }
 
+  let bookBalances = null;
+  const BALANCE_RED = "color:#b91c1c;font-weight:800;font-size:13px;";
+
+  function rememberBalances(data) {
+    bookBalances = data ? Object.assign(data, { failed: false }) : { failed: true };
+  }
+
+  async function loadBookBalances() {
+    try {
+      rememberBalances(await ctx.api("/payment-modes/balances", {}, 0));
+    } catch (e) {
+      bookBalances = { failed: true };
+    }
+  }
+
+  function accountBalanceText(modeId) {
+    if (!modeId) return "";
+    if (!bookBalances || bookBalances.failed) return "Balance could not be loaded";
+    const row = (bookBalances.accounts || []).find(a => String(a.id) === String(modeId));
+    return `Balance ${fmtPrice(row ? row.balance : "0")}`;
+  }
+
+  function subBalanceText(subId) {
+    if (!subId) return "";
+    if (!bookBalances || bookBalances.failed) return "Balance could not be loaded";
+    const row = (bookBalances.categories || []).find(c => String(c.subhead_id) === String(subId));
+    return `Balance ${fmtPrice(row ? row.balance : "0")}`;
+  }
+
+  function paintBookBalance(elId, text) {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    el.textContent = text;
+    el.style.display = text ? "" : "none";
+  }
+
+  function paintPickedBalance(selectId, lineId) {
+    paintBookBalance(lineId, accountBalanceText(document.getElementById(selectId)?.value || ""));
+  }
+
+  function paintExpenseRowBalance(rowId) {
+    paintBookBalance(`me-src-bal-${rowId}`, accountBalanceText(document.getElementById(`me-src-${rowId}`)?.value || ""));
+    paintBookBalance(`me-sub-bal-${rowId}`, subBalanceText(document.getElementById(`me-sub-${rowId}`)?.value || ""));
+  }
+
+  function paintSingleExpenseBalance() {
+    paintBookBalance("exp-source-bal", accountBalanceText(document.getElementById("exp-source")?.value || ""));
+    paintBookBalance("exp-sub-bal", subBalanceText(document.getElementById("exp-sub")?.value || ""));
+  }
+
   function fmtPriceShort(val) {
     if (val == null || val === "") return "—";
     const n = Number(val);
@@ -471,10 +521,11 @@ const Finance = (() => {
       ? `<p style="color:var(--danger);margin:0 0 12px;">Couldn't load payment modes.</p>`
       : vendorPay.modes.length
         ? `<label class="label">Payment mode</label>
-           <select class="input" id="vp-mode" style="margin-bottom:12px;width:100%;">
+           <select class="input" id="vp-mode" style="margin-bottom:4px;width:100%;" onchange="Finance.paintPickedBalance('vp-mode','vp-bal')">
              <option value="">— Select mode —</option>
              ${vendorPay.modes.map(m => `<option value="${m.id}"${String(vendorPay.modeId) === String(m.id) ? " selected" : ""}>${ctx.esc(m.name)}</option>`).join("")}
-           </select>`
+           </select>
+           <p id="vp-bal" style="${BALANCE_RED}display:none;margin:0 0 12px;"></p>`
         : "";
     host.innerHTML = `
       <div class="card" style="padding:20px;max-width:480px;">
@@ -490,6 +541,7 @@ const Finance = (() => {
         <button type="button" class="btn btn-primary" onclick="Finance.reviewVendorPay()">Review</button>
       </div>`;
     host.scrollIntoView?.({ block: "start" });
+    paintPickedBalance("vp-mode", "vp-bal");
   }
 
   async function quickVendorPayment() {
@@ -500,6 +552,7 @@ const Finance = (() => {
     vendorPayHits = [];
     try {
       vendorPay.modes = await ctx.api("/payment-modes?active_only=true", {}, 0) || [];
+      await loadBookBalances();
     } catch (e) {
       vendorPay.modes = [];
       vendorPay.modesFailed = true;
@@ -563,6 +616,7 @@ const Finance = (() => {
           ${ctx.reviewRow("Vendor", partyWithCity(vendorPay.vendor))}
           ${ctx.reviewRow("Amount", fmtPrice(amount))}
           ${ctx.reviewRow("Payment mode", vendorPay.modeName || "—")}
+          ${accountBalanceText(vendorPay.modeId) ? `<p style="${BALANCE_RED}margin:4px 0;">${ctx.esc(accountBalanceText(vendorPay.modeId))}</p>` : ""}
           ${ctx.reviewRow("Reference", fields.ref.trim())}
           ${ctx.reviewRow("Note", fields.note.trim() || "—")}
         </div>
@@ -615,6 +669,7 @@ const Finance = (() => {
     let paymentModesLoadFailed = false;
     try {
       quickPayModes = await ctx.api("/payment-modes?active_only=true", {}, 0) || [];
+      await loadBookBalances();
     } catch (e) {
       quickPayModes = [];
       paymentModesLoadFailed = true;
@@ -624,10 +679,11 @@ const Finance = (() => {
       ? `<p style="font-size:13px;color:var(--danger);margin:0 0 12px;">Couldn't load payment modes. You can still collect; you'll be asked for a mode if one is required.</p>`
       : quickPayModes.length
       ? `<label class="label">Payment mode</label>
-        <select class="input" id="quick-pay-mode" style="margin-bottom:12px;width:100%;">
+        <select class="input" id="quick-pay-mode" style="margin-bottom:4px;width:100%;" onchange="Finance.paintPickedBalance('quick-pay-mode','quick-pay-bal')">
           <option value="">— Select mode —</option>
           ${quickPayModes.map(m => `<option value="${m.id}">${ctx.esc(m.name)}</option>`).join("")}
-        </select>`
+        </select>
+        <p id="quick-pay-bal" style="${BALANCE_RED}display:none;margin:0 0 12px;"></p>`
       : "";
     document.getElementById("quick-pay-body").innerHTML = `
       <div class="review-block" style="margin-bottom:16px;">
@@ -790,9 +846,11 @@ const Finance = (() => {
       <div class="review-block" style="margin-bottom:12px;padding:12px;display:grid;gap:8px;">
         <div style="font-size:12px;color:var(--muted);">Expense ${idx + 1}</div>
         <label class="label">Paid from</label>
-        <select class="input" id="me-src-${r.id}"${dis} style="width:100%;">${srcOpts}</select>
+        <select class="input" id="me-src-${r.id}"${dis} style="width:100%;" onchange="Finance.paintExpenseRowBalance(${r.id})">${srcOpts}</select>
+        <p id="me-src-bal-${r.id}" style="${BALANCE_RED}display:none;margin:0;"></p>
         <label class="label">Subcategory</label>
-        <select class="input" id="me-sub-${r.id}"${dis} style="width:100%;">${subOpts}</select>
+        <select class="input" id="me-sub-${r.id}"${dis} style="width:100%;" onchange="Finance.paintExpenseRowBalance(${r.id})">${subOpts}</select>
+        <p id="me-sub-bal-${r.id}" style="${BALANCE_RED}display:none;margin:0;"></p>
         <label class="label">Name</label>
         <input class="input" id="me-name-${r.id}" value="${ctx.esc(r.name)}" />
         <label class="label">Amount (₹)</label>
@@ -820,6 +878,7 @@ const Finance = (() => {
           <button type="button" class="btn btn-primary" style="flex:1;" onclick="Finance.reviewMultipleExpenses()">Review</button>
         </div>
       </div>`;
+    multiExp.rows.forEach(r => paintExpenseRowBalance(r.id));
     if (focusId) document.getElementById(`me-name-${focusId}`)?.focus();
     else host.scrollIntoView?.({ block: "start" });
   }
@@ -841,8 +900,9 @@ const Finance = (() => {
     ctx.showLoading?.();
     try {
       [sources, heads] = await Promise.all([
-        ctx.api("/expenses/sources", {}, 0),
+        ctx.api("/payment-modes?active_only=true", {}, 0),
         ctx.api("/expenses/heads", {}, 0),
+        loadBookBalances(),
       ]);
     } catch (e) {
       if (multiExp !== state) return;
@@ -919,7 +979,9 @@ const Finance = (() => {
         ${rows.map(r => `
           <div class="review-block" style="margin-bottom:12px;">
             ${ctx.reviewRow("Paid from", multiExpSourceName(r.sourceId))}
+            ${accountBalanceText(r.sourceId) ? `<p style="${BALANCE_RED}margin:0 0 6px;">${ctx.esc(accountBalanceText(r.sourceId))}</p>` : ""}
             ${ctx.reviewRow("Subcategory", multiExpSubLabel(r.subId))}
+            ${subBalanceText(r.subId) ? `<p style="${BALANCE_RED}margin:0 0 6px;">${ctx.esc(subBalanceText(r.subId))}</p>` : ""}
             ${ctx.reviewRow("Name", r.name.trim())}
             ${ctx.reviewRow("Amount", fmtPrice(r.amount))}
             ${ctx.reviewRow("Note", r.note.trim() || "—")}
@@ -968,7 +1030,7 @@ const Finance = (() => {
     state.posting = true;
     const lines = state.checked.map(r => {
       const line = {
-        source_id: Number(r.sourceId),
+        payment_mode_id: Number(r.sourceId),
         subhead_id: Number(r.subId),
         description: r.name.trim(),
         amount: Number(String(r.amount).trim()),
@@ -1782,6 +1844,7 @@ const Finance = (() => {
     let paymentModesLoadFailed = false;
     try {
       paymentModes = await ctx.api("/payment-modes?active_only=true", {}, 30000) || [];
+      await loadBookBalances();
     } catch (e) {
       paymentModes = [];
       paymentModesLoadFailed = true;
@@ -1791,11 +1854,12 @@ const Finance = (() => {
       ? `<p style="font-size:13px;color:var(--danger);margin:0 0 12px;">Couldn't load payment modes — <a href="#" onclick="event.preventDefault();Finance.openSettle()">retry</a>. You can still pay; you'll be asked for a mode if one is required.</p>`
       : paymentModes.length
       ? `<label class="label">Payment mode</label>
-        <select class="input" id="settle-mode" style="margin-bottom:12px;width:100%;">
+        <select class="input" id="settle-mode" style="margin-bottom:4px;width:100%;" onchange="Finance.paintPickedBalance('settle-mode','settle-bal')">
           <option value="">— Select mode —</option>
           ${paymentModes.map(m => `<option value="${m.id}">${ctx.esc(m.name)}</option>`).join("")}
         </select>
-        <p style="font-size:12px;color:var(--muted);margin:-4px 0 12px;">Add modes in Setup → Payment Modes.</p>`
+        <p id="settle-bal" style="${BALANCE_RED}display:none;margin:0 0 4px;"></p>
+        <p style="font-size:12px;color:var(--muted);margin:0 0 12px;">Add modes in Setup → Payment Modes.</p>`
       : `<p style="font-size:13px;color:var(--muted);margin:0 0 12px;">No payment modes yet — <button type="button" class="btn btn-ghost btn-sm" onclick="Finance.closeSettle();App.showView('setup');App.showSetupTab('paymodes')">add in Setup</button></p>`;
     document.getElementById("settle-body").innerHTML = `
       <div class="review-block" style="margin-bottom:16px;">
@@ -2581,6 +2645,7 @@ const Finance = (() => {
     let paymentModesLoadFailed = false;
     try {
       paymentModes = await ctx.api("/payment-modes?active_only=true", {}, 30000) || [];
+      await loadBookBalances();
     } catch (e) {
       paymentModes = [];
       paymentModesLoadFailed = true;
@@ -2590,11 +2655,12 @@ const Finance = (() => {
       ? `<p style="font-size:13px;color:var(--danger);margin:0 0 12px;">Couldn't load payment modes — <a href="#" onclick="event.preventDefault();Finance.openArSettle()">retry</a>. You can still collect; you'll be asked for a mode if one is required.</p>`
       : paymentModes.length
       ? `<label class="label">Payment mode</label>
-        <select class="input" id="ar-settle-mode" style="margin-bottom:12px;width:100%;">
+        <select class="input" id="ar-settle-mode" style="margin-bottom:4px;width:100%;" onchange="Finance.paintPickedBalance('ar-settle-mode','ar-settle-bal')">
           <option value="">— Select mode —</option>
           ${paymentModes.map(m => `<option value="${m.id}">${ctx.esc(m.name)}</option>`).join("")}
         </select>
-        <p style="font-size:12px;color:var(--muted);margin:-4px 0 12px;">Add modes in Setup → Payment Modes.</p>`
+        <p id="ar-settle-bal" style="${BALANCE_RED}display:none;margin:0 0 4px;"></p>
+        <p style="font-size:12px;color:var(--muted);margin:0 0 12px;">Add modes in Setup → Payment Modes.</p>`
       : `<p style="font-size:13px;color:var(--muted);margin:0 0 12px;">No payment modes yet — <button type="button" class="btn btn-ghost btn-sm" onclick="Finance.closeArSettle();App.showView('setup');App.showSetupTab('paymodes')">add in Setup</button></p>`;
     document.getElementById("ar-settle-body").innerHTML = `
       <div class="review-block" style="margin-bottom:16px;">
@@ -2776,13 +2842,13 @@ const Finance = (() => {
     if (saveBusy) return;
     const payload = expensePayload();
     if (!payload) return;
-    const { expense_date, description, amount, reference, subhead_id, head_id, source_id } = payload;
+    const { expense_date, description, amount, reference, subhead_id, head_id, payment_mode_id } = payload;
     saveBusy = true;
     ctx.showLoading?.();
     try {
       await ctx.api(`/expenses/${id}`, {
         method: "PATCH",
-        body: JSON.stringify({ expense_date, description, amount, reference, subhead_id, head_id, source_id }),
+        body: JSON.stringify({ expense_date, description, amount, reference, subhead_id, head_id, payment_mode_id }),
       });
       ctx.invalidateCache?.("/expenses");
       ctx.invalidateCache?.("/finance");
@@ -2944,7 +3010,8 @@ const Finance = (() => {
     let heads = [];
     let sources = [];
     try { heads = await ctx.api("/expenses/heads", {}, 0) || []; } catch (err) { heads = []; }
-    try { sources = await ctx.api("/expenses/sources", {}, 0) || []; } catch (err) { sources = []; }
+    try { sources = await ctx.api("/payment-modes?active_only=true", {}, 0) || []; } catch (err) { sources = []; }
+    await loadBookBalances();
     expenseHeadCache = heads;
     expenseSourceCache = sources;
     const cat = (existing?.category || "").toLowerCase();
@@ -2963,14 +3030,15 @@ const Finance = (() => {
       <input type="date" class="input" id="exp-date" value="${ctx.esc(day)}" style="margin-bottom:12px;" />
       <label class="label">Subcategory</label>
       <select class="input" id="exp-sub" style="margin-bottom:4px;" onchange="Finance.showExpenseHead()">${expenseSubheadOptions("", subId)}</select>
+      <p id="exp-sub-bal" style="${BALANCE_RED}display:none;margin:0 0 4px;"></p>
       <p id="exp-head-label" style="margin:0 0 8px;font-weight:700;"></p>
       <div style="display:flex;gap:8px;margin-bottom:12px;">
         <button type="button" class="btn btn-secondary btn-sm" onclick="Finance.addExpenseSubhead()">Add subcategory</button>
         <button type="button" class="btn btn-ghost btn-sm" onclick="Finance.renameSelectedSubhead()">Edit subcategory</button>
       </div>
       <label class="label">Paid from</label>
-      <select class="input" id="exp-source" style="margin-bottom:8px;">${sourceOptions(existing?.source_id || "")}</select>
-      ${sourceManager()}
+      <select class="input" id="exp-source" style="margin-bottom:4px;" onchange="Finance.paintSingleExpenseBalance()">${sourceOptions(existing?.payment_mode_id || "")}</select>
+      <p id="exp-source-bal" style="${BALANCE_RED}display:none;margin:0 0 12px;"></p>
       <label class="label">Description</label>
       <input class="input" id="exp-desc" value="${ctx.esc(existing?.description || "")}" style="margin-bottom:12px;" />
       <label class="label">Amount (₹)</label>
@@ -2985,6 +3053,7 @@ const Finance = (() => {
       saveBtn.setAttribute("onclick", editId ? `Finance.saveExpenseEdit(${editId})` : "Finance.submitExpense()");
     }
     showExpenseHead();
+    paintSingleExpenseBalance();
   }
 
   function showExpenseHead() {
@@ -2997,6 +3066,7 @@ const Finance = (() => {
       if (sub) { headName = head.name || ""; break; }
     }
     el.textContent = headName ? `Category: ${headName}` : "";
+    paintSingleExpenseBalance();
   }
 
   async function addExpenseSource() {
@@ -3144,11 +3214,11 @@ const Finance = (() => {
     const description = (document.getElementById("exp-desc")?.value || "").trim() || null;
     const amount = parseFloat(document.getElementById("exp-amount")?.value || "0");
     const reference = (document.getElementById("exp-ref")?.value || "").trim() || null;
-    const source_id = Number(document.getElementById("exp-source")?.value || 0);
+    const payment_mode_id = Number(document.getElementById("exp-source")?.value || 0);
     if (!expense_date || !amount || amount <= 0) { ctx.toast("Enter date and amount", "error"); return null; }
     if (!subId) { ctx.toast("Pick a subcategory", "error"); return null; }
-    if (!source_id) { ctx.toast("Pick where the money came from", "error"); return null; }
-    return { expense_date, description, amount, reference, source_id, subhead_id: Number(subId) };
+    if (!payment_mode_id) { ctx.toast("Pick where the money came from", "error"); return null; }
+    return { expense_date, description, amount, reference, payment_mode_id, subhead_id: Number(subId) };
   }
 
   function closeExpenseForm() { document.getElementById("expense-modal")?.classList.add("hidden"); }
@@ -3157,13 +3227,13 @@ const Finance = (() => {
     if (saveBusy) return;
     const payload = expensePayload();
     if (!payload) return;
-    const { expense_date, description, amount, reference, subhead_id, head_id, source_id } = payload;
+    const { expense_date, description, amount, reference, subhead_id, head_id, payment_mode_id } = payload;
     saveBusy = true;
     ctx.showLoading?.();
     try {
       await ctx.api("/expenses", {
         method: "POST",
-        body: JSON.stringify({ expense_date, description, amount, reference, subhead_id, head_id, source_id }),
+        body: JSON.stringify({ expense_date, description, amount, reference, subhead_id, head_id, payment_mode_id }),
       });
       ctx.invalidateCache?.("/expenses");
       ctx.invalidateCache?.("/finance");
@@ -4528,7 +4598,7 @@ const Finance = (() => {
 
 // @slice 07-public
   return {
-    init, showHub, showQuickEntry, openQuickEntry, showArApHub, quickVendorPayment, onVendorPaySearch, pickVendorPay, clearVendorPay, reviewVendorPay, backVendorPay, submitVendorPay, quickCustomerPayment, closeQuickPay, submitQuickPay, quickAddExpense, quickMultipleExpenses, reviewMultipleExpenses, backMultipleExpenses, confirmMultipleExpenses, addExpenseRow, changeExpenseRow, removeExpenseRow, loadNeedsAction,
+    init, showHub, showQuickEntry, openQuickEntry, showArApHub, quickVendorPayment, onVendorPaySearch, pickVendorPay, clearVendorPay, reviewVendorPay, backVendorPay, submitVendorPay, quickCustomerPayment, closeQuickPay, submitQuickPay, quickAddExpense, quickMultipleExpenses, reviewMultipleExpenses, backMultipleExpenses, confirmMultipleExpenses, addExpenseRow, changeExpenseRow, removeExpenseRow, paintExpenseRowBalance, paintPickedBalance, paintSingleExpenseBalance, loadNeedsAction,
     setHubMode, setChip, setHubSearch, setBrowseSection, setShowSettled, setReportTab,
     showAp, showAr, showExpenses, showRevenue, showCost, showPnl, showFreight,
     showRouteCollections, openRouteCollection, openRouteCustomer, backRouteCustomers, printRouteCollection,

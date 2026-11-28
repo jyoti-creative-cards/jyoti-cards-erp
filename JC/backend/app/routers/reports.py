@@ -402,10 +402,11 @@ def expense_lines_report(
     to_date: Optional[date] = Query(None),
     category: str = Query(""),
     source_id: Optional[int] = Query(None),
+    payment_mode_id: Optional[int] = Query(None),
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_admin),
 ):
-    return ext.expense_lines(db, from_date, to_date, category, source_id)
+    return ext.expense_lines(db, from_date, to_date, category, source_id, payment_mode_id)
 
 
 @router.get("/pnl")

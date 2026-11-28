@@ -1758,7 +1758,7 @@ const Reports = (() => {
   }
 
   function expenseLinesQs() {
-    return rangeQs({ category: expenseCat, source_id: expenseSource });
+    return rangeQs({ category: expenseCat, payment_mode_id: expenseSource });
   }
 
   function setExpenseCat(v) {
@@ -1781,7 +1781,7 @@ const Reports = (() => {
     const [data, heads, sources] = await Promise.all([
       ctx.api(`/reports/expense-lines${expenseLinesQs()}`, {}, 0),
       ctx.api("/expenses/heads", {}, 0).catch(() => []),
-      ctx.api("/expenses/sources", {}, 0).catch(() => []),
+      ctx.api("/payment-modes?active_only=true", {}, 0).catch(() => []),
     ]);
     const catOpts = [];
     (heads || []).forEach(h => (h.subheads || []).forEach(s => {
@@ -2022,24 +2022,12 @@ const Reports = (() => {
           <td>${fmtPrice(it.outstanding)}</td>
           <td></td>
         </tr>`).join("");
-      let sources = [];
-      try { sources = await ctx.api("/expenses/sources", {}, 0) || []; } catch (err) { sources = []; }
-      const sourceRows = sources.map(s => `<div style="display:flex;gap:8px;align-items:center;margin-top:6px;">
-        <span style="flex:1;">${ctx.esc(s.name)}</span>
-        <button type="button" class="btn btn-ghost btn-sm" onclick="Reports.renameExpenseSource(${s.id})">Rename</button>
-        <button type="button" class="btn btn-ghost btn-sm" onclick="Reports.deleteExpenseSource(${s.id})">Delete</button>
-      </div>`).join("");
       body.innerHTML = `<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
           <button type="button" class="btn btn-primary btn-sm" onclick="Reports.addExpenseHead()">New head</button>
         </div>
         <div class="card" style="padding:12px;margin-bottom:12px;">
           <strong>Paid from</strong>
-          <p style="margin:4px 0 8px;font-size:12px;color:var(--muted);">ICICI, cash, and any other account the money leaves from.</p>
-          ${sourceRows}
-          <div style="display:flex;gap:8px;margin-top:8px;">
-            <input id="rep-source-new" class="input" placeholder="New source" />
-            <button type="button" class="btn btn-secondary btn-sm" onclick="Reports.addExpenseSource()">Add</button>
-          </div>
+          <p style="margin:4px 0 0;font-size:12px;color:var(--muted);">These are the payment accounts. Add or rename them in Setup → Payment Modes.</p>
         </div>` + ((headRows || oldRows) ? `<div class="card table-wrap"><table class="data"><thead><tr>
         <th>Head</th><th>Sub-head</th><th>Count</th><th>Total</th><th></th>
       </tr></thead><tbody>${headRows}${oldRows}</tbody></table></div>` : empty("No expense heads", "Create a head, then a sub-head, then enter the expense in Finance."));

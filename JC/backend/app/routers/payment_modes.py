@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.deps import AuthContext, require_admin, require_any_permission, require_permission
 from app.models.payment_mode import PaymentMode
+from app.services.account_balance import account_balances
 from app.services.activity import log_from_auth
 
 router = APIRouter(prefix="/payment-modes", tags=["payment-modes"])
@@ -52,6 +53,14 @@ def list_payment_modes(
     if active_only:
         q = q.filter(PaymentMode.is_active.is_(True))
     return [_out(r) for r in q.all()]
+
+
+@router.get("/balances")
+def payment_account_balances(
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_any_permission("finance.write", "ap.write", "ar.write")),
+):
+    return account_balances(db)
 
 
 @router.post("", response_model=PaymentModePublic, status_code=status.HTTP_201_CREATED)

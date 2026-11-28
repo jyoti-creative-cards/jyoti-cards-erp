@@ -437,7 +437,11 @@ def expense_lines(
     to_date: Optional[date],
     category: str = "",
     source_id: Optional[int] = None,
+    payment_mode_id: Optional[int] = None,
 ) -> dict:
+    from app.models.payment_mode import PaymentMode
+    from app.services.account_balance import match_account, paid_from_label
+
     q = db.query(Expense)
     if from_date:
         q = q.filter(Expense.expense_date >= from_date)
@@ -446,15 +450,20 @@ def expense_lines(
     cat = (category or "").strip()
     if cat:
         q = q.filter(func.lower(Expense.category) == cat.lower())
-    if source_id:
+    modes = db.query(PaymentMode).all()
+    sources = db.query(ExpenseSource).all()
+    if payment_mode_id:
+        mode = next((row for row in modes if row.id == payment_mode_id), None)
+        matched = [row.id for row in sources if mode is not None and match_account(row.name, [mode]) is mode]
+        conds = [Expense.payment_mode_id == payment_mode_id]
+        if matched:
+            conds.append(and_(Expense.payment_mode_id.is_(None), Expense.source_id.in_(matched)))
+        q = q.filter(or_(*conds))
+    elif source_id:
         q = q.filter(Expense.source_id == source_id)
     rows = q.order_by(Expense.expense_date.asc(), Expense.id.asc()).all()
-    source_ids = {r.source_id for r in rows if r.source_id}
-    names = (
-        {s.id: s.name for s in db.query(ExpenseSource).filter(ExpenseSource.id.in_(source_ids)).all()}
-        if source_ids
-        else {}
-    )
+    source_names = {row.id: row.name for row in sources}
+    mode_names = {row.id: row.name for row in modes}
     total = Decimal("0")
     items = []
     for r in rows:
@@ -464,7 +473,11 @@ def expense_lines(
             {
                 "date": r.expense_date.isoformat(),
                 "category": r.category or "",
-                "source_name": names.get(r.source_id, "") if r.source_id else "",
+                "source_name": paid_from_label(
+                    source_names.get(r.source_id),
+                    mode_names.get(r.payment_mode_id),
+                    modes,
+                ),
                 "description": r.description or "",
                 "reference": r.reference if (r.reference or "").strip() else None,
                 "amount": _fmt(amt),

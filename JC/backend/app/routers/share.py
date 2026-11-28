@@ -323,10 +323,11 @@ def expense_lines_pdf(
     to_date: Optional[date] = Query(None),
     category: str = Query(""),
     source_id: Optional[int] = Query(None),
+    payment_mode_id: Optional[int] = Query(None),
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_admin),
 ):
-    pdf = render_expense_lines_pdf(db, from_date, to_date, category, source_id)
+    pdf = render_expense_lines_pdf(db, from_date, to_date, category, source_id, payment_mode_id)
     if from_date and to_date:
         name = f"expenses_{from_date.isoformat()}_{to_date.isoformat()}.pdf"
     else:

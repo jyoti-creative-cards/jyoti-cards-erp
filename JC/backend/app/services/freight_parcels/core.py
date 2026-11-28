@@ -118,6 +118,9 @@ def pick_parcel(db: Session, *, bill_id: int, actor_name: str) -> CustomerBill:
         bill.freight_picked_at = now
         bill.freight_picked_by = actor_name
         db.flush()
+        from app.services.tile_notes import clear_billed_note_if_gone
+
+        clear_billed_note_if_gone(db, bill.customer_id)
         return bill
     if not bill.freight_agent_id:
         raise HTTPException(400, "no freight agent assigned")
@@ -126,6 +129,9 @@ def pick_parcel(db: Session, *, bill_id: int, actor_name: str) -> CustomerBill:
         bill.freight_picked_at = now
         bill.freight_picked_by = actor_name
         db.flush()
+        from app.services.tile_notes import clear_billed_note_if_gone
+
+        clear_billed_note_if_gone(db, bill.customer_id)
         return bill
     agent = db.get(FreightAgent, bill.freight_agent_id)
     if not agent:
@@ -155,6 +161,9 @@ def pick_parcel(db: Session, *, bill_id: int, actor_name: str) -> CustomerBill:
     bill.freight_picked_at = datetime.now(timezone.utc)
     bill.freight_picked_by = actor_name
     db.flush()
+    from app.services.tile_notes import clear_billed_note_if_gone
+
+    clear_billed_note_if_gone(db, bill.customer_id)
     return bill
 
 

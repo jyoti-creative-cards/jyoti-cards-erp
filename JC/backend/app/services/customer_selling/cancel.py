@@ -116,5 +116,8 @@ def cancel_customer_placement(
         placement.closed_at = now
     order.updated_at = now
     cancelled_order.updated_at = now
+    from app.services.tile_notes import clear_received_note_if_gone
+
+    clear_received_note_if_gone(db, order.customer_id)
     return placement
 

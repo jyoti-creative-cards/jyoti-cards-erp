@@ -80,6 +80,9 @@ def confirm_received_order(db: Session, customer_id: int) -> bool:
         # Close the (now empty) received order
         received.is_open = False
 
+    from app.services.tile_notes import clear_stage_note
+
+    clear_stage_note(db, customer_id, "received")
     return True
 
 def promote_placement_to_confirmed(db: Session, placement: CustomerOrderPlacement) -> None:
@@ -122,6 +125,9 @@ def promote_placement_to_confirmed(db: Session, placement: CustomerOrderPlacemen
         order.status = "open"
         order.updated_at = datetime.now(timezone.utc)
         placement.status = "open"
+        from app.services.tile_notes import clear_stage_note
+
+        clear_stage_note(db, order.customer_id, "received")
         return
     if open_order is None:
         open_order = get_or_create_customer_order(db, order.customer_id, "open", "open")
@@ -133,6 +139,9 @@ def promote_placement_to_confirmed(db: Session, placement: CustomerOrderPlacemen
     open_order.updated_at = datetime.now(timezone.utc)
     if others == 0:
         order.is_open = False
+        from app.services.tile_notes import clear_stage_note
+
+        clear_stage_note(db, order.customer_id, "received")
 
 def close_received_order_if_fully_billed(db: Session, customer_id: int) -> None:
     """A New order whose every line is already on a bill should leave the New list."""
@@ -154,6 +163,9 @@ def close_received_order_if_fully_billed(db: Session, customer_id: int) -> None:
         return
     received.is_open = False
     received.updated_at = datetime.now(timezone.utc)
+    from app.services.tile_notes import clear_stage_note
+
+    clear_stage_note(db, customer_id, "received")
 
 
 def settle_confirmed_after_bill(db: Session, customer_id: int) -> None:
@@ -163,8 +175,11 @@ def settle_confirmed_after_bill(db: Session, customer_id: int) -> None:
     left on the confirmed order, pull it down. A placement whose every line is
     billed is marked billed so it is not offered again.
     """
+    from app.services.tile_notes import clear_open_note_if_gone
+
     open_order = get_open_customer_order(db, customer_id, "open")
     if open_order is None:
+        clear_open_note_if_gone(db, customer_id)
         return
     unbilled: dict[int, int] = {}
     seen: set[int] = set()
@@ -178,6 +193,7 @@ def settle_confirmed_after_bill(db: Session, customer_id: int) -> None:
         .all()
     )
     if not placements:
+        clear_open_note_if_gone(db, customer_id)
         return
     for placement in placements:
         lines = (
@@ -213,6 +229,7 @@ def settle_confirmed_after_bill(db: Session, customer_id: int) -> None:
         real = int(unbilled.get(cid, 0))
         if int(row.quantity_open or 0) > real:
             row.quantity_open = real
+    clear_open_note_if_gone(db, customer_id)
 
 def get_open_unbilled_placement(db: Session, customer_id: int) -> CustomerOrderPlacement | None:
     """Latest open received placement with no billed lines — dealer’s one active order."""

@@ -143,3 +143,29 @@ def set_live_marking(db: Session, customer_id: int, *, kind: str, text: str | No
         else:
             order.marking = value
             order.customer_marking = None
+    if kind == "marking":
+        paint_tile_marking(db, customer_id, value)
+
+
+def paint_tile_marking(db: Session, customer_id: int, text: str | None) -> None:
+    """The confirmed tile reads the latest placement note. Keep that note
+    equal to the marking just saved, or blank when the marking is cleared."""
+    from app.models.customer_order import CustomerOrderPlacement
+
+    value = clean_mark(text)
+    for bucket, status in (("open", "open"), ("received", "received")):
+        latest = (
+            db.query(CustomerOrderPlacement)
+            .join(CustomerOrder, CustomerOrder.id == CustomerOrderPlacement.customer_order_id)
+            .filter(
+                CustomerOrder.customer_id == customer_id,
+                CustomerOrder.is_open.is_(True),
+                CustomerOrder.bucket == bucket,
+                CustomerOrderPlacement.deleted_at.is_(None),
+                CustomerOrderPlacement.status == status,
+            )
+            .order_by(CustomerOrderPlacement.placed_at.desc(), CustomerOrderPlacement.id.desc())
+            .first()
+        )
+        if latest is not None:
+            latest.customer_notes = value
